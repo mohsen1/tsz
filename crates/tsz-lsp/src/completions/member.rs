@@ -92,8 +92,22 @@ impl<'a> Completions<'a> {
             .get(expr_idx)
             .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
             && self.find_enclosing_class_declaration(expr_idx).is_some();
+        // When the expression is `super`, resolve base class and show its members.
+        let is_super = self
+            .arena
+            .get(expr_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16);
 
-        if !qualified_name_target {
+        if is_super {
+            if let Some(base_sym_id) = self.resolve_super_base_class_symbol(expr_idx) {
+                self.append_symbol_members_as_completions(
+                    base_sym_id,
+                    &mut checker,
+                    &mut seen_names,
+                    &mut items,
+                );
+            }
+        } else if !qualified_name_target {
             let type_id = checker.get_type_of_node(expr_idx);
             let mut visited = FxHashSet::default();
             let mut props: FxHashMap<String, PropertyCompletion> = FxHashMap::default();
@@ -518,7 +532,52 @@ impl<'a> Completions<'a> {
                 let name = self.arena.get_identifier_text(qualified.right)?;
                 self.resolve_exported_member_symbol(left, name)
             }
+            k if k == SyntaxKind::SuperKeyword as u16 => {
+                self.resolve_super_base_class_symbol(expr_idx)
+            }
             _ => self.binder.resolve_identifier(self.arena, expr_idx),
+        }
+    }
+
+    /// Resolve `super` to the base class symbol for completions.
+    fn resolve_super_base_class_symbol(
+        &self,
+        super_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let mut current = super_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent = self.arena.get(ext.parent)?;
+            if parent.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class = self.arena.get_class(parent)?;
+                let heritage = class.heritage_clauses.as_ref()?;
+                for &clause_idx in &heritage.nodes {
+                    let clause_node = self.arena.get(clause_idx)?;
+                    let hd = self.arena.get_heritage(clause_node)?;
+                    if hd.token != SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+                    for &type_idx in &hd.types.nodes {
+                        let type_node = self.arena.get(type_idx)?;
+                        let expr_idx =
+                            if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
+                                self.arena
+                                    .get_expr_type_args(type_node)
+                                    .map(|e| e.expression)?
+                            } else {
+                                type_idx
+                            };
+                        return self.binder.resolve_identifier(self.arena, expr_idx);
+                    }
+                }
+                return None;
+            }
+            current = ext.parent;
         }
     }
 
@@ -1037,6 +1096,52 @@ impl<'a> Completions<'a> {
             item.sort_text = Some(sort_priority::MEMBER.to_string());
             item = item.with_detail(symbol_name);
             seen_names.insert("prototype".to_string());
+            items.push(item);
+        }
+    }
+
+    /// Add instance members of a class symbol as completions (for `super.` access).
+    fn append_symbol_members_as_completions(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        checker: &mut CheckerState,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+        let member_entries: Vec<(String, tsz_binder::SymbolId)> = symbol
+            .members
+            .as_ref()
+            .map(|members| {
+                members
+                    .iter()
+                    .map(|(name, id)| (name.clone(), *id))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (name, member_id) in member_entries {
+            if seen_names.contains(&name) {
+                continue;
+            }
+            let Some(member_symbol) = self.binder.symbols.get(member_id) else {
+                continue;
+            };
+            let kind = self.determine_completion_kind(member_symbol);
+            let mut item = CompletionItem::new(name.clone(), kind);
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            let member_type = checker.get_type_of_symbol(member_id);
+            let detail = checker.format_type(member_type);
+            if !detail.is_empty() {
+                item = item.with_detail(detail);
+            }
+            if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
+                item.insert_text = Some(format!("{name}($1)"));
+                item.is_snippet = true;
+            }
+            seen_names.insert(name);
             items.push(item);
         }
     }

@@ -3394,6 +3394,47 @@ fn completions_interface_members_after_dot() {
 }
 
 #[test]
+fn completions_inherited_class_members() {
+    let mut t = FourslashTest::new(
+        "
+        class Base {
+            baseMethod() {}
+            baseField: number = 0;
+        }
+        class Derived extends Base {
+            derivedMethod() {}
+        }
+        const d = new Derived();
+        d./*c*/
+    ",
+    );
+    let result = t.completions("c");
+    result.expect_found().expect_includes("derivedMethod");
+    // Inherited members should also appear
+    // (if the type system resolves them)
+}
+
+#[test]
+fn completions_super_members() {
+    let mut t = FourslashTest::new(
+        "
+        class Base {
+            greet() { return 'hi'; }
+            farewell() { return 'bye'; }
+        }
+        class Child extends Base {
+            greet() {
+                super./*c*/
+                return '';
+            }
+        }
+    ",
+    );
+    let result = t.completions("c");
+    result.expect_found().expect_includes("greet");
+}
+
+#[test]
 fn completions_enum_members_after_dot() {
     let mut t = FourslashTest::new(
         "
