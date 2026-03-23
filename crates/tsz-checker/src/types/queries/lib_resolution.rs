@@ -14,7 +14,7 @@
 //!    the merged-binder path.
 //! 4. [`lib_def_id_from_node_in_lib_contexts`] — one-step `NodeIndex` → DefId via
 //!    [`resolve_lib_node_in_lib_contexts`]+(2), for per-lib-context lowering.
-//! 5. [`augmentation_def_id_from_node`] — one-step `NodeIndex` → DefId via
+//! 5. [`augmentation_def_id_from_node`] — one-step `NodeIndex` → `DefId` via
 //!    [`resolve_augmentation_node`]+(2), for global-augmentation lowering.
 //!
 //! All lib-lowering resolver closures should delegate to these helpers instead
@@ -212,10 +212,10 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
 /// strategy.
 ///
 /// This is the stable one-step helper for augmentation lowering: it combines
-/// [`resolve_augmentation_node`] (`NodeIndex` → raw SymbolId) with
-/// [`CheckerContext::get_lib_def_id`] (SymbolId → DefId).  Using this
-/// instead of inline `resolver(node_idx).map(|raw| ctx.get_lib_def_id(SymbolId(raw)))`
-/// at the callsite keeps the pattern consistent with [`lib_def_id_from_node`].
+/// [`resolve_augmentation_node`] (`NodeIndex` → `SymbolId`) with
+/// [`CheckerContext::get_lib_def_id`] (`SymbolId` → `DefId`).  Using this
+/// instead of inline two-step resolution at each callsite keeps the pattern
+/// consistent with [`lib_def_id_from_node`].
 #[allow(clippy::type_complexity)]
 pub(crate) fn augmentation_def_id_from_node(
     ctx: &crate::context::CheckerContext<'_>,
@@ -234,7 +234,7 @@ pub(crate) fn augmentation_def_id_from_node(
         all_binders,
         lib_contexts,
     )
-    .map(|raw| ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+    .map(|sym_id| ctx.get_lib_def_id(sym_id))
 }
 
 /// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
@@ -279,8 +279,8 @@ pub(crate) fn resolve_lib_node_in_arenas(
 }
 
 /// Walk a binder's scope chain from the enclosing scope of `node_idx` up to the
-/// root, returning the first `SymbolId` (as raw `u32`) that matches the
-/// identifier text at `node_idx`.
+/// root, returning the first `SymbolId` that matches the identifier text at
+/// `node_idx`.
 ///
 /// This replaces the duplicated `resolve_in_scope` closures that previously
 /// appeared in lib resolution, lib.rs, and property-access augmentation.
@@ -288,13 +288,13 @@ pub(crate) fn resolve_scope_chain(
     binder: &tsz_binder::BinderState,
     arena: &NodeArena,
     node_idx: NodeIndex,
-) -> Option<u32> {
+) -> Option<tsz_binder::SymbolId> {
     let ident_name = arena.get_identifier_text(node_idx)?;
     let mut scope_id = binder.find_enclosing_scope(arena, node_idx)?;
     while scope_id != tsz_binder::ScopeId::NONE {
         let scope = binder.scopes.get(scope_id.0 as usize)?;
         if let Some(sym_id) = scope.table.get(ident_name) {
-            return Some(sym_id.0);
+            return Some(sym_id);
         }
         scope_id = scope.parent;
     }
@@ -387,9 +387,9 @@ pub(crate) fn resolve_lib_node_in_lib_contexts(
     None
 }
 
-/// Resolve a `NodeIndex` to a raw `SymbolId` value using the augmentation
-/// resolution strategy: node-symbol lookup → scope-chain walk → name-based
-/// multi-tier fallback.
+/// Resolve a `NodeIndex` to a `SymbolId` using the augmentation resolution
+/// strategy: node-symbol lookup → scope-chain walk → name-based multi-tier
+/// fallback.
 ///
 /// This consolidates the resolver closure that was duplicated in every
 /// `lower_with_arena` augmentation helper across `lib_resolution.rs` and
@@ -409,9 +409,9 @@ pub(crate) fn resolve_augmentation_node(
     global_file_locals_index: Option<&FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>>,
     all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
     lib_contexts: &[crate::context::LibContext],
-) -> Option<u32> {
+) -> Option<tsz_binder::SymbolId> {
     if let Some(sym_id) = binder.get_node_symbol(node_idx) {
-        return Some(sym_id.0);
+        return Some(sym_id);
     }
     if let Some(sym_id) = resolve_scope_chain(binder, arena, node_idx) {
         return Some(sym_id);
@@ -427,7 +427,6 @@ pub(crate) fn resolve_augmentation_node(
         all_binders,
         lib_contexts,
     )
-    .map(|sym| sym.0)
 }
 
 impl<'a> CheckerState<'a> {
@@ -1108,6 +1107,7 @@ impl<'a> CheckerState<'a> {
                 all_binders_slice,
                 lib_contexts,
             )
+            .map(|sym_id| sym_id.0)
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
             augmentation_def_id_from_node(
