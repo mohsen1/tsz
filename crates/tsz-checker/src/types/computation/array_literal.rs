@@ -326,6 +326,22 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::type_queries::union_contains_tuple(self.ctx.types, applicable)
             });
 
+        // When the contextual type is an object with numeric-string properties
+        // (e.g., `{ "0": (p1: number) => number }`), force tuple typing.
+        // This matches tsc's `isTupleLikeType` which treats any type with a "0"
+        // property as tuple-like for array literal contextual typing purposes.
+        let force_tuple_for_tuple_like = tuple_context.is_none()
+            && !force_tuple_for_mapped
+            && !force_tuple_for_union_context
+            && !force_tuple_for_constraint_hint
+            && resolved_contextual_type.is_some_and(|resolved| {
+                // Only force tuple for object types that have a "0" property but
+                // aren't already handled by get_array_applicable_type.
+                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, resolved)
+                    .is_none()
+                    && tsz_solver::type_queries::is_tuple_like_type(self.ctx.types, resolved)
+            });
+
         // Use the applicable (narrowed) type for contextual typing when available,
         // falling back to the full resolved contextual type.
         // When tuple context came from a type parameter constraint, don't use it for
@@ -410,6 +426,15 @@ impl<'a> CheckerState<'a> {
                             iterable_element_ctx_helper
                                 .as_ref()
                                 .and_then(|h| h.get_array_element_type())
+                        })
+                        .or_else(|| {
+                            // Fallback: when the contextual type is an object with
+                            // numeric-string properties (e.g., { "0": (p1: number) => number }),
+                            // look up the property by index string. This matches tsc's
+                            // getContextualTypeForElementExpression which uses
+                            // getIndexedAccessType(type, numericLiteral(index)).
+                            let index_str = index.to_string();
+                            helper.get_property_type(&index_str)
                         })
                         .or_else(|| {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
@@ -548,7 +573,7 @@ impl<'a> CheckerState<'a> {
 
         // When contextual type is a homomorphic mapped type, force tuple typing.
         // This preserves per-element types for reverse mapped type inference.
-        if force_tuple_for_mapped || force_tuple_for_constraint_hint {
+        if force_tuple_for_mapped || force_tuple_for_constraint_hint || force_tuple_for_tuple_like {
             let mapped_tuple_elements: Vec<tsz_solver::TupleElement> = element_types
                 .iter()
                 .map(|&type_id| tsz_solver::TupleElement {
