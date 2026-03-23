@@ -375,9 +375,16 @@ impl<'a> CheckerState<'a> {
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 // Bare identifier: resolve as enum member reference (e.g., `B = A` in same enum).
-                // Look up the symbol to see if it's an enum member, then evaluate its initializer.
-                let name = self.ctx.arena.get_identifier_text(expr_idx)?;
-                let sym_id = self.ctx.binder.file_locals.get(name)?;
+                // Use the binder's scope-based resolution to find the symbol, since enum members
+                // are bound in the enum's block scope, not in file_locals.
+                let lib_binders = self.get_lib_binders();
+                let sym_id = self.ctx.binder.resolve_name_with_filter(
+                    self.ctx.arena.get_identifier_text(expr_idx)?,
+                    self.ctx.arena,
+                    expr_idx,
+                    &lib_binders,
+                    |_| true,
+                )?;
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
                 if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
                     let member_decl = symbol.value_declaration;
@@ -396,12 +403,11 @@ impl<'a> CheckerState<'a> {
                         self.evaluate_constant_expression(member_data.initializer)
                     } else {
                         // Auto-incremented — find parent enum symbol and compute
-                        let parent_ext = self.ctx.arena.get_extended(member_decl)?;
-                        let parent_node = self.ctx.arena.get(parent_ext.parent)?;
-                        let parent_enum = self.ctx.arena.get_enum(parent_node)?;
-                        let parent_name = self.ctx.arena.get_identifier_text(parent_enum.name)?;
-                        let parent_sym_id = self.ctx.binder.file_locals.get(parent_name)?;
-                        self.compute_auto_increment_value(parent_sym_id, member_decl)
+                        let parent_sym = symbol.parent;
+                        if parent_sym.is_none() {
+                            return None;
+                        }
+                        self.compute_auto_increment_value(parent_sym, member_decl)
                     }
                 } else {
                     None
