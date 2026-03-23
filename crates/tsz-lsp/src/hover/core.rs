@@ -67,12 +67,18 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
 
-        // Handle `this` keyword hover early — before symbol query filtering
-        if let Some(node) = self.arena.get(node_idx)
-            && node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
-            && let Some(this_hover) = self.hover_for_this_keyword(node_idx, type_cache)
-        {
-            return Some(this_hover);
+        // Handle `this` and `super` keyword hover early — before symbol query filtering
+        if let Some(node) = self.arena.get(node_idx) {
+            if node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                if let Some(hover) = self.hover_for_this_keyword(node_idx, type_cache) {
+                    return Some(hover);
+                }
+            }
+            if node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16 {
+                if let Some(hover) = self.hover_for_super_keyword(node_idx) {
+                    return Some(hover);
+                }
+            }
         }
 
         if !crate::utils::is_symbol_query_node(self.arena, node_idx)
@@ -569,6 +575,80 @@ impl<'a> HoverProvider<'a> {
             documentation: String::new(),
             tags: Vec::new(),
         })
+    }
+
+    /// Hover for `super` keyword — shows the base class name.
+    fn hover_for_super_keyword(&self, node_idx: NodeIndex) -> Option<HoverInfo> {
+        let node = self.arena.get(node_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::SuperKeyword as u16 {
+            return None;
+        }
+        let base_name = self.find_base_class_name(node_idx)?;
+        let display_string = format!("super: {base_name}");
+        let start = self.line_map.offset_to_position(node.pos, self.source_text);
+        let end = self.line_map.offset_to_position(node.end, self.source_text);
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(Range::new(start, end)),
+            display_string,
+            kind: "keyword".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
+            tags: Vec::new(),
+        })
+    }
+
+    /// Find the base class name from a node inside a class by walking up to
+    /// the class declaration and reading its extends clause.
+    fn find_base_class_name(&self, start: NodeIndex) -> Option<String> {
+        let mut current = start;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent = self.arena.get(ext.parent)?;
+            if parent.kind == tsz_parser::syntax_kind_ext::CLASS_DECLARATION
+                || parent.kind == tsz_parser::syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class_data = self.arena.get_class(parent)?;
+                return self.extract_extends_name(class_data.heritage_clauses.as_ref()?);
+            }
+            current = ext.parent;
+        }
+    }
+
+    /// Extract the base class/interface name from heritage clauses.
+    fn extract_extends_name(
+        &self,
+        heritage: &tsz_parser::parser::base::NodeList,
+    ) -> Option<String> {
+        for &clause_idx in &heritage.nodes {
+            let clause_node = self.arena.get(clause_idx)?;
+            let hd = self.arena.get_heritage(clause_node)?;
+            if hd.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &hd.types.nodes {
+                let type_node = self.arena.get(type_idx)?;
+                let expr_idx = if type_node.kind
+                    == tsz_parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                {
+                    self.arena
+                        .get_expr_type_args(type_node)
+                        .map(|e| e.expression)?
+                } else {
+                    type_idx
+                };
+                return Some(
+                    self.arena
+                        .get_identifier_text(expr_idx)
+                        .unwrap_or("(base class)")
+                        .to_string(),
+                );
+            }
+        }
+        None
     }
 
     fn hover_for_class_expression_keyword(&self, node_idx: NodeIndex) -> Option<HoverInfo> {

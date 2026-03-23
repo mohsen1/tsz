@@ -2900,6 +2900,42 @@ fn hover_this_keyword() {
 }
 
 #[test]
+fn hover_super_keyword() {
+    let mut t = FourslashTest::new(
+        "
+        class Base {
+            greet() { return 'hi'; }
+        }
+        class Child extends Base {
+            greet() {
+                return /*h*/super.greet();
+            }
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("Base");
+}
+
+#[test]
+fn definition_super_method_call() {
+    let mut t = FourslashTest::new(
+        "
+        class Base {
+            /*def*/greet() { return 'hi'; }
+        }
+        class Child extends Base {
+            greet() {
+                return super./*ref*/greet();
+            }
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
 fn hover_optional_chaining() {
     let mut t = FourslashTest::new(
         "
