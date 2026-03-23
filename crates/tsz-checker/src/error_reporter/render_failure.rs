@@ -13,7 +13,9 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
-use super::assignability::{is_object_prototype_method, is_builtin_wrapper_name, is_primitive_type_name};
+use super::assignability::{
+    is_builtin_wrapper_name, is_object_prototype_method, is_primitive_type_name,
+};
 
 impl<'a> CheckerState<'a> {
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
@@ -38,43 +40,70 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 source_type,
                 target_type,
-            } => {
-                self.render_missing_property(
-                    reason, source, target, idx, depth, start, length, file_name,
-                    *property_name, *source_type, *target_type,
-                )
-            }
+            } => self.render_missing_property(
+                reason,
+                source,
+                target,
+                idx,
+                depth,
+                start,
+                length,
+                file_name,
+                *property_name,
+                *source_type,
+                *target_type,
+            ),
 
             SubtypeFailureReason::MissingProperties {
                 property_names,
                 source_type,
                 target_type,
-            } => {
-                self.render_missing_properties(
-                    reason, source, target, idx, depth, start, length, file_name,
-                    property_names, *source_type, *target_type,
-                )
-            }
+            } => self.render_missing_properties(
+                reason,
+                source,
+                target,
+                idx,
+                depth,
+                start,
+                length,
+                file_name,
+                property_names,
+                *source_type,
+                *target_type,
+            ),
 
             SubtypeFailureReason::PropertyTypeMismatch {
                 property_name,
                 source_property_type,
                 target_property_type,
                 nested_reason,
-            } => {
-                self.render_property_type_mismatch(
-                    reason, source, target, idx, depth, start, length, file_name,
-                    *property_name, *source_property_type, *target_property_type,
-                    nested_reason.as_deref(),
-                )
-            }
+            } => self.render_property_type_mismatch(
+                reason,
+                source,
+                target,
+                idx,
+                depth,
+                start,
+                length,
+                file_name,
+                *property_name,
+                *source_property_type,
+                *target_property_type,
+                nested_reason.as_deref(),
+            ),
 
-            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
-                self.render_optional_property_required(
-                    reason, source, target, idx, depth, start, length, file_name,
+            SubtypeFailureReason::OptionalPropertyRequired { property_name } => self
+                .render_optional_property_required(
+                    reason,
+                    source,
+                    target,
+                    idx,
+                    depth,
+                    start,
+                    length,
+                    file_name,
                     *property_name,
-                )
-            }
+                ),
 
             SubtypeFailureReason::ReadonlyPropertyMismatch { property_name } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
@@ -109,12 +138,18 @@ impl<'a> CheckerState<'a> {
                 )
             }
 
-            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
-                self.render_property_nominal_mismatch(
-                    reason, source, target, idx, depth, start, length, file_name,
+            SubtypeFailureReason::PropertyNominalMismatch { property_name } => self
+                .render_property_nominal_mismatch(
+                    reason,
+                    source,
+                    target,
+                    idx,
+                    depth,
+                    start,
+                    length,
+                    file_name,
                     *property_name,
-                )
-            }
+                ),
 
             SubtypeFailureReason::ExcessProperty {
                 property_name,
@@ -130,12 +165,19 @@ impl<'a> CheckerState<'a> {
                 source_return,
                 target_return,
                 nested_reason,
-            } => {
-                self.render_return_type_mismatch(
-                    reason, source, target, idx, depth, start, length, file_name,
-                    *source_return, *target_return, nested_reason.as_deref(),
-                )
-            }
+            } => self.render_return_type_mismatch(
+                reason,
+                source,
+                target,
+                idx,
+                depth,
+                start,
+                length,
+                file_name,
+                *source_return,
+                *target_return,
+                nested_reason.as_deref(),
+            ),
 
             SubtypeFailureReason::TooManyParameters { .. } => {
                 let (source_str, target_str) =
@@ -370,11 +412,8 @@ impl<'a> CheckerState<'a> {
             SubtypeFailureReason::TypeMismatch {
                 source_type: _,
                 target_type: _,
-            } => {
-                self.render_type_mismatch(
-                    reason, source, target, idx, depth, start, length, file_name,
-                )
-            }
+            } => self
+                .render_type_mismatch(reason, source, target, idx, depth, start, length, file_name),
 
             SubtypeFailureReason::ReadonlyToMutableAssignment {
                 source_type,
@@ -496,8 +535,7 @@ impl<'a> CheckerState<'a> {
                 target_evaluated_for_intersection,
             ) {
                 self.format_type_diagnostic(target_evaluated_for_intersection)
-            } else if tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
-            {
+            } else if tsz_solver::type_queries::is_intersection_type(self.ctx.types, target) {
                 self.format_type_diagnostic(target)
             } else {
                 self.format_type_diagnostic(target_type)
@@ -646,8 +684,7 @@ impl<'a> CheckerState<'a> {
                 self.missing_required_properties_from_index_signature_source(source, target)
             && all_missing.len() > 1
         {
-            let src_str =
-                self.format_assignment_source_type_for_diagnostic(source, target, idx);
+            let src_str = self.format_assignment_source_type_for_diagnostic(source, target, idx);
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let prop_list: Vec<String> = all_missing
                 .iter()
@@ -756,9 +793,7 @@ impl<'a> CheckerState<'a> {
         // Emit TS2322 instead of TS2739/TS2740 when the SOURCE is a wrapper-like built-in.
         let src_str_check = self.format_type_diagnostic(source_type);
         let original_src_check = self.format_type_diagnostic(source);
-        if is_builtin_wrapper_name(&src_str_check)
-            || is_builtin_wrapper_name(&original_src_check)
-        {
+        if is_builtin_wrapper_name(&src_str_check) || is_builtin_wrapper_name(&original_src_check) {
             let display_src = if is_builtin_wrapper_name(&original_src_check) {
                 &original_src_check
             } else {
@@ -832,12 +867,8 @@ impl<'a> CheckerState<'a> {
 
         // If all missing properties were private brands, emit TS2322 instead.
         if filtered_names.is_empty() {
-            if let Some((prop_name, owner_name, visibility)) = self
-                .private_or_protected_member_missing_display(
-                    source_type,
-                    target_type,
-                    None,
-                )
+            if let Some((prop_name, owner_name, visibility)) =
+                self.private_or_protected_member_missing_display(source_type, target_type, None)
             {
                 let widened_source = self.widen_type_for_display(source_type);
                 let src_str = if source_type == TypeId::OBJECT {
@@ -920,10 +951,7 @@ impl<'a> CheckerState<'a> {
 
         // TS2739/TS2740: Type 'A' is missing the following properties from type 'B': x, y, z
         let display_source = if self
-            .missing_required_properties_from_index_signature_source(
-                source_type,
-                target_type,
-            )
+            .missing_required_properties_from_index_signature_source(source_type, target_type)
             .is_some()
         {
             self.evaluate_type_for_assignability(source_type)
@@ -1126,12 +1154,8 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         property_name: tsz_common::interner::Atom,
     ) -> Diagnostic {
-        if let Some((prop_name, owner_name, visibility)) = self
-            .private_or_protected_member_missing_display(
-                source,
-                target,
-                Some(property_name),
-            )
+        if let Some((prop_name, owner_name, visibility)) =
+            self.private_or_protected_member_missing_display(source, target, Some(property_name))
         {
             let widened_source = self.widen_type_for_display(source);
             let src_str = if source == TypeId::OBJECT {
@@ -1215,9 +1239,8 @@ impl<'a> CheckerState<'a> {
 
             let ret_source_str = self.format_type_diagnostic(source_return);
             let ret_target_str = self.format_type_diagnostic(target_return);
-            let ret_msg = format!(
-                "Return type '{ret_source_str}' is not assignable to '{ret_target_str}'."
-            );
+            let ret_msg =
+                format!("Return type '{ret_source_str}' is not assignable to '{ret_target_str}'.");
             diag.related_information.push(DiagnosticRelatedInformation {
                 file: file_name,
                 start,
@@ -1253,13 +1276,8 @@ impl<'a> CheckerState<'a> {
             let target_str = self.format_type_diagnostic(target_return);
             let message =
                 format!("Return type '{source_str}' is not assignable to '{target_str}'.");
-            let mut diag = Diagnostic::error(
-                file_name,
-                start,
-                length,
-                message,
-                reason.diagnostic_code(),
-            );
+            let mut diag =
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code());
 
             if let Some(nested) = nested_reason
                 && depth < 5
@@ -1354,15 +1372,11 @@ impl<'a> CheckerState<'a> {
         let target_is_intersection_for_mismatch = {
             let target_eval = self.evaluate_type_with_env(target);
             tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
-                || tsz_solver::type_queries::is_intersection_type(
-                    self.ctx.types,
-                    target_eval,
-                )
+                || tsz_solver::type_queries::is_intersection_type(self.ctx.types, target_eval)
         };
         if depth == 0
             && !target_is_intersection_for_mismatch
-            && let Some(property_name) =
-                self.missing_single_required_property(source, target)
+            && let Some(property_name) = self.missing_single_required_property(source, target)
         {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
             if prop_name.starts_with("__private_brand") {
@@ -1470,9 +1484,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2820: spelling suggestion for string literals
-        if let Some(suggestion) =
-            self.find_string_literal_spelling_suggestion(source, target)
-        {
+        if let Some(suggestion) = self.find_string_literal_spelling_suggestion(source, target) {
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
                 &[&source_str, &target_str, &suggestion],
