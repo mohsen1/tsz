@@ -367,6 +367,7 @@ impl BinderState {
                         implements_names: entry.implements_names.clone(),
                         parent_namespace: remapped_parent,
                         is_global_augmentation: entry.is_global_augmentation,
+                        is_declare: entry.is_declare,
                     };
                     if let Some(existing) = self.semantic_defs.get_mut(&new_id) {
                         // User-declared entries take precedence for core identity,
