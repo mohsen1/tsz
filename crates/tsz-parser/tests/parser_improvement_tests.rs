@@ -2119,3 +2119,183 @@ fn test_import_defer_from_as_name_not_deferred() {
         "Expected is_deferred to be false for 'import defer from' (defer is name)"
     );
 }
+
+// =============================================================================
+// Bare Hash Character Recovery (TS1127)
+// =============================================================================
+
+#[test]
+fn test_bare_hash_at_top_level_emits_ts1127() {
+    // Bare `#` at top level should emit TS1127, not cascading errors
+    let source = "# foo";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
+    assert!(
+        ts1127_count >= 1,
+        "Expected TS1127 for bare '#', got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_bare_hash_in_class_emits_ts1127() {
+    // Bare `#` in class body should emit TS1127, not cascading errors
+    let source = r"
+class C {
+    # name;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
+    assert!(
+        ts1127_count >= 1,
+        "Expected TS1127 for bare '#' in class body, got diagnostics: {diagnostics:?}"
+    );
+    // Should NOT cascade into TS1003/TS1005/TS1068/TS1128
+    let cascade_count = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 1003 | 1005 | 1068 | 1128))
+        .count();
+    assert_eq!(
+        cascade_count, 0,
+        "Bare '#' should not cascade into other errors, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_valid_private_name_no_ts1127() {
+    // Valid private names should not emit TS1127
+    let source = r"
+class C {
+    #name = 42;
+    get #value() { return this.#name; }
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
+    assert_eq!(
+        ts1127_count, 0,
+        "Valid private names should not emit TS1127, got diagnostics: {diagnostics:?}"
+    );
+}
+
+// =============================================================================
+// Nullable Type Syntax Recovery (TS17019/TS17020)
+// =============================================================================
+
+#[test]
+fn test_postfix_question_emits_ts17019() {
+    // `string?` should emit TS17019, not TS1005 or TS1110
+    let source = "let x: string?;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts17019_count = diagnostics.iter().filter(|d| d.code == 17019).count();
+    assert!(
+        ts17019_count >= 1,
+        "Expected TS17019 for postfix '?' on type, got diagnostics: {diagnostics:?}"
+    );
+    // Should NOT emit TS1005 or TS1110 cascade
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1110_count = diagnostics.iter().filter(|d| d.code == 1110).count();
+    assert_eq!(
+        ts1005_count, 0,
+        "Should not emit TS1005 for nullable type, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1110_count, 0,
+        "Should not emit TS1110 for nullable type, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_prefix_question_emits_ts17020() {
+    // `?string` should emit TS17020, not TS1110
+    let source = "let x: ?string;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts17020_count = diagnostics.iter().filter(|d| d.code == 17020).count();
+    assert!(
+        ts17020_count >= 1,
+        "Expected TS17020 for prefix '?' on type, got diagnostics: {diagnostics:?}"
+    );
+    // Should NOT emit TS1110 cascade
+    let ts1110_count = diagnostics.iter().filter(|d| d.code == 1110).count();
+    assert_eq!(
+        ts1110_count, 0,
+        "Should not emit TS1110 for nullable type, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_multiple_nullable_types() {
+    // Multiple nullable types in different positions
+    let source = r"
+function f(x: string?): ?number {
+    return null;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts17019_count = diagnostics.iter().filter(|d| d.code == 17019).count();
+    let ts17020_count = diagnostics.iter().filter(|d| d.code == 17020).count();
+    assert!(
+        ts17019_count >= 1,
+        "Expected at least 1 TS17019 for postfix '?', got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts17020_count >= 1,
+        "Expected at least 1 TS17020 for prefix '?', got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_nullable_type_in_type_predicate() {
+    // `x is ?string` should emit TS17020
+    let source = "function f(x: any): x is ?string { return true; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts17020_count = diagnostics.iter().filter(|d| d.code == 17020).count();
+    assert!(
+        ts17020_count >= 1,
+        "Expected TS17020 for '?string' in type predicate, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_nullable_type_no_cascade() {
+    // Nullable type should not cause cascading errors
+    let source = r#"
+let a: string? = "hello";
+let b: ?number = 42;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    // Should only have TS17019 and TS17020, no cascade
+    let cascade_codes: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 1005 || d.code == 1109 || d.code == 1110 || d.code == 1128)
+        .map(|d| d.code)
+        .collect();
+    assert!(
+        cascade_codes.is_empty(),
+        "Nullable types should not cause cascading errors, got: {cascade_codes:?}. All: {diagnostics:?}"
+    );
+}

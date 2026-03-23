@@ -67,6 +67,9 @@ pub const CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION: u32 = 16384;
 /// Context flag: parsing a class field initializer.
 /// Newline-separated postfix continuations like `\n[` do not attach across fields.
 pub const CONTEXT_FLAG_CLASS_FIELD_INITIALIZER: u32 = 32768;
+/// Context flag: parsing inside a tuple element where `?` is an optional marker.
+/// When set, postfix `?` should NOT be treated as JSDoc nullable (TS17019).
+pub const CONTEXT_FLAG_IN_TUPLE_ELEMENT: u32 = 65536;
 
 // =============================================================================
 // Parse Diagnostic
@@ -497,7 +500,8 @@ impl ParserState {
             | SyntaxKind::GreaterThanToken    // > (e.g., missing type in generic default: T = >)
             | SyntaxKind::BarToken            // | (when at start, not a union)
             | SyntaxKind::AmpersandToken      // & (when at start, not an intersection)
-            | SyntaxKind::QuestionToken       // ?
+            // Note: QuestionToken is NOT listed here — it is handled by parse_primary_type
+            // which emits TS17020 for JSDoc-style leading `?` (e.g., `?string`).
             | SyntaxKind::EndOfFileToken => false,
             // Everything else could potentially start a type
             // (identifiers, keywords, literals, type operators, etc.)
