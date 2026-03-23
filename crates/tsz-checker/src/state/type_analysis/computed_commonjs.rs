@@ -1,3 +1,4 @@
+use crate::query_boundaries::common::{callable_shape_for_type, function_shape_for_type};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
@@ -735,7 +736,7 @@ impl<'a> CheckerState<'a> {
             return rhs_type;
         };
 
-        if let Some(func) = tsz_solver::type_queries::get_function_shape(self.ctx.types, rhs_type) {
+        if let Some(func) = function_shape_for_type(self.ctx.types, rhs_type) {
             if func.is_constructor {
                 return rhs_type;
             }
@@ -768,8 +769,7 @@ impl<'a> CheckerState<'a> {
                 });
         }
 
-        let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, rhs_type)
-        else {
+        let Some(shape) = callable_shape_for_type(self.ctx.types, rhs_type) else {
             return rhs_type;
         };
         if !shape.construct_signatures.is_empty() || shape.call_signatures.is_empty() {

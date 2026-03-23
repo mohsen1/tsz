@@ -3510,3 +3510,66 @@ fn test_cli_must_not_import_checker_internals() {
         violations.join("\n")
     );
 }
+
+/// Guard that cleaned-up checker modules do not regress by re-introducing
+/// direct `tsz_solver::type_queries::` calls (both `use` imports AND inline
+/// fully-qualified calls).
+///
+/// The existing `test_solver_imports_go_through_query_boundaries` only catches
+/// `use tsz_solver::...` import statements. This test catches inline
+/// `tsz_solver::type_queries::` calls in code that has been migrated to use
+/// boundary wrappers.
+///
+/// When a new module is cleaned up, add its relative path to CLEAN_MODULES.
+#[test]
+fn test_no_inline_type_queries_in_cleaned_modules() {
+    // Modules that have been fully migrated to use query_boundaries wrappers.
+    // These must not contain any direct `tsz_solver::type_queries::` calls.
+    const CLEAN_MODULES: &[&str] = &[
+        "checkers/promise_checker.rs",
+        "checkers/iterable_checker.rs",
+        "flow/control_flow/core.rs",
+        "flow/control_flow/references.rs",
+        "flow/control_flow/narrowing.rs",
+        "flow/reachability_checker.rs",
+        "state/type_analysis/computed_helpers.rs",
+        "state/type_analysis/computed_helpers_private.rs",
+        "state/type_analysis/computed_helpers_binding.rs",
+        "state/type_analysis/computed.rs",
+        "state/type_analysis/core.rs",
+        "state/type_analysis/core_type_query.rs",
+        "state/type_analysis/symbol_type_helpers.rs",
+        "state/type_analysis/computed_commonjs.rs",
+        "state/type_analysis/computed_loops.rs",
+        "context/resolver.rs",
+    ];
+
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+
+    for &module in CLEAN_MODULES {
+        let path = checker_src.join(module);
+        let src = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            // Skip comments
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if trimmed.contains("tsz_solver::type_queries::") {
+                violations.push(format!("  {}:{} — {}", module, line_num + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Cleaned modules must not contain direct tsz_solver::type_queries:: calls. \
+         Use query_boundaries wrappers instead.\n\
+         Violations found:\n{}",
+        violations.join("\n")
+    );
+}

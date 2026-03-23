@@ -1,6 +1,7 @@
 //! Helper methods for symbol type resolution: circular constraint detection,
 //! type parameter identity checks, provisional function types, and numeric enum registration.
 
+use crate::query_boundaries::common::type_param_info;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -31,8 +32,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Get the name of the constraint if it's a type parameter
-            let constraint_info =
-                tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type);
+            let constraint_info = type_param_info(self.ctx.types, constraint_type);
             let Some(constraint_info) = constraint_info else {
                 continue;
             };
@@ -72,10 +72,7 @@ impl<'a> CheckerState<'a> {
                 let Some(next_constraint) = params[current].constraint else {
                     break false;
                 };
-                let next_info = tsz_solver::type_queries::get_type_parameter_info(
-                    self.ctx.types,
-                    next_constraint,
-                );
+                let next_info = type_param_info(self.ctx.types, next_constraint);
                 let Some(next_info) = next_info else {
                     break false;
                 };
@@ -118,9 +115,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if constraint is a TypeParameter with the same name
-        if let Some(info) =
-            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type)
-        {
+        if let Some(info) = type_param_info(self.ctx.types, constraint_type) {
             // Check if the type parameter name matches
             let name_str = self.ctx.types.resolve_atom(info.name);
             if name_str == param_name {

@@ -352,11 +352,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         type_id: tsz_solver::TypeId,
         interner: &dyn tsz_solver::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
-        use tsz_solver::type_queries;
+        use crate::query_boundaries::common::{lazy_def_id, object_symbol};
         use tsz_solver::visitor::callable_shape_id;
 
         // 1. First try Lazy types (type aliases, class/interface references)
-        if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
+        if let Some(def_id) = lazy_def_id(self.types, type_id) {
             // 2. Convert DefId to SymbolId
             let sym_id = self.def_to_symbol_id(def_id)?;
 
@@ -380,7 +380,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         }
 
         // 2. For class instance types (Object/ObjectWithIndex), check the shape symbol
-        if let Some(sym_id) = crate::query_boundaries::common::object_symbol(interner, type_id) {
+        if let Some(sym_id) = object_symbol(interner, type_id) {
             // Use InheritanceGraph to get parent
             let parents = self.inheritance_graph.get_parents(sym_id);
             if let Some(&parent_sym_id) = parents.first() {

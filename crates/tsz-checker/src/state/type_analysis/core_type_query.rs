@@ -1,6 +1,7 @@
 //! Type query (typeof) resolution — `get_type_from_type_query` and helpers.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
@@ -211,9 +212,7 @@ impl<'a> CheckerState<'a> {
                     // resolve_lazy, but typeof needs the constructor type. Fall through to
                     // create a TypeQuery(SymbolRef) which resolves correctly.
                     let expr_type = query_expr_type(self, use_flow_sensitive_query);
-                    let is_lazy =
-                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type)
-                            .is_some();
+                    let is_lazy = lazy_def_id(self.ctx.types, expr_type).is_some();
                     if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
                         return self.get_enum_namespace_type_for_value(expr_type);
                     }
@@ -239,16 +238,13 @@ impl<'a> CheckerState<'a> {
                 // Skip Lazy types - they indicate circular reference and would resolve to
                 // the instance type instead of the constructor type needed for typeof.
                 let flow_resolved = query_expr_type(self, use_flow_sensitive_query);
-                let flow_is_lazy =
-                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, flow_resolved)
-                        .is_some();
+                let flow_is_lazy = lazy_def_id(self.ctx.types, flow_resolved).is_some();
                 if flow_resolved != TypeId::ANY && flow_resolved != TypeId::ERROR && !flow_is_lazy {
                     let flow_resolved = self.get_enum_namespace_type_for_value(flow_resolved);
                     trace!(flow_resolved = ?flow_resolved, "=> returning flow-resolved type directly");
                     return flow_resolved;
                 }
-                let resolved_is_lazy =
-                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved).is_some();
+                let resolved_is_lazy = lazy_def_id(self.ctx.types, resolved).is_some();
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR && !resolved_is_lazy {
                     let resolved = self.get_enum_namespace_type_for_value(resolved);
                     // Fall back to symbol type when flow result is unavailable.

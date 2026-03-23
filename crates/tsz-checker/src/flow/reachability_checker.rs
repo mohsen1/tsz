@@ -154,8 +154,7 @@ impl<'a> CheckerState<'a> {
                 .types
                 .resolve_property_access(resolved, property_name)
         {
-            return tsz_solver::type_queries::get_return_type(self.ctx.types, type_id)
-                == Some(TypeId::NEVER);
+            return query::function_return_type(self.ctx.types, type_id) == Some(TypeId::NEVER);
         }
 
         false
@@ -231,7 +230,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
-            return tsz_solver::type_queries::get_return_type(self.ctx.types, declared_type)
+            return query::function_return_type(self.ctx.types, declared_type)
                 == Some(TypeId::NEVER);
         }
 
@@ -241,7 +240,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let declared_type = self.get_type_from_type_node(param.type_annotation);
-            return tsz_solver::type_queries::get_return_type(self.ctx.types, declared_type)
+            return query::function_return_type(self.ctx.types, declared_type)
                 == Some(TypeId::NEVER);
         }
 

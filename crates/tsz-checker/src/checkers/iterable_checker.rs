@@ -4,8 +4,8 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::checkers::iterable::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, call_signatures_for_type,
     classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
-    function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_tuple_type,
-    union_members_for_type,
+    function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
+    is_tuple_type, union_members_for_type,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -205,8 +205,7 @@ impl<'a> CheckerState<'a> {
 
         // If the iterator function returns `ThisType` (polymorphic `this` from
         // `return this` in class methods), substitute with the iterable type itself.
-        let iterator_type = if tsz_solver::type_queries::is_this_type(self.ctx.types, iterator_type)
-        {
+        let iterator_type = if is_this_type(self.ctx.types, iterator_type) {
             iterable_type
         } else {
             iterator_type
@@ -475,7 +474,6 @@ impl<'a> CheckerState<'a> {
     /// This extracts `T` by reading the first parameter type of the first
     /// call signature's first parameter.
     fn get_awaited_type_of_promise_like(&mut self, type_id: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::common::call_signatures_for_type as get_call_signatures;
         use tsz_solver::operations::property::PropertyAccessEvaluator;
 
         let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
@@ -484,7 +482,7 @@ impl<'a> CheckerState<'a> {
             .success_type()?;
 
         // Get call signatures of `then`
-        let sigs = get_call_signatures(self.ctx.types, then_type)?;
+        let sigs = call_signatures_for_type(self.ctx.types, then_type)?;
         let first_sig = sigs.first()?;
 
         // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
@@ -502,28 +500,23 @@ impl<'a> CheckerState<'a> {
     /// Extract the first parameter type from a callable/function type,
     /// handling unions of `(fn | null | undefined)`.
     fn extract_first_param_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::common::{
-            call_signatures_for_type as get_call_signatures,
-            function_shape_for_type as get_function_shape,
-        };
-
         // Direct Callable
-        if let Some(sigs) = get_call_signatures(self.ctx.types, type_id) {
+        if let Some(sigs) = call_signatures_for_type(self.ctx.types, type_id) {
             return sigs.first()?.params.first().map(|p| p.type_id);
         }
         // Direct Function
-        if let Some(shape) = get_function_shape(self.ctx.types, type_id) {
+        if let Some(shape) = function_shape_for_type(self.ctx.types, type_id) {
             return shape.params.first().map(|p| p.type_id);
         }
         // Union: find first callable/function member
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)?;
+        let members = union_members_for_type(self.ctx.types, type_id)?;
         for member in &members {
-            if let Some(sigs) = get_call_signatures(self.ctx.types, *member)
+            if let Some(sigs) = call_signatures_for_type(self.ctx.types, *member)
                 && let Some(first) = sigs.first()
             {
                 return first.params.first().map(|p| p.type_id);
             }
-            if let Some(shape) = get_function_shape(self.ctx.types, *member) {
+            if let Some(shape) = function_shape_for_type(self.ctx.types, *member) {
                 return shape.params.first().map(|p| p.type_id);
             }
         }
@@ -579,13 +572,12 @@ impl<'a> CheckerState<'a> {
         // `return this` in class methods), fall back to the original iterable type.
         // For `ThisType`, `this` in `[Symbol.iterator]()` refers to the iterable itself,
         // so substituting with `type_id` gives us the concrete class instance type.
-        let iterator_type = if iterator_type == TypeId::ANY
-            || tsz_solver::type_queries::is_this_type(self.ctx.types, iterator_type)
-        {
-            type_id
-        } else {
-            iterator_type
-        };
+        let iterator_type =
+            if iterator_type == TypeId::ANY || is_this_type(self.ctx.types, iterator_type) {
+                type_id
+            } else {
+                iterator_type
+            };
 
         // Step 3: Get .next() on the iterator
         let next_result = self.resolve_property_access_with_env(iterator_type, "next");
@@ -881,12 +873,11 @@ impl<'a> CheckerState<'a> {
             // destructuring inference (e.g. `[a, [b]] = [1, ["x"]]`). tsc does not report
             // TS2461 for these cases.
             if init_expr.is_none()
-                && tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
-                    .is_some_and(|members| {
-                        members
-                            .iter()
-                            .any(|&member| self.is_array_or_tuple_type(member))
-                    })
+                && union_members_for_type(self.ctx.types, resolved_type).is_some_and(|members| {
+                    members
+                        .iter()
+                        .any(|&member| self.is_array_or_tuple_type(member))
+                })
             {
                 return true;
             }
@@ -912,17 +903,16 @@ impl<'a> CheckerState<'a> {
         // NOTE: We use a side-effect-free check (classify_full_iterable_type) instead of
         // is_iterable_type to avoid polluting checker state via property access resolution.
         if init_expr.is_none()
-            && tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
-                .is_some_and(|members| {
-                    members.iter().any(|&member| {
-                        matches!(
-                            classify_full_iterable_type(self.ctx.types, member),
-                            FullIterableTypeKind::Array(_)
-                                | FullIterableTypeKind::Tuple(_)
-                                | FullIterableTypeKind::StringLiteral(_)
-                        )
-                    })
+            && union_members_for_type(self.ctx.types, resolved_type).is_some_and(|members| {
+                members.iter().any(|&member| {
+                    matches!(
+                        classify_full_iterable_type(self.ctx.types, member),
+                        FullIterableTypeKind::Array(_)
+                            | FullIterableTypeKind::Tuple(_)
+                            | FullIterableTypeKind::StringLiteral(_)
+                    )
                 })
+            })
         {
             return true;
         }

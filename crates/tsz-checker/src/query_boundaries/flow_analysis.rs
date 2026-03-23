@@ -1,10 +1,11 @@
 use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
-    PredicateSignatureKind, array_element_type as get_array_element_type, call_signatures_for_type,
-    classify_for_predicate_signature, contains_type_parameters, is_keyof_type,
-    is_narrowing_literal, is_type_parameter_like, is_unit_type, stringify_literal_type,
-    tuple_elements as tuple_elements_for_type, union_members as union_members_for_type,
+    LiteralValueKind, PredicateSignatureKind, array_element_type as get_array_element_type,
+    call_signatures_for_type, classify_for_literal_value, classify_for_predicate_signature,
+    contains_type_parameters, is_keyof_type, is_narrowing_literal, is_type_parameter_like,
+    is_unit_type, stringify_literal_type, tuple_elements as tuple_elements_for_type,
+    union_members as union_members_for_type,
 };
 
 pub(crate) fn union_types(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
@@ -153,6 +154,29 @@ pub(crate) fn unwrap_promise_type_argument(
         return args.first().copied();
     }
     None
+}
+
+pub(crate) use tsz_solver::type_queries::flow::ExtractedPredicateSignature;
+
+/// Re-export for flow narrowing: extract the predicate signature from a callable type.
+pub(crate) fn extract_predicate_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<ExtractedPredicateSignature> {
+    tsz_solver::type_queries::flow::extract_predicate_signature(db, type_id)
+}
+
+/// Check if a type is only `false` or `never` (used for assertion-function detection).
+pub(crate) fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_only_false_or_never(db, type_id)
+}
+
+/// Get type parameter info (constraint, default, name) for a type parameter.
+pub(crate) fn type_param_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::TypeParamInfo> {
+    tsz_solver::type_queries::get_type_parameter_info(db, type_id)
 }
 
 fn types_are_subtype_with_env(

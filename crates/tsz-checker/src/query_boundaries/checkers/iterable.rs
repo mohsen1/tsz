@@ -1,7 +1,7 @@
 use tsz_solver::{FunctionShape, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{
-    call_signatures_for_type, is_string_type, union_members as union_members_for_type,
+    call_signatures_for_type, is_string_type, is_this_type, union_members as union_members_for_type,
 };
 pub(crate) use tsz_solver::type_queries::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind,
