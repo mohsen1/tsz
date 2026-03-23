@@ -179,6 +179,20 @@ pub(crate) fn type_param_info(
     tsz_solver::type_queries::get_type_parameter_info(db, type_id)
 }
 
+/// Evaluate an application type via the solver's `ApplicationEvaluator`.
+///
+/// This is the boundary entry point for flow-control code that needs to
+/// evaluate generic application types (e.g., `Array<T>`) to their concrete
+/// form. Callers should use this instead of constructing `ApplicationEvaluator`
+/// directly.
+pub(crate) fn evaluate_application_type(
+    db: &dyn TypeDatabase,
+    env: &tsz_solver::TypeEnvironment,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::ApplicationEvaluator::new(db, env).evaluate_or_original(type_id)
+}
+
 fn types_are_subtype_with_env(
     db: &dyn TypeDatabase,
     env: &tsz_solver::TypeEnvironment,
