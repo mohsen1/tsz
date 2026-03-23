@@ -298,6 +298,66 @@ pub(crate) fn type_query_symbol(
     tsz_solver::type_query_symbol(db, type_id)
 }
 
+/// Result from a cached type evaluation, including side-effects needed by the checker.
+pub(crate) struct EvalWithCacheResult {
+    /// The evaluated type.
+    pub result: TypeId,
+    /// Whether the evaluator's recursion depth was exceeded.
+    pub depth_exceeded: bool,
+    /// Cache entries produced by the evaluator (key → evaluated value).
+    pub cache_entries: Vec<(TypeId, TypeId)>,
+}
+
+/// Evaluate a type with a resolver, optionally seeding the evaluator cache.
+///
+/// Returns the result plus side-effects (depth exceeded, cache drain).
+/// This is the canonical boundary for TypeEvaluator construction with cache
+/// management — checker code must not construct TypeEvaluator directly.
+pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+    seed: impl Iterator<Item = (TypeId, TypeId)>,
+    has_seed: bool,
+) -> EvalWithCacheResult {
+    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    if has_seed {
+        evaluator.seed_cache(seed);
+    }
+    let result = evaluator.evaluate(type_id);
+    EvalWithCacheResult {
+        result,
+        depth_exceeded: evaluator.is_depth_exceeded(),
+        cache_entries: evaluator.drain_cache().collect(),
+    }
+}
+
+/// Evaluate a type while suppressing `this` binding.
+///
+/// Used during heritage merging where `this` must remain unbound until the
+/// final derived interface is constructed.
+pub(crate) fn evaluate_type_suppressing_this<R: tsz_solver::TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> TypeId {
+    let mut evaluator =
+        tsz_solver::TypeEvaluator::with_resolver(db, resolver).with_suppress_this_binding();
+    evaluator.evaluate(type_id)
+}
+
+/// Check if a type is a generic type application (`TypeData::Application`).
+///
+/// Thin wrapper to avoid direct `TypeData` pattern matching in checker code.
+pub(crate) fn is_application_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_generic_type(db, type_id)
+}
+
+/// Check if a type contains type query references (TypeDatabase-taking variant).
+pub(crate) fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_type_query_db(db, type_id)
+}
+
 struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }

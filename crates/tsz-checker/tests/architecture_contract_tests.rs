@@ -408,3 +408,129 @@ fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
         "ambient_signature_checks should route function return queries via query boundaries"
     );
 }
+
+/// Architecture contract: checker code outside `query_boundaries/` and `tests/`
+/// must not construct `tsz_solver::TypeEvaluator` directly.
+///
+/// TypeEvaluator is the solver's internal evaluation engine. Checker code should
+/// use the boundary wrappers in `query_boundaries/state/type_environment.rs`
+/// (`evaluate_type_with_resolver`, `evaluate_type_with_cache`,
+/// `evaluate_type_suppressing_this`) instead of constructing TypeEvaluator directly.
+#[test]
+fn test_no_direct_type_evaluator_construction_outside_query_boundaries() {
+    fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries {
+            let entry = entry.expect("failed to read directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let rel = path.display().to_string();
+        if rel.contains("/query_boundaries/") || rel.contains("/tests/") {
+            continue;
+        }
+
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("TypeEvaluator::with_resolver")
+                || line.contains("TypeEvaluator::new(")
+                || line.contains("use tsz_solver::TypeEvaluator")
+            {
+                violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        panic!(
+            "Found {} direct TypeEvaluator uses outside query_boundaries.\n\
+             These should use boundary wrappers in query_boundaries/state/type_environment.rs:\n\
+             - evaluate_type_with_resolver (simple evaluation)\n\
+             - evaluate_type_with_cache (with cache seeding/draining)\n\
+             - evaluate_type_suppressing_this (heritage merging)\n\
+             Violations:\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        );
+    }
+}
+
+/// Architecture contract: checker code outside `query_boundaries/` and `tests/`
+/// must not pattern-match on `tsz_solver::TypeData` variants directly.
+///
+/// Direct TypeData matching exposes solver-internal type representation details.
+/// Checker code should use solver query functions (wrapped through
+/// `query_boundaries/`) for type classification instead.
+#[test]
+fn test_no_direct_type_data_pattern_matching_outside_query_boundaries() {
+    fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries {
+            let entry = entry.expect("failed to read directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let rel = path.display().to_string();
+        if rel.contains("/query_boundaries/") || rel.contains("/tests/") {
+            continue;
+        }
+
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // Detect direct TypeData variant matching (e.g., TypeData::Application,
+            // TypeData::Lazy, etc.)
+            if line.contains("tsz_solver::TypeData::") {
+                violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        panic!(
+            "Found {} direct tsz_solver::TypeData:: pattern matches outside query_boundaries.\n\
+             Checker code should use boundary wrappers (e.g., is_application_type, \n\
+             classify_for_type_resolution) instead of matching TypeData variants directly.\n\
+             Violations:\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        );
+    }
+}
