@@ -342,35 +342,36 @@ impl BinderState {
 
             for (&old_sym_id, entry) in &lib_ctx.binder.semantic_defs {
                 if let Some(&new_id) = lib_symbol_remap.get(&(lib_binder_ptr, old_sym_id)) {
-                    // Don't overwrite user-declared semantic_defs (user symbols take precedence,
-                    // same policy as file_locals in Phase 3).
-                    if !self.semantic_defs.contains_key(&new_id) {
-                        // Update file_id to match the remapped symbol's decl_file_idx
-                        // so that DefinitionStore composite key lookups stay consistent.
-                        let file_id = self
-                            .symbols
-                            .get(new_id)
-                            .map_or(entry.file_id, |s| s.decl_file_idx);
-                        // Remap parent_namespace through the lib symbol remap.
-                        let remapped_parent = entry.parent_namespace.and_then(|old_parent| {
-                            lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
-                        });
-                        self.semantic_defs.insert(
-                            new_id,
-                            super::SemanticDefEntry {
-                                kind: entry.kind,
-                                name: entry.name.clone(),
-                                file_id,
-                                span_start: entry.span_start,
-                                type_param_count: entry.type_param_count,
-                                is_exported: entry.is_exported,
-                                enum_member_names: entry.enum_member_names.clone(),
-                                is_const: entry.is_const,
-                                is_abstract: entry.is_abstract,
-                                heritage_names: entry.heritage_names.clone(),
-                                parent_namespace: remapped_parent,
-                            },
-                        );
+                    // Update file_id to match the remapped symbol's decl_file_idx
+                    // so that DefinitionStore composite key lookups stay consistent.
+                    let file_id = self
+                        .symbols
+                        .get(new_id)
+                        .map_or(entry.file_id, |s| s.decl_file_idx);
+                    // Remap parent_namespace through the lib symbol remap.
+                    let remapped_parent = entry.parent_namespace.and_then(|old_parent| {
+                        lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
+                    });
+                    let remapped = super::SemanticDefEntry {
+                        kind: entry.kind,
+                        name: entry.name.clone(),
+                        file_id,
+                        span_start: entry.span_start,
+                        type_param_count: entry.type_param_count,
+                        type_param_names: entry.type_param_names.clone(),
+                        is_exported: entry.is_exported,
+                        enum_member_names: entry.enum_member_names.clone(),
+                        is_const: entry.is_const,
+                        is_abstract: entry.is_abstract,
+                        heritage_names: entry.heritage_names.clone(),
+                        parent_namespace: remapped_parent,
+                    };
+                    if let Some(existing) = self.semantic_defs.get_mut(&new_id) {
+                        // User-declared entries take precedence for core identity,
+                        // but accumulate heritage/members/exports from lib declarations.
+                        existing.merge_cross_file(&remapped);
+                    } else {
+                        self.semantic_defs.insert(new_id, remapped);
                     }
                 }
             }

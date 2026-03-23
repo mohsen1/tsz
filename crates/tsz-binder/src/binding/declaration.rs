@@ -73,6 +73,7 @@ impl BinderState {
                     name,
                     idx,
                     0,
+                    Vec::new(),
                     is_exported,
                 );
 
@@ -107,6 +108,7 @@ impl BinderState {
                             name,
                             ident_idx,
                             0,
+                            Vec::new(),
                             is_exported,
                         );
                         if self.in_global_augmentation {
@@ -162,12 +164,14 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
+                let tp_names = Self::collect_type_param_names(arena, func.type_parameters.as_ref());
                 self.record_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::Function,
                     name,
                     idx,
                     tp_count,
+                    tp_names,
                     is_exported,
                 );
             }
@@ -601,6 +605,8 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
+                let tp_names =
+                    Self::collect_type_param_names(arena, class.type_parameters.as_ref());
                 let heritage_names =
                     Self::collect_heritage_clause_names(arena, class.heritage_clauses.as_ref());
                 self.record_semantic_def_ext(
@@ -609,6 +615,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    tp_names,
                     is_exported,
                     Vec::new(),
                     false, // is_const
@@ -864,6 +871,7 @@ impl BinderState {
                 .type_parameters
                 .as_ref()
                 .map_or(0, |tp| tp.nodes.len() as u16);
+            let tp_names = Self::collect_type_param_names(arena, iface.type_parameters.as_ref());
             let heritage_names =
                 Self::collect_heritage_clause_names(arena, iface.heritage_clauses.as_ref());
             self.record_semantic_def_ext(
@@ -872,6 +880,7 @@ impl BinderState {
                 name,
                 idx,
                 tp_count,
+                tp_names,
                 is_exported,
                 Vec::new(),
                 false,
@@ -980,12 +989,15 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
+                let tp_names =
+                    Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
                 self.record_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
                     tp_count,
+                    tp_names,
                     is_exported,
                 );
             } else {
@@ -994,12 +1006,15 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
+                let tp_names =
+                    Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
                 self.record_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
                     tp_count,
+                    tp_names,
                     is_exported,
                 );
             }
@@ -1054,6 +1069,7 @@ impl BinderState {
                 name,
                 idx,
                 0,
+                Vec::new(), // type_param_names (enums are not generic)
                 is_exported,
                 enum_member_names,
                 is_const,
@@ -2381,6 +2397,30 @@ impl BinderState {
     /// Only records entries for declarations at the source file scope (ScopeId(0))
     /// to avoid noise from nested declarations that are less likely to be
     /// cross-file semantic references.
+    /// Collect type parameter names from a type parameter `NodeList`.
+    ///
+    /// Returns an empty `Vec` if `type_params` is `None` or contains no
+    /// extractable names. Each entry is the escaped text of the type
+    /// parameter identifier (e.g., `["T", "U"]` for `<T, U>`).
+    pub(crate) fn collect_type_param_names(
+        arena: &NodeArena,
+        type_params: Option<&NodeList>,
+    ) -> Vec<String> {
+        let Some(params) = type_params else {
+            return Vec::new();
+        };
+        params
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let node = arena.get(param_idx)?;
+                let tp = arena.get_type_parameter(node)?;
+                let name = Self::get_identifier_name(arena, tp.name)?;
+                Some(name.to_string())
+            })
+            .collect()
+    }
+
     pub(crate) fn record_semantic_def(
         &mut self,
         sym_id: SymbolId,
@@ -2388,6 +2428,7 @@ impl BinderState {
         name: &str,
         declaration: NodeIndex,
         type_param_count: u16,
+        type_param_names: Vec<String>,
         is_exported: bool,
     ) {
         self.record_semantic_def_ext(
@@ -2396,6 +2437,7 @@ impl BinderState {
             name,
             declaration,
             type_param_count,
+            type_param_names,
             is_exported,
             Vec::new(),
             false,
@@ -2422,6 +2464,7 @@ impl BinderState {
         name: &str,
         declaration: NodeIndex,
         type_param_count: u16,
+        type_param_names: Vec<String>,
         is_exported: bool,
         enum_member_names: Vec<String>,
         is_const: bool,
@@ -2458,9 +2501,10 @@ impl BinderState {
                 }
             }
             // If the first declaration had no type params but this one does
-            // (e.g., augmentation adds generics), update the arity.
+            // (e.g., augmentation adds generics), update the arity and names.
             if existing.type_param_count == 0 && type_param_count > 0 {
                 existing.type_param_count = type_param_count;
+                existing.type_param_names = type_param_names;
             }
             // If the later declaration is exported, mark as exported.
             if is_exported {
@@ -2505,6 +2549,7 @@ impl BinderState {
                     .map_or(u32::MAX, |s| s.decl_file_idx),
                 span_start: declaration.0,
                 type_param_count,
+                type_param_names,
                 is_exported,
                 enum_member_names,
                 is_const,
