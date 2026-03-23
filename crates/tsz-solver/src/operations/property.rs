@@ -322,8 +322,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Single-lookup dispatch: resolve property access based on type data.
         // All type variants are handled in one match to avoid redundant interner lookups.
         let Some(key) = self.interner().lookup(obj_type) else {
-            let prop_atom =
-                prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+            let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
             return PropertyAccessResult::PropertyNotFound {
                 type_id: obj_type,
                 property_name: prop_atom,
@@ -360,13 +359,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     IntrinsicKind::Any => PropertyAccessResult::simple(TypeId::ANY),
                     IntrinsicKind::Unknown => PropertyAccessResult::IsUnknown,
                     IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
-                        let cause = if kind == IntrinsicKind::Void
-                            || kind == IntrinsicKind::Undefined
-                        {
-                            TypeId::UNDEFINED
-                        } else {
-                            TypeId::NULL
-                        };
+                        let cause =
+                            if kind == IntrinsicKind::Void || kind == IntrinsicKind::Undefined {
+                                TypeId::UNDEFINED
+                            } else {
+                                TypeId::NULL
+                            };
                         PropertyAccessResult::PossiblyNullOrUndefined {
                             property_type: None,
                             cause,
@@ -378,9 +376,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     IntrinsicKind::Never => PropertyAccessResult::simple(TypeId::NEVER),
                     IntrinsicKind::String => self.resolve_string_property(prop_name, prop_atom),
                     IntrinsicKind::Number => self.resolve_number_property(prop_name, prop_atom),
-                    IntrinsicKind::Boolean => {
-                        self.resolve_boolean_property(prop_name, prop_atom)
-                    }
+                    IntrinsicKind::Boolean => self.resolve_boolean_property(prop_name, prop_atom),
                     IntrinsicKind::Bigint => self.resolve_bigint_property(prop_name, prop_atom),
                     IntrinsicKind::Object => {
                         self.resolve_object_member_or_not_found(obj_type, prop_name, prop_atom)
