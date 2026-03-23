@@ -538,8 +538,7 @@ impl<'a> CheckerContext<'a> {
         }
 
         // 3. Try to get SymbolId from ObjectShape (Object or ObjectWithIndex)
-        if let Some(sym_id) = tsz_solver::type_queries::data::get_object_symbol(self.types, type_id)
-        {
+        if let Some(sym_id) = crate::query_boundaries::common::object_symbol(self.types, type_id) {
             return Some(sym_id);
         }
 

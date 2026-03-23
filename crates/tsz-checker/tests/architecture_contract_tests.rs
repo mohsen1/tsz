@@ -265,6 +265,131 @@ fn test_control_flow_avoids_direct_union_interning() {
     );
 }
 
+/// Architecture contract: checker code outside `query_boundaries/` and `tests/`
+/// must not call `tsz_solver::type_queries::data::` functions directly.
+///
+/// The `data` sub-module of `type_queries` is the lowest-level internal data
+/// accessor for solver type representations. Checker code should use the
+/// thin wrappers in `query_boundaries/common.rs` (or other boundary modules)
+/// instead.
+///
+/// Allowed exceptions:
+/// - Files inside `query_boundaries/` (they ARE the boundary)
+/// - Test files
+#[test]
+fn test_no_direct_type_queries_data_access_outside_query_boundaries() {
+    fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries {
+            let entry = entry.expect("failed to read directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let rel = path.display().to_string();
+        // Allow query_boundaries and test files
+        if rel.contains("/query_boundaries/") || rel.contains("/tests/") {
+            continue;
+        }
+
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("tsz_solver::type_queries::data::") {
+                violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        panic!(
+            "Found {} direct tsz_solver::type_queries::data:: accesses outside query_boundaries.\n\
+             These should use boundary wrappers in query_boundaries/common.rs instead.\n\
+             Violations:\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        );
+    }
+}
+
+/// Architecture contract: checker code outside `query_boundaries/` and `tests/`
+/// must not construct `tsz_solver::RelationPolicy` or `tsz_solver::RelationContext`
+/// directly.
+///
+/// These solver-internal policy types should only be constructed inside
+/// query_boundaries where they translate checker-level concepts (RelationRequest,
+/// RelationFlags) to solver-level knobs.
+#[test]
+fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
+    fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries {
+            let entry = entry.expect("failed to read directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let rel = path.display().to_string();
+        if rel.contains("/query_boundaries/") || rel.contains("/tests/") {
+            continue;
+        }
+
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("tsz_solver::RelationPolicy")
+                || line.contains("tsz_solver::RelationContext")
+            {
+                violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        panic!(
+            "Found {} direct RelationPolicy/RelationContext uses outside query_boundaries.\n\
+             These should be constructed only in query_boundaries/assignability.rs.\n\
+             Violations:\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        );
+    }
+}
+
 #[test]
 fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
     let src = fs::read_to_string("src/state/state_checking_members/ambient_signature_checks.rs").expect(

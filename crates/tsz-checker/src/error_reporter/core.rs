@@ -574,7 +574,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn format_extract_keyof_string_type(&mut self, ty: TypeId) -> Option<String> {
-        let members = tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, ty)?;
+        let members = crate::query_boundaries::common::intersection_members(self.ctx.types, ty)?;
         if members.len() != 2 || !members.contains(&TypeId::STRING) {
             return None;
         }
@@ -1665,7 +1665,7 @@ impl<'a> CheckerState<'a> {
         let target = self.evaluate_type_for_assignability(target);
         tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_none()
             && tsz_solver::type_queries::get_union_members(self.ctx.types, target).is_none()
-            && tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, target)
+            && crate::query_boundaries::common::intersection_members(self.ctx.types, target)
                 .is_none()
     }
 

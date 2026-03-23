@@ -415,7 +415,7 @@ impl<'a> CheckerState<'a> {
             }
             query::ConstructorTypeKind::Function(_) => {
                 // Delegate to solver query for constructor check
-                if tsz_solver::type_queries::data::is_constructor_like_type(
+                if crate::query_boundaries::common::is_constructor_like_type(
                     self.ctx.types,
                     evaluated,
                 ) {

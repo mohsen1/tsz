@@ -755,7 +755,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         }
         let Some(shape) =
-            tsz_solver::type_queries::data::get_function_shape(self.ctx.types, lowered_type)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, lowered_type)
         else {
             return;
         };
