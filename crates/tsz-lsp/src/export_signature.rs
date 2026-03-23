@@ -217,6 +217,56 @@ impl ExportSignatureInput {
 
         input
     }
+
+    /// Construct from a precomputed `ExportSurface`.
+    ///
+    /// This is the preferred path when an `ExportSurface` has already been
+    /// built — it avoids re-reading binder maps.
+    pub fn from_surface(surface: &tsz_binder::ExportSurface) -> Self {
+        let mut input = Self::default();
+
+        // 1. Direct exports (sorted by name for deterministic hashing)
+        let mut export_names: Vec<&str> =
+            surface.exported_locals.keys().map(String::as_str).collect();
+        export_names.sort();
+        for name in &export_names {
+            if let Some(entry) = surface.exported_locals.get(*name) {
+                input
+                    .exports
+                    .push((name.to_string(), entry.flags, entry.is_type_only));
+            }
+        }
+
+        // 2. Named re-exports (already sorted in ExportSurface)
+        for re in &surface.named_reexports {
+            input.named_reexports.push((
+                re.export_name.clone(),
+                re.source_module.clone(),
+                re.original_name.clone(),
+            ));
+        }
+
+        // 3. Wildcard re-exports (already sorted in ExportSurface)
+        for wc in &surface.wildcard_reexports {
+            input
+                .wildcard_reexports
+                .push((wc.source_module.clone(), wc.is_type_only));
+        }
+
+        // 4. Global augmentations
+        input.global_augmentations = surface.global_augmentations.clone();
+
+        // 5. Module augmentations
+        input.module_augmentations = surface.module_augmentations.clone();
+
+        // 6. Exported file-local symbols — in the surface these are merged
+        //    into `exported_locals`, so `exported_locals` above already
+        //    covers them.  We leave this section empty to preserve hash
+        //    compatibility with the tuple-based format.  (The hash sections
+        //    are tagged, so an empty section 5 is fine.)
+
+        input
+    }
 }
 
 impl ExportSignature {

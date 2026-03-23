@@ -299,6 +299,17 @@ pub(crate) fn emit_outputs(
                 if context.options.printer.module.is_node_module() {
                     emitter.set_skip_portability_check(true);
                 }
+
+                // Precompute the export surface summary for this file.
+                // This seeds the overload pre-scan so the emitter doesn't
+                // need to discover overloads incrementally during the walk.
+                let surface = tsz_binder::ExportSurface::from_binder(
+                    &binder,
+                    &file.arena,
+                    &file.file_name,
+                    file.source_file,
+                );
+                emitter.set_export_surface(surface);
                 let map_info =
                     if declaration_bundle_path.is_none() && context.options.declaration_map {
                         map_output_info(&dts_path)
