@@ -99,10 +99,12 @@ impl<'a> CheckerState<'a> {
             | syntax_kind_ext::NAMESPACE_IMPORT
             | syntax_kind_ext::IMPORT_SPECIFIER => Some(symbol_flags::ALIAS),
             syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
-                // 'export as namespace' creates a block-scoped global alias to the module.
-                // tsc treats this as a block-scoped variable in the global scope,
-                // producing TS2451 when it conflicts with other block-scoped declarations.
-                Some(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                // 'export as namespace X' creates a UMD global alias to the module.
+                // In tsc, AliasExcludes = Alias — aliases only conflict with other
+                // aliases. They merge freely with namespaces, classes, functions, etc.
+                // Using ALIAS here (matching the binder) prevents false TS2451 when
+                // `export as namespace React` coexists with `declare namespace React`.
+                Some(symbol_flags::ALIAS)
             }
             _ => None,
         }
