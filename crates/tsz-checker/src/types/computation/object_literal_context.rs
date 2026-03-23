@@ -106,7 +106,7 @@ impl<'a> CheckerState<'a> {
                 // Delegate to solver query: collect all callable property types
                 // (named properties + index signatures) from the object shape.
                 candidates.extend(
-                    tsz_solver::type_queries::data::collect_callable_property_types(
+                    crate::query_boundaries::common::collect_callable_property_types(
                         self.ctx.types,
                         type_id,
                     ),
@@ -1196,7 +1196,7 @@ impl<'a> CheckerState<'a> {
             let never_match = present_property_names.iter().all(|prop_name| {
                 let prop_name_atom = self.ctx.types.intern_string(prop_name);
                 // Look up the raw property type from the member's object shape.
-                let raw_prop_type = tsz_solver::type_queries::data::get_raw_property_type(
+                let raw_prop_type = crate::query_boundaries::common::raw_property_type(
                     self.ctx.types,
                     resolved_member,
                     prop_name_atom,
@@ -1218,7 +1218,7 @@ impl<'a> CheckerState<'a> {
             //   f({ cb: n => ... })  // disc is required in A but optional in B
             let absent_required_match = {
                 let mut ok = true;
-                if let Some(shape) = tsz_solver::type_queries::data::get_object_shape(
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                     self.ctx.types,
                     resolved_member,
                 ) {
@@ -1239,7 +1239,7 @@ impl<'a> CheckerState<'a> {
                             }
                             let resolved_other = self.resolve_type_for_property_access(other);
                             let other_prop =
-                                tsz_solver::type_queries::data::find_property_in_object(
+                                crate::query_boundaries::common::find_property_in_object(
                                     self.ctx.types,
                                     resolved_other,
                                     prop.name,

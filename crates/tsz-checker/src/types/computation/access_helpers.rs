@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
         literal_index: Option<usize>,
     ) -> bool {
         let Some(members) =
-            tsz_solver::type_queries::data::get_union_members(self.ctx.types, object_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
         else {
             return false;
         };
@@ -171,7 +171,7 @@ impl<'a> CheckerState<'a> {
         index: usize,
     ) -> bool {
         let Some(members) =
-            tsz_solver::type_queries::data::get_union_members(self.ctx.types, object_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
         else {
             return false;
         };
@@ -216,7 +216,7 @@ impl<'a> CheckerState<'a> {
     /// member of the intersection is a generic index type.
     pub(crate) fn intersection_has_generic_index(&self, type_id: TypeId) -> bool {
         if let Some(members) =
-            tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             members.iter().any(|&m| self.is_generic_index_type(m))
         } else {
@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_solver::visitor;
         if let Some(members) =
-            tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, index_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
         {
             return members
                 .iter()
@@ -301,7 +301,7 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
     ) -> bool {
         let Some(members) =
-            tsz_solver::type_queries::data::get_union_members(self.ctx.types, object_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
         else {
             return false;
         };
@@ -325,7 +325,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::data::get_union_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             return members
                 .iter()

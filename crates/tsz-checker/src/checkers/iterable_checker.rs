@@ -475,8 +475,8 @@ impl<'a> CheckerState<'a> {
     /// This extracts `T` by reading the first parameter type of the first
     /// call signature's first parameter.
     fn get_awaited_type_of_promise_like(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::common::call_signatures_for_type as get_call_signatures;
         use tsz_solver::operations::property::PropertyAccessEvaluator;
-        use tsz_solver::type_queries::data::get_call_signatures;
 
         let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
         let then_type = evaluator
@@ -502,7 +502,10 @@ impl<'a> CheckerState<'a> {
     /// Extract the first parameter type from a callable/function type,
     /// handling unions of `(fn | null | undefined)`.
     fn extract_first_param_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::type_queries::data::{get_call_signatures, get_function_shape};
+        use crate::query_boundaries::common::{
+            call_signatures_for_type as get_call_signatures,
+            function_shape_for_type as get_function_shape,
+        };
 
         // Direct Callable
         if let Some(sigs) = get_call_signatures(self.ctx.types, type_id) {

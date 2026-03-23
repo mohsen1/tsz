@@ -639,6 +639,70 @@ pub(crate) fn sanitize_callable_shape_binding_pattern_params(
     sanitized
 }
 
+// ── Data-layer query wrappers ──
+// These wrap `tsz_solver::type_queries::data::` functions to keep the
+// internal data-access module out of checker code.
+
+/// Get the SymbolId attached to an object type's shape (if any).
+pub(crate) fn object_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_binder::SymbolId> {
+    tsz_solver::type_queries::data::get_object_symbol(db, type_id)
+}
+
+/// Check if a type is constructor-like (has construct signatures or is a constructor function).
+pub(crate) fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::data::is_constructor_like_type(db, type_id)
+}
+
+/// Get the enum member's underlying value type (e.g., for `Enum.Member` → its literal type).
+pub(crate) fn enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::data::get_enum_member_type(db, type_id)
+}
+
+/// Get a callable shape for a type, synthesizing one from a function shape if needed.
+pub(crate) fn callable_shape_for_type_extended(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::CallableShape>> {
+    tsz_solver::type_queries::data::get_callable_shape_for_type(db, type_id)
+}
+
+/// Get the construct return type for a type (union of all construct signature return types).
+pub(crate) fn construct_return_type_for_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::data::construct_return_type_for_type(db, type_id)
+}
+
+/// Intersect constructor return types between a constructor type and its base.
+pub(crate) fn intersect_constructor_returns(
+    db: &dyn tsz_solver::QueryDatabase,
+    ctor_type: TypeId,
+    base_type: TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::data::intersect_constructor_returns(db, ctor_type, base_type)
+}
+
+/// Get the raw property type by name from an object shape (no full property resolution).
+pub(crate) fn raw_property_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    prop_name: tsz_common::interner::Atom,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::data::get_raw_property_type(db, type_id, prop_name)
+}
+
+/// Collect all callable (function-typed) property types from an object type.
+pub(crate) fn collect_callable_property_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<TypeId> {
+    tsz_solver::type_queries::data::collect_callable_property_types(db, type_id)
+}
+
 /// Find a property by name in a property slice.
 ///
 /// Thin wrapper around `PropertyInfo::find_in_slice` so that checker code

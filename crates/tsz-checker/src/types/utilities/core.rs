@@ -614,7 +614,7 @@ impl<'a> CheckerState<'a> {
             ty: TypeId,
         ) -> bool {
             // Delegate to solver query: checks if any union member is constructor-like
-            tsz_solver::type_queries::data::is_constructor_like_type(db, ty)
+            crate::query_boundaries::common::is_constructor_like_type(db, ty)
         }
 
         if let Some(constraint) =
@@ -1545,7 +1545,7 @@ impl<'a> CheckerState<'a> {
     fn type_has_array_like_heritage(&self, type_id: TypeId) -> bool {
         let sym_id = self.ctx.resolve_type_to_symbol_id(type_id).or_else(|| {
             // Delegate to solver query for object symbol extraction
-            tsz_solver::type_queries::data::get_object_symbol(self.ctx.types, type_id)
+            crate::query_boundaries::common::object_symbol(self.ctx.types, type_id)
         });
         let Some(sym_id) = sym_id else {
             return false;
