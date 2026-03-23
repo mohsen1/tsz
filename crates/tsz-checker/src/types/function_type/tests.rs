@@ -92,7 +92,6 @@ fn async_inferred_return_non_promise_wraps_once() {
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn async_inferred_return_union_with_promise() {
     let diags = async_diagnostics(
         "declare function load(): Promise<boolean>;
