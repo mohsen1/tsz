@@ -821,9 +821,9 @@ impl<'a> Printer<'a> {
         );
 
         match node.kind {
-            syntax_kind_ext::INTERFACE_DECLARATION | syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                true
-            }
+            syntax_kind_ext::INTERFACE_DECLARATION
+            | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => true,
             syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = self.arena.get_function(node) {
                     self.arena

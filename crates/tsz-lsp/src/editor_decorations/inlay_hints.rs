@@ -289,7 +289,7 @@ impl<'a> InlayHintsProvider<'a> {
         self.extract_param_names(params)
     }
 
-    /// Extract parameter names from a NodeList of parameters.
+    /// Extract parameter names from a `NodeList` of parameters.
     fn extract_param_names(
         &self,
         params: &tsz_parser::parser::base::NodeList,
@@ -319,10 +319,10 @@ impl<'a> InlayHintsProvider<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                if let Some(ctor) = self.arena.get_constructor(member_node) {
-                    return self.extract_param_names(&ctor.parameters);
-                }
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR
+                && let Some(ctor) = self.arena.get_constructor(member_node)
+            {
+                return self.extract_param_names(&ctor.parameters);
             }
         }
         Vec::new()
@@ -356,13 +356,12 @@ impl<'a> InlayHintsProvider<'a> {
 
         // Skip if it's a property access whose property name matches the param
         // e.g., user.name for param "name"
-        if arg_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(arg_node)
-                && let Some(prop_name) = self.arena.get_identifier_text(access.name_or_argument)
-                && prop_name == param_name
-            {
-                return true;
-            }
+        if arg_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(arg_node)
+            && let Some(prop_name) = self.arena.get_identifier_text(access.name_or_argument)
+            && prop_name == param_name
+        {
+            return true;
         }
 
         false

@@ -517,4 +517,16 @@ impl<'a> Printer<'a> {
         self.emit(type_alias.type_node);
         self.write_semicolon();
     }
+
+    /// Emit `export as namespace X;` (UMD global namespace declaration).
+    /// Only emitted in declaration mode (.d.ts); erased in JS output.
+    pub(in crate::emitter) fn emit_namespace_export_declaration(&mut self, node: &Node) {
+        let Some(export) = self.arena.get_export_decl(node) else {
+            return;
+        };
+
+        self.write("export as namespace ");
+        self.emit(export.export_clause);
+        self.write_semicolon();
+    }
 }
