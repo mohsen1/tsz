@@ -140,7 +140,15 @@ impl<'a> VarianceComputer<'a> {
         }
 
         if !self.active_defs.insert(def_id) {
-            return None;
+            // Recursive self-reference: return independent (empty) variance for
+            // each type parameter. This tells visit_application to skip the
+            // recursive arguments entirely, so only non-recursive appearances of
+            // the type parameter determine the variance. This avoids the previous
+            // behavior of returning None which caused NEEDS_STRUCTURAL_FALLBACK
+            // to be set, incorrectly forcing structural comparison for types like
+            // Promise<T> that are clearly covariant from their direct usages.
+            let params = self.resolver.get_lazy_type_params(def_id);
+            return params.map(|p| Arc::from(vec![Variance::empty(); p.len()]));
         }
 
         let result = (|| {
