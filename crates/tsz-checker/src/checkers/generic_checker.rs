@@ -969,6 +969,18 @@ impl<'a> CheckerState<'a> {
                                         continue;
                                     }
                                 }
+                                // When the base is an indexed access into a type
+                                // parameter (e.g., `FuncMap[keyof FuncMap]`), we cannot
+                                // determine callability at definition time. The type
+                                // parameter's constraint may guarantee callable values
+                                // (e.g., `FuncMap extends Record<string, Function>`),
+                                // but we can't fully resolve this without instantiation.
+                                // Defer to instantiation time to avoid false TS2344.
+                                if let Some((obj, _idx)) = query::index_access_components(db, base)
+                                    && query::is_bare_type_parameter(db, obj)
+                                {
+                                    continue;
+                                }
                                 // Base is not callable and constraint is callable → TS2344.
                                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                                     && !self.type_argument_is_narrowed_by_conditional_true_branch(
@@ -1119,8 +1131,20 @@ impl<'a> CheckerState<'a> {
                                 // `T extends { [K in keyof T]: () => unknown }`.
                                 let type_arg_is_callable_via_mapped = constraint_is_callable
                                     && self.indexed_access_resolves_to_callable(type_arg);
+                                // When the type arg is an indexed access into a type
+                                // parameter (e.g., `FuncMap[P]`), the result type depends
+                                // on the type parameter's actual type at instantiation
+                                // time. We cannot determine callability at definition
+                                // time — defer to instantiation to avoid false TS2344.
+                                let type_arg_is_indexed_into_type_param = {
+                                    let db2 = self.ctx.types.as_type_database();
+                                    query::index_access_components(db2, type_arg).is_some_and(
+                                        |(obj, _)| query::is_bare_type_parameter(db2, obj),
+                                    )
+                                };
                                 if constraint_is_callable
                                     && !type_arg_is_callable_via_mapped
+                                    && !type_arg_is_indexed_into_type_param
                                     && !query::is_callable_type(db, type_arg)
                                     && query::callable_shape_for_type(db, type_arg).is_none()
                                     && let Some(&arg_idx) = type_args_list.nodes.get(i)
