@@ -639,7 +639,10 @@ impl BindResult {
                 + std::mem::size_of::<crate::binder::SemanticDefEntry>()
                 + 8;
             size += def.name.capacity();
-            for h in &def.heritage_names {
+            for h in &def.extends_names {
+                size += h.capacity();
+            }
+            for h in &def.implements_names {
                 size += h.capacity();
             }
         }
@@ -1390,8 +1393,12 @@ impl BoundFile {
             for m in &entry.enum_member_names {
                 size += m.capacity();
             }
-            size += entry.heritage_names.capacity() * 24;
-            for h in &entry.heritage_names {
+            size += entry.extends_names.capacity() * 24;
+            for h in &entry.extends_names {
+                size += h.capacity();
+            }
+            size += entry.implements_names.capacity() * 24;
+            for h in &entry.implements_names {
                 size += h.capacity();
             }
         }
@@ -1715,7 +1722,7 @@ pub fn pre_populate_definition_store(
             file_id: Some(entry.file_id),
             span: Some((entry.span_start, entry.span_start)),
             symbol_id: Some(sym_id.0),
-            heritage_names: entry.heritage_names.clone(),
+            heritage_names: entry.heritage_names(),
             is_abstract: entry.is_abstract,
             is_const: entry.is_const,
             is_exported: entry.is_exported,
@@ -1742,7 +1749,102 @@ pub fn pre_populate_definition_store(
         }
     }
 
+    // Pass 3: Resolve heritage names to DefIds.
+    //
+    // Now that all DefIds and the name_to_defs index are populated, resolve
+    // `extends_names` and `implements_names` to concrete DefIds and wire them
+    // into `DefinitionInfo.extends` and `DefinitionInfo.implements`.
+    //
+    // This moves class/interface heritage identity from checker-side type
+    // resolution to binder-owned stable identity. Only simple name matches
+    // are resolved here; property-access heritage (e.g., `ns.Base`) and
+    // complex expressions are left for the checker to resolve.
+    resolve_heritage_in_store(semantic_defs, &store, interner);
+
     store
+}
+
+/// Resolve heritage names to DefIds in a pre-populated `DefinitionStore`.
+///
+/// For each class/interface with `extends_names` or `implements_names`, look up
+/// the target by name in the store's `name_to_defs` index and wire:
+/// - `extends`: first `extends_name` matching a Class or Interface (for classes,
+///   this is the parent class; for interfaces, the first extended interface)
+/// - `implements`: all `implements_names` matching an Interface
+///
+/// Only simple identifier names are resolved. Property-access names (e.g.,
+/// `ns.Base`) contain dots and cannot match any DefId name, so they are
+/// silently skipped (the checker resolves them during type checking).
+///
+/// This is called as Pass 3 of `pre_populate_definition_store` and can also
+/// be called standalone for cross-batch heritage resolution.
+pub fn resolve_heritage_in_store(
+    semantic_defs: &FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    store: &DefinitionStore,
+    interner: &TypeInterner,
+) {
+    use tsz_solver::def::DefKind;
+
+    for (&sym_id, entry) in semantic_defs {
+        let def_id = match store.find_def_by_symbol(sym_id.0) {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Resolve extends_names → DefinitionInfo.extends
+        if !entry.extends_names.is_empty() {
+            for name_str in &entry.extends_names {
+                // Skip property-access names (contain dots) — checker resolves these
+                if name_str.contains('.') {
+                    continue;
+                }
+                let name_atom = interner.intern_string(name_str);
+                if let Some(candidates) = store.find_defs_by_name(name_atom) {
+                    for &candidate_id in &candidates {
+                        if candidate_id == def_id {
+                            continue; // skip self
+                        }
+                        if let Some(candidate_info) = store.get(candidate_id)
+                            && matches!(candidate_info.kind, DefKind::Class | DefKind::Interface)
+                        {
+                            store.set_extends(def_id, candidate_id);
+                            break;
+                        }
+                    }
+                }
+                // Only use the first extends name for the `extends` field
+                // (classes have at most one extends target)
+                break;
+            }
+        }
+
+        // Resolve implements_names → DefinitionInfo.implements
+        if !entry.implements_names.is_empty() {
+            let mut resolved_implements = Vec::new();
+            for name_str in &entry.implements_names {
+                if name_str.contains('.') {
+                    continue;
+                }
+                let name_atom = interner.intern_string(name_str);
+                if let Some(candidates) = store.find_defs_by_name(name_atom) {
+                    for &candidate_id in &candidates {
+                        if candidate_id == def_id {
+                            continue;
+                        }
+                        if let Some(candidate_info) = store.get(candidate_id)
+                            && matches!(candidate_info.kind, DefKind::Interface | DefKind::Class)
+                        {
+                            resolved_implements.push(candidate_id);
+                            break;
+                        }
+                    }
+                }
+            }
+            if !resolved_implements.is_empty() {
+                store.set_implements(def_id, resolved_implements);
+            }
+        }
+    }
 }
 
 /// Create a `DefinitionStore` from a single binder's `semantic_defs`.
@@ -2568,8 +2670,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     .and_then(|old_parent| id_remap.get(&old_parent).copied());
                 // Collect per-file entry (always insert — no cross-file merging here)
                 file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
-                // Only insert the first occurrence (declaration merging keeps first identity)
-                semantic_defs.entry(new_sym_id).or_insert(remapped_entry);
+                // Insert the first occurrence, or accumulate heritage/metadata from
+                // later files via merge_cross_file (e.g., cross-file interface merging,
+                // class + interface merging).
+                semantic_defs
+                    .entry(new_sym_id)
+                    .and_modify(|existing| existing.merge_cross_file(&remapped_entry))
+                    .or_insert(remapped_entry);
             }
         }
 

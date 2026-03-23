@@ -813,7 +813,7 @@ impl<'a> CheckerContext<'a> {
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
                 symbol_id: Some(sym_id.0),
-                heritage_names: entry.heritage_names.clone(),
+                heritage_names: entry.heritage_names(),
                 is_abstract: entry.is_abstract,
                 is_const: entry.is_const,
                 is_exported: entry.is_exported,
@@ -934,12 +934,99 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Called once during checker construction after all `pre_populate_*` methods.
     /// Returns the number of heritage links resolved.
-    pub const fn resolve_cross_batch_heritage(&self) -> usize {
-        // Heritage resolution via SemanticDefEntry.extends_names/implements_names
-        // was removed when the binder heritage model was simplified. The method
-        // is kept as a no-op stub because callers (checker construction, tests)
-        // still reference it. Heritage is now resolved through the checker's
-        // class/interface type resolution pipeline instead.
-        0
+    pub fn resolve_cross_batch_heritage(&self) -> usize {
+        use tsz_solver::def::DefKind;
+
+        let mut resolved_count = 0;
+
+        // Collect all semantic_defs from all sources (primary binder + all_binders).
+        // The shared DefinitionStore's name_to_defs index is already populated from
+        // all pre-population batches, so name-based lookups will find targets from
+        // any batch (user files, lib files, cross-file binders).
+        let sources: Vec<
+            &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+        > = {
+            let mut v = vec![&self.binder.semantic_defs];
+            for lib_ctx in &self.lib_contexts {
+                v.push(&lib_ctx.binder.semantic_defs);
+            }
+            if let Some(ref binders) = self.all_binders {
+                for binder in binders.iter() {
+                    v.push(&binder.semantic_defs);
+                }
+            }
+            v
+        };
+
+        for source in &sources {
+            for (&sym_id, entry) in *source {
+                let def_id = match self.definition_store.find_def_by_symbol(sym_id.0) {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                // Skip if extends is already wired (from pre-populate Pass 3)
+                if let Some(info) = self.definition_store.get(def_id) {
+                    if info.extends.is_some() {
+                        continue;
+                    }
+                }
+
+                // Resolve extends_names → extends
+                for name_str in &entry.extends_names {
+                    if name_str.contains('.') {
+                        continue;
+                    }
+                    let name_atom = self.types.intern_string(name_str);
+                    if let Some(candidates) = self.definition_store.find_defs_by_name(name_atom) {
+                        for &candidate_id in &candidates {
+                            if candidate_id == def_id {
+                                continue;
+                            }
+                            if let Some(info) = self.definition_store.get(candidate_id)
+                                && matches!(info.kind, DefKind::Class | DefKind::Interface)
+                            {
+                                self.definition_store.set_extends(def_id, candidate_id);
+                                resolved_count += 1;
+                                break;
+                            }
+                        }
+                    }
+                    break; // only first extends name
+                }
+
+                // Resolve implements_names → implements
+                if !entry.implements_names.is_empty() {
+                    let mut resolved = Vec::new();
+                    for name_str in &entry.implements_names {
+                        if name_str.contains('.') {
+                            continue;
+                        }
+                        let name_atom = self.types.intern_string(name_str);
+                        if let Some(candidates) = self.definition_store.find_defs_by_name(name_atom)
+                        {
+                            for &candidate_id in &candidates {
+                                if candidate_id == def_id {
+                                    continue;
+                                }
+                                if let Some(info) = self.definition_store.get(candidate_id)
+                                    && matches!(info.kind, DefKind::Interface | DefKind::Class)
+                                {
+                                    resolved.push(candidate_id);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !resolved.is_empty() {
+                        self.definition_store
+                            .set_implements(def_id, resolved.clone());
+                        resolved_count += resolved.len();
+                    }
+                }
+            }
+        }
+
+        resolved_count
     }
 }
