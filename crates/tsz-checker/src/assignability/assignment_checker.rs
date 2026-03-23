@@ -1144,6 +1144,7 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
 
+        let mut is_not_iterable = false;
         if is_array_destructuring {
             // TS2488: Array destructuring assignments require an iterable RHS.
             // Keep parity with `[] = value` behavior by skipping empty patterns.
@@ -1154,10 +1155,14 @@ impl<'a> CheckerState<'a> {
                 .and_then(|node| self.ctx.arena.get_literal_expr(node))
                 .is_none_or(|array_lit| !array_lit.elements.nodes.is_empty());
             if should_check_iterability {
-                self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
+                let is_iterable =
+                    self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
+                is_not_iterable = !is_iterable;
             }
             self.check_array_destructuring_rest_position(left_idx);
-            self.check_tuple_destructuring_bounds(left_idx, right_type);
+            if !is_not_iterable {
+                self.check_tuple_destructuring_bounds(left_idx, right_type);
+            }
         }
 
         // TS1186: Check for rest elements with initializers in destructuring assignments.
@@ -1192,7 +1197,7 @@ impl<'a> CheckerState<'a> {
             // Also skip when the target was readonly (TS2540/TS2542 already emitted).
             let mut check_assignability = !is_destructuring && !is_readonly_target;
 
-            if is_destructuring {
+            if is_destructuring && !is_not_iterable {
                 self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
                 self.check_destructuring_property_accessibility(left_idx, right_type);
                 // TS2322: Check rest element assignability in object destructuring
