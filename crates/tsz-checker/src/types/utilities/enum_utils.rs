@@ -11,16 +11,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-// Thread-local visited set for non-const enum evaluation cycle detection.
-//
-// Tracks which enum member declarations are currently being evaluated by
-// `evaluate_enum_member_access`, preventing infinite recursion from self-references
-// (e.g., `B = E.B`) and mutual recursion across enums
-// (e.g., `enum E { A = F.B }; enum F { B = E.A }`).
-thread_local! {
-    static EVAL_VISITED: std::cell::RefCell<rustc_hash::FxHashSet<NodeIndex>>
-        = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-}
+use super::cycle_guard::{self, CycleSetId};
 
 // Thread-local memoization cache for evaluated enum member values.
 //
@@ -41,16 +32,6 @@ thread_local! {
 }
 
 const MAX_EVAL_DEPTH: u32 = 100;
-
-// RAII guard that removes a `NodeIndex` from `EVAL_VISITED` on drop.
-struct VisitedGuard(NodeIndex);
-impl Drop for VisitedGuard {
-    fn drop(&mut self) {
-        EVAL_VISITED.with(|v| {
-            v.borrow_mut().remove(&self.0);
-        });
-    }
-}
 
 // RAII guard that decrements `EVAL_DEPTH` on drop, and clears the memo cache
 // when depth returns to 0 (end of top-level evaluation).
@@ -454,13 +435,8 @@ impl<'a> CheckerState<'a> {
                     let member_node = self.ctx.arena.get(member_decl)?;
                     let member_data = self.ctx.arena.get_enum_member(member_node)?;
 
-                    // Cycle detection via EVAL_VISITED
-                    let already_visiting =
-                        EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
-                    if already_visiting {
-                        return None; // Circular — treat as non-constant
-                    }
-                    let _guard = VisitedGuard(member_decl);
+                    // Cycle detection via shared CycleGuard
+                    let _guard = cycle_guard::try_enter(member_decl, CycleSetId::NonConstEnum)?;
 
                     let result = if member_data.initializer.is_some() {
                         self.evaluate_constant_expression(member_data.initializer)
@@ -555,30 +531,15 @@ impl<'a> CheckerState<'a> {
             // Walk through all declarations of the parent enum to find this member's
             // auto-incremented value.
             //
-            // Add to EVAL_VISITED before entering compute_auto_increment_value:
-            // that function evaluates prior members' initializers, which can cycle
-            // back to this auto-incremented member via cross-enum references.
+            // Guard against cycles through auto-increment:
             // e.g., `enum E { A = F.C }; enum F { B = E.A, C }`
             // E.A -> F.C (auto-inc) -> compute_auto_inc walks F.B -> E.A -> F.C -> ...
-            let already_visiting = EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
-            if already_visiting {
-                return None; // Circular — treat as non-constant
-            }
-            let _guard = VisitedGuard(member_decl);
+            let _guard = cycle_guard::try_enter(member_decl, CycleSetId::NonConstEnum)?;
             self.compute_auto_increment_value(current_sym_id, member_decl)
         } else {
             // Guard against self-referencing and mutually-recursive enum initializers
             // (e.g., `B = E.B` or `enum E { A = F.B }; enum F { B = E.A }`).
-            // Without this, the recursive evaluate_constant_expression call creates
-            // infinite recursion → stack overflow.
-            //
-            // Uses the module-level EVAL_VISITED thread-local with an RAII drop guard
-            // to ensure cleanup even if evaluation panics.
-            let already_visiting = EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
-            if already_visiting {
-                return None; // Circular — treat as non-constant
-            }
-            let _guard = VisitedGuard(member_decl);
+            let _guard = cycle_guard::try_enter(member_decl, CycleSetId::NonConstEnum)?;
             self.evaluate_constant_expression(member_data.initializer)
         };
 
