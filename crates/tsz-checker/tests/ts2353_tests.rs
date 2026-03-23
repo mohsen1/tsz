@@ -398,9 +398,13 @@ function foo(options?: { a: string, b: number }) {
         diags.iter().any(|d| d.0 == 2339),
         "Read access should still report TS2339 before widening, got: {diags:?}"
     );
+    // Element access with literal string key "a" on a union type emits TS7053
+    // (implicit any from index expression), not TS2339. TS2339 is reserved for
+    // literal keys on non-union types; unions use TS7053 because partial index
+    // signature presence across members causes the index failure.
     assert!(
         diags.iter().any(|d| d.0 == 7053),
-        "Element read access should still report TS7053 before widening, got: {diags:?}"
+        "Element read access on union should report TS7053 before widening, got: {diags:?}"
     );
     assert!(
         !diags.iter().any(|d| d.0 == 2322),
@@ -424,9 +428,10 @@ function foo(options?: { a: string, b: number } | null) {
         diags.iter().any(|d| d.0 == 2339),
         "Read access through ?? should still report TS2339 before widening, got: {diags:?}"
     );
+    // Element access with literal string key "a" on a union type emits TS7053.
     assert!(
         diags.iter().any(|d| d.0 == 7053),
-        "Element read access through ?? should still report TS7053 before widening, got: {diags:?}"
+        "Element read access through ?? on union should report TS7053, got: {diags:?}"
     );
     assert!(
         !diags.iter().any(|d| d.0 == 2322),

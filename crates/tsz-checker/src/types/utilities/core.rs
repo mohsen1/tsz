@@ -1693,7 +1693,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if index_type == TypeId::ANY || index_type == TypeId::UNKNOWN {
+        // `unknown` index type can't trigger TS7053 — it's not usable as an index.
+        if index_type == TypeId::UNKNOWN {
             return false;
         }
 
@@ -1725,14 +1726,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let index_key_kind = self.get_index_key_kind(index_type);
-        let wants_number = literal_index.is_some()
-            || index_key_kind
+        // `any` index type: tsc reports TS7053 when noImplicitAny is on and the
+        // object lacks an index signature. Treat `any` as wanting both string and
+        // number indexing — if the object supports neither, a diagnostic should fire.
+        let (wants_string, wants_number) = if index_type == TypeId::ANY {
+            (true, true)
+        } else {
+            let index_key_kind = self.get_index_key_kind(index_type);
+            let wants_number = literal_index.is_some()
+                || index_key_kind
+                    .as_ref()
+                    .is_some_and(|(_, wants_number)| *wants_number);
+            let wants_string = index_key_kind
                 .as_ref()
-                .is_some_and(|(_, wants_number)| *wants_number);
-        let wants_string = index_key_kind
-            .as_ref()
-            .is_some_and(|(wants_string, _)| *wants_string);
+                .is_some_and(|(wants_string, _)| *wants_string);
+            (wants_string, wants_number)
+        };
         if !wants_number && !wants_string {
             return false;
         }

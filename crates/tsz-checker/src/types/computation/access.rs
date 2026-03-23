@@ -1079,8 +1079,18 @@ impl<'a> CheckerState<'a> {
         // the type has no explicit index signature. The solver already computes
         // the union of all property types as the result, so we only need to
         // suppress the checker's independent TS7053 check.
+        //
+        // IMPORTANT: Only suppress when the object literal has at least one
+        // property. An empty `{}` has no properties to form an implicit index
+        // signature, so `{}["hi"]` and `{}[10]` should still report diagnostics
+        // (TS2339 for literal keys, TS7053 for non-literal keys).
         let is_fresh_object_literal = self.ctx.arena.get(access.expression).is_some_and(|n| {
             n.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_expr(n)
+                    .is_some_and(|lit| !lit.elements.nodes.is_empty())
         });
 
         if use_index_signature_check
