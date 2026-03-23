@@ -165,14 +165,6 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
-    /// Format a pair of types, disambiguating with import paths when names collide.
-    pub fn format_disambiguated(&mut self, type_a: TypeId, type_b: TypeId) -> (String, String) {
-        (
-            self.format(type_a).into_owned(),
-            self.format(type_b).into_owned(),
-        )
-    }
-
     fn atom(&mut self, atom: Atom) -> Arc<str> {
         if let Some(value) = self.atom_cache.get(&atom) {
             return std::sync::Arc::clone(value);

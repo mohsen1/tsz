@@ -11,23 +11,6 @@ use tsz_solver::{SubtypeFailureReason, TypeId};
 // PropertyClassification: structured property-level analysis for EPC/missing
 // ---------------------------------------------------------------------------
 
-/// Classification of a single property in an object compatibility check.
-#[derive(Debug, Clone)]
-pub(crate) enum PropertyStatus {
-    /// Property exists in both source and target with compatible types.
-    Compatible { name: Atom, target_type: TypeId },
-    /// Property exists in source but not in any target member (excess).
-    Excess { name: Atom },
-    /// Property exists in target but not in source (missing required).
-    Missing { name: Atom, target_type: TypeId },
-    /// Property exists in both but types are incompatible.
-    Incompatible {
-        name: Atom,
-        source_type: TypeId,
-        target_type: TypeId,
-    },
-}
-
 /// Structured property-level classification of an object compatibility check.
 ///
 /// This is the canonical boundary output for property-level analysis. The checker
