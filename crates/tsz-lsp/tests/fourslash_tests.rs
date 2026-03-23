@@ -2765,7 +2765,6 @@ fn hover_class_method_call() {
 }
 
 #[test]
-#[ignore = "requires member access hover resolution"]
 fn hover_enum_member_dot_access() {
     let mut t = FourslashTest::new(
         "
@@ -2780,7 +2779,6 @@ fn hover_enum_member_dot_access() {
 }
 
 #[test]
-#[ignore = "requires namespace member hover resolution"]
 fn hover_namespace_function() {
     let mut t = FourslashTest::new(
         "
