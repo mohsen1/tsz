@@ -1158,6 +1158,10 @@ impl<'a> CheckerState<'a> {
                                         let ann_type =
                                             self.get_type_from_type_node(param.type_annotation);
                                         substitution.insert(tp_info.name, ann_type);
+                                        // Also update round2_substitution so contextual
+                                        // typing of unannotated parameters sees the
+                                        // inferred type from annotations.
+                                        round2_substitution.insert(tp_info.name, ann_type);
                                         trace!(
                                             param_index = j,
                                             ann_type = ann_type.0,
