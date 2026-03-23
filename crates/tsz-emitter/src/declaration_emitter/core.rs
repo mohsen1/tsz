@@ -664,7 +664,18 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.source_is_js_file = self.source_file_is_js(source_file);
         self.current_source_file_idx = Some(root_idx);
-        self.emit_public_api_only = self.has_public_api_exports(source_file);
+        // Prefer the pre-computed flag from ExportSurface when available;
+        // fall back to the existing AST walk for JS files (which need
+        // CommonJS-specific detection the surface doesn't cover yet).
+        self.emit_public_api_only = if let Some(ref surface) = self.export_surface {
+            if !self.source_is_js_file {
+                surface.has_public_api_scope
+            } else {
+                self.has_public_api_exports(source_file)
+            }
+        } else {
+            self.has_public_api_exports(source_file)
+        };
         self.all_comments = source_file.comments.clone();
         self.comment_emit_idx = 0;
         let (js_named_export_names, folded_named_exports, deferred_named_exports) =
