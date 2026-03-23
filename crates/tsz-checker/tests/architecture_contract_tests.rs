@@ -334,8 +334,8 @@ fn test_no_direct_type_queries_data_access_outside_query_boundaries() {
 /// directly.
 ///
 /// These solver-internal policy types should only be constructed inside
-/// query_boundaries where they translate checker-level concepts (RelationRequest,
-/// RelationFlags) to solver-level knobs.
+/// `query_boundaries` where they translate checker-level concepts (`RelationRequest`,
+/// `RelationFlags`) to solver-level knobs.
 #[test]
 fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
     fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {

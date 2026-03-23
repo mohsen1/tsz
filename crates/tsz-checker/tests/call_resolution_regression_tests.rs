@@ -1029,8 +1029,7 @@ f(...args);
     // No false TS2769 — the spread matches the second overload.
     assert!(
         !codes.contains(&2349),
-        "Spread in overload call should not emit TS2349, got: {:?}",
-        codes
+        "Spread in overload call should not emit TS2349, got: {codes:?}",
     );
 }
 
@@ -1558,8 +1557,7 @@ add(...args);
     let codes = get_codes(source);
     assert!(
         codes.contains(&2554) || codes.contains(&2556),
-        "Spread from wrong-length tuple should emit argument count error, got: {:?}",
-        codes
+        "Spread from wrong-length tuple should emit argument count error, got: {codes:?}",
     );
 }
 
@@ -1716,8 +1714,7 @@ f("hello");
     // The error could be TS2554 (wrong arg count) or TS2349 (not callable)
     assert!(
         !codes.is_empty(),
-        "Union callee should require all members to accept the call, got: {:?}",
-        codes
+        "Union callee should require all members to accept the call, got: {codes:?}",
     );
 }
 

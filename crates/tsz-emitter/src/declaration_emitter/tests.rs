@@ -12023,7 +12023,6 @@ fn test_probe_string_enum_concat() {
 }
 "#,
     );
-    eprintln!("STRING_ENUM_CONCAT: {:?}", result);
     // tsc evaluates: Full = "PRE_SUFFIX"
     assert!(
         result.contains(r#"Full = "PRE_SUFFIX""#),
@@ -12045,7 +12044,6 @@ fn probe_type_literal_with_call_and_construct_signatures() {
     name: string;
 };"#,
     );
-    eprintln!("TYPE_LITERAL_COMPLEX:\n{output}");
     assert!(
         output.contains("(x: string): number;"),
         "call sig: {output}"
@@ -12062,7 +12060,6 @@ fn probe_const_type_parameter() {
     // TS 5.0 `const` type parameter modifier
     let output =
         emit_dts("export declare function foo<const T extends readonly unknown[]>(args: T): T;");
-    eprintln!("CONST_TYPE_PARAM:\n{output}");
     assert!(
         output.contains("const T"),
         "const type param modifier should be preserved: {output}"
@@ -12084,7 +12081,6 @@ export interface State<in out T> {
     set(value: T): void;
 }"#,
     );
-    eprintln!("VARIANCE:\n{output}");
     assert!(output.contains("out T"), "out variance: {output}");
     assert!(output.contains("in T"), "in variance: {output}");
     assert!(output.contains("in out T"), "in out variance: {output}");
@@ -12094,7 +12090,6 @@ export interface State<in out T> {
 fn probe_abstract_construct_signature_in_interface() {
     // Abstract construct signature in type
     let output = emit_dts("export type AbstractCtor = abstract new <T>() => T;");
-    eprintln!("ABSTRACT_CTOR:\n{output}");
     assert!(
         output.contains("abstract new"),
         "abstract constructor type: {output}"
@@ -12109,7 +12104,6 @@ fn probe_nested_mapped_type_with_as_clause() {
     [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K];
 };"#,
     );
-    eprintln!("MAPPED_AS:\n{output}");
     assert!(
         output.contains("as `get${Capitalize"),
         "as clause with template: {output}"
@@ -12128,7 +12122,6 @@ fn probe_class_static_block_omitted() {
     }
 }"#,
     );
-    eprintln!("STATIC_BLOCK:\n{output}");
     assert!(
         !output.contains("static {"),
         "static block should be omitted: {output}"
@@ -12145,7 +12138,6 @@ fn probe_conditional_type_nested_in_extends() {
     let output = emit_dts(
         "export type Deep<T> = T extends string ? 1 : T extends number ? 2 : T extends boolean ? 3 : 4;",
     );
-    eprintln!("DEEP_CONDITIONAL:\n{output}");
     assert!(
         output.contains("T extends string ? 1 : T extends number ? 2 : T extends boolean ? 3 : 4"),
         "nested conditional: {output}"
@@ -12156,7 +12148,6 @@ fn probe_conditional_type_nested_in_extends() {
 fn probe_type_operator_on_union_needs_parens() {
     // `keyof (A | B)` needs parens around the union
     let output = emit_dts("export type K = keyof (string | number);");
-    eprintln!("KEYOF_UNION:\n{output}");
     // tsc emits: type K = keyof (string | number);
     assert!(
         output.contains("keyof (string | number)"),
@@ -12168,7 +12159,6 @@ fn probe_type_operator_on_union_needs_parens() {
 fn probe_readonly_tuple_type() {
     // readonly tuple
     let output = emit_dts("export type RT = readonly [string, number, ...boolean[]];");
-    eprintln!("READONLY_TUPLE:\n{output}");
     assert!(
         output.contains("readonly [string, number, ...boolean[]]"),
         "readonly tuple: {output}"
@@ -12179,7 +12169,6 @@ fn probe_readonly_tuple_type() {
 fn probe_rest_type_in_tuple() {
     // Rest type in tuple
     let output = emit_dts("export type Spread = [string, ...number[], boolean];");
-    eprintln!("REST_TUPLE:\n{output}");
     assert!(
         output.contains("[string, ...number[], boolean]"),
         "rest in middle: {output}"
@@ -12190,7 +12179,6 @@ fn probe_rest_type_in_tuple() {
 fn probe_optional_type_in_tuple() {
     // Optional element in tuple
     let output = emit_dts("export type Opt = [string, number?, boolean?];");
-    eprintln!("OPT_TUPLE:\n{output}");
     assert!(
         output.contains("[string, number?, boolean?]"),
         "optional tuple elements: {output}"
@@ -12201,7 +12189,6 @@ fn probe_optional_type_in_tuple() {
 fn probe_intersection_with_union_needs_parens() {
     // Union inside intersection needs parens
     let output = emit_dts("export type X = (string | number) & { tag: true };");
-    eprintln!("INTERSECT_UNION:\n{output}");
     assert!(
         output.contains("(string | number) &"),
         "union in intersection needs parens: {output}"
@@ -12212,7 +12199,6 @@ fn probe_intersection_with_union_needs_parens() {
 fn probe_function_type_in_union_needs_parens() {
     // Function type in union needs parens
     let output = emit_dts("export type F = ((x: number) => string) | null;");
-    eprintln!("FUNC_UNION:\n{output}");
     assert!(
         output.contains("((x: number) => string) | null"),
         "function type in union needs parens: {output}"
@@ -12230,7 +12216,6 @@ export declare class Child extends Base {
     override method(): void;
 }"#,
     );
-    eprintln!("OVERRIDE:\n{output}");
     assert!(
         !output.contains("override"),
         "override modifier should be stripped in .d.ts: {output}"
@@ -12241,7 +12226,6 @@ export declare class Child extends Base {
 fn probe_export_type_star_from() {
     // export type * from should be preserved
     let output = emit_dts(r#"export type * from "./types";"#);
-    eprintln!("EXPORT_TYPE_STAR:\n{output}");
     assert!(
         output.contains("export type *"),
         "export type * should be preserved: {output}"
@@ -12252,7 +12236,6 @@ fn probe_export_type_star_from() {
 fn probe_export_type_star_as_ns() {
     // export type * as ns from should be preserved
     let output = emit_dts(r#"export type * as ns from "./types";"#);
-    eprintln!("EXPORT_TYPE_STAR_AS:\n{output}");
     assert!(
         output.contains("export type * as ns"),
         "export type * as ns should be preserved: {output}"
@@ -12263,7 +12246,6 @@ fn probe_export_type_star_as_ns() {
 fn probe_await_using_declaration() {
     // `await using` declarations should emit as `const` in .d.ts
     let output = emit_dts("export await using x: AsyncDisposable = getResource();");
-    eprintln!("AWAIT_USING:\n{output}");
     assert!(
         output.contains("export declare const x: AsyncDisposable;"),
         "await using should emit as const: {output}"
@@ -12278,7 +12260,6 @@ fn probe_class_accessor_modifier() {
     accessor name: string = "default";
 }"#,
     );
-    eprintln!("ACCESSOR_FIELD:\n{output}");
     assert!(
         output.contains("accessor name: string;"),
         "accessor keyword should be preserved: {output}"
@@ -12289,7 +12270,6 @@ fn probe_class_accessor_modifier() {
 fn probe_negative_numeric_literal_type() {
     // Negative numeric literal in type position
     let output = emit_dts("export type Neg = -1 | -2 | -3;");
-    eprintln!("NEG_LIT_TYPE:\n{output}");
     assert!(
         output.contains("-1 | -2 | -3"),
         "negative literals: {output}"
@@ -12300,7 +12280,6 @@ fn probe_negative_numeric_literal_type() {
 fn probe_bigint_literal_type_in_union() {
     // BigInt literal type in union
     let output = emit_dts("export type Big = 100n | 200n;");
-    eprintln!("BIGINT_TYPE:\n{output}");
     assert!(output.contains("100n"), "bigint literal type: {output}");
     assert!(output.contains("200n"), "bigint literal type: {output}");
 }
@@ -12315,7 +12294,6 @@ fn probe_constructor_overloads_in_class() {
     constructor(x: string | number) {}
 }"#,
     );
-    eprintln!("CTOR_OVERLOADS:\n{output}");
     assert!(
         output.contains("constructor(x: string);"),
         "first overload: {output}"
@@ -12342,7 +12320,6 @@ declare global {
     }
 }"#,
     );
-    eprintln!("DECLARE_GLOBAL:\n{output}");
     assert!(
         output.contains("declare global"),
         "declare global should be preserved: {output}"
@@ -12359,7 +12336,6 @@ fn probe_type_alias_recursive() {
     let output = emit_dts(
         r#"export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };"#,
     );
-    eprintln!("RECURSIVE_TYPE:\n{output}");
     assert!(output.contains("Json[]"), "recursive array: {output}");
     assert!(
         output.contains("[key: string]: Json"),
@@ -12371,7 +12347,6 @@ fn probe_type_alias_recursive() {
 fn probe_export_as_namespace() {
     // UMD global export
     let output = emit_dts(r#"export as namespace myLib;"#);
-    eprintln!("EXPORT_AS_NS:\n{output}");
     assert!(
         output.contains("export as namespace myLib;"),
         "export as namespace should be preserved: {output}"
@@ -12386,7 +12361,6 @@ fn probe_module_declaration_string_name() {
     export function hello(): void;
 }"#,
     );
-    eprintln!("MODULE_STRING:\n{output}");
     assert!(
         output.contains(r#"declare module "my-module""#),
         "ambient module with string name: {output}"
@@ -12405,7 +12379,6 @@ fn probe_class_with_declare_field() {
     declare x: string;
 }"#,
     );
-    eprintln!("DECLARE_FIELD:\n{output}");
     // tsc strips `declare` from class fields in .d.ts
     assert!(
         output.contains("x: string;"),
@@ -12427,7 +12400,6 @@ fn probe_export_default_abstract_class_with_method() {
     abstract baz(x: string): number;
 }"#,
     );
-    eprintln!("DEFAULT_ABSTRACT:\n{output}");
     assert!(
         output.contains("abstract class"),
         "abstract class should be emitted: {output}"
@@ -12450,7 +12422,6 @@ fn probe_interface_with_readonly_index_signature() {
     readonly [key: string]: number;
 }"#,
     );
-    eprintln!("READONLY_INDEX:\n{output}");
     assert!(
         output.contains("readonly [key: string]: number;"),
         "readonly index signature: {output}"
@@ -12466,7 +12437,6 @@ fn probe_type_literal_with_optional_method() {
     onError?(error: Error): void;
 };"#,
     );
-    eprintln!("TYPE_LIT_OPT_METHOD:\n{output}");
     assert!(
         output.contains("onSuccess?(data: string): void;"),
         "optional method in type literal: {output}"
@@ -12486,7 +12456,6 @@ fn probe_enum_with_non_identifier_member_name() {
     "foo-bar" = 2,
 }"#,
     );
-    eprintln!("ENUM_STRING_MEMBER:\n{output}");
     // tsc emits these as: ["hello world"] = 1
     assert!(
         output.contains(r#""hello world""#) || output.contains(r#"["hello world"]"#),
@@ -12499,7 +12468,6 @@ fn probe_conditional_type_with_infer_constraint() {
     // infer with extends constraint (TS 4.7)
     let output =
         emit_dts("export type ElementType<T> = T extends (infer U extends string)[] ? U : never;");
-    eprintln!("INFER_CONSTRAINT:\n{output}");
     assert!(
         output.contains("infer U extends string"),
         "infer with extends constraint: {output}"
@@ -12510,7 +12478,6 @@ fn probe_conditional_type_with_infer_constraint() {
 fn probe_array_of_function_type_needs_parens() {
     // Array of function type needs parens: ((x: number) => string)[]
     let output = emit_dts("export type FnArr = ((x: number) => string)[];");
-    eprintln!("FN_ARRAY:\n{output}");
     assert!(
         output.contains("((x: number) => string)[]"),
         "function type in array needs parens: {output}"
@@ -12521,7 +12488,6 @@ fn probe_array_of_function_type_needs_parens() {
 fn probe_array_of_union_type_needs_parens() {
     // Array of union type needs parens: (string | number)[]
     let output = emit_dts("export type UnionArr = (string | number)[];");
-    eprintln!("UNION_ARRAY:\n{output}");
     assert!(
         output.contains("(string | number)[]"),
         "union in array needs parens: {output}"
@@ -12532,7 +12498,6 @@ fn probe_array_of_union_type_needs_parens() {
 fn probe_indexed_access_on_union_needs_parens() {
     // Indexed access on union type needs parens: (A | B)["key"]
     let output = emit_dts(r#"export type X = (string[] | number[])["length"];"#);
-    eprintln!("INDEX_UNION:\n{output}");
     assert!(
         output.contains(r#"(string[] | number[])["length"]"#),
         "indexed access on union needs parens: {output}"
@@ -12543,7 +12508,6 @@ fn probe_indexed_access_on_union_needs_parens() {
 fn probe_export_default_function_with_type_params() {
     // export default function with type parameters
     let output = emit_dts("export default function identity<T>(x: T): T { return x; }");
-    eprintln!("DEFAULT_FN_GENERIC:\n{output}");
     assert!(
         output.contains("function identity<T>(x: T): T;"),
         "default generic function: {output}"
@@ -12558,7 +12522,6 @@ fn probe_class_with_symbol_computed_property() {
     [Symbol.iterator](): Iterator<number> { return null!; }
 }"#,
     );
-    eprintln!("SYMBOL_COMPUTED:\n{output}");
     assert!(
         output.contains("[Symbol.iterator]"),
         "well-known symbol property: {output}"
@@ -12575,7 +12538,6 @@ fn probe_namespace_with_type_and_value() {
     export const DEFAULT: Config;
 }"#,
     );
-    eprintln!("NS_TYPE_VALUE:\n{output}");
     assert!(
         output.contains("interface Config"),
         "interface in ns: {output}"
@@ -12594,7 +12556,6 @@ fn probe_namespace_with_type_and_value() {
 fn probe_constructor_type_in_array_needs_parens() {
     // Constructor type in array: (new () => Foo)[]
     let output = emit_dts("export type CtorArr = (new () => object)[];");
-    eprintln!("CTOR_ARRAY:\n{output}");
     assert!(
         output.contains("(new () => object)[]"),
         "constructor type in array needs parens: {output}"
@@ -12605,7 +12566,6 @@ fn probe_constructor_type_in_array_needs_parens() {
 fn probe_conditional_type_in_array_needs_parens() {
     // Conditional type in array: (T extends U ? X : Y)[]
     let output = emit_dts("export type CondArr<T> = (T extends string ? 1 : 2)[];");
-    eprintln!("COND_ARRAY:\n{output}");
     assert!(
         output.contains("(T extends string ? 1 : 2)[]"),
         "conditional in array needs parens: {output}"
@@ -12616,7 +12576,6 @@ fn probe_conditional_type_in_array_needs_parens() {
 fn probe_intersection_type_in_array_needs_parens() {
     // Intersection type in array needs parens: (A & B)[]
     let output = emit_dts("export type InterArr = (string & { brand: true })[];");
-    eprintln!("INTER_ARRAY:\n{output}");
     assert!(
         output.contains("(string &"),
         "intersection in array needs parens: {output}"
@@ -12627,7 +12586,6 @@ fn probe_intersection_type_in_array_needs_parens() {
 fn probe_type_operator_keyof_in_array_needs_parens() {
     // keyof in array: (keyof T)[]
     let output = emit_dts("export type Keys<T> = (keyof T)[];");
-    eprintln!("KEYOF_ARRAY:\n{output}");
     // tsc emits: (keyof T)[]
     assert!(
         output.contains("(keyof T)[]"),
@@ -12639,7 +12597,6 @@ fn probe_type_operator_keyof_in_array_needs_parens() {
 fn probe_infer_type_in_array_needs_parens() {
     // infer in conditional then used in array context
     let output = emit_dts("export type Flatten<T> = T extends (infer U)[] ? U : T;");
-    eprintln!("INFER_ARRAY:\n{output}");
     assert!(
         output.contains("(infer U)[]"),
         "infer in array needs parens: {output}"
@@ -12650,7 +12607,6 @@ fn probe_infer_type_in_array_needs_parens() {
 fn probe_function_type_in_intersection_needs_parens() {
     // Function type in intersection: ((x: number) => void) & { tag: true }
     let output = emit_dts(r#"export type TaggedFn = ((x: number) => void) & { tag: true };"#);
-    eprintln!("FN_INTERSECT:\n{output}");
     assert!(
         output.contains("((x: number) => void) &"),
         "function type in intersection needs parens: {output}"
@@ -12664,7 +12620,6 @@ fn probe_conditional_check_type_parens() {
     // But when a function type is the check type, it does need parens
     let output =
         emit_dts("export type IsFn<T> = T extends (...args: any[]) => any ? true : false;");
-    eprintln!("COND_CHECK:\n{output}");
     assert!(
         output.contains("(...args: any[]) => any ? true : false"),
         "function type as extends type in conditional: {output}"
@@ -12681,7 +12636,6 @@ fn probe_nested_type_literal_formatting() {
     };
 };"#,
     );
-    eprintln!("NESTED_TYPE_LIT:\n{output}");
     assert!(output.contains("inner:"), "nested inner prop: {output}");
     assert!(
         output.contains("deep: string;"),
@@ -12693,7 +12647,6 @@ fn probe_nested_type_literal_formatting() {
 fn probe_empty_interface() {
     // Empty interface
     let output = emit_dts("export interface Empty {}");
-    eprintln!("EMPTY_IFACE:\n{output}");
     assert!(
         output.contains("interface Empty {") && output.contains("}"),
         "empty interface: {output}"
@@ -12706,7 +12659,6 @@ fn probe_type_parameter_default_with_conditional() {
     let output = emit_dts(
         "export type Wrap<T, R = T extends string ? string[] : T[]> = { value: T; result: R };",
     );
-    eprintln!("TPARAM_COND_DEFAULT:\n{output}");
     assert!(
         output.contains("R = T extends string ? string[] : T[]"),
         "conditional type parameter default: {output}"
@@ -12718,7 +12670,6 @@ fn probe_function_returning_conditional() {
     // Function with conditional return type
     let output =
         emit_dts("export declare function check<T>(value: T): T extends string ? true : false;");
-    eprintln!("FN_COND_RETURN:\n{output}");
     assert!(
         output.contains("T extends string ? true : false"),
         "conditional return type: {output}"
@@ -12736,7 +12687,6 @@ fn probe_export_declare_enum_const() {
     Right = 3,
 }"#,
     );
-    eprintln!("CONST_ENUM:\n{output}");
     assert!(
         output.contains("const enum Direction"),
         "const enum: {output}"
@@ -12752,7 +12702,6 @@ fn probe_interface_with_get_set_accessors() {
     set value(v: string);
 }"#,
     );
-    eprintln!("IFACE_ACCESSORS:\n{output}");
     assert!(
         output.contains("get value(): string;"),
         "get accessor in interface: {output}"
@@ -12773,7 +12722,6 @@ fn probe_method_overloads_skip_implementation() {
     process(x: string | number): string | number { return x; }
 }"#,
     );
-    eprintln!("METHOD_OVERLOADS:\n{output}");
     let process_count = output.matches("process(").count();
     assert_eq!(
         process_count, 2,
@@ -12791,7 +12739,6 @@ export function parse(input: string | number): number | string {
     return typeof input === "string" ? 0 : "";
 }"#,
     );
-    eprintln!("FN_OVERLOADS:\n{output}");
     let parse_count = output.matches("function parse(").count();
     assert_eq!(
         parse_count, 2,
@@ -12803,7 +12750,6 @@ export function parse(input: string | number): number | string {
 fn probe_import_type_with_qualifier() {
     // import("module").Type.SubType
     let output = emit_dts(r#"export type X = import("./foo").Bar.Baz;"#);
-    eprintln!("IMPORT_TYPE_QUAL:\n{output}");
     assert!(
         output.contains(r#"import("./foo").Bar.Baz"#),
         "import type with qualifier: {output}"
@@ -12814,7 +12760,6 @@ fn probe_import_type_with_qualifier() {
 fn probe_import_type_with_type_args() {
     // import("module").Type<T>
     let output = emit_dts(r#"export type X = import("./foo").Container<string>;"#);
-    eprintln!("IMPORT_TYPE_ARGS:\n{output}");
     assert!(
         output.contains(r#"import("./foo").Container<string>"#),
         "import type with type args: {output}"
@@ -12825,7 +12770,6 @@ fn probe_import_type_with_type_args() {
 fn probe_typeof_with_import() {
     // typeof import("module").default
     let output = emit_dts(r#"export type X = typeof import("./foo").default;"#);
-    eprintln!("TYPEOF_IMPORT:\n{output}");
     assert!(
         output.contains(r#"typeof import("./foo").default"#),
         "typeof import: {output}"
@@ -12844,7 +12788,6 @@ export class Child extends Base implements Serializable, Printable {
     print(): void {}
 }"#,
     );
-    eprintln!("MULTI_HERITAGE:\n{output}");
     assert!(
         output.contains("extends Base implements Serializable, Printable"),
         "extends + implements: {output}"
@@ -12855,7 +12798,6 @@ export class Child extends Base implements Serializable, Printable {
 fn probe_template_literal_type_with_union() {
     // Template literal type containing union
     let output = emit_dts(r#"export type Event = `${"click" | "hover"}_${"start" | "end"}`;"#);
-    eprintln!("TLT_UNION:\n{output}");
     // Should preserve the template literal structure
     assert!(
         output.contains("`${") && output.contains("}_${"),
