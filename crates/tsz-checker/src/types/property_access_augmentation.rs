@@ -3,7 +3,7 @@
 //!
 //! Extracted from `property_access_type.rs` to keep module size manageable.
 
-use super::queries::lib_resolution::resolve_augmentation_node;
+use super::queries::lib_resolution::{augmentation_def_id_from_node, resolve_augmentation_node};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -112,10 +112,18 @@ impl<'a> CheckerState<'a> {
                     all_binders_slice,
                     &lib_contexts,
                 )
+                .map(|sym_id| sym_id.0)
             };
             let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                resolver(node_idx)
-                    .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
+                augmentation_def_id_from_node(
+                    &self.ctx,
+                    decl_binder,
+                    arena.as_ref(),
+                    node_idx,
+                    global_idx,
+                    all_binders_slice,
+                    &lib_contexts,
+                )
             };
 
             let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = decls
@@ -324,11 +332,19 @@ impl<'a> CheckerState<'a> {
                     all_binders_slice,
                     &lib_contexts,
                 )
+                .map(|sym_id| sym_id.0)
             };
             let def_id_resolver =
                 |node_idx: tsz_parser::parser::NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx)
-                        .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
+                    augmentation_def_id_from_node(
+                        &self.ctx,
+                        decl_binder,
+                        arena.as_ref(),
+                        node_idx,
+                        global_idx,
+                        all_binders_slice,
+                        &lib_contexts,
+                    )
                 };
 
             let decls_with_arenas: Vec<(tsz_parser::parser::NodeIndex, &NodeArena)> = decls
