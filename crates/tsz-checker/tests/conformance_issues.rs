@@ -17339,3 +17339,39 @@ const arr: any[] = r;
          Assigning to any[] should emit TS2322.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+/// Test: union type alias return type should not produce false TS2322.
+///
+/// Regression test for union→Application cache poisoning in env_eval_cache.
+/// When the TypeEvaluator produces an intermediate result mapping a union type
+/// to an Application type (due to incomplete type environment resolution at that
+/// point in time), caching that result poisons later lookups and causes false
+/// assignability failures.
+#[test]
+fn test_union_type_alias_return_no_false_ts2322() {
+    let source = r#"
+interface YR<T> { done?: false; value: T; }
+interface RR<T> { done: true; value: T; }
+type MyResult<T, TReturn = any> = YR<T> | RR<TReturn>;
+
+function test<T>(val: T): MyResult<T> {
+    return { done: false, value: val };
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2322.is_empty(),
+        "Should not emit false TS2322 for generic union type alias return.\n\
+         TS2322 diagnostics: {ts2322:#?}"
+    );
+}
