@@ -1047,6 +1047,12 @@ impl QueryDatabase for QueryCache<'_> {
         if target == TypeId::NEVER {
             return false;
         }
+        // `any` is assignable to/from everything except `never` (already handled above).
+        // At the top-level (depth 0), allow_any is always true in SubtypeChecker,
+        // so this is safe regardless of flags.
+        if source == TypeId::ANY || target == TypeId::ANY {
+            return true;
+        }
 
         let trace_enabled = query_trace::enabled();
         let trace_query_id = trace_enabled.then(|| {
@@ -1100,6 +1106,12 @@ impl QueryDatabase for QueryCache<'_> {
         }
         if target == TypeId::NEVER && source != TypeId::NEVER {
             return false;
+        }
+        // `any` is assignable to/from everything except `never` (already handled above).
+        // CompatChecker defaults to allow_any_suppression=true (non-sound mode),
+        // and apply_flags does not change it, so this is safe.
+        if source == TypeId::ANY || target == TypeId::ANY {
+            return true;
         }
 
         let trace_enabled = query_trace::enabled();
