@@ -246,6 +246,7 @@ impl<'a> CheckerState<'a> {
                         is_const: false,
                         is_exported: false,
                         is_global_augmentation: false,
+                        is_declare: false,
                     })
             };
             self.ctx

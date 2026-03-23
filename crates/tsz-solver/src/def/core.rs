@@ -194,6 +194,15 @@ pub struct DefinitionInfo {
     /// Propagated from binder `SemanticDefEntry` during pre-population.
     /// Global augmentations merge with lib.d.ts symbols at type resolution time.
     pub is_global_augmentation: bool,
+
+    /// Whether this declaration has the `declare` modifier or is in an ambient
+    /// context (`.d.ts` file).
+    ///
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
+    /// Ambient declarations have no runtime representation; the checker uses
+    /// this to suppress certain diagnostics (e.g., TS1183 requires ambient
+    /// classes to have no body on methods) and to gate emit behaviour.
+    pub is_declare: bool,
 }
 
 /// Enum member value.
@@ -229,6 +238,7 @@ impl DefinitionInfo {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         }
     }
 
@@ -269,6 +279,7 @@ impl DefinitionInfo {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         }
     }
 
@@ -312,6 +323,7 @@ impl DefinitionInfo {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         }
     }
 
@@ -336,6 +348,7 @@ impl DefinitionInfo {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         }
     }
 
@@ -360,6 +373,7 @@ impl DefinitionInfo {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         }
     }
 

@@ -611,6 +611,7 @@ impl BinderState {
                     arena,
                     class.heritage_clauses.as_ref(),
                 );
+                let is_declare = Self::has_declare_modifier(arena, class.modifiers.as_ref());
                 self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
@@ -622,6 +623,7 @@ impl BinderState {
                     Vec::new(),
                     false, // is_const
                     is_abstract,
+                    is_declare,
                     extends_names,
                     implements_names,
                 );
@@ -877,6 +879,7 @@ impl BinderState {
             let tp_names = Self::collect_type_param_names(arena, iface.type_parameters.as_ref());
             let (extends_names, implements_names) =
                 Self::collect_heritage_clause_names_split(arena, iface.heritage_clauses.as_ref());
+            let is_declare = Self::has_declare_modifier(arena, iface.modifiers.as_ref());
             self.record_semantic_def_ext(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
@@ -888,6 +891,7 @@ impl BinderState {
                 Vec::new(),
                 false,
                 false,
+                is_declare,
                 extends_names,
                 implements_names,
             );
@@ -995,7 +999,8 @@ impl BinderState {
                     .map_or(0, |tp| tp.nodes.len() as u16);
                 let tp_names =
                     Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
-                self.record_semantic_def(
+                let is_declare = Self::has_declare_modifier(arena, alias.modifiers.as_ref());
+                self.record_semantic_def_with_declare(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
@@ -1003,6 +1008,7 @@ impl BinderState {
                     tp_count,
                     tp_names,
                     is_exported,
+                    is_declare,
                 );
             } else {
                 let sym_id = self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
@@ -1012,7 +1018,8 @@ impl BinderState {
                     .map_or(0, |tp| tp.nodes.len() as u16);
                 let tp_names =
                     Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
-                self.record_semantic_def(
+                let is_declare = Self::has_declare_modifier(arena, alias.modifiers.as_ref());
+                self.record_semantic_def_with_declare(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
@@ -1020,6 +1027,7 @@ impl BinderState {
                     tp_count,
                     tp_names,
                     is_exported,
+                    is_declare,
                 );
             }
 
@@ -1067,6 +1075,7 @@ impl BinderState {
                 })
                 .collect();
 
+            let is_declare = Self::has_declare_modifier(arena, enum_decl.modifiers.as_ref());
             self.record_semantic_def_ext(
                 enum_sym_id,
                 crate::state::SemanticDefKind::Enum,
@@ -1077,7 +1086,8 @@ impl BinderState {
                 is_exported,
                 enum_member_names,
                 is_const,
-                false,      // is_abstract
+                false, // is_abstract
+                is_declare,
                 Vec::new(), // extends_names
                 Vec::new(), // implements_names
             );
@@ -2436,6 +2446,30 @@ impl BinderState {
         type_param_names: Vec<String>,
         is_exported: bool,
     ) {
+        self.record_semantic_def_with_declare(
+            sym_id,
+            kind,
+            name,
+            declaration,
+            type_param_count,
+            type_param_names,
+            is_exported,
+            false,
+        );
+    }
+
+    /// Like `record_semantic_def` but with explicit `is_declare` flag.
+    pub(crate) fn record_semantic_def_with_declare(
+        &mut self,
+        sym_id: SymbolId,
+        kind: crate::state::SemanticDefKind,
+        name: &str,
+        declaration: NodeIndex,
+        type_param_count: u16,
+        type_param_names: Vec<String>,
+        is_exported: bool,
+        is_declare: bool,
+    ) {
         self.record_semantic_def_ext(
             sym_id,
             kind,
@@ -2447,6 +2481,7 @@ impl BinderState {
             Vec::new(),
             false,
             false,
+            is_declare,
             Vec::new(),
             Vec::new(),
         );
@@ -2476,6 +2511,7 @@ impl BinderState {
         enum_member_names: Vec<String>,
         is_const: bool,
         is_abstract: bool,
+        is_declare: bool,
         extends_names: Vec<String>,
         implements_names: Vec<String>,
     ) {
@@ -2581,6 +2617,7 @@ impl BinderState {
                 implements_names,
                 parent_namespace,
                 is_global_augmentation: self.in_global_augmentation,
+                is_declare,
             },
         );
     }

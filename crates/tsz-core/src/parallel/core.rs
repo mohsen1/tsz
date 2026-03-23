@@ -1727,6 +1727,7 @@ pub fn pre_populate_definition_store(
             is_const: entry.is_const,
             is_exported: entry.is_exported,
             is_global_augmentation: entry.is_global_augmentation,
+            is_declare: entry.is_declare,
         };
 
         let def_id = store.register(info);
@@ -1756,6 +1757,7 @@ pub fn pre_populate_definition_store(
                 is_const: false,
                 is_exported: entry.is_exported,
                 is_global_augmentation: false,
+                is_declare: entry.is_declare,
             };
             let ctor_def_id = store.register(ctor_info);
             store.register_constructor_companion(def_id, ctor_def_id);

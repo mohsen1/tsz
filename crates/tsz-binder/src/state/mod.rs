@@ -546,6 +546,18 @@ pub struct SemanticDefEntry {
     /// identity resolution when augmented types need special handling (e.g.,
     /// cross-batch heritage resolution for `declare global { interface Array<T> { ... } }`).
     pub is_global_augmentation: bool,
+
+    /// Whether this declaration has the `declare` modifier or is in an ambient
+    /// context (`.d.ts` file).
+    ///
+    /// Captured at bind time so that the checker and solver can distinguish
+    /// ambient declarations from implementation declarations without
+    /// re-examining the AST or symbol modifiers. Ambient declarations have
+    /// no runtime representation; this flag enables the checker to suppress
+    /// certain diagnostics and gate emit behaviour.
+    ///
+    /// Propagated through merge and pre-population to `DefinitionInfo.is_declare`.
+    pub is_declare: bool,
 }
 
 impl SemanticDefEntry {
@@ -609,6 +621,10 @@ impl SemanticDefEntry {
         // Promote global augmentation flag if any declaration is from declare global.
         if other.is_global_augmentation {
             self.is_global_augmentation = true;
+        }
+        // Promote declare flag if any declaration has the declare modifier.
+        if other.is_declare {
+            self.is_declare = true;
         }
     }
 }
