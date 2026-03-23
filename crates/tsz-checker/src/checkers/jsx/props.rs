@@ -1203,7 +1203,6 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-
     pub(crate) fn check_jsx_union_props(
         &mut self,
         attributes_idx: NodeIndex,

@@ -1536,7 +1536,6 @@ impl<'a> CheckerState<'a> {
 
         false
     }
-
 }
 
 /// Check if contextual type is `boolean` and the literal is a boolean literal.

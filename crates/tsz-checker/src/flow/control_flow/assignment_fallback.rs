@@ -9,9 +9,8 @@ use crate::query_boundaries::common::{
     TypeSubstitution, construct_signatures_for_type, instantiate_type,
 };
 use crate::query_boundaries::flow_analysis::{
-    call_signatures_for_type, function_return_type, get_application_info,
-    is_promise_like_type, union_members_for_type, unwrap_promise_type_argument,
-    widen_literal_to_primitive,
+    call_signatures_for_type, function_return_type, get_application_info, is_promise_like_type,
+    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -49,10 +48,7 @@ impl<'a> FlowAnalyzer<'a> {
         (operand_type != TypeId::ERROR).then_some(operand_type)
     }
 
-    pub(super) fn fallback_assigned_type_from_expression(
-        &self,
-        rhs: NodeIndex,
-    ) -> Option<TypeId> {
+    pub(super) fn fallback_assigned_type_from_expression(&self, rhs: NodeIndex) -> Option<TypeId> {
         let rhs = self.skip_parens_and_assertions(rhs);
         let rhs_node = self.arena.get(rhs)?;
 
@@ -87,10 +83,7 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    pub(super) fn fallback_expression_type_from_syntax(
-        &self,
-        expr: NodeIndex,
-    ) -> Option<TypeId> {
+    pub(super) fn fallback_expression_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
         let expr = self.skip_parens_and_assertions(expr);
         if let Some(literal_type) = self.literal_type_from_node(expr) {
             return Some(widen_literal_to_primitive(self.interner, literal_type));
