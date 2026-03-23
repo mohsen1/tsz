@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide covers setting up and working with the Project Zang codebase.
+This guide covers setting up and working with the tsz codebase.
 
 ## Getting Started
 
@@ -9,76 +9,160 @@ This guide covers setting up and working with the Project Zang codebase.
 git clone https://github.com/mohsen1/tsz.git
 cd tsz
 
-# Initialize the TypeScript submodule (required for conformance tests)
-git submodule update --init TypeScript
+# Run the setup script (installs git hooks, initializes submodules)
+./scripts/setup/setup.sh
 
-# Build the project (also installs git hooks automatically)
+# Build the project
 cargo build
 ```
 
+The setup script initializes the TypeScript submodule (pinned to a specific commit for conformance tests) and installs pre-commit hooks.
+
 ## Git Hooks
 
-Pre-commit hooks are automatically installed on first build. They run:
-- `cargo fmt` - Format code
-- `cargo clippy --fix` - Lint and auto-fix issues
-- Unit tests via `cargo nextest run`
+Pre-commit hooks run automatically on every commit. They enforce:
+- `cargo fmt` — format code (auto-fixes and re-stages)
+- `cargo clippy` — lint with `-D warnings` on affected crates and CI parity commands
+- `wasm32` compile check — ensures WASM compatibility
+- Architecture boundary checks — prevents cross-layer imports
+- Unit tests — runs tests for affected crates only
 
 To manually install hooks:
 ```bash
 ./scripts/setup/setup.sh
 ```
 
-To skip hooks for a single commit (not recommended):
+To skip hooks for a single commit (use sparingly):
 ```bash
-git commit --no-verify
+TSZ_SKIP_HOOKS=1 git commit -m "message"
 ```
+
+Environment variables for hook control:
+- `TSZ_SKIP_HOOKS=1` — skip all pre-commit checks
+- `TSZ_SKIP_BENCH=1` — skip microbenchmark regression check
+- `TSZ_SKIP_CLEAN=1` — skip target cleanup step
+- `TSZ_SKIP_LINT_PARITY=1` — skip CI parity lint commands
+- `TSZ_SKIP_WASM_LINT=1` — skip wasm32 lint gate
+
+## Project Structure
+
+tsz is a Cargo workspace with each pipeline stage in its own crate:
+
+```
+tsz/
+├── crates/
+│   ├── tsz-common/        # Shared types, IDs, diagnostic codes
+│   ├── tsz-scanner/       # Lexer/tokenizer, string interning
+│   ├── tsz-parser/        # Syntax-only AST construction
+│   ├── tsz-binder/        # Symbols, scopes, control-flow graph
+│   ├── tsz-solver/        # All type relations, inference, evaluation
+│   ├── tsz-checker/       # AST walk, diagnostics, delegates to solver
+│   ├── tsz-lowering/      # AST transforms (downlevel emit)
+│   ├── tsz-emitter/       # JS/declaration output
+│   ├── tsz-lsp/           # Language server protocol
+│   ├── tsz-cli/           # CLI binary (tsz command)
+│   ├── tsz-core/          # Integration crate, root tests
+│   ├── tsz-wasm/          # WASM target bindings
+│   ├── tsz-website/       # Website/playground
+│   └── conformance/       # Conformance test runner binary
+├── TypeScript/             # TypeScript submodule (test source, read-only)
+├── docs/                   # Documentation
+│   ├── architecture/       # Architecture decisions and boundaries
+│   ├── plan/              # Roadmaps and planning docs
+│   ├── specs/             # TypeScript behavior specifications
+│   └── site/              # Website content
+├── scripts/
+│   ├── conformance/       # Conformance test runner and analysis tools
+│   ├── setup/             # Setup and installation scripts
+│   ├── arch/              # Architecture boundary checking
+│   ├── bench/             # Benchmarking scripts
+│   └── session/           # Multi-agent campaign system
+└── .claude/               # AI assistant configuration
+```
+
+### Pipeline Architecture
+
+```
+scanner → parser → binder → checker → solver → emitter
+                                ↕
+                          (query boundary)
+```
+
+- **Scanner**: Lexes source into tokens, interns strings to `Atom`
+- **Parser**: Builds syntax-only AST in `NodeArena`
+- **Binder**: Creates symbols, scopes, and control-flow graph (no type computation)
+- **Checker**: Walks AST, tracks diagnostics, delegates type questions to Solver
+- **Solver**: Owns all type relations, evaluation, inference, instantiation, narrowing
+- **Emitter**: Produces JS/declaration output from checked AST
+
+Key rule: if code computes type semantics, it belongs in the Solver. The Checker is thin orchestration only.
 
 ## Running Tests
 
 ### Unit Tests
 
-We use [cargo-nextest](https://nexte.st/) for all test runs. It provides timeout protection,
-per-test isolation, and better output than `cargo test`.
-
 ```bash
-# Install nextest (one time)
-cargo install cargo-nextest
-
 # Run all unit tests
+cargo test
+
+# Run tests for specific crates
+cargo test -p tsz-checker -p tsz-solver
+
+# Using nextest (recommended for CI-like behavior)
+cargo install cargo-nextest
 cargo nextest run
-
-# Run tests for a specific module
-cargo nextest run -E 'test(/scanner/)'
-cargo nextest run -E 'test(/parser/)'
-cargo nextest run -E 'test(/binder/)'
-cargo nextest run -E 'test(/checker/)'
-
-# Quick mode (fail-fast, 10s timeout)
-cargo nextest run --profile quick
-
-# Run ignored tests
-cargo nextest run --run-ignored all
+cargo nextest run --profile precommit  # fast profile with timeouts
 ```
-
-Nextest profiles are configured in `.config/nextest.toml` with protection against:
-- **Hanging tests**: Auto-terminate after timeout periods
-- **Leaked threads**: Detect tests that don't terminate cleanly
-- **Slow tests**: Warn and kill tests exceeding time limits
 
 ### Conformance Tests
 
-Conformance tests compare Zang's output against the official TypeScript compiler.
+Conformance tests compare tsz diagnostics against the official TypeScript compiler (`tsc`).
 
 ```bash
-# Run conformance tests (server mode, fast)
-./scripts/conformance/run.sh --server --max=500
+# Build the conformance runner (fast profile)
+cargo build --profile dist-fast -p tsz-conformance
 
 # Run all conformance tests
-./scripts/conformance/run.sh --all
+.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json
 
-# Run with WASM
-./scripts/conformance/run.sh --wasm --max=500
+# Run filtered tests (fast, for development)
+.target/dist-fast/tsz-conformance --filter "controlFlow" --cache-file scripts/conformance/tsc-cache-full.json
+
+# Verbose output (shows expected vs actual diagnostics)
+.target/dist-fast/tsz-conformance --filter "testName" --verbose --cache-file scripts/conformance/tsc-cache-full.json
+
+# Wrap heavy runs with memory guard
+scripts/safe-run.sh .target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json
 ```
+
+### Conformance Analysis (Offline)
+
+Analysis tools work from pre-computed snapshot files — no CPU cost:
+
+```bash
+# Overview of conformance status
+python3 scripts/conformance/query-conformance.py
+
+# Root-cause campaign recommendations
+python3 scripts/conformance/query-conformance.py --campaigns
+
+# Tests fixable by removing 1 extra diagnostic
+python3 scripts/conformance/query-conformance.py --one-extra
+
+# Tests closest to passing (diff <= 2)
+python3 scripts/conformance/query-conformance.py --close 2
+
+# Deep-dive a specific error code
+python3 scripts/conformance/query-conformance.py --code TS2322
+
+# Update snapshots after code changes
+scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+```
+
+Snapshot files:
+- `scripts/conformance/conformance-snapshot.json` — high-level aggregates
+- `scripts/conformance/conformance-detail.json` — per-test failure data
+- `scripts/conformance/tsc-cache-full.json` — tsc expected diagnostics for every test
 
 ## Building
 
@@ -88,84 +172,54 @@ Conformance tests compare Zang's output against the official TypeScript compiler
 # Debug build
 cargo build
 
-# Release build
-cargo build --release
+# Fast optimized build (for conformance testing)
+cargo build --profile dist-fast -p tsz-cli
 
-# The binary is at target/release/tsz
+# Release build
+cargo build --release -p tsz-cli
+
+# Run tsz on a file
+.target/dist-fast/tsz-cli check myfile.ts
 ```
 
 ### WASM Build
 
 ```bash
-# Install wasm-pack if needed
-curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+# Check WASM compatibility
+cargo check -p tsz-wasm --target wasm32-unknown-unknown
 
 # Build WASM package
-wasm-pack build --target web --out-dir pkg
+wasm-pack build crates/tsz-wasm --target web --out-dir pkg
 ```
 
-## Project Structure
+## Architecture Rules
 
-```
-tsz/
-├── src/                    # Rust source code
-│   ├── scanner/           # Lexer/tokenizer
-│   ├── parser/            # Parser
-│   ├── binder/            # Name binding
-│   ├── checker/           # Type checker
-│   ├── solver/            # Type constraint solver
-│   └── ...
-├── TypeScript/            # TypeScript submodule (tests source)
-├── docs/                  # Documentation
-└── scripts/               # Build, utility scripts, conformance & fourslash test runners
-```
+These are enforced by pre-commit hooks and CI:
 
-## Updating TypeScript Version
+1. **Solver owns type semantics** — if code computes type relations, evaluation, or inference, it goes in `tsz-solver`
+2. **Checker is thin orchestration** — reads AST/symbols/flow, asks Solver for answers, tracks diagnostics
+3. **No cross-layer imports** — Binder cannot import Solver, Emitter cannot import Checker internals
+4. **Single type universe** — one `TypeId` space via the Solver's interner
+5. **DefId-first resolution** — semantic references use `TypeData::Lazy(DefId)`, resolved through `TypeEnvironment`
 
-The TypeScript submodule is used for conformance tests:
+See `docs/architecture/BOUNDARIES.md` and `docs/architecture/NORTH_STAR.md` for details.
+
+## Memory-Guarded Execution
+
+All long-running or memory-intensive commands should be wrapped with the memory guard:
 
 ```bash
-# Update to latest TypeScript
-cd TypeScript
-git fetch origin main
-git checkout origin/main
-cd ..
-git add TypeScript
-
-# Update the version mapping
-# Edit scripts/conformance/typescript-versions.json with the new SHA
+scripts/safe-run.sh cargo test
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run
+scripts/safe-run.sh --limit 8192 -- cargo build --release
 ```
+
+This monitors RSS and kills the process if it exceeds the limit (default: 75% of system RAM).
 
 ## Tips
 
-- Run `cargo clippy` before committing to catch common issues
-- Use `cargo fmt` to auto-format code
-- The conformance test cache speeds up repeated runs - generate it with `npm run cache:generate`
-
-## Disk Space Management
-
-The `target/` directory can grow to multi-GB sizes during builds. Protect your disk:
-
-```bash
-# Check disk space and target size
-./scripts/setup/clean.sh --check
-
-# Safe cleanup (removes release artifacts, keeps debug for faster iteration)
-./scripts/setup/clean.sh --safe
-
-# Full cleanup (removes all build artifacts)
-./scripts/setup/clean.sh --full
-
-# Or use cargo directly
-cargo clean          # Full clean
-cargo clean --release  # Release artifacts only
-```
-
-**Recommended schedule:**
-- Before starting work: Clean if disk space < 10GB
-- After finishing work: Run `cargo clean --release` to free space
-- Before large test runs: Check disk space and clean if needed
-
-**Warning signs:**
-- Target directory > 2GB: Consider cleanup
-- Available disk space < 5GB: Must clean before building
+- Pre-commit hooks check only affected crates — changing `tsz-scanner` triggers checks on scanner + all dependents
+- Use `cargo check -p tsz-checker` for fast feedback during development
+- The TypeScript submodule is read-only — never commit changes to it
+- Conformance snapshot files are generated artifacts — update them with `conformance.sh snapshot`
+- Run `cargo fmt` before committing (hooks auto-fix but it's faster to do it yourself)
