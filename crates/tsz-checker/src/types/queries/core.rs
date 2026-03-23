@@ -566,6 +566,63 @@ impl<'a> CheckerState<'a> {
         ident.escaped_text == "eval"
     }
 
+    /// Check if a node is inside a bare block statement (a block that is NOT a
+    /// function/method/accessor body).  Walks up the parent chain (max 6 levels)
+    /// to find the nearest `Block` node and returns `true` if that block's parent
+    /// is **not** a function-like declaration.
+    ///
+    /// Used by the TS2695 suppression logic: comma expressions inside bare blocks
+    /// with parse errors are likely malformed destructuring patterns
+    /// (e.g., `{ a, b } = fn()`), and the diagnostic should be suppressed.
+    pub(crate) fn is_inside_bare_block(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Function-like parent kinds whose body-block should NOT be considered
+        // a "bare block".
+        fn is_function_like(kind: u16) -> bool {
+            kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || kind == syntax_kind_ext::ARROW_FUNCTION
+                || kind == syntax_kind_ext::METHOD_DECLARATION
+                || kind == syntax_kind_ext::CONSTRUCTOR
+                || kind == syntax_kind_ext::GET_ACCESSOR
+                || kind == syntax_kind_ext::SET_ACCESSOR
+                || kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+        }
+
+        let mut current = idx;
+        for _ in 0..6 {
+            let ext = self.ctx.arena.get_extended(current);
+            let parent = ext.map_or(NodeIndex::NONE, |e| e.parent);
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::BLOCK {
+                // Found a Block ancestor.  Check its parent.
+                let block_parent = self
+                    .ctx
+                    .arena
+                    .get_extended(parent)
+                    .map_or(NodeIndex::NONE, |e| e.parent);
+                if block_parent.is_none() {
+                    // Block at the top level (no parent) — treat as bare.
+                    return true;
+                }
+                let Some(bp_node) = self.ctx.arena.get(block_parent) else {
+                    return true;
+                };
+                // If the block's parent is a function-like node, it's a function
+                // body — not a bare block.
+                return !is_function_like(bp_node.kind);
+            }
+            current = parent;
+        }
+        false
+    }
+
     // =========================================================================
     // Section 29: Expression Kind Detection Utilities
     // =========================================================================
