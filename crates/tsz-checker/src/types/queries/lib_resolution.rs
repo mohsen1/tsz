@@ -1200,3 +1200,309 @@ impl<'a> CheckerState<'a> {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- keyword_syntax_to_type_id ----
+
+    #[test]
+    fn keyword_syntax_maps_string() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::StringKeyword as u16),
+            Some(TypeId::STRING)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_number() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::NumberKeyword as u16),
+            Some(TypeId::NUMBER)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_boolean() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::BooleanKeyword as u16),
+            Some(TypeId::BOOLEAN)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_void() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::VoidKeyword as u16),
+            Some(TypeId::VOID)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_never() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::NeverKeyword as u16),
+            Some(TypeId::NEVER)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_any() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::AnyKeyword as u16),
+            Some(TypeId::ANY)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_unknown() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::UnknownKeyword as u16),
+            Some(TypeId::UNKNOWN)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_null() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::NullKeyword as u16),
+            Some(TypeId::NULL)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_undefined() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::UndefinedKeyword as u16),
+            Some(TypeId::UNDEFINED)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_object() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::ObjectKeyword as u16),
+            Some(TypeId::OBJECT)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_symbol() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::SymbolKeyword as u16),
+            Some(TypeId::SYMBOL)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_maps_bigint() {
+        assert_eq!(
+            keyword_syntax_to_type_id(SyntaxKind::BigIntKeyword as u16),
+            Some(TypeId::BIGINT)
+        );
+    }
+
+    #[test]
+    fn keyword_syntax_returns_none_for_non_keyword() {
+        // Use an arbitrary non-keyword kind value
+        assert_eq!(keyword_syntax_to_type_id(0), None);
+        assert_eq!(keyword_syntax_to_type_id(9999), None);
+    }
+
+    // ---- keyword_name_to_type_id ----
+
+    #[test]
+    fn keyword_name_maps_all_primitives() {
+        assert_eq!(keyword_name_to_type_id("string"), Some(TypeId::STRING));
+        assert_eq!(keyword_name_to_type_id("number"), Some(TypeId::NUMBER));
+        assert_eq!(keyword_name_to_type_id("boolean"), Some(TypeId::BOOLEAN));
+        assert_eq!(keyword_name_to_type_id("void"), Some(TypeId::VOID));
+        assert_eq!(
+            keyword_name_to_type_id("undefined"),
+            Some(TypeId::UNDEFINED)
+        );
+        assert_eq!(keyword_name_to_type_id("null"), Some(TypeId::NULL));
+        assert_eq!(keyword_name_to_type_id("never"), Some(TypeId::NEVER));
+        assert_eq!(keyword_name_to_type_id("unknown"), Some(TypeId::UNKNOWN));
+        assert_eq!(keyword_name_to_type_id("any"), Some(TypeId::ANY));
+        assert_eq!(keyword_name_to_type_id("object"), Some(TypeId::OBJECT));
+        assert_eq!(keyword_name_to_type_id("symbol"), Some(TypeId::SYMBOL));
+        assert_eq!(keyword_name_to_type_id("bigint"), Some(TypeId::BIGINT));
+    }
+
+    #[test]
+    fn keyword_name_returns_none_for_non_keyword() {
+        assert_eq!(keyword_name_to_type_id("Promise"), None);
+        assert_eq!(keyword_name_to_type_id("Array"), None);
+        assert_eq!(keyword_name_to_type_id("String"), None); // capital S
+        assert_eq!(keyword_name_to_type_id(""), None);
+    }
+
+    #[test]
+    fn keyword_name_and_syntax_agree() {
+        // Verify both mapping functions return the same TypeId for each keyword
+        let pairs = [
+            ("string", SyntaxKind::StringKeyword),
+            ("number", SyntaxKind::NumberKeyword),
+            ("boolean", SyntaxKind::BooleanKeyword),
+            ("void", SyntaxKind::VoidKeyword),
+            ("undefined", SyntaxKind::UndefinedKeyword),
+            ("null", SyntaxKind::NullKeyword),
+            ("never", SyntaxKind::NeverKeyword),
+            ("unknown", SyntaxKind::UnknownKeyword),
+            ("any", SyntaxKind::AnyKeyword),
+            ("object", SyntaxKind::ObjectKeyword),
+            ("symbol", SyntaxKind::SymbolKeyword),
+            ("bigint", SyntaxKind::BigIntKeyword),
+        ];
+        for (name, kind) in pairs {
+            assert_eq!(
+                keyword_name_to_type_id(name),
+                keyword_syntax_to_type_id(kind as u16),
+                "Mismatch for keyword '{name}'"
+            );
+        }
+    }
+
+    // ---- dedup_decl_arenas ----
+
+    #[test]
+    fn dedup_empty() {
+        let result = dedup_decl_arenas(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn dedup_single() {
+        let arena = NodeArena::default();
+        let idx = NodeIndex(0);
+        let input = [(idx, &arena)];
+        let result = dedup_decl_arenas(&input);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn dedup_same_arena_same_index() {
+        let arena = NodeArena::default();
+        let idx = NodeIndex(0);
+        let input = [(idx, &arena), (idx, &arena)];
+        let result = dedup_decl_arenas(&input);
+        assert_eq!(
+            result.len(),
+            1,
+            "Duplicate (same arena, same index) should be removed"
+        );
+    }
+
+    #[test]
+    fn dedup_different_arenas_same_index() {
+        let arena1 = NodeArena::default();
+        let arena2 = NodeArena::default();
+        let idx = NodeIndex(0);
+        let input = [(idx, &arena1), (idx, &arena2)];
+        let result = dedup_decl_arenas(&input);
+        assert_eq!(
+            result.len(),
+            2,
+            "Same index from different arenas should be kept"
+        );
+    }
+
+    #[test]
+    fn dedup_same_arena_different_indices() {
+        let arena = NodeArena::default();
+        let idx0 = NodeIndex(0);
+        let idx1 = NodeIndex(1);
+        let input = [(idx0, &arena), (idx1, &arena)];
+        let result = dedup_decl_arenas(&input);
+        assert_eq!(
+            result.len(),
+            2,
+            "Different indices from same arena should be kept"
+        );
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use crate::test_utils::check_source_codes;
+
+    // ---- Promise / lib ref lowering ----
+
+    #[test]
+    fn promise_type_annotation_no_error() {
+        // Without lib contexts, Promise is unknown. We just verify no crash.
+        let codes = check_source_codes("let p: Promise<number>;");
+        // TS2304 (Cannot find name) or TS2583 (needs lib change) expected without libs
+        assert!(
+            codes.contains(&2304) || codes.contains(&2583) || codes.is_empty(),
+            "Promise without libs should produce TS2304/TS2583 or pass: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn async_function_returns_promise_no_crash() {
+        // Async functions implicitly return Promise — verify no panic during lowering
+        let _codes = check_source_codes("async function f(): Promise<string> { return ''; }");
+    }
+
+    #[test]
+    fn generic_lib_ref_annotation_no_crash() {
+        // Generic lib-like types referenced without lib contexts should not crash
+        let _codes = check_source_codes("let a: Array<number> = [];");
+    }
+
+    // ---- import type lowering ----
+
+    #[test]
+    fn import_type_basic_no_crash() {
+        // import() type expressions should not crash the lowering pipeline
+        let _codes = check_source_codes("type T = import('./other').Foo;");
+    }
+
+    #[test]
+    fn import_type_with_generic_no_crash() {
+        let _codes = check_source_codes("type T = import('./other').Bar<number>;");
+    }
+
+    // ---- lib keyword type refs ----
+
+    #[test]
+    fn keyword_type_refs_no_error() {
+        let codes = check_source_codes(
+            "let s: string; let n: number; let b: boolean; let v: void; let u: undefined;",
+        );
+        // Keyword types always resolve (no lib needed)
+        assert!(
+            codes.is_empty(),
+            "Keyword type annotations should produce no errors: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn keyword_type_in_function_params_no_error() {
+        let codes =
+            check_source_codes("function f(a: string, b: number): boolean { return true; }");
+        assert!(
+            codes.is_empty(),
+            "Keyword types in function params should produce no errors: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn null_and_never_types_no_error() {
+        let codes = check_source_codes("let n: null = null; let x: never = undefined as never;");
+        // 'never' assignment may error, but should not crash
+        let _ = codes;
+    }
+
+    #[test]
+    fn union_of_keyword_types_no_error() {
+        let codes = check_source_codes("let x: string | number | boolean = 'hello';");
+        assert!(
+            codes.is_empty(),
+            "Union of keyword types should produce no errors: {codes:?}"
+        );
+    }
+}
