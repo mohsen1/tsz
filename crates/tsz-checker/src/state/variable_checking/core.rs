@@ -1255,7 +1255,7 @@ impl<'a> CheckerState<'a> {
 
             if !self.ctx.compiler_options.sound_mode {
                 final_type =
-                    tsz_solver::relations::freshness::widen_freshness(self.ctx.types, final_type);
+                    crate::query_boundaries::common::widen_freshness(self.ctx.types, final_type);
             }
             self.pop_symbol_dependency();
 

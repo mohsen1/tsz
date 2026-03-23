@@ -1463,7 +1463,7 @@ impl<'a> CheckerState<'a> {
             // already performed. Re-apply freshness stripping to prevent "Zombie Freshness"
             // where excess property checks fire on non-literal variable references.
             if !self.ctx.compiler_options.sound_mode {
-                use tsz_solver::relations::freshness::{is_fresh_object_type, widen_freshness};
+                use crate::query_boundaries::common::{is_fresh_object_type, widen_freshness};
                 if is_fresh_object_type(self.ctx.types, narrowed) {
                     narrowed = widen_freshness(self.ctx.types, narrowed);
                 }
