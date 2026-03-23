@@ -3723,3 +3723,46 @@ fn test_no_direct_application_evaluator_outside_query_boundaries() {
         violations.join("\n")
     );
 }
+
+/// Guard: context/def_mapping.rs and context/speculation.rs must not cross-reference
+/// each other. def_mapping owns SymbolId<->DefId identity mapping, speculation owns
+/// checker state transaction boundaries. Mixing these concerns would violate the
+/// clean context module separation (BOUNDARIES.md §4 Identity Boundary).
+#[test]
+fn test_def_mapping_and_speculation_do_not_cross_reference() {
+    let def_mapping_src = fs::read_to_string("src/context/def_mapping.rs")
+        .expect("failed to read src/context/def_mapping.rs");
+    let speculation_src = fs::read_to_string("src/context/speculation.rs")
+        .expect("failed to read src/context/speculation.rs");
+
+    // def_mapping must not reference speculation types or functions
+    assert!(
+        !def_mapping_src.contains("DiagnosticSnapshot")
+            && !def_mapping_src.contains("FullSnapshot")
+            && !def_mapping_src.contains("ReturnTypeSnapshot")
+            && !def_mapping_src.contains("rollback_")
+            && !def_mapping_src.contains("snapshot_"),
+        "def_mapping.rs must not reference speculation types or functions — \
+         keep identity mapping separate from transaction boundaries"
+    );
+
+    // speculation must not reference def_mapping types or functions
+    assert!(
+        !speculation_src.contains("get_or_create_def_id")
+            && !speculation_src.contains("def_mapping")
+            && !speculation_src.contains("DefinitionStore")
+            && !speculation_src.contains("DefinitionInfo"),
+        "speculation.rs must not reference def_mapping types or functions — \
+         keep transaction boundaries separate from identity mapping"
+    );
+
+    // Neither should perform type computation
+    assert!(
+        !def_mapping_src.contains("is_subtype_of") && !def_mapping_src.contains("is_assignable"),
+        "def_mapping.rs must not perform type computation — it is pure identity mapping"
+    );
+    assert!(
+        !speculation_src.contains("is_subtype_of") && !speculation_src.contains("is_assignable"),
+        "speculation.rs must not perform type computation — it is pure state management"
+    );
+}
