@@ -219,6 +219,25 @@ impl<'a> CheckerContext<'a> {
         self.get_lib_def_id(canonical_sym)
     }
 
+    /// Cache type parameters for a canonical lib symbol (without body registration).
+    ///
+    /// Combines [`get_canonical_lib_def_id`] + [`insert_def_type_params`] into a
+    /// single call.  Used in `resolve_lib_type_with_params` where the type body
+    /// is still being accumulated across multiple lib contexts and should not be
+    /// registered in the type environments yet.
+    ///
+    /// Returns the `DefId` for subsequent use.
+    pub fn cache_canonical_lib_type_params(
+        &self,
+        name: &str,
+        per_lib_sym_id: SymbolId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) -> DefId {
+        let def_id = self.get_canonical_lib_def_id(name, per_lib_sym_id);
+        self.insert_def_type_params(def_id, params);
+        def_id
+    }
+
     /// Register a lib type's DefId, type parameters, and body in one step.
     ///
     /// Combines `get_lib_def_id` + `insert_def_type_params` +
