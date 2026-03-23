@@ -1006,6 +1006,11 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2394: Check overload compatibility for constructors with a body.
+        if ctor.body.is_some() {
+            self.check_overload_compatibility(member_idx);
+        }
+
         // Check for parameter properties in constructor overload signatures (error 2369)
         // Parameter properties are only allowed in constructor implementations (with body).
         // This applies to both regular constructors and ambient (declare class) constructors.
