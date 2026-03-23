@@ -342,6 +342,29 @@ impl<'a> InlayHintsProvider<'a> {
             return true;
         }
 
+        // Skip for object literals — the properties make the structure clear
+        if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return true;
+        }
+
+        // Skip for arrow functions — the parameter structure is visible
+        if arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return true;
+        }
+
+        // Skip if it's a property access whose property name matches the param
+        // e.g., user.name for param "name"
+        if arg_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.arena.get_access_expr(arg_node)
+                && let Some(prop_name) = self.arena.get_identifier_text(access.name_or_argument)
+                && prop_name == param_name
+            {
+                return true;
+            }
+        }
+
         false
     }
 
