@@ -2409,7 +2409,7 @@ impl<'a> TypePrinter<'a> {
             && callable.number_index.is_none()
     }
 
-    /// Check if a type is a function-like (FunctionShape or single-call-sig Callable)
+    /// Check if a type is a function-like (`FunctionShape` or single-call-sig `Callable`)
     /// whose return type is a conditional type. Used to decide whether the type needs
     /// parentheses in the extends position of a conditional type.
     fn function_like_has_conditional_return(&self, type_id: TypeId) -> bool {
