@@ -127,8 +127,13 @@ impl<'a> CheckerState<'a> {
             class_info.in_static_property_initializer = true;
         }
 
+        // When useDefineForClassFields is true (target >= ES2022), property
+        // initializers run in the class body scope, NOT the constructor scope.
+        // Constructor parameters are not visible, so we skip TS2301 checks
+        // and let normal name resolution handle it (producing TS2304 if needed).
         if !is_static
             && prop.initializer.is_some()
+            && !self.ctx.compiler_options.target.supports_es2022()
             && let Some(member_name) = self.get_property_name(prop.name)
         {
             self.check_constructor_param_capture_in_instance_initializer(
