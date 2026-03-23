@@ -42,7 +42,7 @@ while IFS= read -r file; do
         */tests/*) continue ;;
     esac
 
-    loc=$(grep -cv '^\s*$\|^\s*//' "$file" 2>/dev/null || echo 0)
+    loc=$(grep -cvE '^\s*$|^\s*//' "$file" 2>/dev/null; true)
     if [ "$loc" -gt 2000 ]; then
         loc_violations=$((loc_violations + 1))
         echo "  LOC: ${file#$REPO_ROOT/} ($loc lines)"
@@ -74,11 +74,24 @@ grep -rn 'TODO\|FIXME\|HACK' "$CHECKER_SRC" --include='*.rs' 2>/dev/null | grep 
 code_smells=$(wc -l < "$smells_file" | tr -d ' ')
 rm -f "$smells_file"
 
-# 5. Cross-layer violations
-binder_solver=$(count_grep -rl 'tsz_solver' "$BINDER_SRC" --include='*.rs' || echo 0)
-emitter_checker=$(count_grep -rl 'tsz_checker' "$EMITTER_SRC" --include='*.rs' || echo 0)
-scanner_downstream=$(count_grep -rEl 'tsz_(parser|binder|checker|solver|emitter)' "$SCANNER_SRC" --include='*.rs' || echo 0)
-parser_downstream=$(count_grep -rEl 'tsz_(binder|checker|solver|emitter)' "$PARSER_SRC" --include='*.rs' || echo 0)
+# 5. Cross-layer violations (exclude comment-only references: lines starting with // or ///)
+count_non_comment_grep() {
+    local pattern="$1"
+    local dir="$2"
+    # Find files containing the pattern on non-comment lines
+    local count=0
+    while IFS= read -r file; do
+        # Check if the pattern appears on any non-comment line
+        if grep -v '^\s*//' "$file" 2>/dev/null | grep -q "$pattern"; then
+            count=$((count + 1))
+        fi
+    done < <(grep -rl "$pattern" "$dir" --include='*.rs' 2>/dev/null || true)
+    echo "$count"
+}
+binder_solver=$(count_non_comment_grep 'tsz_solver' "$BINDER_SRC")
+emitter_checker=$(count_non_comment_grep 'tsz_checker' "$EMITTER_SRC")
+scanner_downstream=$(count_non_comment_grep 'tsz_\(parser\|binder\|checker\|solver\|emitter\)' "$SCANNER_SRC")
+parser_downstream=$(count_non_comment_grep 'tsz_\(binder\|checker\|solver\|emitter\)' "$PARSER_SRC")
 
 cross_layer=$((binder_solver + emitter_checker + scanner_downstream + parser_downstream))
 
