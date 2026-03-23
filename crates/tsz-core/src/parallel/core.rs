@@ -1726,6 +1726,7 @@ pub fn pre_populate_definition_store(
             is_abstract: entry.is_abstract,
             is_const: entry.is_const,
             is_exported: entry.is_exported,
+            is_global_augmentation: entry.is_global_augmentation,
         };
 
         let def_id = store.register(info);
