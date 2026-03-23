@@ -1295,7 +1295,7 @@ impl ParserState {
         }
 
         let type_ref = self.parse_heritage_type_reference();
-        let type_refs = vec![type_ref];
+        let mut type_refs = vec![type_ref];
 
         while self.is_token(SyntaxKind::CommaToken) {
             let comma_pos = self.token_pos();
@@ -1318,7 +1318,8 @@ impl ParserState {
                 "Classes can only extend a single class.",
                 diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
             );
-            let _ = self.parse_heritage_type_reference();
+            let extra_ref = self.parse_heritage_type_reference();
+            type_refs.push(extra_ref);
         }
 
         let end_pos = self.token_end();
