@@ -19,6 +19,7 @@
 //! ```
 
 pub(crate) mod assignment;
+mod assignment_fallback;
 pub(crate) mod condition_narrowing;
 mod core;
 pub(crate) mod narrowing;
