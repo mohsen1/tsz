@@ -465,14 +465,6 @@ pub(crate) struct RelationOutcome {
     pub property_classification: Option<super::relation_types::PropertyClassification>,
 }
 
-impl RelationOutcome {
-    /// Quick check: the relation holds or should be treated as acceptable
-    /// (weak-union violations are suppressed in favor of excess-property errors).
-    pub fn is_ok_or_weak_union(&self) -> bool {
-        self.related || self.weak_union_violation
-    }
-}
-
 /// Execute a `RelationRequest` through the canonical boundary.
 ///
 /// This is the single authoritative entry point for relation queries that
