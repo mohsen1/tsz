@@ -1,6 +1,8 @@
 # Roadmap to 100% Conformance
 
-**Current: 87.4% (10,991 / 12,581) — 1,590 tests failing**
+**Current: 88.6% (11,143 / 12,581) — 1,438 tests failing**
+
+> Last updated: March 2026. Phase 1 is largely complete.
 
 ## Failure Breakdown
 
@@ -27,10 +29,12 @@ and over-reporting — indicating structural accuracy issues, not simply missing
 
 ---
 
-## Phase 1: False Positive Elimination (~+120 tests → ~88.4%)
+## Phase 1: False Positive Elimination (~+120 tests → ~88.4%) — MOSTLY COMPLETE
 
 **Target: Remove false emissions where tsc expects 0 errors but we emit errors.**
-Every fix is a net gain with zero regression risk.
+Every fix is a net gain with zero regression risk. Most false positives have been addressed
+through fixes to Promise type preservation, ambient module resolution, private name access,
+destructuring assignment flow narrowing, and union call parameter handling.
 
 | Fix | Tests | Module | Difficulty |
 |-----|-------|--------|-----------|
