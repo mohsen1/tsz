@@ -3458,6 +3458,31 @@ fn rename_type_alias() {
 }
 
 #[test]
+fn rename_function_with_calls() {
+    let mut t = FourslashTest::new(
+        "
+        function /*r*/greet(name: string) { return 'Hello ' + name; }
+        greet('Alice');
+        greet('Bob');
+    ",
+    );
+    t.rename("r", "sayHello")
+        .expect_success()
+        .expect_total_edits(3);
+}
+
+#[test]
+fn rename_class_across_type_and_value() {
+    let mut t = FourslashTest::new(
+        "
+        class /*r*/Foo { x = 1; }
+        const f: Foo = new Foo();
+    ",
+    );
+    t.rename("r", "Bar").expect_success().expect_total_edits(3);
+}
+
+#[test]
 #[ignore = "requires destructuring pattern rename support"]
 fn rename_destructured() {
     let mut t = FourslashTest::new(
