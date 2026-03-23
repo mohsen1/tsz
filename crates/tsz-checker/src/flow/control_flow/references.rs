@@ -8,12 +8,12 @@
 //! - Numeric parsing (`parse_numeric_literal_value`, `parse_radix_digits`, `bigint_base_to_decimal`)
 //! - Symbol resolution (`reference_symbol`, `resolve_namespace_member`, `resolve_alias_symbol`)
 
+use crate::query_boundaries::flow_analysis::{LiteralValueKind, classify_for_literal_value};
 use std::borrow::Cow;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::type_queries::{LiteralValueKind, classify_for_literal_value};
 
 use super::{FlowAnalyzer, PropertyKey};
 

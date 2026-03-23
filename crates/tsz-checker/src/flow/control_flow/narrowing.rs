@@ -14,8 +14,8 @@ use tsz_solver::{GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePr
 
 use super::{FlowAnalyzer, PredicateSignature};
 use crate::query_boundaries::flow_analysis::{
-    PredicateSignatureKind, classify_for_predicate_signature, is_narrowing_literal,
-    stringify_literal_type,
+    self as flow_query, PredicateSignatureKind, classify_for_predicate_signature,
+    is_narrowing_literal, stringify_literal_type,
 };
 
 impl<'a> FlowAnalyzer<'a> {
@@ -250,25 +250,22 @@ impl<'a> FlowAnalyzer<'a> {
         // Resolve Lazy(DefId) types before classification — type aliases
         // for callback types (e.g., JSDoc @callback) are stored as Lazy(DefId)
         // and must be resolved to their underlying function type first.
-        let resolved_type = if let Some(def_id) =
-            tsz_solver::type_queries::get_lazy_def_id(self.interner, callee_type)
-        {
-            if let Some(ref env) = self.type_environment {
-                env.borrow().get_def(def_id).unwrap_or(callee_type)
+        let resolved_type =
+            if let Some(def_id) = flow_query::get_lazy_def_id(self.interner, callee_type) {
+                if let Some(ref env) = self.type_environment {
+                    env.borrow().get_def(def_id).unwrap_or(callee_type)
+                } else {
+                    callee_type
+                }
             } else {
                 callee_type
-            }
-        } else {
-            callee_type
-        };
+            };
         match classify_for_predicate_signature(self.interner, resolved_type) {
             PredicateSignatureKind::Function(_) | PredicateSignatureKind::Callable(_) => {
                 // Delegate to solver query for Function and Callable types.
                 // For Callable, this picks the first signature with a predicate (heuristic).
-                let extracted = tsz_solver::type_queries::flow::extract_predicate_signature(
-                    self.interner,
-                    resolved_type,
-                )?;
+                let extracted =
+                    flow_query::extract_predicate_signature(self.interner, resolved_type)?;
                 Some(PredicateSignature {
                     predicate: extracted.predicate,
                     params: extracted.params,
@@ -400,10 +397,9 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         // Extract type params from the predicate signature via solver query
-        let type_params =
-            tsz_solver::type_queries::flow::extract_predicate_signature(self.interner, callee_type)
-                .map(|sig| sig.type_params)
-                .unwrap_or_default();
+        let type_params = flow_query::extract_predicate_signature(self.interner, callee_type)
+            .map(|sig| sig.type_params)
+            .unwrap_or_default();
 
         if type_params.is_empty() {
             return predicate.clone();
@@ -433,8 +429,7 @@ impl<'a> FlowAnalyzer<'a> {
         let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
         for tp in &type_params {
             for (i, param) in params.iter().enumerate() {
-                if let Some(info) =
-                    tsz_solver::type_queries::get_type_parameter_info(self.interner, param.type_id)
+                if let Some(info) = flow_query::type_param_info(self.interner, param.type_id)
                     && info.name == tp.name
                 {
                     if let Some(&arg_idx) = args.get(i)
@@ -1458,13 +1453,8 @@ fn callable_returns_only_false_or_never(
     interner: &dyn tsz_solver::QueryDatabase,
     callable_type: TypeId,
 ) -> bool {
-    match tsz_solver::type_queries::get_return_type(interner, callable_type) {
-        Some(rt) => is_only_false_or_never(interner, rt),
+    match flow_query::function_return_type(interner, callable_type) {
+        Some(rt) => flow_query::is_only_false_or_never(interner, rt),
         None => false,
     }
-}
-
-/// Returns true if the type is exclusively composed of `false` literals and/or `never`.
-fn is_only_false_or_never(interner: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_only_false_or_never(interner, type_id)
 }

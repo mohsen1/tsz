@@ -2,6 +2,7 @@
 //! type queries, and contextual literal type analysis.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use rustc_hash::FxHashSet;
@@ -1589,8 +1590,7 @@ impl<'a> CheckerState<'a> {
         trace!(
             sym_id = sym_id.0,
             placeholder = placeholder.0,
-            is_lazy =
-                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, placeholder).is_some(),
+            is_lazy = lazy_def_id(self.ctx.types, placeholder).is_some(),
             file = self.ctx.file_name.as_str(),
             "get_type_of_symbol: inserted placeholder"
         );

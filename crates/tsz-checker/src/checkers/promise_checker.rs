@@ -313,7 +313,6 @@ impl<'a> CheckerState<'a> {
     /// 2. Getting its call signature
     /// 3. Extracting the first param of the `onfulfilled` callback (which is T)
     fn extract_awaited_type_from_thenable(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::common::call_signatures_for_type as get_call_signatures;
         use tsz_solver::operations::property::PropertyAccessEvaluator;
 
         let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
@@ -322,7 +321,7 @@ impl<'a> CheckerState<'a> {
             .success_type()?;
 
         // Get call signatures of `then`
-        let sigs = get_call_signatures(self.ctx.types, then_type)?;
+        let sigs = query::call_signatures_for_type(self.ctx.types, then_type)?;
         let first_sig = sigs.first()?;
 
         // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
@@ -335,29 +334,23 @@ impl<'a> CheckerState<'a> {
     /// Extract the first parameter type from a callable/function type,
     /// handling unions of `(fn | null | undefined)`.
     fn extract_first_param_from_callback(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::common::{
-            call_signatures_for_type as get_call_signatures,
-            function_shape_for_type as get_function_shape,
-        };
-
         // Direct Callable
-        if let Some(sigs) = get_call_signatures(self.ctx.types, type_id) {
+        if let Some(sigs) = query::call_signatures_for_type(self.ctx.types, type_id) {
             return sigs.first()?.params.first().map(|p| p.type_id);
         }
         // Direct Function
-        if let Some(shape) = get_function_shape(self.ctx.types, type_id) {
+        if let Some(shape) = query::function_shape_for_type(self.ctx.types, type_id) {
             return shape.params.first().map(|p| p.type_id);
         }
         // Union: find first callable/function member
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
             for member in &members {
-                if let Some(sigs) = get_call_signatures(self.ctx.types, *member)
+                if let Some(sigs) = query::call_signatures_for_type(self.ctx.types, *member)
                     && let Some(first) = sigs.first()
                 {
                     return first.params.first().map(|p| p.type_id);
                 }
-                if let Some(shape) = get_function_shape(self.ctx.types, *member) {
+                if let Some(shape) = query::function_shape_for_type(self.ctx.types, *member) {
                     return shape.params.first().map(|p| p.type_id);
                 }
             }
@@ -951,7 +944,7 @@ impl<'a> CheckerState<'a> {
     /// without recursively evaluating the result. This preserves Application types like
     /// `Generator<Y,R,N>` in their wrapper form rather than expanding them to structural objects.
     fn shallow_expand_type_alias(&mut self, type_id: TypeId) -> Option<TypeId> {
-        let (base, args) = tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)?;
+        let (base, args) = query::application_info(self.ctx.types, type_id)?;
         if args.is_empty() {
             return None;
         }
@@ -1224,9 +1217,7 @@ impl<'a> CheckerState<'a> {
             return unwrapped;
         }
         // For unions, unwrap each Promise member individually
-        if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
-        {
+        if let Some(members) = query::union_members(self.ctx.types, return_type) {
             let mut new_members: Vec<TypeId> = Vec::new();
             for member in &members {
                 if let Some(unwrapped) = self.unwrap_promise_type(*member) {

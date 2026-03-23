@@ -713,3 +713,82 @@ pub(crate) fn find_matching_property(
 ) -> Option<&tsz_solver::PropertyInfo> {
     tsz_solver::PropertyInfo::find_in_slice(properties, name)
 }
+
+// ── This-type query ──
+
+pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_this_type(db, type_id)
+}
+
+// ── Conditional type query ──
+
+pub(crate) fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_conditional_type(db, type_id)
+}
+
+// ── Type parameter constraint query ──
+
+pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
+}
+
+// ── Mapped type query ──
+
+pub(crate) fn mapped_type_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::MappedType>> {
+    tsz_solver::type_queries::get_mapped_type(db, type_id)
+}
+
+// ── Index access types query ──
+
+pub(crate) fn index_access_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, TypeId)> {
+    tsz_solver::type_queries::get_index_access_types(db, type_id)
+}
+
+// ── String literal value extraction ──
+
+pub(crate) fn string_literal_value(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_common::interner::Atom> {
+    tsz_solver::type_queries::get_string_literal_value(db, type_id)
+}
+
+// ── Number literal value extraction ──
+
+pub(crate) fn number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<f64> {
+    tsz_solver::type_queries::get_number_literal_value(db, type_id)
+}
+
+// ── Same base literal kind comparison ──
+
+pub(crate) fn are_same_base_literal_kind(db: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
+    tsz_solver::type_queries::are_same_base_literal_kind(db, a, b)
+}
+
+// ── Contextual literal classification ──
+
+pub(crate) use tsz_solver::type_queries::ContextualLiteralAllowKind;
+
+pub(crate) fn classify_for_contextual_literal(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> ContextualLiteralAllowKind {
+    tsz_solver::type_queries::classify_for_contextual_literal(db, type_id)
+}
+
+// ── Literal value classification ──
+
+pub(crate) use tsz_solver::type_queries::LiteralValueKind;
+
+pub(crate) fn classify_for_literal_value(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> LiteralValueKind {
+    tsz_solver::type_queries::classify_for_literal_value(db, type_id)
+}

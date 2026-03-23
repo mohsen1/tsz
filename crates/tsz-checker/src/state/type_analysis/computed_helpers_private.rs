@@ -3,6 +3,7 @@
 //! Handles type resolution and diagnostics for private identifier (`#field`)
 //! property accesses on class instances and static sides.
 
+use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -499,8 +500,7 @@ impl<'a> CheckerState<'a> {
         });
         let object_type_for_check_pre_resolution = object_type_for_check;
         let object_type_for_check = if member_is_static
-            && let Some(def_id) =
-                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, object_type_for_check)
+            && let Some(def_id) = lazy_def_id(self.ctx.types, object_type_for_check)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.flags & tsz_binder::symbol_flags::CLASS != 0
@@ -529,13 +529,10 @@ impl<'a> CheckerState<'a> {
         // resolved to the constructor type. In that case, the access should fail.
         let lazy_promoted_instance = member_is_static
             && object_type_for_check != object_type_for_check_pre_resolution
-            && tsz_solver::type_queries::get_lazy_def_id(
-                self.ctx.types,
-                object_type_for_check_pre_resolution,
-            )
-            .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
-            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-            .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::CLASS != 0);
+            && lazy_def_id(self.ctx.types, object_type_for_check_pre_resolution)
+                .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::CLASS != 0);
         let types_compatible = if member_is_static && lazy_promoted_instance {
             // The object type was a Lazy instance ref that got promoted to constructor.
             // Check if the expression actually refers to the class (e.g., `A.#field`),

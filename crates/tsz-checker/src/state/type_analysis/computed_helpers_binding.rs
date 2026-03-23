@@ -1,5 +1,5 @@
 use crate::context::TypingRequest;
-use crate::query_boundaries::common::object_shape_for_type;
+use crate::query_boundaries::common::{object_shape_for_type, union_members};
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -270,9 +270,7 @@ impl<'a> CheckerState<'a> {
             // For union types (e.g., { kind: 'A', payload: number } | { kind: 'B', payload: string }),
             // collect the property type from each union member and return their union.
             // This enables correlated narrowing for dependent destructured variables.
-            if let Some(members) =
-                tsz_solver::type_queries::get_union_members(self.ctx.types, ann_type)
-            {
+            if let Some(members) = union_members(self.ctx.types, ann_type) {
                 let mut prop_types = Vec::new();
                 for &member in &members {
                     let evaluated = self.evaluate_type_for_assignability(member);

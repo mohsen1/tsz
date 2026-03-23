@@ -1,6 +1,9 @@
 //! Computed symbol type analysis: `compute_type_of_symbol`, contextual literal types,
 //! and private property access checking.
 
+use crate::query_boundaries::common::{
+    array_element_type, contains_infer_types, contains_type_parameters, is_generic_type,
+};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
@@ -10,8 +13,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
-        tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
-            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
+        contains_type_parameters(self.ctx.types, type_id)
+            || contains_infer_types(self.ctx.types, type_id)
     }
 
     /// Compute type of a symbol (internal, not cached).
@@ -1120,8 +1123,7 @@ impl<'a> CheckerState<'a> {
                         // store deeply-nested Application trees that cause O(2^N)
                         // traversal work in subsequent type operations (inference,
                         // contains_type_parameters, ensure_application_symbols_resolved).
-                        if tsz_solver::type_queries::is_generic_type(self.ctx.types, inferred_type)
-                        {
+                        if is_generic_type(self.ctx.types, inferred_type) {
                             inferred_type = self.evaluate_application_type(inferred_type);
                         }
                         inferred_type = self.augment_callable_type_with_expandos(
@@ -1142,10 +1144,8 @@ impl<'a> CheckerState<'a> {
                                         .is_some_and(|lit| lit.elements.nodes.is_empty())
                             });
                         if init_is_direct_empty_array
-                            && tsz_solver::type_queries::get_array_element_type(
-                                self.ctx.types,
-                                inferred_type,
-                            ) == Some(TypeId::NEVER)
+                            && array_element_type(self.ctx.types, inferred_type)
+                                == Some(TypeId::NEVER)
                         {
                             inferred_type = self.ctx.types.factory().array(TypeId::ANY);
                         }

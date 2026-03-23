@@ -3,7 +3,12 @@
 use crate::call_checker::CallableContext;
 use crate::class_inheritance::ClassInheritanceChecker;
 use crate::query_boundaries::common::{
-    TypeTraversalKind, classify_for_traversal, object_shape_for_type,
+    self as common, ContextualLiteralAllowKind, TypeTraversalKind, are_same_base_literal_kind,
+    classify_for_contextual_literal, classify_for_traversal, contains_type_parameters,
+    index_access_types, intersection_members, is_conditional_type, is_index_access_type,
+    is_keyof_type, is_this_type, lazy_def_id, mapped_type_info, number_literal_value,
+    object_shape_for_type, string_literal_value, type_application, type_parameter_constraint,
+    union_members,
 };
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -14,7 +19,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::keyof_inner_type;
-use tsz_solver::type_queries::{ContextualLiteralAllowKind, classify_for_contextual_literal};
 
 impl<'a> CheckerState<'a> {
     fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {
@@ -33,8 +37,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn contextual_type_for_expression(&mut self, type_id: TypeId) -> TypeId {
         // Evaluate union members individually without subtype reduction to
         // preserve literal types (e.g., avoid `string | 'done'` → `string`).
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = union_members(self.ctx.types, type_id) {
             let mut evaluated_members = Vec::with_capacity(members.len());
             let mut any_changed = false;
             for &member in &members {
@@ -74,8 +77,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(constraint) =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)
+        if let Some(constraint) = type_parameter_constraint(self.ctx.types, type_id)
             && constraint != type_id
             && constraint != TypeId::UNKNOWN
             && constraint != TypeId::ERROR
@@ -146,18 +148,16 @@ impl<'a> CheckerState<'a> {
             arg_node.kind,
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-        ) && (tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+        ) && (contains_type_parameters(self.ctx.types, type_id)
             || crate::computation::call_inference::should_preserve_contextual_application_shape(
                 self.ctx.types,
                 type_id,
             ));
-        let needs_resolved_callable_context =
-            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id).is_some()
-                || tsz_solver::type_queries::get_index_access_types(self.ctx.types, type_id)
-                    .is_some()
-                || tsz_solver::type_queries::is_conditional_type(self.ctx.types, type_id)
-                || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
-                    .is_some();
+        let needs_resolved_callable_context = common::type_param_info(self.ctx.types, type_id)
+            .is_some()
+            || index_access_types(self.ctx.types, type_id).is_some()
+            || is_conditional_type(self.ctx.types, type_id)
+            || type_application(self.ctx.types, type_id).is_some();
 
         if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             && arg_index.is_some()
@@ -210,11 +210,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         // tsc: literal contextual type allows ALL literals of the same base type.
-        if tsz_solver::type_queries::are_same_base_literal_kind(
-            self.ctx.types,
-            ctx_type,
-            literal_type,
-        ) {
+        if are_same_base_literal_kind(self.ctx.types, ctx_type, literal_type) {
             return true;
         }
         // tsz's BOOLEAN is intrinsic (not true|false union), so explicit check needed.
@@ -226,7 +222,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Resolve Lazy(DefId) types before classification.
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ctx_type) {
+        if let Some(def_id) = lazy_def_id(self.ctx.types, ctx_type) {
             // Try type_env first
             let resolved = {
                 let env = self.ctx.type_env.borrow();
@@ -252,9 +248,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Evaluate KeyOf/IndexAccess to concrete form before classification.
-        if tsz_solver::type_queries::is_keyof_type(self.ctx.types, ctx_type)
-            || tsz_solver::type_queries::is_index_access_type(self.ctx.types, ctx_type)
-            || tsz_solver::type_queries::is_conditional_type(self.ctx.types, ctx_type)
+        if is_keyof_type(self.ctx.types, ctx_type)
+            || is_index_access_type(self.ctx.types, ctx_type)
+            || is_conditional_type(self.ctx.types, ctx_type)
         {
             let evaluated = self.evaluate_type_with_env(ctx_type);
             if evaluated != ctx_type && evaluated != TypeId::ERROR {
@@ -263,9 +259,8 @@ impl<'a> CheckerState<'a> {
         }
         // Generic `keyof` contexts preserve literal arguments.
         if let Some(keyof_inner) = keyof_inner_type(self.ctx.types, ctx_type)
-            && (tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, keyof_inner)
-                .is_some()
-                || tsz_solver::type_queries::is_this_type(self.ctx.types, keyof_inner))
+            && (common::type_param_info(self.ctx.types, keyof_inner).is_some()
+                || is_this_type(self.ctx.types, keyof_inner))
         {
             return true;
         }
@@ -352,8 +347,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         // Check if resolved_type is Lazy(DefId) pointing to a type alias in the
         // current resolution chain.
-        if let Some(def_id) =
-            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
+        if let Some(def_id) = lazy_def_id(self.ctx.types, resolved_type)
             && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
         {
             // Check if the target is in the resolution set (detecting cycles).
@@ -398,9 +392,7 @@ impl<'a> CheckerState<'a> {
         // For mapped types, check if the constraint references the alias being
         // defined (via keyof or directly).  This catches non-generic self-referencing
         // mapped type aliases like `type Recurse = { [K in keyof Recurse]: Recurse[K] }`.
-        if let Some(mapped_info) =
-            tsz_solver::type_queries::get_mapped_type(self.ctx.types, resolved_type)
-        {
+        if let Some(mapped_info) = mapped_type_info(self.ctx.types, resolved_type) {
             let constraint = mapped_info.constraint;
             // Check constraint directly and also its keyof inner type
             let refs_to_check: Vec<TypeId> = {
@@ -411,8 +403,7 @@ impl<'a> CheckerState<'a> {
                 v
             };
             for ref_type in refs_to_check {
-                if let Some(def_id) =
-                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ref_type)
+                if let Some(def_id) = lazy_def_id(self.ctx.types, ref_type)
                     && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
                     && self.ctx.symbol_resolution_set.contains(&target_sym_id)
                     && self
@@ -461,9 +452,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some((object_type, index_type)) =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, resolved_type)
-        {
+        if let Some((object_type, index_type)) = index_access_types(self.ctx.types, resolved_type) {
             if self.is_direct_circular_reference(sym_id, object_type, type_node, true)
                 || self.is_direct_circular_reference(sym_id, index_type, type_node, true)
             {
@@ -511,9 +500,7 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
-                } else if let Some(key) =
-                    tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
-                {
+                } else if let Some(key) = string_literal_value(self.ctx.types, index_type) {
                     let key_text = self.ctx.types.resolve_atom(key);
                     if let Some(prop) = shape
                         .properties
@@ -543,11 +530,7 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
-                } else if tsz_solver::type_queries::get_number_literal_value(
-                    self.ctx.types,
-                    index_type,
-                )
-                .is_some()
+                } else if number_literal_value(self.ctx.types, index_type).is_some()
                     && let Some(index_sig) = &shape.number_index
                     && self.is_direct_circular_reference(
                         sym_id,
@@ -563,18 +546,14 @@ impl<'a> CheckerState<'a> {
 
         // Also check union/intersection members for circular references.
         // Per TS spec: "A union type directly depends on each of the constituent types."
-        if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
-        {
+        if let Some(members) = union_members(self.ctx.types, resolved_type) {
             for &member in &members {
                 if self.is_direct_circular_reference(sym_id, member, type_node, true) {
                     return true;
                 }
             }
         }
-        if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_type)
-        {
+        if let Some(members) = intersection_members(self.ctx.types, resolved_type) {
             for &member in &members {
                 if self.is_direct_circular_reference(sym_id, member, type_node, true) {
                     return true;
@@ -701,8 +680,7 @@ impl<'a> CheckerState<'a> {
         visited.insert(own_def_id);
 
         loop {
-            let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, current)
-            else {
+            let Some(def_id) = lazy_def_id(self.ctx.types, current) else {
                 return false;
             };
 
@@ -773,7 +751,7 @@ impl<'a> CheckerState<'a> {
 
             // Only check if the resolved type is a Lazy reference (unresolved
             // cross-file placeholder).
-            if tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved).is_none() {
+            if lazy_def_id(self.ctx.types, resolved).is_none() {
                 continue;
             }
 
@@ -895,12 +873,12 @@ impl<'a> CheckerState<'a> {
         skip_members: bool,
         guard: &mut tsz_solver::recursion::RecursionGuard<(TypeId, bool)>,
     ) -> bool {
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
             && self.ctx.def_to_symbol_id_with_fallback(def_id) == Some(target_sym)
         {
             return requires_structure;
         }
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
             && self
                 .ctx

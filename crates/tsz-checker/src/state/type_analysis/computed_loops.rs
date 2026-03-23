@@ -1,3 +1,4 @@
+use crate::query_boundaries::common::{is_keyof_type, is_type_parameter_like};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -78,8 +79,8 @@ impl<'a> CheckerState<'a> {
         let keyof_type = self.ctx.types.factory().keyof(non_nullable);
         let keyof_evaluated = self.evaluate_type_with_env(keyof_type);
 
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, keyof_evaluated)
-            || tsz_solver::type_queries::is_keyof_type(self.ctx.types, keyof_evaluated)
+        if is_type_parameter_like(self.ctx.types, keyof_evaluated)
+            || is_keyof_type(self.ctx.types, keyof_evaluated)
         {
             self.ctx
                 .types
