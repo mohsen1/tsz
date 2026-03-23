@@ -592,7 +592,12 @@ impl<'a> CheckerState<'a> {
         ext.parent.is_some().then_some(ext.parent)
     }
 
-    fn normalized_anchor_span(&self, node_idx: NodeIndex, start: u32, length: u32) -> (u32, u32) {
+    pub(crate) fn normalized_anchor_span(
+        &self,
+        node_idx: NodeIndex,
+        start: u32,
+        length: u32,
+    ) -> (u32, u32) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return (start, length);
         };
@@ -603,14 +608,44 @@ impl<'a> CheckerState<'a> {
             return (start, ident.escaped_text.len() as u32);
         }
 
+        // For declarations that always start with a name token (no
+        // modifiers), normalize the diagnostic span to just the leading
+        // identifier.  This matches tsc which anchors on the name, not
+        // the full declaration span.
         if matches!(
             node.kind,
             k if k == syntax_kind_ext::VARIABLE_DECLARATION
                 || k == syntax_kind_ext::PROPERTY_ASSIGNMENT
                 || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                || k == syntax_kind_ext::PROPERTY_SIGNATURE
+                || k == syntax_kind_ext::BINDING_ELEMENT
         ) && let Some(identifier_len) = self.leading_identifier_len(start)
         {
             return (start, identifier_len);
+        }
+
+        // For declarations that may have leading modifiers (private,
+        // readonly, etc.) or keywords (dot-dot-dot), resolve via the
+        // explicit `name` child node so modifiers are excluded from the
+        // diagnostic span.
+        if node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+            && let Some(prop) = self.ctx.arena.get_property_decl(node)
+            && prop.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(prop.name)
+        {
+            let name_start = name_node.pos;
+            let name_len = name_node.end.saturating_sub(name_start);
+            return self.normalized_anchor_span(prop.name, name_start, name_len);
+        }
+
+        if node.kind == syntax_kind_ext::PARAMETER
+            && let Some(param) = self.ctx.arena.get_parameter(node)
+            && param.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(param.name)
+        {
+            let name_start = name_node.pos;
+            let name_len = name_node.end.saturating_sub(name_start);
+            return self.normalized_anchor_span(param.name, name_start, name_len);
         }
 
         (start, length)
