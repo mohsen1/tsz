@@ -67,6 +67,15 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
 
+        // Handle `this` keyword hover early — before symbol query filtering
+        if let Some(node) = self.arena.get(node_idx)
+            && node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+        {
+            if let Some(this_hover) = self.hover_for_this_keyword(node_idx, type_cache) {
+                return Some(this_hover);
+            }
+        }
+
         if !crate::utils::is_symbol_query_node(self.arena, node_idx)
             && (is_comment_context(self.source_text, offset)
                 || should_backtrack_to_previous_symbol(self.source_text, offset))
@@ -509,6 +518,58 @@ impl<'a> HoverProvider<'a> {
         }
 
         None
+    }
+
+    fn hover_for_this_keyword(
+        &self,
+        node_idx: NodeIndex,
+        type_cache: &mut Option<tsz_checker::TypeCache>,
+    ) -> Option<HoverInfo> {
+        let node = self.arena.get(node_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        // Walk up to find the enclosing class declaration
+        let mut current = node_idx;
+        let class_name = loop {
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent = self.arena.get(ext.parent)?;
+            if parent.kind == tsz_parser::syntax_kind_ext::CLASS_DECLARATION
+                || parent.kind == tsz_parser::syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class_data = self.arena.get_class(parent)?;
+                if class_data.name.is_some() {
+                    let name_node = self.arena.get(class_data.name)?;
+                    break self
+                        .arena
+                        .get_identifier(name_node)
+                        .map(|id| id.escaped_text.clone())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "this".to_string());
+                }
+                break "this".to_string();
+            }
+            current = ext.parent;
+        };
+
+        let display_string = format!("this: {class_name}");
+        let start = self.line_map.offset_to_position(node.pos, self.source_text);
+        let end = self.line_map.offset_to_position(node.end, self.source_text);
+        // Drop type_cache to satisfy unused warning
+        let _ = type_cache;
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(Range::new(start, end)),
+            display_string,
+            kind: "keyword".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
+            tags: Vec::new(),
+        })
     }
 
     fn hover_for_class_expression_keyword(&self, node_idx: NodeIndex) -> Option<HoverInfo> {
