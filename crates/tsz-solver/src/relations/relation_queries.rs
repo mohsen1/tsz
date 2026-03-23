@@ -435,14 +435,13 @@ pub fn check_application_variance<R: TypeResolver>(
         return Some(true);
     }
 
-    if !needs_structural_fallback {
-        // Same-base generic application variance failure is itself conclusive.
-        // Letting the checker re-expand structurally here erases the generic
-        // application identity and suppresses legitimate TS2322/TS2345 errors.
-        return Some(false);
-    }
-
-    None
+    // Variance failures are definitive even with structural fallback.
+    // The structural fallback flag means "don't trust True because mapped
+    // modifiers could change the structure". But a False result (type args
+    // are incompatible) is trustworthy: if the type arguments fail the
+    // invariant/covariant/contravariant check, the generic types cannot be
+    // compatible regardless of how modifiers transform the structure.
+    Some(false)
 }
 
 #[cfg(test)]
