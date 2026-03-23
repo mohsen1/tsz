@@ -197,6 +197,7 @@ impl BinderState {
                     &name,
                     idx,
                     0,
+                    Vec::new(), // namespaces are not generic
                     is_exported,
                 );
 

@@ -5938,3 +5938,271 @@ fn cross_file_semantic_def_identity_stable_in_definition_store() {
     assert!(info.heritage_names.contains(&"Renderable".to_string()));
     assert!(info.heritage_names.contains(&"Serializable".to_string()));
 }
+
+// =============================================================================
+// Type parameter name identity through merge/rebind
+// =============================================================================
+
+#[test]
+fn type_param_names_captured_for_all_generic_families() {
+    // Verify that binder captures type parameter names for classes, interfaces,
+    // type aliases, and functions — and that they survive merge into DefinitionStore.
+    let files = vec![(
+        "generics.ts".to_string(),
+        r#"
+            export class Container<T, U> {}
+            export interface Mapper<In, Out> {}
+            export type Pair<A, B> = [A, B];
+            export function identity<X>(x: X): X { return x; }
+            export enum Color { Red, Green, Blue }
+            export namespace Utils {}
+        "#
+        .to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Helper: find semantic def by name and verify type param names
+    let check = |name: &str, expected_names: &[&str]| {
+        let entry = program
+            .semantic_defs
+            .values()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} should be in semantic_defs"));
+        assert_eq!(
+            entry.type_param_count as usize,
+            expected_names.len(),
+            "{name}: type_param_count mismatch"
+        );
+        assert_eq!(
+            entry.type_param_names,
+            expected_names
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            "{name}: type_param_names mismatch"
+        );
+
+        // Verify DefinitionStore also has real names (non-zero Atoms)
+        let sym = program
+            .semantic_defs
+            .iter()
+            .find(|(_, e)| e.name == name)
+            .map(|(s, _)| s)
+            .unwrap();
+        let def_id = program
+            .definition_store
+            .find_def_by_symbol(sym.0)
+            .unwrap_or_else(|| panic!("{name} should have DefId"));
+        let info = program
+            .definition_store
+            .get(def_id)
+            .unwrap_or_else(|| panic!("{name} should have DefinitionInfo"));
+        assert_eq!(
+            info.type_params.len(),
+            expected_names.len(),
+            "{name}: DefinitionInfo type_params count mismatch"
+        );
+        // Generic entries should have real interned names (Atom != 0).
+        for (i, tp) in info.type_params.iter().enumerate() {
+            assert_ne!(
+                tp.name,
+                tsz_common::interner::Atom(0),
+                "{name}: type param {i} should have a real name, not Atom(0)"
+            );
+        }
+    };
+
+    check("Container", &["T", "U"]);
+    check("Mapper", &["In", "Out"]);
+    check("Pair", &["A", "B"]);
+    check("identity", &["X"]);
+    check("Color", &[]);
+    check("Utils", &[]);
+}
+
+#[test]
+fn type_param_names_survive_cross_file_merge() {
+    // When a non-generic interface is first declared in file A and then
+    // augmented with generics in file B, the merged entry should have the
+    // names from file B.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Foo { x: number }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Foo<T, U> { y: T }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let foo_entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("Foo should be in semantic_defs");
+
+    assert_eq!(foo_entry.type_param_count, 2);
+    assert_eq!(
+        foo_entry.type_param_names,
+        vec!["T".to_string(), "U".to_string()]
+    );
+
+    // Verify DefinitionStore entry has proper names
+    let foo_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Foo")
+        .map(|(s, _)| s)
+        .unwrap();
+    let def_id = program
+        .definition_store
+        .find_def_by_symbol(foo_sym.0)
+        .expect("Foo should have DefId");
+    let info = program
+        .definition_store
+        .get(def_id)
+        .expect("Foo DefinitionInfo");
+    assert_eq!(info.type_params.len(), 2);
+}
+
+#[test]
+fn type_param_names_stable_across_rebind() {
+    // Verify that type param names survive the full cycle:
+    // bind → merge → create_binder_from_bound_file → DefinitionStore lookup
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "export class Box<T> { value: T; }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export type Result<Ok, Err> = Ok | Err;".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Record original DefIds
+    let box_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Box")
+        .map(|(s, _)| *s)
+        .expect("Box should exist");
+    let result_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Result")
+        .map(|(s, _)| *s)
+        .expect("Result should exist");
+
+    let box_def = program
+        .definition_store
+        .find_def_by_symbol(box_sym.0)
+        .expect("Box DefId");
+    let result_def = program
+        .definition_store
+        .find_def_by_symbol(result_sym.0)
+        .expect("Result DefId");
+
+    // Reconstruct binders (as check_files_parallel does)
+    let _binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let _binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
+
+    // DefIds must be stable after rebind
+    assert_eq!(
+        program.definition_store.find_def_by_symbol(box_sym.0),
+        Some(box_def),
+        "Box DefId should be stable after rebind"
+    );
+    assert_eq!(
+        program.definition_store.find_def_by_symbol(result_sym.0),
+        Some(result_def),
+        "Result DefId should be stable after rebind"
+    );
+
+    // Type param names should still be in the DefinitionStore
+    let box_info = program.definition_store.get(box_def).unwrap();
+    assert_eq!(
+        box_info.type_params.len(),
+        1,
+        "Box should have 1 type param"
+    );
+
+    let result_info = program.definition_store.get(result_def).unwrap();
+    assert_eq!(
+        result_info.type_params.len(),
+        2,
+        "Result should have 2 type params"
+    );
+}
+
+#[test]
+fn single_file_definition_store_from_binder() {
+    // Verify create_definition_store_from_binder produces a valid store
+    // from a single binder's semantic_defs.
+    use crate::parallel::create_definition_store_from_binder;
+
+    let source = r#"
+        export class MyClass<T> {}
+        export interface MyInterface<A, B> {}
+        export type MyAlias = string;
+        export enum MyEnum { X, Y }
+        export namespace MyNS {}
+        export function myFunc<R>(x: R): R { return x; }
+    "#;
+
+    let parsed = crate::parallel::parse_file_single("test.ts".to_string(), source.to_string());
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(&parsed.arena, parsed.source_file);
+
+    let interner = tsz_solver::TypeInterner::new();
+    let store = create_definition_store_from_binder(&binder, &interner);
+
+    // All 6 top-level declarations should have DefIds
+    let stats = store.statistics();
+    assert!(
+        stats.total_definitions >= 6,
+        "Expected at least 6 definitions, got {}",
+        stats.total_definitions
+    );
+
+    // Verify class has type param name
+    let class_def = store
+        .find_defs_by_name(interner.intern_string("MyClass"))
+        .and_then(|defs| defs.first().copied());
+    assert!(class_def.is_some(), "MyClass should have a DefId");
+    let class_info = store.get(class_def.unwrap()).unwrap();
+    assert_eq!(class_info.type_params.len(), 1);
+    assert_eq!(class_info.kind, tsz_solver::def::DefKind::Class);
+
+    // Verify interface has 2 type params
+    let iface_def = store
+        .find_defs_by_name(interner.intern_string("MyInterface"))
+        .and_then(|defs| defs.first().copied());
+    assert!(iface_def.is_some(), "MyInterface should have a DefId");
+    let iface_info = store.get(iface_def.unwrap()).unwrap();
+    assert_eq!(iface_info.type_params.len(), 2);
+    assert_eq!(iface_info.kind, tsz_solver::def::DefKind::Interface);
+
+    // Verify enum with members
+    let enum_def = store
+        .find_defs_by_name(interner.intern_string("MyEnum"))
+        .and_then(|defs| defs.first().copied());
+    assert!(enum_def.is_some(), "MyEnum should have a DefId");
+    let enum_info = store.get(enum_def.unwrap()).unwrap();
+    assert_eq!(enum_info.kind, tsz_solver::def::DefKind::Enum);
+    assert_eq!(enum_info.enum_members.len(), 2);
+
+    // Verify namespace
+    let ns_def = store
+        .find_defs_by_name(interner.intern_string("MyNS"))
+        .and_then(|defs| defs.first().copied());
+    assert!(ns_def.is_some(), "MyNS should have a DefId");
+    let ns_info = store.get(ns_def.unwrap()).unwrap();
+    assert_eq!(ns_info.kind, tsz_solver::def::DefKind::Namespace);
+}
