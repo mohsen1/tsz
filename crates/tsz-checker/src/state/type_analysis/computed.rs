@@ -881,9 +881,9 @@ impl<'a> CheckerState<'a> {
                 // declarations (e.g. `type T1<in in> = T1`) where syntax errors
                 // take priority over semantic circularity detection.
                 let decl_has_parse_error = self.node_contains_any_parse_error(decl_idx);
-                let circularity_eligible =
-                    flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE) == 0
-                        && !decl_has_parse_error;
+                let circularity_eligible = flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE)
+                    == 0
+                    && !decl_has_parse_error;
                 let is_circular = circularity_eligible
                     && (self.is_direct_circular_reference(
                         sym_id,
