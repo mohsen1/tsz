@@ -740,6 +740,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // tsc increments suggestionCount unconditionally for every name resolution
+        // failure, not just when a suggestion is found. This ensures the cap of 10
+        // counts all resolution attempts, matching tsc's behavior.
+        self.ctx.spelling_suggestions_emitted += 1;
+
         // Fall back to standard error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(

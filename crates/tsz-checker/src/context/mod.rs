@@ -275,7 +275,8 @@ pub struct CheckerContext<'a> {
     /// Tracking the current computed property name node for TS2467
     pub checking_computed_property_name: Option<NodeIndex>,
 
-    /// Count of spelling suggestions (TS2552) emitted to limit output size.
+    /// Count of name resolution attempts (TS2304/TS2552) to limit spelling suggestions.
+    /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
     pub spelling_suggestions_emitted: u32,
 
     // --- Caches ---
