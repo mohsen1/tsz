@@ -901,17 +901,24 @@ impl<'a> CheckerState<'a> {
                     // can detect constraints referencing it.
                     self.ctx.circular_type_aliases.insert(sym_id);
 
-                    let name = escaped_name;
-                    let message = format_message(
-                        diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
-                        &[&name],
-                    );
-                    // Point at the type alias name, not the entire declaration
-                    self.error_at_node(
-                        type_alias.name,
-                        &message,
-                        diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
-                    );
+                    // Suppress TS2456 when the file has parse errors — the
+                    // circularity may be an artifact of parser recovery (e.g.,
+                    // malformed type parameter lists).  tsc does the same:
+                    // it skips semantic circularity errors when syntax errors
+                    // are present.
+                    if !self.has_parse_errors() {
+                        let name = escaped_name;
+                        let message = format_message(
+                            diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                            &[&name],
+                        );
+                        // Point at the type alias name, not the entire declaration
+                        self.error_at_node(
+                            type_alias.name,
+                            &message,
+                            diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                        );
+                    }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if !params.is_empty() {
                         self.ctx.insert_def_type_params(def_id, params.clone());

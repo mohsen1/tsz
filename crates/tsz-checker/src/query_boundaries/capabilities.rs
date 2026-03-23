@@ -275,10 +275,13 @@ pub(crate) fn is_known_node_global(name: &str) -> bool {
     // `import X = require("X")` patterns).
     // NOTE: "console" is intentionally excluded — tsc classifies standalone
     // "console" as a DOM global (TS2584), not a Node global (TS2591).
+    // NOTE: "assert" is intentionally excluded — tsc classifies standalone
+    // "assert" as TS2304 (Cannot find name), not TS2591.  While "assert" is
+    // a Node.js built-in module, it is NOT a global variable and tsc never
+    // suggests @types/node installation for it.
     if matches!(
         name,
-        "assert"
-            | "buffer"
+        "buffer"
             | "child_process"
             | "cluster"
             | "constants"
