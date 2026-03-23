@@ -471,7 +471,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.is_enum_type(target, self.ctx.types) {
             if let Some(source_literal) = source_literal {
                 let structural_target =
-                    tsz_solver::type_queries::data::get_enum_member_type(self.ctx.types, target)
+                    crate::query_boundaries::common::enum_member_type(self.ctx.types, target)
                         .unwrap_or(target);
                 return Some(self.is_assignable_to(source_literal, structural_target));
             }
@@ -479,7 +479,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let target_member =
-            tsz_solver::type_queries::data::get_enum_member_type(self.ctx.types, target);
+            crate::query_boundaries::common::enum_member_type(self.ctx.types, target);
         let target_literal =
             target_member.and_then(|member| tsz_solver::literal_value(self.ctx.types, member));
 
@@ -851,7 +851,7 @@ impl<'a> CheckerState<'a> {
             let should_suppress =
                 tsz_solver::has_deferred_conditional_member(self.ctx.types, evaluated_target)
                     || [target, evaluated_target].into_iter().any(|candidate| {
-                        tsz_solver::type_queries::data::get_intersection_members(
+                        crate::query_boundaries::common::intersection_members(
                             self.ctx.types,
                             candidate,
                         )

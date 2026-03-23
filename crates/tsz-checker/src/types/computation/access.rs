@@ -1121,7 +1121,7 @@ impl<'a> CheckerState<'a> {
         if !report_no_index
             && use_index_signature_check
             && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
-            && tsz_solver::type_queries::data::get_union_members(
+            && crate::query_boundaries::common::union_members(
                 self.ctx.types,
                 object_type_for_access,
             )
@@ -1140,7 +1140,7 @@ impl<'a> CheckerState<'a> {
         if !report_no_index
             && use_index_signature_check
             && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
-            && let Some(members) = tsz_solver::type_queries::data::get_union_members(
+            && let Some(members) = crate::query_boundaries::common::union_members(
                 self.ctx.types,
                 object_type_for_access,
             )

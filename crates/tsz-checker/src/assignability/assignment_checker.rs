@@ -1300,9 +1300,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Union of tuples case: check if ALL members are out of bounds
-        if let Some(members) =
-            tsz_solver::type_queries::data::get_union_members(self.ctx.types, rhs)
-        {
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, rhs) {
             for (index, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
                 if element_idx.is_none() {
                     continue;

@@ -14,7 +14,7 @@ impl<'a> CheckerState<'a> {
         [target, self.evaluate_type_for_assignability(target)]
             .into_iter()
             .filter_map(|candidate| {
-                tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, candidate)
+                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
             })
             .any(|members| {
                 members.iter().any(|member| {
@@ -933,7 +933,7 @@ impl<'a> CheckerState<'a> {
     fn should_suggest_dom_lib_for_type(&self, type_id: TypeId) -> bool {
         // Check intersection members individually
         if let Some(members) =
-            tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             if members.is_empty() {
                 return false;

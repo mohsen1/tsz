@@ -179,7 +179,18 @@ This is the most important operational boundary in the compiler.
 4. Checker must not routinely pattern-match on low-level solver internals to finish semantic work locally.
 5. A checker helper that answers a semantic question differently from the solver is architectural debt unless explicitly temporary.
 
-### 6.4 What Belongs Behind the Query Boundary
+### 6.4 Automated Enforcement
+
+The following contract tests in `crates/tsz-checker/tests/architecture_contract_tests.rs` enforce Query Boundary rules at the source level:
+
+- **`test_no_direct_type_queries_data_access_outside_query_boundaries`**: Checker code outside `query_boundaries/` must not call `tsz_solver::type_queries::data::` functions directly. These internal data accessors must be wrapped as thin boundary helpers in `query_boundaries/common.rs`.
+- **`test_no_direct_relation_policy_construction_outside_query_boundaries`**: `RelationPolicy` and `RelationContext` must only be constructed inside `query_boundaries/` where checker-level concepts are translated to solver-level knobs.
+- **`test_direct_call_evaluator_usage_is_quarantined_to_query_boundaries`**: `CallEvaluator` must stay in query boundaries.
+- **`test_control_flow_avoids_direct_union_interning`**: Control flow must not intern union types directly.
+
+New contract tests should be added as new boundary rules are enforced.
+
+### 6.5 What Belongs Behind the Query Boundary
 
 The following behaviors should converge on query-boundary/solver ownership:
 
@@ -192,7 +203,7 @@ The following behaviors should converge on query-boundary/solver ownership:
 - inference and instantiation,
 - semantic summaries for hot repeated work.
 
-### 6.5 What Does Not Belong Behind the Query Boundary
+### 6.6 What Does Not Belong Behind the Query Boundary
 
 The solver should not:
 

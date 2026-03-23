@@ -343,7 +343,7 @@ impl<'a> CheckerState<'a> {
                         // contains type parameters (from outer scopes). The
                         // instance type is incomplete until instantiation.
                         if !is_call_sig
-                            && tsz_solver::type_queries::data::contains_type_parameters_db(
+                            && crate::query_boundaries::common::contains_type_parameters(
                                 self.ctx.types,
                                 ret,
                             )

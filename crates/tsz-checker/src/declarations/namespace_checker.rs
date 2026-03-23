@@ -463,7 +463,7 @@ impl<'a> CheckerState<'a> {
         // Get a unified CallableShape for the function type.
         // Solver query handles both Callable (overloaded) and Function (single-signature)
         // types, wrapping Functions as single-call-signature callables.
-        let Some(shape) = tsz_solver::type_queries::data::get_callable_shape_for_type(
+        let Some(shape) = crate::query_boundaries::common::callable_shape_for_type_extended(
             self.ctx.types,
             function_type,
         ) else {
