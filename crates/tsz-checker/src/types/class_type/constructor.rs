@@ -225,6 +225,7 @@ impl<'a> CheckerState<'a> {
                     is_abstract: false,
                     is_const: false,
                     is_exported: false,
+                    is_global_augmentation: false,
                 });
             self.ctx
                 .definition_store

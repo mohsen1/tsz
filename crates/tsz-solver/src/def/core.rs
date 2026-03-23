@@ -189,6 +189,11 @@ pub struct DefinitionInfo {
     /// Whether this declaration is exported.
     /// Propagated from binder `SemanticDefEntry` during pre-population.
     pub is_exported: bool,
+
+    /// Whether this declaration is from a `declare global { }` block.
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
+    /// Global augmentations merge with lib.d.ts symbols at type resolution time.
+    pub is_global_augmentation: bool,
 }
 
 /// Enum member value.
@@ -223,6 +228,7 @@ impl DefinitionInfo {
             is_abstract: false,
             is_const: false,
             is_exported: false,
+            is_global_augmentation: false,
         }
     }
 
@@ -262,6 +268,7 @@ impl DefinitionInfo {
             is_abstract: false,
             is_const: false,
             is_exported: false,
+            is_global_augmentation: false,
         }
     }
 
@@ -304,6 +311,7 @@ impl DefinitionInfo {
             is_abstract: false,
             is_const: false,
             is_exported: false,
+            is_global_augmentation: false,
         }
     }
 
@@ -327,6 +335,7 @@ impl DefinitionInfo {
             is_abstract: false,
             is_const: false,
             is_exported: false,
+            is_global_augmentation: false,
         }
     }
 
@@ -350,6 +359,7 @@ impl DefinitionInfo {
             is_abstract: false,
             is_const: false,
             is_exported: false,
+            is_global_augmentation: false,
         }
     }
 

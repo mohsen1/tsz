@@ -6414,3 +6414,135 @@ fn single_file_definition_store_from_binder() {
     let ns_info = store.get(ns_def.unwrap()).unwrap();
     assert_eq!(ns_info.kind, tsz_solver::def::DefKind::Namespace);
 }
+
+#[test]
+fn definition_store_preserves_is_global_augmentation_flag() {
+    // Verify that the is_global_augmentation flag from binder semantic_defs
+    // flows through pre_populate_definition_store into DefinitionInfo.
+    use crate::parallel::create_definition_store_from_binder;
+
+    let source = r#"
+export {};
+declare global {
+    interface AugmentedGlobal {
+        foo: string;
+    }
+}
+type LocalType = number;
+"#;
+
+    let parsed = crate::parallel::parse_file_single("test.ts".to_string(), source.to_string());
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(&parsed.arena, parsed.source_file);
+
+    let interner = tsz_solver::TypeInterner::new();
+    let store = create_definition_store_from_binder(&binder, &interner);
+
+    // AugmentedGlobal should have is_global_augmentation = true
+    let aug_def = store
+        .find_defs_by_name(interner.intern_string("AugmentedGlobal"))
+        .and_then(|defs| defs.first().copied());
+    assert!(aug_def.is_some(), "AugmentedGlobal should have a DefId");
+    let aug_info = store.get(aug_def.unwrap()).unwrap();
+    assert!(
+        aug_info.is_global_augmentation,
+        "declare global interface should have is_global_augmentation=true in DefinitionInfo"
+    );
+
+    // LocalType should have is_global_augmentation = false
+    let local_def = store
+        .find_defs_by_name(interner.intern_string("LocalType"))
+        .and_then(|defs| defs.first().copied());
+    assert!(local_def.is_some(), "LocalType should have a DefId");
+    let local_info = store.get(local_def.unwrap()).unwrap();
+    assert!(
+        !local_info.is_global_augmentation,
+        "regular type alias should have is_global_augmentation=false"
+    );
+}
+
+#[test]
+fn multi_file_merge_preserves_semantic_def_identity_across_files() {
+    // Verify that semantic_defs from multiple files survive merge and produce
+    // stable DefIds in the shared DefinitionStore.
+    let files = vec![
+        (
+            "file_a.ts".to_string(),
+            r"
+export class Foo<T> { }
+export interface IBar { x: number }
+export type Baz = string;
+"
+            .to_string(),
+        ),
+        (
+            "file_b.ts".to_string(),
+            r"
+export enum Color { Red, Green }
+export namespace NS { export type Inner = number }
+export function myFunc(): void { }
+export const myVar: string = 'hello';
+"
+            .to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    // The merged program's definition_store should contain DefIds for all
+    // top-level declarations from both files.
+    let store = &program.definition_store;
+    let interner = &program.type_interner;
+    let stats = store.statistics();
+
+    // At minimum: Foo, IBar, Baz, Color, NS, myFunc, myVar = 7 top-level defs
+    // Plus NS.Inner as a namespace member
+    assert!(
+        stats.total_definitions >= 7,
+        "Expected at least 7 definitions from 2-file merge, got {}",
+        stats.total_definitions
+    );
+
+    // Verify each family has a DefId
+    let has_def = |name: &str| -> bool {
+        store
+            .find_defs_by_name(interner.intern_string(name))
+            .is_some()
+    };
+    assert!(has_def("Foo"), "class Foo should have DefId after merge");
+    assert!(
+        has_def("IBar"),
+        "interface IBar should have DefId after merge"
+    );
+    assert!(
+        has_def("Baz"),
+        "type alias Baz should have DefId after merge"
+    );
+    assert!(has_def("Color"), "enum Color should have DefId after merge");
+    assert!(has_def("NS"), "namespace NS should have DefId after merge");
+    assert!(
+        has_def("myFunc"),
+        "function myFunc should have DefId after merge"
+    );
+    assert!(
+        has_def("myVar"),
+        "variable myVar should have DefId after merge"
+    );
+
+    // Verify DefKind correctness
+    let get_kind = |name: &str| -> Option<tsz_solver::def::DefKind> {
+        let defs: Vec<tsz_solver::def::DefId> =
+            store.find_defs_by_name(interner.intern_string(name))?;
+        let id = *defs.first()?;
+        let info = store.get(id)?;
+        Some(info.kind)
+    };
+    assert_eq!(get_kind("Foo"), Some(tsz_solver::def::DefKind::Class));
+    assert_eq!(get_kind("IBar"), Some(tsz_solver::def::DefKind::Interface));
+    assert_eq!(get_kind("Baz"), Some(tsz_solver::def::DefKind::TypeAlias));
+    assert_eq!(get_kind("Color"), Some(tsz_solver::def::DefKind::Enum));
+    assert_eq!(get_kind("NS"), Some(tsz_solver::def::DefKind::Namespace));
+    assert_eq!(get_kind("myFunc"), Some(tsz_solver::def::DefKind::Function));
+    assert_eq!(get_kind("myVar"), Some(tsz_solver::def::DefKind::Variable));
+}

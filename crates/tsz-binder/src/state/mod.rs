@@ -537,6 +537,15 @@ pub struct SemanticDefEntry {
     ///
     /// `None` for top-level (source-file scope) declarations.
     pub parent_namespace: Option<SymbolId>,
+    /// Whether this declaration was captured inside a `declare global { }` block.
+    ///
+    /// Declarations inside `declare global` blocks are semantically global
+    /// augmentations — they merge with lib.d.ts symbols at type resolution time.
+    /// This flag allows the merge pipeline and pre-population to distinguish
+    /// true top-level declarations from global augmentations, enabling correct
+    /// identity resolution when augmented types need special handling (e.g.,
+    /// cross-batch heritage resolution for `declare global { interface Array<T> { ... } }`).
+    pub is_global_augmentation: bool,
 }
 
 impl SemanticDefEntry {
@@ -596,6 +605,10 @@ impl SemanticDefEntry {
         // Promote const flag if any declaration is const (for enums).
         if other.is_const {
             self.is_const = true;
+        }
+        // Promote global augmentation flag if any declaration is from declare global.
+        if other.is_global_augmentation {
+            self.is_global_augmentation = true;
         }
     }
 }
