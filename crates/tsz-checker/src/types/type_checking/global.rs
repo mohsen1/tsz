@@ -256,12 +256,12 @@ impl<'a> CheckerState<'a> {
             if type_opt.is_some() {
                 for ctx in &self.ctx.lib_contexts {
                     if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        let def_id = self.ctx.get_lib_def_id(sym_id);
                         self.ctx.types.register_boxed_def_id(kind, def_id);
                     }
                 }
                 if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    let def_id = self.ctx.get_lib_def_id(sym_id);
                     self.ctx.types.register_boxed_def_id(kind, def_id);
                 }
             }
@@ -271,12 +271,12 @@ impl<'a> CheckerState<'a> {
         // ThisType<T> applications when the base type is Lazy(DefId).
         for ctx in &self.ctx.lib_contexts {
             if let Some(sym_id) = ctx.binder.file_locals.get("ThisType") {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                let def_id = self.ctx.get_lib_def_id(sym_id);
                 self.ctx.types.register_this_type_def_id(def_id);
             }
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("ThisType") {
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            let def_id = self.ctx.get_lib_def_id(sym_id);
             self.ctx.types.register_this_type_def_id(def_id);
         }
 
@@ -320,13 +320,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(ty) = type_opt {
                     for ctx in &self.ctx.lib_contexts {
                         if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            let def_id = self.ctx.get_lib_def_id(sym_id);
                             env.insert_def(def_id, ty);
                             env.register_boxed_def_id(kind, def_id);
                         }
                     }
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        let def_id = self.ctx.get_lib_def_id(sym_id);
                         env.insert_def(def_id, ty);
                         env.register_boxed_def_id(kind, def_id);
                     }
@@ -341,13 +341,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(ty) = type_opt {
                     for ctx in &self.ctx.lib_contexts {
                         if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            let def_id = self.ctx.get_lib_def_id(sym_id);
                             env.insert_def(def_id, ty);
                             env.register_boxed_def_id(kind, def_id);
                         }
                     }
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        let def_id = self.ctx.get_lib_def_id(sym_id);
                         env.insert_def(def_id, ty);
                         env.register_boxed_def_id(kind, def_id);
                     }
@@ -409,14 +409,14 @@ impl<'a> CheckerState<'a> {
 
         for ctx in &self.ctx.lib_contexts {
             if let Some(sym_id) = ctx.binder.file_locals.get("Function") {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                let def_id = self.ctx.get_lib_def_id(sym_id);
                 self.ctx
                     .types
                     .register_boxed_def_id(IntrinsicKind::Function, def_id);
             }
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("Function") {
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            let def_id = self.ctx.get_lib_def_id(sym_id);
             self.ctx
                 .types
                 .register_boxed_def_id(IntrinsicKind::Function, def_id);

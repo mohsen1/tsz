@@ -1505,4 +1505,122 @@ mod integration_tests {
             "Union of keyword types should produce no errors: {codes:?}"
         );
     }
+
+    // ---- Promise lowering edge cases ----
+
+    #[test]
+    fn promise_nested_generic_no_crash() {
+        // Nested Promise generics should not crash during lib lowering
+        let _codes = check_source_codes("let p: Promise<Promise<number>>;");
+    }
+
+    #[test]
+    fn promise_union_type_arg_no_crash() {
+        let _codes = check_source_codes("let p: Promise<string | number>;");
+    }
+
+    #[test]
+    fn promise_in_return_type_no_crash() {
+        let _codes = check_source_codes("function f(): Promise<void> { return undefined as any; }");
+    }
+
+    #[test]
+    fn promise_all_pattern_no_crash() {
+        // Promise.all-like usage pattern
+        let _codes =
+            check_source_codes("async function f() { const a = await Promise.resolve(1); }");
+    }
+
+    #[test]
+    fn promise_like_type_no_crash() {
+        // PromiseLike is a separate lib interface
+        let _codes = check_source_codes("let p: PromiseLike<string>;");
+    }
+
+    // ---- lib ref lowering: generic types ----
+
+    #[test]
+    fn map_type_no_crash() {
+        let _codes = check_source_codes("let m: Map<string, number>;");
+    }
+
+    #[test]
+    fn set_type_no_crash() {
+        let _codes = check_source_codes("let s: Set<number>;");
+    }
+
+    #[test]
+    fn readonly_array_no_crash() {
+        let _codes = check_source_codes("let a: ReadonlyArray<string>;");
+    }
+
+    #[test]
+    fn record_type_no_crash() {
+        let _codes = check_source_codes("let r: Record<string, number>;");
+    }
+
+    #[test]
+    fn partial_type_no_crash() {
+        let _codes = check_source_codes("type P = Partial<{ a: number; b: string }>;");
+    }
+
+    #[test]
+    fn pick_type_no_crash() {
+        let _codes = check_source_codes("type P = Pick<{ a: number; b: string }, 'a'>;");
+    }
+
+    // ---- import-type lowering edge cases ----
+
+    #[test]
+    fn import_type_typeof_no_crash() {
+        let _codes = check_source_codes("type T = typeof import('./mod');");
+    }
+
+    #[test]
+    fn import_type_nested_access_no_crash() {
+        // Nested property access on import type
+        let _codes = check_source_codes("type T = import('./mod').Ns.Inner;");
+    }
+
+    #[test]
+    fn import_type_in_function_param_no_crash() {
+        let _codes = check_source_codes(
+            "function f(x: import('./mod').Foo): import('./mod').Bar { return x as any; }",
+        );
+    }
+
+    #[test]
+    fn import_type_with_multiple_generics_no_crash() {
+        let _codes = check_source_codes("type T = import('./mod').Map<string, number>;");
+    }
+
+    // ---- lib ref lowering: intersection of keyword and lib types ----
+
+    #[test]
+    fn intersection_of_keyword_and_lib_type_no_crash() {
+        let _codes = check_source_codes("type T = string & { brand: true };");
+    }
+
+    #[test]
+    fn conditional_type_with_lib_ref_no_crash() {
+        let _codes = check_source_codes(
+            "type IsArray<T> = T extends Array<infer U> ? U : never; type X = IsArray<number[]>;",
+        );
+    }
+
+    #[test]
+    fn error_type_no_crash() {
+        // Error is a lib type
+        let _codes = check_source_codes("let e: Error;");
+    }
+
+    #[test]
+    fn regexp_type_no_crash() {
+        let _codes = check_source_codes("let r: RegExp;");
+    }
+
+    #[test]
+    fn date_type_no_crash() {
+        let _codes = check_source_codes("let d: Date;");
+    }
 }
