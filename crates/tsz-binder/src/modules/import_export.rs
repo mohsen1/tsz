@@ -588,6 +588,13 @@ impl BinderState {
                         }
                     }
                 }
+                // Handle `export import { ... } from "..."` — the parser wraps the
+                // malformed import inside an ExportDeclaration with the ImportDeclaration
+                // as export_clause.  We still need to bind the import's named symbols so
+                // that references to them don't produce false TS2304 errors.
+                else if clause_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    self.bind_import_declaration(arena, clause_node, export.export_clause);
+                }
                 // Check if it's an exported declaration (function, class, variable, etc.)
                 else if Self::is_declaration(clause_node.kind) {
                     // Recursively bind the declaration
