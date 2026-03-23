@@ -1250,7 +1250,6 @@ c = d;
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_check_files_parallel_invariant_generic_error_preserves_assignability_diagnostic() {
     let files = vec![(
         "test.ts".to_string(),
