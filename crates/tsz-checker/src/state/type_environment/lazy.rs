@@ -196,6 +196,23 @@ impl<'a> CheckerState<'a> {
                         && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
                         && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, v)
                     {
+                        // Guard against union→non-union cache poisoning: when the
+                        // evaluator maps a union type to a non-union Application,
+                        // this indicates a failed or incomplete evaluation (e.g.,
+                        // an Application whose DefId wasn't yet resolved in the
+                        // TypeEnvironment). Caching such entries causes downstream
+                        // assignability checks to fail because union member checking
+                        // is bypassed. Skip these entries to allow re-evaluation
+                        // once the type environment is more complete.
+                        if tsz_solver::is_union_type(self.ctx.types, k)
+                            && !tsz_solver::is_union_type(self.ctx.types, v)
+                            && matches!(
+                                self.ctx.types.as_type_database().lookup(v),
+                                Some(tsz_solver::TypeData::Application(_))
+                            )
+                        {
+                            continue;
+                        }
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -233,7 +250,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.depth_exceeded.set(true);
             }
             // Persist intermediate results from the second evaluator pass too.
-            // Same Infer guard: skip caching leaked Infer results.
+            // Same guards: skip caching leaked Infer results and union→Application poisoning.
             if use_cache {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
@@ -242,6 +259,16 @@ impl<'a> CheckerState<'a> {
                         && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
                         && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, v)
                     {
+                        // Guard: skip union→Application entries (same as first pass)
+                        if tsz_solver::is_union_type(self.ctx.types, k)
+                            && !tsz_solver::is_union_type(self.ctx.types, v)
+                            && matches!(
+                                self.ctx.types.as_type_database().lookup(v),
+                                Some(tsz_solver::TypeData::Application(_))
+                            )
+                        {
+                            continue;
+                        }
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
