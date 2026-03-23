@@ -262,14 +262,26 @@ impl CheckerContext<'_> {
 
     /// Collect and remove speculative diagnostics since a snapshot, returning
     /// them as a `Vec`. The diagnostic vector is truncated back to the
-    /// snapshot point. Dedup state is NOT restored (caller is responsible
-    /// for managing the dedup set if needed).
+    /// snapshot point. TS2454 dedup entries for taken diagnostics are cleaned
+    /// up so they can be re-emitted later. General dedup state is NOT restored
+    /// (caller is responsible for managing the `emitted_diagnostics` set).
     pub(crate) fn take_speculative_diagnostics(
         &mut self,
         snap: &DiagnosticSnapshot,
     ) -> Vec<Diagnostic> {
         let split_at = snap.diagnostics_len.min(self.diagnostics.len());
-        self.diagnostics.split_off(split_at)
+        let taken = self.diagnostics.split_off(split_at);
+        // Clean up TS2454 dedup entries for taken diagnostics. Without this,
+        // if the caller later discards some TS2454 diagnostics from the returned
+        // vec, those entries remain orphaned in emitted_ts2454_errors and prevent
+        // re-emission on subsequent passes.
+        for diag in &taken {
+            if diag.code == 2454 {
+                self.emitted_ts2454_errors
+                    .retain(|&(pos, _)| pos != diag.start);
+            }
+        }
+        taken
     }
 
     /// Discard speculative diagnostics and replace with a curated set.
@@ -300,6 +312,11 @@ impl CheckerContext<'_> {
         self.diagnostics.truncate(truncate_at);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
+        // Also truncate deferred TS2454 errors, matching rollback_diagnostics behavior.
+        self.deferred_ts2454_errors.truncate(
+            snap.deferred_ts2454_len
+                .min(self.deferred_ts2454_errors.len()),
+        );
         for diag in &replacement {
             let key = self.diagnostic_dedup_key(diag);
             self.emitted_diagnostics.insert(key);
@@ -372,12 +389,12 @@ impl DiagnosticSpeculationGuard {
 
     /// Rollback and apply a filter to keep some speculative diagnostics.
     pub(crate) fn rollback_filtered(
-        self,
+        mut self,
         ctx: &mut CheckerContext,
         keep: impl FnMut(&Diagnostic) -> bool,
     ) {
         ctx.rollback_diagnostics_filtered(&self.snapshot, keep);
-        // guard will drop harmlessly (can't double-rollback without ctx)
+        self.committed = true;
     }
 
     /// Access the underlying snapshot for manual operations.
@@ -388,17 +405,21 @@ impl DiagnosticSpeculationGuard {
     /// Consume the guard and return the snapshot without any rollback.
     /// The caller takes responsibility for state management.
     pub(crate) fn into_snapshot(mut self) -> DiagnosticSnapshot {
-        self.committed = true; // prevent Drop from trying anything
+        self.committed = true;
         self.snapshot
     }
 }
 
-// Note: We intentionally do NOT implement Drop with automatic rollback
-// because `CheckerContext` is not accessible from Drop. The guard is a
-// structured holder for the snapshot — callers must explicitly call
-// `rollback()`, `commit()`, or `rollback_filtered()`. The guard's value
-// is in making the snapshot lifecycle explicit and preventing accidental
-// use-after-rollback.
+// We intentionally do NOT implement Drop with automatic rollback because
+// `CheckerContext` is not accessible from Drop. The guard is a structured
+// holder for the snapshot — callers must explicitly call `rollback()`,
+// `commit()`, `rollback_filtered()`, or `into_snapshot()`. Dropping without
+// an explicit call means "keep the speculative diagnostics" (implicit commit).
+//
+// Some call sites use the guard purely as a snapshot holder (accessing
+// `.snapshot()` for manual operations) and intentionally drop the guard
+// to commit the speculative diagnostics. A debug_assert in Drop would
+// break these legitimate patterns.
 
 // Unit tests for speculation API are in tests/speculation_rollback_tests.rs
 // (integration tests that use the full parse→bind→check pipeline).
