@@ -950,15 +950,15 @@ impl<'a> GoToDefinition<'a> {
                                 let mut w = ScopeWalker::new(self.arena, self.binder);
                                 w.resolve_node(root, expr_idx)
                             });
-                        if let Some(base_symbol_id) = base_symbol_id {
-                            if let Some(loc) = self.find_member_location_in_chain(
+                        if let Some(base_symbol_id) = base_symbol_id
+                            && let Some(loc) = self.find_member_location_in_chain(
                                 root,
                                 base_symbol_id,
                                 member_name,
                                 depth + 1,
-                            ) {
-                                return Some(loc);
-                            }
+                            )
+                        {
+                            return Some(loc);
                         }
                     }
                 }

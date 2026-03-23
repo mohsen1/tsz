@@ -204,8 +204,13 @@ impl<'a> InlayHintsProvider<'a> {
             return;
         };
 
-        // Get the function being called and resolve its symbol
-        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, call.expression) else {
+        // Get the function being called and resolve its symbol.
+        // Handles both direct calls (foo(arg)) and method calls (obj.method(arg)).
+        let symbol_id = self
+            .binder
+            .resolve_identifier(self.arena, call.expression)
+            .or_else(|| self.resolve_method_call_target(call.expression));
+        let Some(symbol_id) = symbol_id else {
             return;
         };
         let Some(symbol) = self.binder.symbols.get(symbol_id) else {
@@ -301,6 +306,75 @@ impl<'a> InlayHintsProvider<'a> {
         }
 
         false
+    }
+
+    /// Resolve the method symbol for a property access call like `obj.method(arg)`.
+    fn resolve_method_call_target(&self, expr_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let method_name = self.arena.get_identifier_text(access.name_or_argument)?;
+        let obj_symbol_id = self
+            .binder
+            .resolve_identifier(self.arena, access.expression)?;
+        let obj_symbol = self.binder.symbols.get(obj_symbol_id)?;
+
+        // Direct lookup on the symbol (class/namespace)
+        if let Some(id) = obj_symbol
+            .members
+            .as_ref()
+            .and_then(|m| m.get(method_name))
+            .or_else(|| obj_symbol.exports.as_ref().and_then(|e| e.get(method_name)))
+        {
+            return Some(id);
+        }
+
+        // For variables: check type annotation or new-expression initializer
+        for &decl_idx in &obj_symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                continue;
+            }
+            let var = self.arena.get_variable_declaration(decl_node)?;
+
+            // Type annotation: const obj: MyClass = ...
+            if var.type_annotation.is_some()
+                && let Some(type_node) = self.arena.get(var.type_annotation)
+                && type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = self.arena.get_type_ref(type_node)
+                && let Some(type_sym) = self
+                    .binder
+                    .resolve_identifier(self.arena, type_ref.type_name)
+                && let Some(type_symbol) = self.binder.symbols.get(type_sym)
+                && let Some(id) = type_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|m| m.get(method_name))
+            {
+                return Some(id);
+            }
+
+            // Initializer: const obj = new MyClass()
+            if var.initializer.is_some()
+                && let Some(init_node) = self.arena.get(var.initializer)
+                && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                && let Some(new_call) = self.arena.get_call_expr(init_node)
+                && let Some(class_sym) = self
+                    .binder
+                    .resolve_identifier(self.arena, new_call.expression)
+                && let Some(class_symbol) = self.binder.symbols.get(class_sym)
+                && let Some(id) = class_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|m| m.get(method_name))
+            {
+                return Some(id);
+            }
+        }
+
+        None
     }
 
     /// Collect type hints for variable declarations without explicit type annotations.
