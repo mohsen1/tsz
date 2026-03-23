@@ -33,12 +33,11 @@ impl<'a> CheckerState<'a> {
         // TS2394: Check overload compatibility for function declarations with a body.
         // When a function has overload signatures followed by an implementation,
         // verify the implementation signature is compatible with all overloads.
-        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-            if let Some(func) = self.ctx.arena.get_function(node) {
-                if func.body.is_some() {
-                    self.check_overload_compatibility(func_idx);
-                }
-            }
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = self.ctx.arena.get_function(node)
+            && func.body.is_some()
+        {
+            self.check_overload_compatibility(func_idx);
         }
 
         // Validate indexed access types in the return type annotation of ambient
