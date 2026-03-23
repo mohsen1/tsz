@@ -300,3 +300,120 @@ fn unresolved_contextual_arg_implicit_any_rollback() {
         "TS7006 should not appear when contextual type resolves via generic inference: {ts7006_in_consume:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Nested speculation edge cases
+// ---------------------------------------------------------------------------
+// These tests exercise scenarios where nested or cross-path speculation
+// can cause the diagnostics list to shrink below a snapshot's recorded
+// length — the clamping logic must prevent panics.
+
+/// Nested overload resolution inside a conditional expression: inner
+/// speculative rollback must not panic even if outer speculation has
+/// already modified the diagnostic vector.
+#[test]
+fn nested_overload_in_conditional_no_panic() {
+    let diags = check(
+        r#"
+        declare function inner(x: string): string;
+        declare function inner(x: number): number;
+        declare let cond: boolean;
+        let result: string = cond ? inner(42) : inner("hello");
+    "#,
+    );
+    // We care that it doesn't panic; the exact diagnostics depend on
+    // type narrowing but must be bounded.
+    assert!(
+        diags.len() <= 3,
+        "Expected bounded diagnostics for nested overload in conditional, got {}: {diags:?}",
+        diags.len()
+    );
+}
+
+/// Deeply nested overload inside switch-like narrowing: exercises
+/// multiple levels of snapshot/rollback.
+#[test]
+fn nested_overload_in_narrowing_chain_no_panic() {
+    let diags = check(
+        r#"
+        declare function f(x: string): string;
+        declare function f(x: number): number;
+        function test(x: string | number) {
+            if (typeof x === "string") {
+                return f(x);
+            } else {
+                return f(x);
+            }
+        }
+    "#,
+    );
+    // Both branches resolve cleanly; no leaked diagnostics expected.
+    let leaked = diags
+        .iter()
+        .filter(|d| d.code == 2769 || d.code == 2345)
+        .count();
+    assert_eq!(
+        leaked, 0,
+        "No overload errors should leak from narrowed branches: {diags:?}"
+    );
+}
+
+/// Overload resolution with nested conditional expression as argument:
+/// speculative argument typing interacts with conditional branch rollback.
+#[test]
+fn overload_with_conditional_argument_no_panic() {
+    let diags = check(
+        r#"
+        declare function g(x: string): void;
+        declare function g(x: number): void;
+        declare let b: boolean;
+        g(b ? "hello" : 42);
+    "#,
+    );
+    // Should succeed without panic; either overload or TS2769 is acceptable.
+    assert!(
+        diags.len() <= 2,
+        "Expected bounded diagnostics, got {}: {diags:?}",
+        diags.len()
+    );
+}
+
+/// Multiple overloaded calls in sequence: ensure rollback from one call
+/// doesn't corrupt the snapshot state for the next call.
+#[test]
+fn sequential_overload_calls_independent_rollback() {
+    let diags = check(
+        r#"
+        declare function h(x: string): string;
+        declare function h(x: number): number;
+        let a = h(1);
+        let b = h("hello");
+        let c = h(true);
+    "#,
+    );
+    // First two calls succeed, third fails with TS2769.
+    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
+    assert!(
+        ts2769_count <= 1,
+        "Expected at most one TS2769 from the failing call, got {ts2769_count}: {diags:?}"
+    );
+}
+
+/// Nested speculative typing with callback and conditional:
+/// exercises the deepest nesting pattern (overload → callback body → conditional).
+#[test]
+fn deeply_nested_speculation_callback_conditional_no_panic() {
+    let diags = check(
+        r#"
+        declare function apply<T>(cb: (x: T) => T): T;
+        declare function apply(cb: (x: string) => string): string;
+        let result = apply((x) => typeof x === "string" ? x.toUpperCase() : x);
+    "#,
+    );
+    // Should not panic. Exact diagnostics depend on inference but must be bounded.
+    assert!(
+        diags.len() <= 4,
+        "Expected bounded diagnostics for deeply nested speculation, got {}: {diags:?}",
+        diags.len()
+    );
+}
