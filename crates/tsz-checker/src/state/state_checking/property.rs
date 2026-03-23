@@ -145,7 +145,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use tsz_solver::relations::freshness;
+        use crate::query_boundaries::common as freshness_query;
 
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter_like(self.ctx.types, target) {
@@ -161,7 +161,7 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: Freshness is tracked on the TypeId itself.
         // This fixes the "Zombie Freshness" bug by keeping fresh vs non-fresh
         // object types distinct at the interner level.
-        let is_fresh_source = freshness::is_fresh_object_type(self.ctx.types, source);
+        let is_fresh_source = freshness_query::is_fresh_object_type(self.ctx.types, source);
         let explicit_property_names = if is_fresh_source {
             None
         } else {
@@ -607,9 +607,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         obj_literal_idx: NodeIndex,
     ) -> bool {
-        use tsz_solver::relations::freshness;
+        use crate::query_boundaries::common as freshness_query;
 
-        let is_fresh_source = freshness::is_fresh_object_type(self.ctx.types, source);
+        let is_fresh_source = freshness_query::is_fresh_object_type(self.ctx.types, source);
         let explicit_property_names = if is_fresh_source {
             None
         } else {

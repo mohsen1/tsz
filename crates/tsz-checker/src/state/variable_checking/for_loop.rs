@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 // No type annotation - use element type (with freshness stripped)
                 let widened_element_type = if !self.ctx.compiler_options.sound_mode {
-                    tsz_solver::relations::freshness::widen_freshness(self.ctx.types, element_type)
+                    crate::query_boundaries::common::widen_freshness(self.ctx.types, element_type)
                 } else {
                     element_type
                 };

@@ -494,6 +494,11 @@ pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Type
 
 // ── Contextual/operation wrappers ──
 
+/// Check whether a type is a "fresh" object literal type (for excess property checking).
+pub(crate) fn is_fresh_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::relations::freshness::is_fresh_object_type(db, type_id)
+}
+
 /// Widen "fresh" object literal types to remove freshness tracking.
 pub(crate) fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::relations::freshness::widen_freshness(db, type_id)
