@@ -1393,7 +1393,19 @@ impl<'a> CheckerState<'a> {
             let base_key_type = self
                 .get_binding_identifier_initializer_key_type_with_request(sym_id, request)
                 .unwrap_or(key_type);
-            let mut key_types = vec![base_key_type];
+            // When the identifier resolves to a unique symbol but the initializer
+            // type is plain `symbol` (e.g. `const sa = Symbol()`), prefer the
+            // identifier's type. The initializer `Symbol()` returns `symbol`, but
+            // the const variable's type is narrowed to `typeof sa` (unique symbol)
+            // which is more specific and correct for property key lookups.
+            let effective_key = if base_key_type == TypeId::SYMBOL
+                && crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, key_type)
+            {
+                key_type
+            } else {
+                base_key_type
+            };
+            let mut key_types = vec![effective_key];
             self.collect_enclosing_default_assignment_key_types(
                 pattern_idx,
                 sym_id,
@@ -1403,7 +1415,7 @@ impl<'a> CheckerState<'a> {
             if key_types.len() > 1 {
                 key_type = self.ctx.types.factory().union(key_types);
             } else {
-                key_type = base_key_type;
+                key_type = effective_key;
             }
         }
 
