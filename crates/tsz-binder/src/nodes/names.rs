@@ -64,15 +64,23 @@ impl BinderState {
     /// as dot-separated strings (e.g., `"ns.Base"`).
     ///
     /// Returns an empty `Vec` if there are no heritage clauses or no extractable names.
-    pub(crate) fn collect_heritage_clause_names(
+    /// Collect heritage clause names split by clause kind.
+    ///
+    /// Returns `(extends_names, implements_names)` so the binder can record
+    /// which heritage references are `extends` vs `implements`. This enables
+    /// pre-population to wire `DefinitionInfo.extends` and `.implements`
+    /// directly, moving class/interface heritage identity from checker-side
+    /// type resolution to binder-owned stable identity.
+    pub(crate) fn collect_heritage_clause_names_split(
         arena: &NodeArena,
         heritage_clauses: Option<&NodeList>,
-    ) -> Vec<String> {
+    ) -> (Vec<String>, Vec<String>) {
         let clauses = match heritage_clauses {
             Some(c) => c,
-            None => return Vec::new(),
+            None => return (Vec::new(), Vec::new()),
         };
-        let mut names = Vec::new();
+        let mut extends_names = Vec::new();
+        let mut implements_names = Vec::new();
         for &clause_idx in &clauses.nodes {
             let clause_node = match arena.get(clause_idx) {
                 Some(n) => n,
@@ -82,6 +90,8 @@ impl BinderState {
                 Some(d) => d,
                 None => continue,
             };
+            // ExtendsKeyword = 96 (from tsz_scanner::SyntaxKind)
+            let is_extends = heritage_data.token == 96;
             for &type_idx in &heritage_data.types.nodes {
                 let type_node = match arena.get(type_idx) {
                     Some(n) => n,
@@ -94,11 +104,15 @@ impl BinderState {
                     type_idx
                 };
                 if let Some(name) = Self::extract_heritage_expression_name(arena, expr_idx) {
-                    names.push(name);
+                    if is_extends {
+                        extends_names.push(name);
+                    } else {
+                        implements_names.push(name);
+                    }
                 }
             }
         }
-        names
+        (extends_names, implements_names)
     }
 
     /// Extract a name from a heritage expression node.
