@@ -22,12 +22,49 @@ thread_local! {
         = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
 }
 
+// Thread-local memoization cache for evaluated enum member values.
+//
+// Caches successful and failed evaluation results to avoid redundant work when
+// multiple enum members reference the same target in complex dependency graphs.
+// Cleared at the start of each top-level evaluation via `EVAL_DEPTH`.
+thread_local! {
+    static EVAL_MEMO: std::cell::RefCell<rustc_hash::FxHashMap<NodeIndex, Option<f64>>>
+        = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+// Thread-local recursion depth counter for `evaluate_constant_expression`.
+//
+// Prevents stack overflow from deeply nested (but non-cyclic) expression trees.
+// The depth limit matches `evaluate_const_enum_initializer` (100).
+thread_local! {
+    static EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+const MAX_EVAL_DEPTH: u32 = 100;
+
 // RAII guard that removes a `NodeIndex` from `EVAL_VISITED` on drop.
 struct VisitedGuard(NodeIndex);
 impl Drop for VisitedGuard {
     fn drop(&mut self) {
         EVAL_VISITED.with(|v| {
             v.borrow_mut().remove(&self.0);
+        });
+    }
+}
+
+// RAII guard that decrements `EVAL_DEPTH` on drop, and clears the memo cache
+// when depth returns to 0 (end of top-level evaluation).
+struct DepthGuard;
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        EVAL_DEPTH.with(|d| {
+            let new_depth = d.get().saturating_sub(1);
+            d.set(new_depth);
+            if new_depth == 0 {
+                // Clear memoization cache at the end of the top-level evaluation
+                // to avoid stale results across unrelated evaluation chains.
+                EVAL_MEMO.with(|m| m.borrow_mut().clear());
+            }
         });
     }
 }
@@ -315,6 +352,18 @@ impl<'a> CheckerState<'a> {
     /// property access (E.V1) or element access (E["V1"], E[`V1`]).
     /// Returns None if the expression cannot be evaluated at compile time.
     pub(crate) fn evaluate_constant_expression(&self, expr_idx: NodeIndex) -> Option<f64> {
+        // Depth guard: prevent stack overflow from deeply nested expressions.
+        let current_depth = EVAL_DEPTH.with(|d| {
+            let depth = d.get() + 1;
+            d.set(depth);
+            depth
+        });
+        if current_depth > MAX_EVAL_DEPTH {
+            EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            return None;
+        }
+        let _depth_guard = DepthGuard;
+
         let node = self.ctx.arena.get(expr_idx)?;
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
@@ -395,6 +444,13 @@ impl<'a> CheckerState<'a> {
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
                 if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
                     let member_decl = symbol.value_declaration;
+
+                    // Check memoization cache first.
+                    if let Some(cached) = EVAL_MEMO.with(|m| m.borrow().get(&member_decl).copied())
+                    {
+                        return cached;
+                    }
+
                     let member_node = self.ctx.arena.get(member_decl)?;
                     let member_data = self.ctx.arena.get_enum_member(member_node)?;
 
@@ -406,7 +462,7 @@ impl<'a> CheckerState<'a> {
                     }
                     let _guard = VisitedGuard(member_decl);
 
-                    if member_data.initializer.is_some() {
+                    let result = if member_data.initializer.is_some() {
                         self.evaluate_constant_expression(member_data.initializer)
                     } else {
                         // Auto-incremented — find parent enum symbol and compute
@@ -415,7 +471,11 @@ impl<'a> CheckerState<'a> {
                             return None;
                         }
                         self.compute_auto_increment_value(parent_sym, member_decl)
-                    }
+                    };
+
+                    // Cache the result.
+                    EVAL_MEMO.with(|m| m.borrow_mut().insert(member_decl, result));
+                    result
                 } else {
                     None
                 }
@@ -480,10 +540,17 @@ impl<'a> CheckerState<'a> {
 
         // Get the member's value declaration and evaluate its initializer.
         let member_decl = member_symbol.value_declaration;
+
+        // Check memoization cache first: if we've already evaluated this member
+        // (successfully or not), return the cached result immediately.
+        if let Some(cached) = EVAL_MEMO.with(|m| m.borrow().get(&member_decl).copied()) {
+            return cached;
+        }
+
         let member_node = self.ctx.arena.get(member_decl)?;
         let member_data = self.ctx.arena.get_enum_member(member_node)?;
 
-        if member_data.initializer.is_none() {
+        let result = if member_data.initializer.is_none() {
             // Auto-incremented member — we need to compute its position value.
             // Walk through all declarations of the parent enum to find this member's
             // auto-incremented value.
@@ -498,22 +565,26 @@ impl<'a> CheckerState<'a> {
                 return None; // Circular — treat as non-constant
             }
             let _guard = VisitedGuard(member_decl);
-            return self.compute_auto_increment_value(current_sym_id, member_decl);
-        }
+            self.compute_auto_increment_value(current_sym_id, member_decl)
+        } else {
+            // Guard against self-referencing and mutually-recursive enum initializers
+            // (e.g., `B = E.B` or `enum E { A = F.B }; enum F { B = E.A }`).
+            // Without this, the recursive evaluate_constant_expression call creates
+            // infinite recursion → stack overflow.
+            //
+            // Uses the module-level EVAL_VISITED thread-local with an RAII drop guard
+            // to ensure cleanup even if evaluation panics.
+            let already_visiting = EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
+            if already_visiting {
+                return None; // Circular — treat as non-constant
+            }
+            let _guard = VisitedGuard(member_decl);
+            self.evaluate_constant_expression(member_data.initializer)
+        };
 
-        // Guard against self-referencing and mutually-recursive enum initializers
-        // (e.g., `B = E.B` or `enum E { A = F.B }; enum F { B = E.A }`).
-        // Without this, the recursive evaluate_constant_expression call creates
-        // infinite recursion → stack overflow.
-        //
-        // Uses the module-level EVAL_VISITED thread-local with an RAII drop guard
-        // to ensure cleanup even if evaluation panics.
-        let already_visiting = EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
-        if already_visiting {
-            return None; // Circular — treat as non-constant
-        }
-        let _guard = VisitedGuard(member_decl);
-        self.evaluate_constant_expression(member_data.initializer)
+        // Cache the result for future lookups of the same member.
+        EVAL_MEMO.with(|m| m.borrow_mut().insert(member_decl, result));
+        result
     }
 
     /// Collect the identifier chain from a property/element access expression.
