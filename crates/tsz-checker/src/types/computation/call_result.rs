@@ -543,17 +543,23 @@ impl<'a> CheckerState<'a> {
                 constraint_type,
                 return_type,
             } => {
-                // Type parameter constraint violations in generic calls are
-                // semantically argument-level mismatches: the argument's inferred
-                // type doesn't satisfy the constraint. tsc reports TS2345
+                // For regular function calls with arguments, report as TS2345
                 // ("Argument of type X is not assignable to parameter of type Y")
-                // at the argument level. Use the first argument as the anchor.
-                let anchor = args.first().copied().unwrap_or(call_idx);
-                let _ = self.check_argument_assignable_or_report(
-                    inferred_type,
-                    constraint_type,
-                    anchor,
-                );
+                // at the argument position. tsc treats type parameter constraint
+                // violations from regular arguments as TS2345, not TS2322.
+                // We emit directly (bypassing check_argument_assignable_or_report)
+                // because the solver has already confirmed the constraint violation
+                // and the checker's re-check may disagree due to different context.
+                if !args.is_empty() {
+                    self.error_argument_not_assignable_at(inferred_type, constraint_type, args[0]);
+                } else {
+                    let _ = self.check_assignable_or_report_generic_at(
+                        inferred_type,
+                        constraint_type,
+                        call_idx,
+                        call_idx,
+                    );
+                }
                 return_type
             }
             CallResult::NoOverloadMatch {
