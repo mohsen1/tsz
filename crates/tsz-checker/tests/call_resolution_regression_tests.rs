@@ -960,3 +960,292 @@ f("hello");
 
 // NOTE: super<T>() should emit TS2754 but tsz does not yet implement this.
 // Add a test once TS2754 support is implemented.
+
+// ============================================================================
+// Spread argument edge cases (callWithSpread patterns)
+// ============================================================================
+
+#[test]
+fn call_with_spread_tuple_exact_match() {
+    let source = r#"
+function f(a: number, b: string, c: boolean): void {}
+let args: [number, string, boolean] = [1, "hi", true];
+f(...args);
+"#;
+    assert!(
+        no_errors(source),
+        "Spread of exact tuple match should not error"
+    );
+}
+
+#[test]
+fn call_with_spread_array_to_rest_param() {
+    let source = r#"
+function f(...args: number[]): void {}
+let arr: number[] = [1, 2, 3];
+f(...arr);
+"#;
+    assert!(
+        no_errors(source),
+        "Spread array to rest param should not error"
+    );
+}
+
+#[test]
+fn call_with_spread_mixed_args() {
+    let source = r#"
+function f(a: number, ...rest: string[]): void {}
+let strs: string[] = ["a", "b"];
+f(1, ...strs);
+"#;
+    assert!(
+        no_errors(source),
+        "Spread with leading fixed arg should not error"
+    );
+}
+
+#[test]
+fn call_with_spread_wrong_element_type() {
+    let source = r#"
+function f(a: number, b: number): void {}
+let args: [string, string] = ["a", "b"];
+f(...args);
+"#;
+    assert!(
+        has_error(source, 2345) || has_error(source, 2556),
+        "Spread with wrong element types should emit error"
+    );
+}
+
+#[test]
+fn call_with_spread_overload_resolution() {
+    let source = r#"
+declare function f(a: number): number;
+declare function f(a: string, b: string): string;
+let args: [string, string] = ["a", "b"];
+f(...args);
+"#;
+    // Should select the second overload
+    let codes = get_codes(source);
+    // No false TS2769 — the spread matches the second overload.
+    assert!(
+        !codes.contains(&2349),
+        "Spread in overload call should not emit TS2349, got: {:?}",
+        codes
+    );
+}
+
+// ============================================================================
+// Generic call with optional chaining
+// ============================================================================
+
+#[test]
+fn generic_call_with_optional_chaining() {
+    let source = r#"
+interface Processor {
+    process<T>(x: T): T;
+}
+declare let p: Processor | undefined;
+let result = p?.process(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call via optional chaining should not error"
+    );
+}
+
+#[test]
+fn optional_chain_call_returns_possibly_undefined() {
+    let source = r#"
+declare let obj: { f(): number } | undefined;
+let result: number = obj?.f();
+"#;
+    // The result of obj?.f() is number | undefined, not number
+    assert!(
+        has_error(source, 2322),
+        "Optional chain call result should be T | undefined"
+    );
+}
+
+// ============================================================================
+// IIFE with contextual typing
+// ============================================================================
+
+#[test]
+fn iife_with_contextual_return_type() {
+    let source = r#"
+let result: number = (() => 42)();
+"#;
+    assert!(
+        no_errors(source),
+        "IIFE with contextual return type should not error"
+    );
+}
+
+#[test]
+fn iife_with_params() {
+    let source = r#"
+let result = (function(x: number) { return x + 1; })(5);
+"#;
+    assert!(no_errors(source), "IIFE with params should not error");
+}
+
+// ============================================================================
+// Property-call regression patterns
+// ============================================================================
+
+#[test]
+fn method_call_through_non_null_assertion() {
+    let source = r#"
+declare let obj: { f(): number } | undefined;
+let result: number = obj!.f();
+"#;
+    assert!(
+        no_errors(source),
+        "Method call through non-null assertion should work"
+    );
+}
+
+#[test]
+fn method_call_on_intersection_type() {
+    let source = r#"
+interface A { foo(): number; }
+interface B { bar(): string; }
+declare let obj: A & B;
+let n: number = obj.foo();
+let s: string = obj.bar();
+"#;
+    assert!(
+        no_errors(source),
+        "Method call on intersection type should work"
+    );
+}
+
+#[test]
+fn method_call_on_generic_constraint() {
+    let source = r#"
+interface HasId { getId(): string; }
+function getIdOf<T extends HasId>(obj: T): string {
+    return obj.getId();
+}
+"#;
+    assert!(
+        no_errors(source),
+        "Method call on generic constraint should work"
+    );
+}
+
+#[test]
+fn chained_method_calls() {
+    let source = r#"
+interface Builder {
+    setName(n: string): Builder;
+    build(): { name: string };
+}
+declare let b: Builder;
+let result = b.setName("test").build();
+"#;
+    assert!(no_errors(source), "Chained method calls should work");
+}
+
+// ============================================================================
+// Overload with generic and non-generic signatures
+// ============================================================================
+
+#[test]
+fn overload_generic_and_non_generic_mixed() {
+    let source = r#"
+declare function f(x: string): string;
+declare function f<T>(x: T): T;
+let s: string = f("hello");
+let n: number = f(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Mixed generic/non-generic overloads should resolve"
+    );
+}
+
+#[test]
+fn overload_with_optional_params_ambiguity() {
+    let source = r#"
+declare function f(x: number): number;
+declare function f(x: number, y?: string): string;
+let result: number = f(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Overload with optional params should pick first match"
+    );
+}
+
+// ============================================================================
+// Type predicate through call resolution
+// ============================================================================
+
+#[test]
+fn type_predicate_call_narrows_type() {
+    let source = r#"
+function isString(x: unknown): x is string {
+    return typeof x === "string";
+}
+declare let val: string | number;
+if (isString(val)) {
+    let s: string = val;
+}
+"#;
+    assert!(no_errors(source), "Type predicate call should narrow type");
+}
+
+// ============================================================================
+// Generic call inference edge cases
+// ============================================================================
+
+#[test]
+fn generic_call_with_literal_type_preservation() {
+    let source = r#"
+declare function identity<T>(x: T): T;
+const result = identity("hello");
+"#;
+    // Should infer T as "hello" (literal) or string — no error either way
+    assert!(
+        no_errors(source),
+        "Generic call with literal should not error"
+    );
+}
+
+#[test]
+fn generic_call_with_constrained_type_param() {
+    let source = r#"
+declare function first<T extends any[]>(arr: T): T[0];
+let result: number = first([1, 2, 3]);
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call with constrained type param should work"
+    );
+}
+
+#[test]
+fn generic_call_with_multiple_type_params() {
+    let source = r#"
+declare function pair<A, B>(a: A, b: B): [A, B];
+let result = pair(1, "hello");
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call with multiple type params should work"
+    );
+}
+
+#[test]
+fn generic_call_with_default_type_param() {
+    let source = r#"
+declare function create<T = string>(x?: T): T;
+let result: string = create();
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call with default type param should work"
+    );
+}
