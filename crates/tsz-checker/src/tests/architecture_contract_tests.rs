@@ -1679,7 +1679,6 @@ fn test_solver_imports_go_through_query_boundaries() {
         "TypeResolver",
         "TypeSubstitution",
         "def::resolver::TypeResolver",
-        "expression_ops",
         "instantiate_generic",
         "instantiate_type_with_depth_status",
         "judge::DefaultJudge",
@@ -1934,7 +1933,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 // - [x] Centralized assignability gateways                -> multiple existing tests
 //
 // RATCHET GUARDS (debt tracking):
-// - [x] TEMPORARILY_ALLOWED bypass list capped at 43      -> test_temporarily_allowed_bypass_list_does_not_grow
+// - [x] TEMPORARILY_ALLOWED bypass list capped at 42      -> test_temporarily_allowed_bypass_list_does_not_grow
 // - [x] Direct interner type construction capped at 13    -> test_direct_interner_type_construction_ceiling
 // - [x] Checker file size ceiling (4 files > 2000 LOC)    -> test_checker_file_size_ceiling
 // - [x] Max single file LOC ceiling (2650 lines)          -> test_checker_file_size_ceiling
@@ -3223,7 +3222,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
         }
     }
 
-    const CEILING: usize = 43;
+    const CEILING: usize = 42;
     assert!(
         count <= CEILING,
         "TEMPORARILY_ALLOWED bypass list has grown to {count} items (ceiling: {CEILING}). \
@@ -3627,5 +3626,53 @@ fn test_direct_widening_calls_ceiling() {
          Use query_boundaries::common::widen_type or self.widen_literal_type() instead.\n\
          Locations:\n{}",
         locations.join("\n")
+    );
+}
+
+/// Guard: no direct `expression_ops::` calls outside `query_boundaries/` and `tests/`.
+///
+/// Expression operation calls should go through `query_boundaries::type_computation::core`
+/// wrappers to maintain the boundary layer.
+#[test]
+fn test_no_direct_expression_ops_outside_query_boundaries() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut violations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("expression_ops::") && line.contains("tsz_solver") {
+                violations.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Direct tsz_solver::expression_ops:: calls found outside query_boundaries/. \
+         Use query_boundaries::type_computation::core wrappers instead.\n\
+         Violations:\n{}",
+        violations.join("\n")
     );
 }
