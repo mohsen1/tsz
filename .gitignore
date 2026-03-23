@@ -78,6 +78,7 @@ yarn.lock
 # Random AI coding artifacts sometimes generated in sessions
 /tmp
 /scripts/*.py
+!/scripts/refresh-readme.py
 
 # Claude Code - ignore everything in .claude except local settings and skills
 .claude/*
