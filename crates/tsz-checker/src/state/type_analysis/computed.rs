@@ -1182,7 +1182,7 @@ impl<'a> CheckerState<'a> {
                         self.compute_for_in_of_variable_type(resolved_value_decl)
                     {
                         let widened = if !self.ctx.compiler_options.sound_mode {
-                            tsz_solver::relations::freshness::widen_freshness(
+                            crate::query_boundaries::common::widen_freshness(
                                 self.ctx.types,
                                 for_element_type,
                             )

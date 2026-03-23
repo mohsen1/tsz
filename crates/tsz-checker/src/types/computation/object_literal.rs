@@ -1127,7 +1127,7 @@ impl<'a> CheckerState<'a> {
                         let refined_this_display = Self::widen_primitive_literal_type_display(
                             &self.format_type(crate::query_boundaries::common::widen_type(
                                 self.ctx.types,
-                                tsz_solver::relations::freshness::widen_freshness(
+                                crate::query_boundaries::common::widen_freshness(
                                     self.ctx.types,
                                     refined_this_type,
                                 ),

@@ -720,7 +720,7 @@ impl<'a> CheckerState<'a> {
             .literal_type_from_initializer(rhs_expr)
             .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
         ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
-        ty = tsz_solver::relations::freshness::widen_freshness(checker.ctx.types, ty);
+        ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
     }
