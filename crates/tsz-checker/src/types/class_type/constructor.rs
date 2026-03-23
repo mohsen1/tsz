@@ -634,6 +634,12 @@ impl<'a> CheckerState<'a> {
                         // get_type_of_node(this.y) → get_class_constructor_type → cycle.
                         // The partial constructor type lets the cycle detection return
                         // a usable type with previously-processed members.
+                        // Suppress diagnostics during inference: type resolution for
+                        // `this.prop` in static blocks can emit false TS2339 when the
+                        // partial constructor type doesn't yet contain all members.
+                        // These diagnostics will be re-emitted correctly during the
+                        // proper checking phase.
+                        let diag_count_before = self.ctx.diagnostics.len();
                         let prev_sym_cached_acc = current_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
                         let prev_name_sym_cached_acc = class_name_sym
@@ -694,6 +700,19 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.symbol_types.insert(name_sym, prev_type);
                             } else {
                                 self.ctx.symbol_types.remove(&name_sym);
+                            }
+                        }
+                        // Roll back diagnostics emitted during inference.
+                        // These would be false positives from resolving `this.prop`
+                        // against an incomplete partial constructor type.
+                        self.ctx.diagnostics.truncate(diag_count_before);
+                        // Clear node type cache for nodes inside static blocks so that
+                        // the checking phase re-evaluates them with the final constructor type.
+                        for &sb_member_idx in &class.members.nodes {
+                            if let Some(sb_node) = self.ctx.arena.get(sb_member_idx)
+                                && sb_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                            {
+                                self.clear_type_cache_recursive(sb_member_idx);
                             }
                         }
                         inferred
