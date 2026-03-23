@@ -12,6 +12,7 @@
 //! - `complex_new_target` — new expression target validation and abstract constructor detection
 //! - `complex_js_constructor` — JS constructor instance type synthesis
 //! - `identifier` — identifier reference resolution
+//! - `identifier_flow` — flow-based helpers for identifier type computation (evolving arrays, implicit any)
 //! - `object_literal` — object literal type construction
 //! - `object_literal_context` — contextual property type resolution helpers for object literals
 //! - `tagged_template` — tagged template expression type resolution
@@ -34,6 +35,7 @@ pub(crate) mod complex_new_target;
 pub(crate) mod contextual;
 pub mod helpers;
 pub(crate) mod identifier;
+pub(crate) mod identifier_flow;
 pub(crate) mod object_literal;
 pub(crate) mod object_literal_circularity;
 pub(crate) mod object_literal_context;
