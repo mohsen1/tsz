@@ -905,6 +905,10 @@ impl<'a> CheckerContext<'a> {
     /// re-iterating each binder's `semantic_defs` and re-converting
     /// `SemanticDefEntry` → `DefinitionInfo`.
     ///
+    /// Also discovers ClassConstructor companion DefIds for any class DefIds
+    /// encountered, ensuring constructor identity is warm from the start
+    /// rather than being created on-demand in checker hot paths.
+    ///
     /// Returns the number of mappings warmed.
     pub fn warm_local_caches_from_shared_store(&self) -> usize {
         if self.definition_store.is_empty() {
@@ -929,6 +933,16 @@ impl<'a> CheckerContext<'a> {
             // and flow-analyzer can query it without waiting for first access.
             if let Some(info) = self.definition_store.get(*def_id) {
                 self.register_def_kind_in_envs(*def_id, info.kind);
+
+                // For classes, also warm the ClassConstructor companion's
+                // DefKind so the checker doesn't need to create one on demand.
+                if info.kind == tsz_solver::def::DefKind::Class {
+                    if let Some(ctor_def_id) = self.definition_store.get_constructor_def(*def_id) {
+                        if let Some(ctor_info) = self.definition_store.get(ctor_def_id) {
+                            self.register_def_kind_in_envs(ctor_def_id, ctor_info.kind);
+                        }
+                    }
+                }
             }
 
             count += 1;

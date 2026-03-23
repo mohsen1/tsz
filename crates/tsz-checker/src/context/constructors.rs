@@ -315,6 +315,10 @@ impl<'a> CheckerContext<'a> {
             capabilities,
         );
         ctx.definition_store = definition_store;
+        // Eagerly warm local caches from the shared store so that
+        // cross-file symbol resolution and other early-access paths
+        // hit O(1) local lookups instead of the fallback path.
+        ctx.warm_local_caches_from_shared_store();
         ctx
     }
 
@@ -462,6 +466,7 @@ impl<'a> CheckerContext<'a> {
             capabilities,
         );
         ctx.definition_store = definition_store;
+        ctx.warm_local_caches_from_shared_store();
         ctx.apply_cache(cache);
         ctx
     }

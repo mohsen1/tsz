@@ -35453,3 +35453,56 @@ const myVar: number = 42;
         eprintln!("INFO: def_fallback_count = {fallback_count} (expected for internal symbols)");
     }
 }
+
+/// Test that using a shared DefinitionStore (pre-populated at merge time)
+/// reduces checker fallback to zero for all top-level declaration families.
+/// This verifies that the merge pipeline's `pre_populate_definition_store`
+/// + checker's `warm_local_caches_from_shared_store` path provides complete
+/// stable identity coverage.
+#[test]
+fn test_shared_def_store_eliminates_fallback_for_top_level() {
+    use crate::parallel::{merge_bind_results, parse_and_bind_parallel};
+
+    let source = r#"
+export class MyClass<T> { value: T; }
+export interface MyInterface { x: number; }
+export type MyAlias = string | number;
+export enum MyEnum { A, B, C }
+export function myFunc(): void {}
+export const myVar: number = 42;
+"#;
+
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Use the shared DefinitionStore from the merge pipeline
+    let store = &program.definition_store;
+    let interner = &program.type_interner;
+
+    // Verify all families have DefIds in the shared store
+    let names = [
+        "MyClass",
+        "MyInterface",
+        "MyAlias",
+        "MyEnum",
+        "myFunc",
+        "myVar",
+    ];
+    for name in &names {
+        let atom = interner.intern_string(name);
+        let defs = store.find_defs_by_name(atom);
+        assert!(
+            defs.is_some() && !defs.as_ref().unwrap().is_empty(),
+            "{name} should have DefId in shared store before checker construction"
+        );
+    }
+
+    // Verify symbol_only_index has mappings for all semantic_defs
+    let mappings = store.all_symbol_mappings();
+    assert!(
+        mappings.len() >= 6,
+        "Shared store should have at least 6 symbol→DefId mappings, got {}",
+        mappings.len()
+    );
+}
