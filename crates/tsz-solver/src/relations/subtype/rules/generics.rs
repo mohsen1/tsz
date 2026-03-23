@@ -522,6 +522,176 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
+    /// Pre-evaluation variance fast path for Application types.
+    ///
+    /// When both source and target are Application types with the same base generic
+    /// definition and matching arity, check type arguments using variance annotations
+    /// WITHOUT evaluating the types to their structural forms first.
+    ///
+    /// This is critical for recursive generic interfaces like `FunctionComponent<P>`
+    /// where evaluation converts Application → Object, losing the generic identity
+    /// needed for variance-based rejection. Without this, the structural comparison
+    /// falls through to Object-to-Object with coinductive cycle detection, which
+    /// incorrectly assumes compatibility for structurally recursive types whose
+    /// type arguments differ.
+    ///
+    /// Returns `Some(result)` if variance gives a conclusive answer, `None` otherwise.
+    pub(crate) fn try_variance_fast_path(
+        &mut self,
+        s_app_id: TypeApplicationId,
+        t_app_id: TypeApplicationId,
+    ) -> Option<SubtypeResult> {
+        let s_app = self.interner.type_application(s_app_id);
+        let t_app = self.interner.type_application(t_app_id);
+
+        // Arity must match for variance comparison
+        if s_app.args.len() != t_app.args.len() {
+            return None;
+        }
+
+        // Must be the same base type (same generic definition)
+        let same_base = s_app.base == t_app.base
+            || self
+                .shared_application_base_def_id(s_app.base, t_app.base)
+                .is_some();
+        if !same_base {
+            return None;
+        }
+
+        let variance_def_id = if s_app.base == t_app.base {
+            self.application_base_def_id(s_app.base)
+        } else {
+            self.shared_application_base_def_id(s_app.base, t_app.base)
+        };
+
+        let def_id = variance_def_id?;
+
+        use crate::caches::db::QueryDatabase;
+        let variances = self
+            .query_db
+            .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
+            .or_else(|| self.resolver.get_type_param_variance(def_id))
+            .or_else(|| {
+                crate::relations::variance::compute_type_param_variances_with_resolver(
+                    self.interner,
+                    self.resolver,
+                    def_id,
+                )
+            })?;
+
+        if variances.len() != s_app.args.len() {
+            return None;
+        }
+
+        let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
+        let mut all_ok = true;
+        let mut any_checked = false;
+
+        for (i, variance) in variances.iter().enumerate() {
+            let s_arg = s_app.args[i];
+            let t_arg = t_app.args[i];
+
+            if variance.is_invariant() {
+                any_checked = true;
+                if !self.check_subtype(s_arg, t_arg).is_true()
+                    || !self.check_subtype(t_arg, s_arg).is_true()
+                {
+                    all_ok = false;
+                    break;
+                }
+            } else if variance.is_covariant() {
+                any_checked = true;
+                if !self.check_subtype(s_arg, t_arg).is_true() {
+                    all_ok = false;
+                    break;
+                }
+            } else if variance.is_contravariant() {
+                any_checked = true;
+                if !self.check_subtype(t_arg, s_arg).is_true() {
+                    all_ok = false;
+                    break;
+                }
+            }
+        }
+
+        if any_checked && all_ok && !needs_structural_fallback {
+            return Some(SubtypeResult::True);
+        }
+        // Variance failures are definitive even with structural fallback.
+        // The structural fallback flag means "don't trust True because mapped
+        // modifiers could change the structure". But a False result (type args
+        // are incompatible) is trustworthy: if the type arguments fail the
+        // invariant/covariant/contravariant check, the generic types cannot be
+        // compatible regardless of how modifiers transform the structure.
+        if any_checked && !all_ok {
+            return Some(SubtypeResult::False);
+        }
+
+        None
+    }
+
+    /// Pre-evaluation variance check for Application source vs Union target.
+    ///
+    /// When the target is a Union containing an Application with the same base
+    /// as the source (common for optional properties: `FC<X> | undefined`),
+    /// try variance checking BEFORE evaluation. This prevents the source
+    /// Application from being evaluated to an Object, which would lose the
+    /// generic identity needed for variance-based rejection.
+    ///
+    /// Returns `Some(result)` if variance gives a conclusive answer, `None` otherwise.
+    pub(crate) fn try_variance_against_union_target(
+        &mut self,
+        s_app_id: TypeApplicationId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        let target_members = union_list_id(self.interner, target)?;
+        let members = self.interner.type_list(target_members);
+
+        // Find Application members and non-Application members of the union
+        let mut app_member_id = None;
+        let mut non_app_members = Vec::new();
+
+        for &member in members.iter() {
+            if let Some(t_app_id) = application_id(self.interner, member) {
+                // Check if this Application has the same base as the source
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                let same_base = s_app.base == t_app.base
+                    || self
+                        .shared_application_base_def_id(s_app.base, t_app.base)
+                        .is_some();
+                if same_base && s_app.args.len() == t_app.args.len() {
+                    app_member_id = Some(t_app_id);
+                } else {
+                    non_app_members.push(member);
+                }
+            } else {
+                non_app_members.push(member);
+            }
+        }
+
+        let t_app_id = app_member_id?;
+
+        // Try variance check between source Application and matching target Application
+        match self.try_variance_fast_path(s_app_id, t_app_id) {
+            Some(SubtypeResult::True) => Some(SubtypeResult::True),
+            Some(SubtypeResult::False) => {
+                // Variance rejected the Application member. Check if the source
+                // is a subtype of any non-Application member (e.g., undefined).
+                // For a non-nullable Application type, this is typically false.
+                let s_app = self.interner.type_application(s_app_id);
+                let source_type = self.interner.application(s_app.base, s_app.args.clone());
+                for &non_app in &non_app_members {
+                    if self.check_subtype(source_type, non_app).is_true() {
+                        return Some(SubtypeResult::True);
+                    }
+                }
+                Some(SubtypeResult::False)
+            }
+            _ => None,
+        }
+    }
+
     /// Check application-to-application structural comparison.
     ///
     /// When both source and target are type applications that resolve to mapped types
