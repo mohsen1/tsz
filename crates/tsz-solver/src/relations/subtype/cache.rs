@@ -486,6 +486,76 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =========================================================================
+        // Pre-evaluation variance fast path for Application types.
+        //
+        // When both types are Application types (e.g., FunctionComponent<X> vs
+        // FunctionComponent<Y>), check type argument compatibility using variance
+        // BEFORE evaluation. This is critical because evaluation converts
+        // Application → Object, losing the generic identity needed for variance-
+        // based rejection. Without this, recursive generic interfaces like
+        // FunctionComponent<P> get structurally compared with coinductive cycle
+        // detection, which incorrectly assumes compatibility when type arguments
+        // differ (e.g., SomePropsCloneX vs SomeProps).
+        //
+        // Also handles the common case where the target is a Union containing an
+        // Application (e.g., from optional properties: FC<SomeProps> | undefined).
+        // Without this, the source Application gets evaluated to an Object before
+        // the union is unwrapped, losing the generic identity.
+        // =========================================================================
+        // =========================================================================
+        // Pre-evaluation variance fast path for Application types.
+        //
+        // When both types are Application types (e.g., FunctionComponent<X> vs
+        // FunctionComponent<Y>), check type argument compatibility using variance
+        // BEFORE evaluation. This is critical because evaluation converts
+        // Application -> Object, losing the generic identity needed for variance-
+        // based rejection. Without this, recursive generic interfaces like
+        // FunctionComponent<P> get structurally compared with coinductive cycle
+        // detection, which incorrectly assumes compatibility when type arguments
+        // differ (e.g., SomePropsCloneX vs SomeProps).
+        //
+        // Also handles the common case where the target is a Union containing an
+        // Application (e.g., from optional properties: FC<SomeProps> | undefined).
+        // Without this, the source Application gets evaluated to an Object before
+        // the union is unwrapped, losing the generic identity.
+        //
+        // GUARD: Skip this fast path when we're already inside a recursive type
+        // expansion (def_guard has entries). In that case, variance rejection may
+        // be incorrect because the types participate in a recursive structure where
+        // coinductive cycle detection should determine the result instead.
+        // =========================================================================
+        let outer_def_count =
+            self.def_guard.visiting_count() - if def_entered.is_some() { 1 } else { 0 };
+        if !self.bypass_evaluation && outer_def_count == 0 {
+            let variance_result = if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
+                self.try_variance_fast_path(s_app_id, t_app_id)
+            } else if let Some(s_app_id) = s_app_id {
+                // Source is Application, target might be Union containing an Application.
+                // This handles optional properties where target is App<X> | undefined.
+                self.try_variance_against_union_target(s_app_id, target)
+            } else {
+                None
+            };
+
+            if let Some(result) = variance_result {
+                if let Some(dp) = def_entered {
+                    self.def_guard.leave(dp);
+                }
+                self.guard.leave(pair);
+                if let Some(db) = self.query_db {
+                    let key = self.make_cache_key(source, target);
+                    match result {
+                        SubtypeResult::True => db.insert_subtype_cache(key, true),
+                        SubtypeResult::False => db.insert_subtype_cache(key, false),
+                        _ => {}
+                    }
+                }
+                leave_global!();
+                return result;
+            }
+        }
+
+        // =========================================================================
         // Meta-type evaluation (after cycle detection is set up)
         // =========================================================================
         let result = if self.bypass_evaluation {
