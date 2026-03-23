@@ -758,18 +758,25 @@ impl<'a> CheckerContext<'a> {
             // prerequisite for file-skeleton decomposition (Phase 2).
             let name = self.types.intern_string(&entry.name);
 
-            // Create stub type parameter entries if the declaration is generic.
-            // These are placeholders with default Atom(0) names and no constraints;
-            // the real TypeParamInfo will be filled in by the checker walk via
-            // DefinitionStore::set_type_params(). The arity itself enables the
-            // TypeFormatter to display `Foo<unknown, unknown>` instead of just `Foo`.
+            // Create type parameter entries preserving arity and names.
+            // Binder captures type param names at bind time; we use them here
+            // so DefinitionInfo has real names from the start. Constraints and
+            // defaults are still filled in later by the checker walk via
+            // DefinitionStore::set_type_params().
             let type_params = if entry.type_param_count > 0 {
                 (0..entry.type_param_count)
-                    .map(|_| tsz_solver::TypeParamInfo {
-                        name: tsz_common::interner::Atom(0),
-                        constraint: None,
-                        default: None,
-                        is_const: false,
+                    .map(|i| {
+                        let name = entry
+                            .type_param_names
+                            .get(i as usize)
+                            .map(|n| self.types.intern_string(n))
+                            .unwrap_or(tsz_common::interner::Atom(0));
+                        tsz_solver::TypeParamInfo {
+                            name,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        }
                     })
                     .collect()
             } else {
