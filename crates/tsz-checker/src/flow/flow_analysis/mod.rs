@@ -27,6 +27,7 @@
 
 mod core;
 pub(crate) mod definite;
+pub(crate) mod tdz;
 pub(crate) mod usage;
 
 pub(crate) use self::core::{ComputedKey, PropertyKey};
