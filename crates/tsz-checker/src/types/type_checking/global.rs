@@ -450,16 +450,24 @@ impl<'a> CheckerState<'a> {
             "IterableIterator",
             "AsyncIterableIterator",
             "TypedPropertyDescriptor",
-            // Note: Disposable/AsyncDisposable are intentionally NOT checked here.
-            // These types were added in esnext.disposable and are not present in
-            // es2022 or earlier libs. tsc does not emit TS2318 for them when the
-            // lib target doesn't include them — it handles the missing type
-            // gracefully at usage sites instead.
+            "Disposable",
+            "AsyncDisposable",
         ];
 
         for &type_name in FEATURE_TYPES {
             // Check if available in lib contexts or declared locally
             if self.ctx.has_name_in_lib(type_name) || self.ctx.binder.file_locals.has(type_name) {
+                continue;
+            }
+
+            // Disposable/AsyncDisposable: tsc only emits TS2318 when the target
+            // requires downleveling of `using`/`await using` (target < ES2025).
+            // When native support is available (target >= ES2025/ESNext), the types
+            // are only needed if they happen to be in the lib; their absence is not
+            // an error.
+            if matches!(type_name, "Disposable" | "AsyncDisposable")
+                && self.ctx.compiler_options.target.supports_es2025()
+            {
                 continue;
             }
 
