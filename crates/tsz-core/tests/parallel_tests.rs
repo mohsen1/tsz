@@ -6888,3 +6888,373 @@ fn namespace_with_nested_declarations_stable_across_merge() {
         "Shapes' DefId should be stable after rebind"
     );
 }
+
+// =============================================================================
+// ClassConstructor Companion Pre-population Tests
+// =============================================================================
+
+#[test]
+fn class_constructor_companion_created_during_merge() {
+    let files = vec![("a.ts".to_string(), "export class Foo {}".to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let stats = program.definition_store.statistics();
+    assert!(
+        stats.classes >= 1,
+        "expected at least 1 class def, got {}",
+        stats.classes
+    );
+    assert!(
+        stats.class_constructors >= 1,
+        "expected at least 1 ClassConstructor companion, got {}",
+        stats.class_constructors
+    );
+    assert!(
+        stats.class_to_constructor_entries >= 1,
+        "expected class_to_constructor index entry, got {}",
+        stats.class_to_constructor_entries
+    );
+}
+
+#[test]
+fn class_constructor_companion_has_correct_name_and_kind() {
+    let files = vec![(
+        "a.ts".to_string(),
+        "export class Widget<T> { value: T; }".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Find the class DefId
+    let class_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Widget")
+        .map(|(&id, _)| id)
+        .expect("Widget should be in semantic_defs");
+
+    let class_def = program
+        .definition_store
+        .find_def_by_symbol(class_sym.0)
+        .expect("Widget should have a DefId");
+
+    let class_info = program
+        .definition_store
+        .get(class_def)
+        .expect("Widget DefId should have info");
+    assert_eq!(
+        class_info.kind,
+        tsz_solver::def::DefKind::Class,
+        "Widget should be DefKind::Class"
+    );
+
+    // Check the constructor companion
+    let ctor_def = program
+        .definition_store
+        .get_constructor_def(class_def)
+        .expect("Widget should have a ClassConstructor companion");
+
+    let ctor_info = program
+        .definition_store
+        .get(ctor_def)
+        .expect("Constructor DefId should have info");
+    assert_eq!(
+        ctor_info.kind,
+        tsz_solver::def::DefKind::ClassConstructor,
+        "Companion should be DefKind::ClassConstructor"
+    );
+    // Constructor companion should share the same symbol_id
+    assert_eq!(
+        ctor_info.symbol_id, class_info.symbol_id,
+        "Constructor companion should share the class's symbol_id"
+    );
+    // Body should be None (filled lazily by checker)
+    assert!(
+        ctor_info.body.is_none(),
+        "Pre-populated constructor body should be None (lazy)"
+    );
+}
+
+#[test]
+fn class_constructor_companion_multifile() {
+    let files = vec![
+        ("a.ts".to_string(), "export class Alpha {}".to_string()),
+        (
+            "b.ts".to_string(),
+            "export class Beta<T> extends Object {}".to_string(),
+        ),
+        (
+            "c.ts".to_string(),
+            "export abstract class Gamma {}".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let stats = program.definition_store.statistics();
+    assert!(
+        stats.classes >= 3,
+        "expected at least 3 class defs, got {}",
+        stats.classes
+    );
+    assert!(
+        stats.class_constructors >= 3,
+        "expected at least 3 ClassConstructor companions, got {}",
+        stats.class_constructors
+    );
+    assert!(
+        stats.class_to_constructor_entries >= 3,
+        "expected at least 3 class_to_constructor entries, got {}",
+        stats.class_to_constructor_entries
+    );
+}
+
+#[test]
+fn class_constructor_companion_survives_binder_reconstruction() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "export class Foo { x: number; }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export class Bar<T> { value: T; }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Capture DefIds before reconstruction
+    let foo_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Foo")
+        .map(|(&id, _)| id)
+        .expect("Foo in semantic_defs");
+    let foo_def = program
+        .definition_store
+        .find_def_by_symbol(foo_sym.0)
+        .expect("Foo DefId");
+    let foo_ctor = program
+        .definition_store
+        .get_constructor_def(foo_def)
+        .expect("Foo constructor companion");
+
+    // Reconstruct binders (simulates what check_files_parallel does)
+    let _binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let _binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
+
+    // After reconstruction, the class_to_constructor mapping should still work
+    assert_eq!(
+        program.definition_store.get_constructor_def(foo_def),
+        Some(foo_ctor),
+        "ClassConstructor companion should survive binder reconstruction"
+    );
+
+    // The DefId should still resolve
+    let ctor_info = program.definition_store.get(foo_ctor);
+    assert!(
+        ctor_info.is_some(),
+        "Constructor DefId should still have info after reconstruction"
+    );
+}
+
+// =============================================================================
+// Multi-file Identity Stability Tests (all declaration families)
+// =============================================================================
+
+#[test]
+fn multifile_identity_all_families_survive_merge_rebind() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            r#"
+export class MyClass<T> { value: T; }
+export interface MyInterface { x: number; }
+export type MyAlias = string | number;
+"#
+            .to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            r#"
+export enum MyEnum { A, B, C }
+export namespace MyNS { export type T = number; }
+export function myFunc(): void {}
+export const myVar = 42;
+"#
+            .to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let store = &program.definition_store;
+
+    // Collect all semantic def names and their DefIds before reconstruction
+    let mut pre_reconstruct: Vec<(String, tsz_solver::def::DefId)> = Vec::new();
+    for (&sym_id, entry) in &program.semantic_defs {
+        if let Some(def_id) = store.find_def_by_symbol(sym_id.0) {
+            pre_reconstruct.push((entry.name.clone(), def_id));
+        }
+    }
+
+    // Verify all 7 families are represented
+    let expected_names = [
+        "MyClass",
+        "MyInterface",
+        "MyAlias",
+        "MyEnum",
+        "MyNS",
+        "myFunc",
+        "myVar",
+    ];
+    for name in &expected_names {
+        assert!(
+            pre_reconstruct.iter().any(|(n, _)| n == name),
+            "{name} should have a DefId in the store"
+        );
+    }
+
+    // Reconstruct binders for both files
+    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
+
+    // Verify all semantic_defs in reconstructed binders still have DefIds
+    for binder in [&binder_a, &binder_b] {
+        for &sym_id in binder.semantic_defs.keys() {
+            let def_id = store.find_def_by_symbol(sym_id.0);
+            assert!(
+                def_id.is_some(),
+                "Reconstructed SymbolId({}) should still have DefId in shared store",
+                sym_id.0
+            );
+        }
+    }
+
+    // Verify DefIds didn't change
+    for (name, original_def) in &pre_reconstruct {
+        let current_sym = program
+            .semantic_defs
+            .iter()
+            .find(|(_, e)| e.name == *name)
+            .map(|(&id, _)| id);
+        if let Some(sym_id) = current_sym {
+            let current_def = store.find_def_by_symbol(sym_id.0);
+            assert_eq!(
+                current_def,
+                Some(*original_def),
+                "{name}: DefId should be stable across reconstruction"
+            );
+        }
+    }
+}
+
+#[test]
+fn interface_merge_across_files_preserves_identity() {
+    // Interface declaration merging: same interface in two files
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "export interface Merged { x: number; }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export interface Merged { y: string; }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let store = &program.definition_store;
+
+    // After merge, 'Merged' should exist as a single logical entity
+    // in semantic_defs (merged under one SymbolId)
+    let merged_entries: Vec<_> = program
+        .semantic_defs
+        .iter()
+        .filter(|(_, e)| e.name == "Merged")
+        .collect();
+
+    assert!(
+        !merged_entries.is_empty(),
+        "Merged interface should be in semantic_defs"
+    );
+
+    // Each semantic_def entry should have a DefId
+    for (sym_id, _) in &merged_entries {
+        let def_id = store.find_def_by_symbol(sym_id.0);
+        assert!(
+            def_id.is_some(),
+            "Merged interface SymbolId({}) should have DefId",
+            sym_id.0
+        );
+
+        // Verify it's DefKind::Interface
+        if let Some(def_id) = def_id {
+            let kind = store.get_kind(def_id);
+            assert_eq!(
+                kind,
+                Some(tsz_solver::def::DefKind::Interface),
+                "Merged interface should be DefKind::Interface"
+            );
+        }
+    }
+}
+
+#[test]
+fn class_with_heritage_preserves_identity_through_merge() {
+    let files = vec![
+        (
+            "base.ts".to_string(),
+            "export class Base { x: number; }".to_string(),
+        ),
+        (
+            "derived.ts".to_string(),
+            "export class Derived extends Base { y: string; }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let store = &program.definition_store;
+
+    // Both classes should have DefIds
+    let base_entry = program.semantic_defs.iter().find(|(_, e)| e.name == "Base");
+    let derived_entry = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Derived");
+
+    assert!(base_entry.is_some(), "Base should be in semantic_defs");
+    assert!(
+        derived_entry.is_some(),
+        "Derived should be in semantic_defs"
+    );
+
+    let base_def = store
+        .find_def_by_symbol(base_entry.unwrap().0.0)
+        .expect("Base DefId");
+    let derived_def = store
+        .find_def_by_symbol(derived_entry.unwrap().0.0)
+        .expect("Derived DefId");
+
+    // Both should have constructor companions
+    assert!(
+        store.get_constructor_def(base_def).is_some(),
+        "Base should have ClassConstructor companion"
+    );
+    assert!(
+        store.get_constructor_def(derived_def).is_some(),
+        "Derived should have ClassConstructor companion"
+    );
+
+    // Heritage should be wired (Derived extends Base)
+    let derived_extends = store.get_extends(derived_def);
+    assert_eq!(
+        derived_extends,
+        Some(base_def),
+        "Derived should extend Base via heritage resolution"
+    );
+}
