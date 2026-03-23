@@ -134,17 +134,23 @@ impl CheckerContext<'_> {
         // The emitted_ts2454_errors set is separate from emitted_diagnostics and
         // is NOT restored by this rollback. Without cleanup, discarded TS2454
         // errors remain in the dedup set and prevent re-emission later.
-        for diag in &self.diagnostics[snap.diagnostics_len..] {
+        //
+        // Clamp to current length: nested speculation or cross-path diagnostic
+        // removal can make the list shorter than the snapshot expected.
+        let truncate_at = snap.diagnostics_len.min(self.diagnostics.len());
+        for diag in &self.diagnostics[truncate_at..] {
             if diag.code == 2454 {
                 self.emitted_ts2454_errors
                     .retain(|&(pos, _)| pos != diag.start);
             }
         }
-        self.diagnostics.truncate(snap.diagnostics_len);
+        self.diagnostics.truncate(truncate_at);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
-        self.deferred_ts2454_errors
-            .truncate(snap.deferred_ts2454_len);
+        self.deferred_ts2454_errors.truncate(
+            snap.deferred_ts2454_len
+                .min(self.deferred_ts2454_errors.len()),
+        );
     }
 
     /// Roll back to a full snapshot, discarding speculative diagnostics and
@@ -250,7 +256,7 @@ impl CheckerContext<'_> {
         to: &DiagnosticSnapshot,
     ) -> &[Diagnostic] {
         let start = from.diagnostics_len.min(self.diagnostics.len());
-        let end = to.diagnostics_len.min(self.diagnostics.len());
+        let end = to.diagnostics_len.min(self.diagnostics.len()).max(start);
         &self.diagnostics[start..end]
     }
 
@@ -276,18 +282,22 @@ impl CheckerContext<'_> {
     ) {
         // Clean up emitted_ts2454_errors for discarded TS2454 diagnostics
         // that are not in the replacement set.
+        //
+        // Clamp to current length: nested speculation or cross-path diagnostic
+        // removal can make the list shorter than the snapshot expected.
+        let truncate_at = snap.diagnostics_len.min(self.diagnostics.len());
         let replacement_ts2454_positions: rustc_hash::FxHashSet<u32> = replacement
             .iter()
             .filter(|d| d.code == 2454)
             .map(|d| d.start)
             .collect();
-        for diag in &self.diagnostics[snap.diagnostics_len..] {
+        for diag in &self.diagnostics[truncate_at..] {
             if diag.code == 2454 && !replacement_ts2454_positions.contains(&diag.start) {
                 self.emitted_ts2454_errors
                     .retain(|&(pos, _)| pos != diag.start);
             }
         }
-        self.diagnostics.truncate(snap.diagnostics_len);
+        self.diagnostics.truncate(truncate_at);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
         for diag in &replacement {
@@ -352,15 +362,12 @@ impl DiagnosticSpeculationGuard {
         self.committed = true;
     }
 
-    /// Roll back manually (same as drop, but explicit for clarity).
-    pub(crate) fn rollback(self, ctx: &mut CheckerContext) {
+    /// Roll back manually (same effect as letting the guard go unused,
+    /// but explicit for clarity). Since Drop cannot access `CheckerContext`,
+    /// this is the only way to perform a rollback via the guard.
+    pub(crate) fn rollback(mut self, ctx: &mut CheckerContext) {
         ctx.rollback_diagnostics(&self.snapshot);
-        // drop will see committed = false, but snapshot is already consumed
-        // Actually we need to handle this properly - the Drop will try to
-        // rollback but ctx isn't available. So we just mark as committed
-        // to prevent double-rollback since we already did it.
-        // Actually, Drop can't access ctx, so it's a no-op anyway.
-        // The manual rollback is the real one.
+        self.committed = true; // prevent any future misuse; Drop is a no-op anyway
     }
 
     /// Rollback and apply a filter to keep some speculative diagnostics.
