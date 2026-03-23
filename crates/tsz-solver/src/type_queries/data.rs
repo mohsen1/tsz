@@ -1152,6 +1152,22 @@ pub fn find_property_in_object_by_str(
         .cloned()
 }
 
+/// Check if a type is "tuple-like", matching tsc's `isTupleLikeType`.
+///
+/// A type is tuple-like if it is a Tuple, Array, or an object type with a
+/// property named `"0"`. This is used by array literal contextual typing
+/// to decide whether to create a tuple type instead of an array type.
+pub fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Tuple(_) | TypeData::Array(_)) => true,
+        Some(TypeData::ReadonlyType(inner)) => is_tuple_like_type(db, inner),
+        Some(TypeData::TypeParameter(info)) => {
+            info.constraint.is_some_and(|c| is_tuple_like_type(db, c))
+        }
+        _ => find_property_in_object_by_str(db, type_id, "0").is_some(),
+    }
+}
+
 /// Check if a type that is a numeric literal (or union of numeric literals) is
 /// a valid index for `object_type` by matching numeric values against named
 /// properties.
