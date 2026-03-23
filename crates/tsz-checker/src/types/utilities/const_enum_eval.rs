@@ -2,11 +2,32 @@
 //!
 //! These are free functions (not methods on `CheckerState`) so they can be called
 //! from both `CheckerState` and `DeclarationChecker` contexts.
+//!
+//! Cycle detection: A thread-local visited set (`CONST_EVAL_VISITED`) tracks which
+//! enum member declarations are currently being evaluated.  This detects both direct
+//! self-references (`A = E.A`) and mutual recursion across enums
+//! (`enum E { A = F.B }; enum F { B = E.A }`).  A drop guard ensures cleanup even
+//! on panic.
 
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+
+thread_local! {
+    static CONST_EVAL_VISITED: std::cell::RefCell<rustc_hash::FxHashSet<NodeIndex>>
+        = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+}
+
+/// RAII guard that removes a `NodeIndex` from `CONST_EVAL_VISITED` on drop.
+struct ConstEvalGuard(NodeIndex);
+impl Drop for ConstEvalGuard {
+    fn drop(&mut self) {
+        CONST_EVAL_VISITED.with(|v| {
+            v.borrow_mut().remove(&self.0);
+        });
+    }
+}
 
 /// Evaluate a const enum member's initializer value, resolving references to other members.
 ///
@@ -214,6 +235,9 @@ fn resolve_cross_enum_element_access(
 }
 
 /// Find an enum declaration by name in the same file and evaluate one of its members.
+///
+/// Uses `CONST_EVAL_VISITED` to detect cycles across mutually-recursive enums
+/// (e.g., `const enum E { A = F.B }; const enum F { B = E.A }`).
 fn resolve_external_enum_member(
     arena: &tsz_parser::parser::NodeArena,
     current_enum_data: &tsz_parser::parser::node::EnumData,
@@ -237,6 +261,13 @@ fn resolve_external_enum_member(
                 let m_idx = candidate_enum.members.nodes[member_idx];
                 let m_node = arena.get(m_idx)?;
                 let m_data = arena.get_enum_member(m_node)?;
+
+                // Cycle detection: if we're already evaluating this member, bail out.
+                let already_visiting = CONST_EVAL_VISITED.with(|v| !v.borrow_mut().insert(m_idx));
+                if already_visiting {
+                    return None; // Circular — treat as non-constant
+                }
+                let _guard = ConstEvalGuard(m_idx);
 
                 if m_data.initializer.is_some() {
                     return evaluate_const_enum_initializer(
@@ -282,6 +313,9 @@ fn resolve_external_enum_member(
 /// For members with explicit initializers, evaluates the initializer directly.
 /// For auto-incremented members, finds the nearest prior explicit initializer,
 /// evaluates it, then adds the offset.
+///
+/// Uses `CONST_EVAL_VISITED` to detect self-referencing initializers
+/// (e.g., `const enum E { A = A }`).
 fn resolve_enum_member_value(
     arena: &tsz_parser::parser::NodeArena,
     name: &str,
@@ -295,6 +329,13 @@ fn resolve_enum_member_value(
     let m_idx = target_enum_data.members.nodes[target_idx];
     let m_node = arena.get(m_idx)?;
     let m_data = arena.get_enum_member(m_node)?;
+
+    // Cycle detection: if we're already evaluating this member, bail out.
+    let already_visiting = CONST_EVAL_VISITED.with(|v| !v.borrow_mut().insert(m_idx));
+    if already_visiting {
+        return None; // Circular — treat as non-constant
+    }
+    let _guard = ConstEvalGuard(m_idx);
 
     // If it has an explicit initializer, evaluate it directly
     if m_data.initializer.is_some() {
