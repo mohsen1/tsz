@@ -296,6 +296,15 @@ impl<'a> FlowGraphBuilder<'a> {
                     }
                 }
             }
+            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                // Unwrap parenthesized expressions so that assignments inside
+                // parentheses are visible to flow analysis.
+                // e.g., `d ?? (d = x ?? "x")` — the inner `d = x ?? "x"` must
+                // create an ASSIGNMENT flow node for `d`.
+                if let Some(inner) = self.arena.get_parenthesized(node) {
+                    self.handle_expression_for_assignments(inner.expression);
+                }
+            }
             _ => {}
         }
     }
