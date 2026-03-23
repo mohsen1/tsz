@@ -334,33 +334,6 @@ pub(crate) fn type_param_info(
     tsz_solver::type_param_info(db, type_id)
 }
 
-// ── Composite type-classification queries ──
-
-/// True when the type is a bare type parameter or an intersection containing a
-/// type parameter. Used during generic call inference to decide whether a
-/// function-literal argument should be sanitized.
-pub(crate) fn is_type_param_at_top_or_in_intersection(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_type_param_at_top_or_in_intersection(db, type_id)
-}
-
-/// True when both types are Applications and the param contains type parameters.
-/// Tells the pre-evaluation step to preserve the raw Application shape.
-pub(crate) fn both_are_applications_with_generic_param(
-    db: &dyn TypeDatabase,
-    param_type: TypeId,
-    arg_type: TypeId,
-) -> bool {
-    tsz_solver::type_queries::both_are_applications_with_generic_param(db, param_type, arg_type)
-}
-
-/// True when a type has any call signatures (Function or Callable).
-pub(crate) fn has_any_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::has_any_call_signatures(db, type_id)
-}
-
 // ── Type unwrapping / widening wrappers ──
 
 /// Unwrap `ReadonlyType` or `NoInfer` wrappers, returning the inner type if present.

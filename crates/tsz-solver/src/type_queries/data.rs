@@ -1373,52 +1373,6 @@ pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
-/// Check if a type is a bare type parameter, or an intersection that contains
-/// at least one type parameter member.
-///
-/// This is used during generic call inference to decide whether a function-literal
-/// argument should be sanitized (replaced with `unknown`) before the solver's
-/// second inference pass. When the shape parameter is `T` or `T & Callback`,
-/// the sensitive placeholder `(any?) => any` from Round 1 can contaminate
-/// inference. But when the param is a concrete callable like `Predicate<A>`,
-/// the placeholder structure helps infer inner type params.
-pub fn is_type_param_at_top_or_in_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if is_type_parameter(db, type_id) {
-        return true;
-    }
-    if let Some(members) = get_intersection_members(db, type_id) {
-        return members.iter().any(|&m| is_type_parameter(db, m));
-    }
-    false
-}
-
-/// Check if both `param_type` and `arg_type` are `Application` types and the
-/// param also contains type parameters.
-///
-/// When true, the pre-evaluation step during Round 1 inference should preserve
-/// the raw `Application` form instead of evaluating it through the
-/// `TypeEnvironment`. Evaluating both sides would lose the structural alignment
-/// between the generic param shape and the concrete arg shape, preventing the
-/// solver from correctly matching type arguments.
-pub fn both_are_applications_with_generic_param(
-    db: &dyn TypeDatabase,
-    param_type: TypeId,
-    arg_type: TypeId,
-) -> bool {
-    super::extended::get_application_info(db, param_type).is_some()
-        && super::extended::get_application_info(db, arg_type).is_some()
-        && contains_type_parameters_db(db, param_type)
-}
-
-/// Check if a type has any call signatures, either as a `Function` type or a
-/// `Callable` type with call signatures.
-///
-/// This is a quick predicate used to decide whether an argument type is
-/// callable (e.g. for refining generic inference substitutions).
-pub fn has_any_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    get_function_shape(db, type_id).is_some() || get_callable_shape(db, type_id).is_some()
-}
-
 /// Get the constraint of a type parameter.
 ///
 /// Returns None if not a type parameter or has no constraint.
