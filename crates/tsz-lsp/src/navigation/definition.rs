@@ -725,16 +725,26 @@ impl<'a> GoToDefinition<'a> {
             }
         }
 
-        // Walk up the extends chain
+        // Walk up the extends chain (classes and interfaces)
         for &decl_idx in &class_symbol.declarations {
             let decl_node = self.arena.get(decl_idx)?;
-            if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION
-                && decl_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            // Get heritage clauses from class or interface declarations
+            let heritage_clauses = if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
+                self.arena
+                    .get_class(decl_node)
+                    .and_then(|c| c.heritage_clauses.as_ref())
+            } else if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                self.arena
+                    .get_interface(decl_node)
+                    .and_then(|i| i.heritage_clauses.as_ref())
+            } else {
                 continue;
-            }
-            let class = self.arena.get_class(decl_node)?;
-            let heritage_clauses = class.heritage_clauses.as_ref()?;
+            };
+            let Some(heritage_clauses) = heritage_clauses else {
+                continue;
+            };
             for &clause_idx in &heritage_clauses.nodes {
                 let clause_node = self.arena.get(clause_idx)?;
                 let heritage = self.arena.get_heritage(clause_node)?;
@@ -754,8 +764,16 @@ impl<'a> GoToDefinition<'a> {
                             Some(type_idx)
                         };
                     if let Some(expr_idx) = expr_idx {
-                        let mut walker = ScopeWalker::new(self.arena, self.binder);
-                        if let Some(base_symbol_id) = walker.resolve_node(root, expr_idx)
+                        // Try binder's direct identifier resolution first (faster),
+                        // then fall back to scope walker for qualified names.
+                        let base_symbol_id = self
+                            .binder
+                            .resolve_identifier(self.arena, expr_idx)
+                            .or_else(|| {
+                                let mut walker = ScopeWalker::new(self.arena, self.binder);
+                                walker.resolve_node(root, expr_idx)
+                            });
+                        if let Some(base_symbol_id) = base_symbol_id
                             && let Some(member_id) = self.resolve_member_in_class_chain(
                                 root,
                                 base_symbol_id,
@@ -865,11 +883,85 @@ impl<'a> GoToDefinition<'a> {
 
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let type_symbol_id = walker.resolve_node(root, type_name_idx)?;
-        let type_symbol = self.binder.symbols.get(type_symbol_id)?;
 
-        for &decl_idx in &type_symbol.declarations {
+        self.find_member_location_in_chain(root, type_symbol_id, member_name, 0)
+    }
+
+    /// Find a member's AST location by walking the class/interface inheritance chain.
+    fn find_member_location_in_chain(
+        &self,
+        root: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+        member_name: &str,
+        depth: u8,
+    ) -> Option<Location> {
+        if depth > 10 {
+            return None;
+        }
+        let symbol = self.binder.symbols.get(symbol_id)?;
+
+        // Check direct declarations
+        for &decl_idx in &symbol.declarations {
             if let Some(loc) = self.find_member_location_in_declaration(decl_idx, member_name) {
                 return Some(loc);
+            }
+        }
+
+        // Walk extends chain
+        for &decl_idx in &symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            let heritage_clauses = if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                self.arena
+                    .get_interface(decl_node)
+                    .and_then(|i| i.heritage_clauses.as_ref())
+            } else if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                self.arena
+                    .get_class(decl_node)
+                    .and_then(|c| c.heritage_clauses.as_ref())
+            } else {
+                continue;
+            };
+            let Some(heritage_clauses) = heritage_clauses else {
+                continue;
+            };
+            for &clause_idx in &heritage_clauses.nodes {
+                let clause_node = self.arena.get(clause_idx)?;
+                let heritage = self.arena.get_heritage(clause_node)?;
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                for &type_idx in &heritage.types.nodes {
+                    let type_node = self.arena.get(type_idx)?;
+                    let expr_idx =
+                        if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
+                            self.arena
+                                .get_expr_type_args(type_node)
+                                .map(|e| e.expression)
+                        } else {
+                            Some(type_idx)
+                        };
+                    if let Some(expr_idx) = expr_idx {
+                        let base_symbol_id = self
+                            .binder
+                            .resolve_identifier(self.arena, expr_idx)
+                            .or_else(|| {
+                                let mut w = ScopeWalker::new(self.arena, self.binder);
+                                w.resolve_node(root, expr_idx)
+                            });
+                        if let Some(base_symbol_id) = base_symbol_id {
+                            if let Some(loc) = self.find_member_location_in_chain(
+                                root,
+                                base_symbol_id,
+                                member_name,
+                                depth + 1,
+                            ) {
+                                return Some(loc);
+                            }
+                        }
+                    }
+                }
             }
         }
 
