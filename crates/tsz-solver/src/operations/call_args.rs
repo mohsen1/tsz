@@ -486,7 +486,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.param_type_contains_void(elem.type_id)
     }
 
-    pub(crate) fn arg_count_bounds(&self, params: &[ParamInfo]) -> (usize, Option<usize>) {
+    pub(crate) fn arg_count_bounds(&mut self, params: &[ParamInfo]) -> (usize, Option<usize>) {
         // Count required parameters, treating trailing `void`-containing params as optional.
         // In TypeScript, a parameter of type `void` (or union containing void like `number | void`)
         // can be omitted at the call site, but only if all subsequent params are also optional/void.
@@ -510,6 +510,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         let rest_param_type = self.unwrap_readonly(rest_param.type_id);
+        // Evaluate Application/Conditional/Mapped types (e.g. Parameters<Fn>) to
+        // their concrete Tuple form so arity checking works correctly.
+        let rest_param_type = self.evaluate_rest_param_type(rest_param_type);
         match self.interner.lookup(rest_param_type) {
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
