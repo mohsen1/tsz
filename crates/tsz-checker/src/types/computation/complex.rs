@@ -1061,13 +1061,13 @@ impl<'a> CheckerState<'a> {
                 constraint_type,
                 return_type,
             } => {
-                // Report TS2322 instead of TS2345 for constraint violations from
-                // callback return type inference.
-                let _ = self.check_assignable_or_report_generic_at(
+                // Type parameter constraint violations are argument-level
+                // mismatches. tsc reports TS2345 at the argument.
+                let anchor = args.first().copied().unwrap_or(idx);
+                let _ = self.check_argument_assignable_or_report(
                     inferred_type,
                     constraint_type,
-                    idx,
-                    idx,
+                    anchor,
                 );
                 return_type
             }
