@@ -43,6 +43,7 @@ impl<'a> CheckerState<'a> {
         let binder = &self.ctx.binder;
         let resolver = |node_idx: NodeIndex| -> Option<u32> {
             resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
+                .map(|sym_id| sym_id.0)
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
             lib_def_id_from_node(
