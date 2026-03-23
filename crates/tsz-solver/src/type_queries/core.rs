@@ -217,6 +217,14 @@ pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Check if a type is `symbol` or a `unique symbol` type.
 ///
 /// Returns true for the built-in `symbol` type and for `TypeData::UniqueSymbol`.
+/// Check if a type is a unique symbol (not plain `symbol`).
+///
+/// Returns true only for `TypeData::UniqueSymbol` types, which represent
+/// individual `typeof sym` types created for const symbol declarations.
+pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(db.lookup(type_id), Some(TypeData::UniqueSymbol(_)))
+}
+
 pub fn is_symbol_or_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::SYMBOL {
         return true;
