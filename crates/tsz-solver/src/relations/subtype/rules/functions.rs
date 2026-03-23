@@ -836,7 +836,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .any(|(_, renamed_tp)| {
                     infer_ctx
                         .find_type_param(renamed_tp.name)
-                        .map_or(false, |var| infer_ctx.var_has_candidates(var))
+                        .is_some_and(|var| infer_ctx.var_has_candidates(var))
                 });
             if has_actual_candidates {
                 return Err(e.clone());

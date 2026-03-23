@@ -279,12 +279,11 @@ impl<'a> CheckerState<'a> {
         for lib_ctx in &self.ctx.lib_contexts {
             for (symbol_name, sym_id) in lib_ctx.binder.file_locals.iter() {
                 // Apply the same meaning filter as the local search.
-                if meaning_flags != 0 {
-                    if let Some(sym) = lib_ctx.binder.get_symbol(*sym_id) {
-                        if sym.flags & meaning_flags == 0 {
-                            continue;
-                        }
-                    }
+                if meaning_flags != 0
+                    && let Some(sym) = lib_ctx.binder.get_symbol(*sym_id)
+                    && sym.flags & meaning_flags == 0
+                {
+                    continue;
                 }
                 Self::consider_identifier_suggestion(
                     name,
