@@ -374,12 +374,19 @@ impl<'a> CheckerState<'a> {
                 self.evaluate_enum_member_access(expr_idx)
             }
             k if k == SyntaxKind::Identifier as u16 => {
-                // Bare identifier: resolve as enum member reference (e.g., `B = A` in same enum).
+                // Bare identifier: resolve as enum member reference (e.g., `B = A` in same enum),
+                // or recognize global numeric constants NaN and Infinity.
+                let name = self.ctx.arena.get_identifier_text(expr_idx)?;
+                match name {
+                    "NaN" => return Some(f64::NAN),
+                    "Infinity" => return Some(f64::INFINITY),
+                    _ => {}
+                }
                 // Use the binder's scope-based resolution to find the symbol, since enum members
                 // are bound in the enum's block scope, not in file_locals.
                 let lib_binders = self.get_lib_binders();
                 let sym_id = self.ctx.binder.resolve_name_with_filter(
-                    self.ctx.arena.get_identifier_text(expr_idx)?,
+                    name,
                     self.ctx.arena,
                     expr_idx,
                     &lib_binders,
