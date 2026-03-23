@@ -1467,9 +1467,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Try to get keys from keyof an operand type.
     pub(crate) fn try_get_keyof_keys(
-        &self,
+        &mut self,
         operand: TypeId,
     ) -> Option<Vec<tsz_common::interner::Atom>> {
+        self.try_get_keyof_keys_depth(operand, 0)
+    }
+
+    fn try_get_keyof_keys_depth(
+        &mut self,
+        operand: TypeId,
+        depth: u32,
+    ) -> Option<Vec<tsz_common::interner::Atom>> {
+        if depth > 5 {
+            return None;
+        }
         let shape_id = object_shape_id(self.interner, operand)
             .or_else(|| object_with_index_shape_id(self.interner, operand));
         if let Some(shape_id) = shape_id {
@@ -1488,7 +1499,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if resolved == operand {
                 return None; // Avoid infinite recursion
             }
-            return self.try_get_keyof_keys(resolved);
+            return self.try_get_keyof_keys_depth(resolved, depth + 1);
+        }
+
+        // When the operand is a TypeParameter with a constraint, resolve through
+        // the constraint. E.g., for `keyof T` where `T extends { content: C }`,
+        // the keys are determined by the constraint `{ content: C }`.
+        if let Some(tp) = type_param_info(self.interner, operand) {
+            if let Some(constraint) = tp.constraint {
+                // Evaluate the constraint first (e.g., Application(IData, [C]) → { content: C })
+                let evaluated = self.evaluate_type(constraint);
+                if evaluated != operand {
+                    return self.try_get_keyof_keys_depth(evaluated, depth + 1);
+                }
+            }
         }
 
         None
