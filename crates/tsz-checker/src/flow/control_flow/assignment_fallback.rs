@@ -80,6 +80,15 @@ impl<'a> FlowAnalyzer<'a> {
             return self.fallback_await_expression_type(rhs);
         }
 
+        // Handle binary expressions whose types may only be in request_node_types
+        // (contextually typed) rather than node_types. Compute the result type
+        // from the operand types which ARE in node_types.
+        if rhs_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(rhs_node)
+        {
+            return self.fallback_binary_expression_type(bin.left, bin.right, bin.operator_token);
+        }
+
         None
     }
 
@@ -647,6 +656,66 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(return_type) = function_return_type(self.interner, ty) {
             return_types.push(return_type);
         }
+    }
+
+    /// Compute the result type of a binary expression from its operand types.
+    ///
+    /// Used as a fallback when the binary expression's type is only in
+    /// `request_node_types` (contextually typed) and not in `node_types`.
+    /// This handles `??`, `||`, and `+` which are the most common cases
+    /// where an assignment RHS is a binary expression whose cached type
+    /// is missing from the non-contextual cache.
+    fn fallback_binary_expression_type(
+        &self,
+        left: NodeIndex,
+        right: NodeIndex,
+        operator: u16,
+    ) -> Option<TypeId> {
+        if operator == SyntaxKind::QuestionQuestionToken as u16 {
+            // x ?? y -> NonNullable<typeof x> | typeof y
+            let left_type = self.resolve_operand_type(left)?;
+            let right_type = self.resolve_operand_type(right)?;
+            let non_nullish_left = self.interner.remove_nullish(left_type);
+            return Some(self.interner.union2(non_nullish_left, right_type));
+        }
+        if operator == SyntaxKind::BarBarToken as u16 {
+            // x || y -> NonNullable<typeof x> | typeof y
+            // TypeScript narrows the left side in || result types: the truthy branch
+            // removes null/undefined (and other falsy types, but removing nullish covers
+            // the most important case for flow analysis).
+            let left_type = self.resolve_operand_type(left)?;
+            let right_type = self.resolve_operand_type(right)?;
+            let non_nullish_left = self.interner.remove_nullish(left_type);
+            return Some(self.interner.union2(non_nullish_left, right_type));
+        }
+        if operator == SyntaxKind::PlusToken as u16 {
+            // If either operand is string, result is string
+            let left_type = self.resolve_operand_type(left);
+            let right_type = self.resolve_operand_type(right);
+            if left_type == Some(TypeId::STRING) || right_type == Some(TypeId::STRING) {
+                return Some(TypeId::STRING);
+            }
+        }
+        None
+    }
+
+    /// Resolve the type of an expression operand using node_types cache,
+    /// literal detection, or reference resolution.
+    fn resolve_operand_type(&self, idx: NodeIndex) -> Option<TypeId> {
+        let idx = self.skip_parens_and_assertions(idx);
+        // Try node_types first
+        if let Some(ty) = self.node_types.and_then(|nt| nt.get(&idx.0).copied()) {
+            return Some(ty);
+        }
+        // Try literal type
+        if let Some(literal_type) = self.literal_type_from_node(idx) {
+            return Some(literal_type);
+        }
+        // Try reference resolution
+        if let Some(reference_type) = self.fallback_type_for_reference(idx) {
+            return Some(reference_type);
+        }
+        None
     }
 
     pub(super) fn union_types_if_any(&self, mut types: Vec<TypeId>) -> Option<TypeId> {
