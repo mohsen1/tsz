@@ -1692,9 +1692,6 @@ fn test_solver_imports_go_through_query_boundaries() {
         "operations::property::PropertyAccessResult",
         "operations::property::is_mapped_type_with_readonly_modifier",
         "operations::property::is_readonly_tuple_fixed_element",
-        "relations::freshness",
-        "relations::freshness::is_fresh_object_type",
-        "relations::freshness::widen_freshness",
         "substitute_this_type",
         "type_param_info",
         "types::ParamInfo",
@@ -3221,7 +3218,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
         }
     }
 
-    const CEILING: usize = 41;
+    const CEILING: usize = 38;
     assert!(
         count <= CEILING,
         "TEMPORARILY_ALLOWED bypass list has grown to {count} items (ceiling: {CEILING}). \
@@ -3764,5 +3761,270 @@ fn test_def_mapping_and_speculation_do_not_cross_reference() {
     assert!(
         !speculation_src.contains("is_subtype_of") && !speculation_src.contains("is_assignable"),
         "speculation.rs must not perform type computation — it is pure state management"
+    );
+}
+
+// =============================================================================
+// Boundary Quarantine Tests — Evaluator/Checker Construction Ceilings
+// =============================================================================
+
+/// Guard: no `CompatChecker::new()` or `CompatChecker::with_resolver()` outside
+/// `query_boundaries/` and `tests/`.
+///
+/// CompatChecker is the solver's Lawyer layer. Checker code should never construct
+/// it directly — the relation should flow through `query_boundaries/assignability`
+/// via `execute_relation()` and related helpers (CLAUDE.md §5, §22).
+#[test]
+fn test_no_direct_compat_checker_construction_outside_query_boundaries() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("CompatChecker::new(")
+                || line.contains("CompatChecker::with_resolver(")
+            {
+                violations.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Direct CompatChecker construction found outside query_boundaries/. \
+         Route relation checks through query_boundaries/assignability instead (CLAUDE.md §5, §22).\n\
+         Violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Ceiling: direct `BinaryOpEvaluator::new()` calls outside `query_boundaries/` and `tests/`.
+///
+/// These bypass the query boundary layer. A wrapper in
+/// `query_boundaries/type_computation/core.rs` exists for `evaluate_plus_chain`;
+/// more wrappers should be added over time. This ceiling must only decrease.
+///
+/// Current ceiling: 21 occurrences.
+#[test]
+fn test_direct_binary_op_evaluator_construction_ceiling() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut count = 0usize;
+    let mut locations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("BinaryOpEvaluator::new(") {
+                count += 1;
+                locations.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    const CEILING: usize = 21;
+    assert!(
+        count <= CEILING,
+        "BinaryOpEvaluator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
+         Create query_boundaries wrappers instead of adding new direct usages.\n\
+         Locations:\n{}",
+        locations.join("\n")
+    );
+}
+
+/// Ceiling: direct `PropertyAccessEvaluator::new()` calls outside `query_boundaries/` and `tests/`.
+///
+/// These bypass the query boundary layer. Wrappers should be created in
+/// `query_boundaries/` over time. This ceiling must only decrease.
+///
+/// Current ceiling: 3 occurrences.
+#[test]
+fn test_direct_property_access_evaluator_construction_ceiling() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut count = 0usize;
+    let mut locations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("PropertyAccessEvaluator::new(") {
+                count += 1;
+                locations.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    const CEILING: usize = 3;
+    assert!(
+        count <= CEILING,
+        "PropertyAccessEvaluator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
+         Create query_boundaries wrappers instead of adding new direct usages.\n\
+         Locations:\n{}",
+        locations.join("\n")
+    );
+}
+
+/// Ceiling: direct `TypeInstantiator::new()` calls outside `query_boundaries/` and `tests/`.
+///
+/// Type instantiation should flow through `query_boundaries/common::instantiate_type`
+/// or dedicated boundary helpers. This ceiling must only decrease.
+///
+/// Current ceiling: 1 occurrence (types/queries/lib.rs).
+#[test]
+fn test_direct_type_instantiator_construction_ceiling() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut count = 0usize;
+    let mut locations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("TypeInstantiator::new(") {
+                count += 1;
+                locations.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    const CEILING: usize = 1;
+    assert!(
+        count <= CEILING,
+        "TypeInstantiator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
+         Use query_boundaries/common::instantiate_type or create a new boundary wrapper.\n\
+         Locations:\n{}",
+        locations.join("\n")
+    );
+}
+
+/// Guard: no direct `tsz_solver::relations::freshness::` calls outside
+/// `query_boundaries/` and `tests/`.
+///
+/// Freshness queries (`is_fresh_object_type`, `widen_freshness`) have wrappers
+/// in `query_boundaries/common.rs`. All checker code must use those wrappers
+/// to maintain the boundary between checker (WHERE) and solver (WHAT).
+#[test]
+fn test_no_direct_freshness_calls_outside_query_boundaries() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut violations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("tsz_solver::relations::freshness") {
+                violations.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Direct tsz_solver::relations::freshness:: calls found outside query_boundaries/. \
+         Use query_boundaries::common::is_fresh_object_type / widen_freshness instead.\n\
+         Violations:\n{}",
+        violations.join("\n")
     );
 }
