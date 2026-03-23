@@ -851,20 +851,8 @@ impl<'a> CheckerState<'a> {
 
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
-                            // Record type parameters for generic interfaces.
-                            // `sym_id` was already resolved via file_locals (preferred)
-                            // or get_global_type_with_libs; no re-lookup needed.
-                            let def_id = self.ctx.get_lib_def_id(sym_id);
-                            if !params.is_empty() {
-                                // Cache type params for Application expansion
-                                self.ctx.insert_def_type_params(def_id, params.clone());
-                            }
-
-                            // Register the interface body in both type environments so
-                            // that resolve_lazy(def_id) and flow-analyzer narrowing
-                            // contexts can find it.
-                            self.ctx
-                                .register_def_auto_params_in_envs(def_id, ty, params);
+                            // Register DefId, type params, and body in one step.
+                            self.ctx.register_lib_def_resolved(sym_id, ty, params);
 
                             lib_types.push(ty);
                         }
@@ -882,17 +870,9 @@ impl<'a> CheckerState<'a> {
                                 let (ty, params) =
                                     alias_lowering.lower_type_alias_declaration(alias);
                                 if ty != TypeId::ERROR {
-                                    // Cache type parameters for Application expansion.
-                                    // Uses `get_lib_def_id`: prefers pre-populated DefIds,
-                                    // falls back to on-demand creation.
-                                    let def_id = self.ctx.get_lib_def_id(sym_id);
-                                    self.ctx.insert_def_type_params(def_id, params.clone());
-
-                                    // Register the type body in both envs so that
-                                    // evaluate_application can resolve via resolve_lazy(def_id)
-                                    // and flow-analyzer narrowing contexts see it too.
-                                    self.ctx
-                                        .register_def_with_params_in_envs(def_id, ty, params);
+                                    // Register DefId, type params, and body in one step.
+                                    let def_id =
+                                        self.ctx.register_lib_def_resolved(sym_id, ty, params);
 
                                     // CRITICAL: Return Lazy(DefId) instead of the structural body.
                                     // Application types only expand when the base is Lazy, not when
