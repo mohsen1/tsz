@@ -6,6 +6,7 @@ use crate::state::{CheckerState, EnumKind, MAX_TREE_WALK_ITERATIONS, MemberAcces
 use rustc_hash::FxHashMap;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -371,6 +372,40 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 self.evaluate_enum_member_access(expr_idx)
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                // Bare identifier: resolve as enum member reference (e.g., `B = A` in same enum).
+                // Look up the symbol to see if it's an enum member, then evaluate its initializer.
+                let name = self.ctx.arena.get_identifier_text(expr_idx)?;
+                let sym_id = self.ctx.binder.file_locals.get(name)?;
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+                    let member_decl = symbol.value_declaration;
+                    let member_node = self.ctx.arena.get(member_decl)?;
+                    let member_data = self.ctx.arena.get_enum_member(member_node)?;
+
+                    // Cycle detection via EVAL_VISITED
+                    let already_visiting =
+                        EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
+                    if already_visiting {
+                        return None; // Circular — treat as non-constant
+                    }
+                    let _guard = VisitedGuard(member_decl);
+
+                    if member_data.initializer.is_some() {
+                        self.evaluate_constant_expression(member_data.initializer)
+                    } else {
+                        // Auto-incremented — find parent enum symbol and compute
+                        let parent_ext = self.ctx.arena.get_extended(member_decl)?;
+                        let parent_node = self.ctx.arena.get(parent_ext.parent)?;
+                        let parent_enum = self.ctx.arena.get_enum(parent_node)?;
+                        let parent_name = self.ctx.arena.get_identifier_text(parent_enum.name)?;
+                        let parent_sym_id = self.ctx.binder.file_locals.get(parent_name)?;
+                        self.compute_auto_increment_value(parent_sym_id, member_decl)
+                    }
+                } else {
+                    None
+                }
             }
             _ => None,
         }
