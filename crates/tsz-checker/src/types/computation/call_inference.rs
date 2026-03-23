@@ -817,20 +817,11 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.types.factory().function(sanitized)
         } else if let Some(shape) = common::callable_shape_for_type(self.ctx.types, arg_type) {
-            let mut sanitized = shape.as_ref().clone();
-            sanitized.call_signatures = sanitized
-                .call_signatures
-                .iter()
-                .map(|sig| {
-                    let mut new_sig = sig.clone();
-                    new_sig.params = common::sanitize_params_at_positions(
-                        &sig.params,
-                        &binding_pattern_param_positions,
-                        TypeId::UNKNOWN,
-                    );
-                    new_sig
-                })
-                .collect();
+            let sanitized = common::sanitize_callable_shape_binding_pattern_params(
+                &shape,
+                &binding_pattern_param_positions,
+                TypeId::UNKNOWN,
+            );
             self.ctx.types.factory().callable(sanitized)
         } else {
             arg_type
