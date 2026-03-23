@@ -495,87 +495,10 @@ impl<'a> CheckerState<'a> {
                     // later inference/evaluation paths.
                     let _ = self.type_reference_symbol_type(sym_id);
                 }
-                // Cache type parameters for the symbol's DefId before lowering.
-                // This enables the Solver to expand Application(Lazy(DefId), Args)
-                // for generic interfaces like Promise<T>, Map<K,V>, Set<T>.
+                // Ensure the symbol's DefId has type params cached and body
+                // registered so the Solver can expand Application(Lazy(DefId), Args).
                 if let Some(sym_id) = sym_id {
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    if self.ctx.get_def_type_params(def_id).is_none() {
-                        // Try file arena first
-                        let mut found = false;
-                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            for &decl_idx in &symbol.declarations {
-                                if let Some(node) = self.ctx.arena.get(decl_idx) {
-                                    if let Some(iface) = self.ctx.arena.get_interface(node)
-                                        && let Some(ref tpl) = iface.type_parameters
-                                    {
-                                        // Verify name matches to prevent NodeIndex collisions
-                                        if let Some(iface_name_node) =
-                                            self.ctx.arena.get(iface.name)
-                                            && let Some(iface_ident) =
-                                                self.ctx.arena.get_identifier(iface_name_node)
-                                            && self.ctx.arena.resolve_identifier_text(iface_ident)
-                                                != name
-                                        {
-                                            continue;
-                                        }
-                                        let (params, updates) =
-                                            self.push_type_parameters(&Some(tpl.clone()));
-                                        self.pop_type_parameters(updates);
-                                        if !params.is_empty() {
-                                            self.ctx.insert_def_type_params(def_id, params);
-                                            found = true;
-                                        }
-                                        break;
-                                    }
-
-                                    if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
-                                        // Verify name matches to prevent NodeIndex collisions
-                                        if let Some(alias_name_node) =
-                                            self.ctx.arena.get(type_alias.name)
-                                            && let Some(alias_ident) =
-                                                self.ctx.arena.get_identifier(alias_name_node)
-                                            && self.ctx.arena.resolve_identifier_text(alias_ident)
-                                                != name
-                                        {
-                                            continue;
-                                        }
-                                        let (params, updates) =
-                                            self.push_type_parameters(&type_alias.type_parameters);
-                                        self.pop_type_parameters(updates);
-                                        if !params.is_empty() {
-                                            self.ctx.insert_def_type_params(def_id, params);
-                                            found = true;
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        // If not found in file arena, use resolve_lib_type_by_name
-                        // which lowers the full interface from lib arenas and registers
-                        // both the body type and type params in type_env.
-                        if !found && !self.ctx.lib_contexts.is_empty() {
-                            let _ = self.resolve_lib_type_by_name(name);
-                        }
-                    }
-
-                    // Ensure the body type is registered in type_env for generic
-                    // lib interfaces. The solver's resolve_lazy needs the body to
-                    // perform property access with type parameter substitution.
-                    if self.ctx.get_def_type_params(def_id).is_some()
-                        && !self.ctx.lib_contexts.is_empty()
-                    {
-                        let has_body = self
-                            .ctx
-                            .type_env
-                            .try_borrow()
-                            .map(|env| env.get_def(def_id).is_some())
-                            .unwrap_or(false);
-                        if !has_body {
-                            let _ = self.resolve_lib_type_by_name(name);
-                        }
-                    }
+                    self.ensure_def_ready_for_lowering(sym_id, name);
                 }
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
