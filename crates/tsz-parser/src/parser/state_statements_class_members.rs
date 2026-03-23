@@ -926,6 +926,23 @@ impl ParserState {
         // We do NOT reject them here — they flow through to normal class member parsing
         // where is_property_name() correctly accepts them.
 
+        // Handle bare `#` that can't become a PrivateIdentifier.
+        // In tsc, the scanner emits TS1127 for a standalone `#` (e.g., `# name` with a
+        // space, or `#` followed by a non-identifier char). Rescan; if still HashToken,
+        // emit TS1127 and skip to avoid cascading TS1003/TS1005/TS1068/TS1128.
+        if self.is_token(SyntaxKind::HashToken) {
+            let rescanned = self.scanner.re_scan_hash_token();
+            if rescanned != SyntaxKind::PrivateIdentifier {
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+                self.next_token();
+                return NodeIndex::NONE;
+            }
+            self.current_token = rescanned;
+        }
+
         // Parse decorators if present
         let decorators = self.parse_decorators();
         let has_decorators = decorators.is_some();

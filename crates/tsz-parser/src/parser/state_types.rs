@@ -321,6 +321,26 @@ impl ParserState {
     pub(crate) fn parse_primary_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
+        // Handle JSDoc-style leading `?` before a type (e.g., `?string`).
+        // TSC emits TS17020: "'?' at the start of a type is not valid TypeScript syntax."
+        // We consume the `?`, emit the error, then parse the type normally so downstream
+        // checks (e.g., TS2322) can still run without parser cascade noise.
+        if self.is_token(SyntaxKind::QuestionToken) {
+            let q_start = self.token_pos();
+            let q_end = self.token_end();
+            self.next_token(); // consume '?'
+            let inner_type = self.parse_primary_type();
+            // Build the suggestion: `T | undefined` where T is whatever follows
+            let msg = "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'T | undefined'?";
+            self.parse_error_at(
+                q_start,
+                q_end - q_start,
+                msg,
+                tsz_common::diagnostics::diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
+            );
+            return inner_type;
+        }
+
         // If we encounter a token that can't start a type, emit TS1110 (Type expected).
         // However, suppress the error for delimiter/terminator tokens that indicate a
         // *missing* type rather than an *incorrect* token used as a type. TSC silently
@@ -474,10 +494,52 @@ impl ParserState {
         base_type: NodeIndex,
     ) -> NodeIndex {
         if self.is_token(SyntaxKind::OpenBracketToken) && !self.scanner.has_preceding_line_break() {
-            self.parse_array_type(start_pos, base_type)
-        } else {
-            base_type
+            return self.parse_array_type(start_pos, base_type);
         }
+
+        // Handle JSDoc-style postfix `?` after a type (e.g., `string?`).
+        // TSC emits TS17019: "'?' at the end of a type is not valid TypeScript syntax."
+        // We consume the `?` and emit the error so the parser resumes cleanly and
+        // downstream semantic checks can still run.
+        //
+        // Suppress when:
+        // - Inside a tuple element (where `?` is the optional marker for `[T?]`)
+        // - The token after `?` can start a type (then `?` is a conditional type operator,
+        //   e.g., `T extends U ? X : Y`). The conditional type `?` is always followed by
+        //   a type (the true branch). A nullable `?` is followed by a delimiter
+        //   (`;`, `)`, `,`, `}`, `]`, `=`, EOF, or a line break).
+        if self.is_token(SyntaxKind::QuestionToken)
+            && !self.scanner.has_preceding_line_break()
+            && (self.context_flags & crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT) == 0
+        {
+            // Lookahead: if the token after `?` can start a type, this is a conditional
+            // type's `?`, not a nullable suffix.
+            let snapshot = self.scanner.save_state();
+            let saved_token = self.current_token;
+            self.next_token(); // look past '?'
+            let next_can_start_type = self.can_token_start_type()
+                || self.is_token(SyntaxKind::BarToken)
+                || self.is_token(SyntaxKind::AmpersandToken);
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+
+            if !next_can_start_type {
+                let q_start = self.token_pos();
+                let q_end = self.token_end();
+                self.next_token(); // consume '?'
+                let msg = "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'T | undefined'?";
+                self.parse_error_at(
+                    q_start,
+                    q_end - q_start,
+                    msg,
+                    tsz_common::diagnostics::diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
+                );
+                // Recurse to handle `T?[]` (postfix ? followed by array suffix)
+                return self.parse_primary_type_array_suffix(start_pos, base_type);
+            }
+        }
+
+        base_type
     }
 
     fn parse_parenthesized_type_or_function_type(&mut self) -> NodeIndex {
@@ -609,8 +671,12 @@ impl ParserState {
             self.current_token = current;
         }
 
-        // Parse the type
+        // Parse the type with IN_TUPLE_ELEMENT flag set, so postfix `?` is not
+        // consumed as JSDoc nullable (TS17019) — it should be the optional marker instead.
+        let saved_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
         let type_node = self.parse_type();
+        self.context_flags = saved_flags;
 
         // Check for optional marker: T?
         if self.parse_optional(SyntaxKind::QuestionToken) {
