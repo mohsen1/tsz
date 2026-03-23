@@ -3572,3 +3572,60 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
         violations.join("\n")
     );
 }
+
+/// Ratchet guard: direct `tsz_solver::widening::widen_type` (or `operations::widening::`)
+/// calls outside `query_boundaries/`, `tests/`, and `types/utilities/core.rs` must not grow.
+///
+/// Callers should use `query_boundaries::common::widen_type` (free function) or
+/// `self.widen_literal_type()` (method on CheckerState) instead.
+///
+/// Current ceiling: 8 occurrences. This number must only decrease over time.
+#[test]
+fn test_direct_widening_calls_ceiling() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut count = 0usize;
+    let mut locations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Skip allowed locations
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("tsz_solver::widening::widen_type")
+                || line.contains("tsz_solver::operations::widening::widen_type")
+            {
+                count += 1;
+                locations.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    const CEILING: usize = 8;
+    assert!(
+        count <= CEILING,
+        "Direct tsz_solver::widening::widen_type calls have grown to {count} (ceiling: {CEILING}). \
+         Use query_boundaries::common::widen_type or self.widen_literal_type() instead.\n\
+         Locations:\n{}",
+        locations.join("\n")
+    );
+}
