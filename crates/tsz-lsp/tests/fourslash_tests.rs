@@ -3725,6 +3725,38 @@ fn completions_no_completions_in_string() {
 }
 
 #[test]
+fn completions_type_position() {
+    let mut t = FourslashTest::new(
+        "
+        interface Point { x: number; y: number; }
+        type Direction = 'up' | 'down';
+        class Shape {}
+        const p: /*c*/
+    ",
+    );
+    // Type names should appear in type position
+    let result = t.completions("c");
+    result
+        .expect_found()
+        .expect_includes("Point")
+        .expect_includes("Direction")
+        .expect_includes("Shape");
+}
+
+#[test]
+fn completions_generic_type_argument() {
+    let mut t = FourslashTest::new(
+        "
+        interface Container<T> { value: T; }
+        class Box {}
+        const c: Container</*c*/> = { value: new Box() };
+    ",
+    );
+    let result = t.completions("c");
+    result.expect_found().expect_includes("Box");
+}
+
+#[test]
 fn completions_after_new_keyword() {
     let mut t = FourslashTest::new(
         "
