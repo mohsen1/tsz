@@ -4103,6 +4103,28 @@ fn inlay_hints_variable_type() {
     let _ = result; // Just verify no crash
 }
 
+#[test]
+fn inlay_hints_method_call_parameters() {
+    let t = FourslashTest::new(
+        "
+        class Logger {
+            log(message: string, level: number) {}
+        }
+        const logger = new Logger();
+        logger.log('hello', 1);
+    ",
+    );
+    let result = t.inlay_hints("test.ts");
+    // Should have parameter name hints for the method call
+    let has_message_hint = result.hints.iter().any(|h| h.label.contains("message"));
+    let has_level_hint = result.hints.iter().any(|h| h.label.contains("level"));
+    assert!(
+        has_message_hint && has_level_hint,
+        "Expected parameter hints for method call, got: {:?}",
+        result.hints.iter().map(|h| &h.label).collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // Type Hierarchy: Advanced Patterns (NEW)
 // =============================================================================
