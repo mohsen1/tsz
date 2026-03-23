@@ -6,7 +6,7 @@
 //! Lib lowering resolves `NodeIndex` values from multiple arenas into `SymbolIds`
 //! and `DefIds`.  The canonical resolution path is:
 //!
-//! 1. [`resolve_lib_node_in_arenas`] — `NodeIndex` → raw `SymbolId` value via
+//! 1. [`resolve_lib_node_in_arenas`] — `NodeIndex` → `SymbolId` via
 //!    identifier-text lookup across declaration arenas, then `file_locals` lookup.
 //! 2. [`CheckerContext::get_lib_def_id`] — SymbolId → DefId, preferring
 //!    pre-populated identities from `semantic_defs` with on-demand fallback.
@@ -176,11 +176,10 @@ pub(crate) fn dedup_decl_arenas<'a>(
 /// Resolve a `NodeIndex` directly to a `DefId` via the merged binder.
 ///
 /// This is the stable one-step helper for lib lowering: it combines
-/// [`resolve_lib_node_in_arenas`] (`NodeIndex` → raw SymbolId) with
-/// [`CheckerContext::get_lib_def_id`] (SymbolId → DefId).  Using this
+/// [`resolve_lib_node_in_arenas`] (`NodeIndex` → `SymbolId`) with
+/// [`CheckerContext::get_lib_def_id`] (`SymbolId` → `DefId`).  Using this
 /// instead of the two-step closure pattern avoids duplicating the
-/// `resolver(node_idx).map(|raw| ctx.get_lib_def_id(SymbolId(raw)))` logic
-/// at every callsite.
+/// resolution logic at every callsite.
 pub(crate) fn lib_def_id_from_node(
     ctx: &crate::context::CheckerContext<'_>,
     binder: &tsz_binder::BinderState,
@@ -189,7 +188,7 @@ pub(crate) fn lib_def_id_from_node(
     fallback_arena: &NodeArena,
 ) -> Option<tsz_solver::DefId> {
     resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)
-        .map(|raw| ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+        .map(|sym_id| ctx.get_lib_def_id(sym_id))
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via lib-context binders.
@@ -205,7 +204,7 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
     lib_contexts: &[crate::context::LibContext],
 ) -> Option<tsz_solver::DefId> {
     resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)
-        .map(|raw| ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+        .map(|sym_id| ctx.get_lib_def_id(sym_id))
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via the augmentation resolution
@@ -237,8 +236,8 @@ pub(crate) fn augmentation_def_id_from_node(
     .map(|sym_id| ctx.get_lib_def_id(sym_id))
 }
 
-/// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
-/// multiple declaration arenas.
+/// Resolve a `NodeIndex` to a `SymbolId` by searching across multiple
+/// declaration arenas.
 ///
 /// This is the stable resolution path for lib lowering.  It replaces the
 /// per-call resolver closures that previously duplicated this logic (and
@@ -256,14 +255,14 @@ pub(crate) fn resolve_lib_node_in_arenas(
     node_idx: NodeIndex,
     decl_arenas: &[(NodeIndex, &NodeArena)],
     fallback_arena: &NodeArena,
-) -> Option<u32> {
+) -> Option<tsz_binder::SymbolId> {
     for (_, arena) in decl_arenas {
         if let Some(ident_name) = arena.get_identifier_text(node_idx) {
             if is_compiler_managed_type(ident_name) {
                 continue;
             }
             if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                return Some(found_sym.0);
+                return Some(found_sym);
             }
         }
     }
@@ -272,7 +271,7 @@ pub(crate) fn resolve_lib_node_in_arenas(
             return None;
         }
         if let Some(found_sym) = binder.file_locals.get(ident_name) {
-            return Some(found_sym.0);
+            return Some(found_sym);
         }
     }
     None
@@ -341,8 +340,8 @@ pub(crate) fn resolve_name_to_lib_symbol(
         .find_map(|ctx| ctx.binder.file_locals.get(name))
 }
 
-/// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
-/// declaration arenas and then all lib context binders.
+/// Resolve a `NodeIndex` to a `SymbolId` by searching across declaration
+/// arenas and then all lib context binders.
 ///
 /// This is the stable resolution path for per-lib-context lowering (e.g.,
 /// `resolve_lib_type_with_params`) where the main file's merged binder is
@@ -361,7 +360,7 @@ pub(crate) fn resolve_lib_node_in_lib_contexts(
     decl_arenas: &[(NodeIndex, &NodeArena)],
     fallback_arena: &NodeArena,
     lib_contexts: &[crate::context::LibContext],
-) -> Option<u32> {
+) -> Option<tsz_binder::SymbolId> {
     for (_, arena) in decl_arenas {
         if let Some(ident_name) = arena.get_identifier_text(node_idx) {
             if is_compiler_managed_type(ident_name) {
@@ -369,7 +368,7 @@ pub(crate) fn resolve_lib_node_in_lib_contexts(
             }
             for ctx in lib_contexts {
                 if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                    return Some(found_sym.0);
+                    return Some(found_sym);
                 }
             }
             break;
@@ -381,7 +380,7 @@ pub(crate) fn resolve_lib_node_in_lib_contexts(
     }
     for ctx in lib_contexts {
         if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-            return Some(found_sym.0);
+            return Some(found_sym);
         }
     }
     None
@@ -802,10 +801,13 @@ impl<'a> CheckerState<'a> {
                 );
 
                 // Resolver triplet: delegates to stable helpers instead of
-                // maintaining per-call caches.
+                // maintaining per-call caches. The `resolver` closure extracts
+                // the raw `u32` at the TypeLowering boundary; all internal
+                // resolution uses type-safe `SymbolId`.
                 let binder = &self.ctx.binder;
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
+                        .map(|sym_id| sym_id.0)
                 };
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
                     lib_def_id_from_node(
