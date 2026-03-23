@@ -161,6 +161,14 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {
+        self.emit_object_literal_entries_es5_with_trailing_comma(elements, false);
+    }
+
+    pub(in crate::emitter) fn emit_object_literal_entries_es5_with_trailing_comma(
+        &mut self,
+        elements: &[NodeIndex],
+        has_trailing_comma: bool,
+    ) {
         if elements.is_empty() {
             self.write("{}");
             return;
@@ -172,7 +180,7 @@ impl<'a> Printer<'a> {
             self.increase_indent();
             for (i, &prop) in elements.iter().enumerate() {
                 self.emit_object_literal_member_es5(prop);
-                if i < elements.len() - 1 {
+                if i < elements.len() - 1 || has_trailing_comma {
                     self.write(",");
                 }
                 self.write_line();
@@ -182,6 +190,9 @@ impl<'a> Printer<'a> {
         } else {
             self.write("{ ");
             self.emit_object_literal_member_es5(elements[0]);
+            if has_trailing_comma {
+                self.write(",");
+            }
             self.write(" }");
         }
     }
@@ -264,6 +275,7 @@ impl<'a> Printer<'a> {
         &mut self,
         elements: &[NodeIndex],
         source_range: Option<(u32, u32)>,
+        has_trailing_comma: bool,
     ) {
         if elements.is_empty() {
             self.write("{}");
@@ -277,7 +289,7 @@ impl<'a> Printer<'a> {
 
         if !has_spread {
             // No spread - use the old computed property logic
-            self.emit_object_literal_without_spread_es5(elements, source_range);
+            self.emit_object_literal_without_spread_es5(elements, source_range, has_trailing_comma);
             return;
         }
 
@@ -290,6 +302,7 @@ impl<'a> Printer<'a> {
         &mut self,
         elements: &[NodeIndex],
         source_range: Option<(u32, u32)>,
+        has_trailing_comma: bool,
     ) {
         let first_computed_idx = elements
             .iter()
@@ -297,7 +310,7 @@ impl<'a> Printer<'a> {
             .unwrap_or(elements.len());
 
         if first_computed_idx == elements.len() {
-            self.emit_object_literal_entries_es5(elements);
+            self.emit_object_literal_entries_es5_with_trailing_comma(elements, has_trailing_comma);
             return;
         }
 
@@ -388,7 +401,7 @@ impl<'a> Printer<'a> {
                     .iter()
                     .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 if has_computed {
-                    self.emit_object_literal_without_spread_es5(elems, source_range);
+                    self.emit_object_literal_without_spread_es5(elems, source_range, false);
                 } else {
                     self.emit_object_literal_entries_es5(elems);
                 }
