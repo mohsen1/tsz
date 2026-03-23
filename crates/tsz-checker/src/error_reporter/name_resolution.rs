@@ -760,7 +760,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect spelling suggestions for an unresolved name, respecting all
-    /// suppression rules (accessibility modifiers, spread elements, `arguments`,
+    /// suppression rules (accessibility modifiers, `arguments`,
     /// max-suggestion cap, parse-error suppression).
     ///
     /// Returns an empty `Vec` when suggestions should be suppressed.
@@ -768,39 +768,13 @@ impl<'a> CheckerState<'a> {
     /// both `error_cannot_find_name_at` and the boundary's
     /// `report_not_found_at_boundary`.
     pub(crate) fn collect_spelling_suggestions(&self, name: &str, idx: NodeIndex) -> Vec<String> {
-        use tsz_parser::parser::syntax_kind_ext;
-
         // Keep TS2304 for accessibility modifier keywords recovered as identifiers.
         // tsc does not emit TS2552 suggestions (e.g. "private" -> "print") in these cases.
         let is_accessibility_modifier_name = matches!(name, "public" | "private" | "protected");
-        let mut is_in_spread_element = false;
-        let mut current = idx;
-        let mut guard = 0;
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-            let Some(node) = self.ctx.arena.get(current) else {
-                break;
-            };
-            if node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                is_in_spread_element = true;
-                break;
-            }
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
-        }
         // Keep TS2304 (no TS2552 suggestion) for `arguments` lookups.
         // TypeScript does not offer spelling suggestions for unresolved `arguments`.
         let is_arguments_name = name == "arguments";
-        let suppress_spelling_suggestion =
-            is_accessibility_modifier_name || is_in_spread_element || is_arguments_name;
+        let suppress_spelling_suggestion = is_accessibility_modifier_name || is_arguments_name;
 
         if suppress_spelling_suggestion {
             return Vec::new();

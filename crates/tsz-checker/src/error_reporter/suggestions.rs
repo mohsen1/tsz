@@ -273,10 +273,29 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // NOTE: We intentionally do NOT fall back to lib globals for spelling
-        // suggestions. TSC's fallback is more targeted (only specific well-known
-        // globals), while iterating all file_locals from lib.d.ts produces false
-        // positives (e.g., Script→WScript, parse→parseFloat).
+        // Also search lib globals (Array, Map, Set, Promise, etc.) for spelling
+        // suggestions. tsc searches the full scope chain including the global
+        // scope from lib.d.ts, so names like `array2` → `Array` are suggested.
+        for lib_ctx in &self.ctx.lib_contexts {
+            for (symbol_name, sym_id) in lib_ctx.binder.file_locals.iter() {
+                // Apply the same meaning filter as the local search.
+                if meaning_flags != 0 {
+                    if let Some(sym) = lib_ctx.binder.get_symbol(*sym_id) {
+                        if sym.flags & meaning_flags == 0 {
+                            continue;
+                        }
+                    }
+                }
+                Self::consider_identifier_suggestion(
+                    name,
+                    symbol_name,
+                    name_len,
+                    maximum_length_difference,
+                    &mut best_distance,
+                    &mut best_candidate,
+                );
+            }
+        }
 
         best_candidate.map(|c| vec![c])
     }
