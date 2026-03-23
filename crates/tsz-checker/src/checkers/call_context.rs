@@ -418,6 +418,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip function expressions: they are deferred arguments whose return
+            // types contribute to inference in Round 2. Including them here would
+            // incorrectly suppress the contextual return type even when the callback
+            // is the sole inference source for the return type's type params.
+            // Example: `invoke(() => 1)` where `invoke<T>(f: () => T): T` — the
+            // callback `() => 1` references T in its return position, but T has no
+            // other inference source; suppressing the contextual type loses the
+            // literal preservation.
+            if self.ctx.arena.get(arg_idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            }) {
+                continue;
+            }
+
             if is_contextually_sensitive(self, arg_idx)
                 || self.object_literal_contains_function_member(arg_idx)
             {
