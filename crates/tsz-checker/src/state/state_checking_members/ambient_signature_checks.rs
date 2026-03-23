@@ -522,6 +522,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2394: Check overload compatibility for method declarations with a body.
+        if method.body.is_some() {
+            self.check_overload_compatibility(member_idx);
+        }
+
         // Error 1245: Method '{0}' cannot have an implementation because it is marked abstract.
         // TSC anchors this error at the method name, not the whole member node.
         if method.body.is_some() && self.has_abstract_modifier(&method.modifiers) {
