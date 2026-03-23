@@ -940,6 +940,12 @@ impl<'a> Printer<'a> {
             emitter.set_source_text(text);
         }
         let output = emitter.emit_class(class_node);
+        if output.is_empty() {
+            // No transform needed (e.g., all decorated members are abstract).
+            // Fall back to default class emit.
+            self.emit_node_default(node, _idx);
+            return;
+        }
         // Trim trailing newline from the output to avoid double-newlining
         // when the writer adds its own line termination
         let output = output.trim_end_matches('\n');
