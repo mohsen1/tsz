@@ -957,9 +957,9 @@ impl<'a> CheckerState<'a> {
 
                 // TS2538: Type cannot be used as an index type.
                 // tsc uses strict validation for computed property keys in destructuring:
-                // only `string`, `number`, `bigint`, string/number literals, template
-                // literals, and string mappings are valid. Rejects `any`, `symbol`,
-                // `unique symbol`, `void`, `null`, `undefined`, `boolean`, `object`,
+                // string, number, bigint, symbol, unique symbol, enum, string/number
+                // literals, template literals, and string mappings are valid. Rejects
+                // `any`, `void`, `null`, `undefined`, `boolean`, `object`,
                 // `function`, and structural types.
                 // ERROR types from failed expressions are treated as `any`
                 // for this check — tsc cascades TS2538 after prior expression errors.
