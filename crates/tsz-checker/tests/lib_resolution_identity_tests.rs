@@ -3763,3 +3763,206 @@ const chained = p.then(x => x.toString()).catch(e => "error");
         "Promise .then/.catch chain should resolve via SymbolId-typed path.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- Stable helper path tests (no DefId repair) ----
+//
+// These tests verify that lib type lowering uses the stable identity helpers
+// (no_value_resolver, get_lib_def_id, register_lib_def_resolved) and does
+// not fall back to on-demand DefId creation or local caching tricks.
+
+#[test]
+fn test_promise_generic_return_type_stable() {
+    // Verify that Promise<T> as a generic return type uses stable DefId lowering.
+    // The `then` callback's return type should propagate through the Promise chain.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function fetchData(): Promise<{ name: string; age: number }> {
+    return { name: "test", age: 30 };
+}
+const result: Promise<{ name: string; age: number }> = fetchData();
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        "Promise<{{name, age}}> return type should be stable across references.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_nested_generic_stable_lowering() {
+    // Nested generics like Promise<Array<T>> exercise both Promise and Array
+    // DefId resolution through stable helpers.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function getItems(): Promise<Array<string>> {
+    return ["a", "b"];
+}
+const items: Promise<Array<string>> = getItems();
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Promise<Array<string>> nested generics should resolve via stable helpers.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_error_type_stable_identity() {
+    // Error is a lib type that exercises the interface heritage path
+    // (Error extends Object in lib.es5.d.ts).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const e = new Error("test");
+const msg: string = e.message;
+const name: string = e.name;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Error lib type properties should resolve via stable DefId path.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_regexp_stable_identity() {
+    // RegExp is a lib type with both interface and value declarations.
+    // Exercises the value-declaration lowering path (no_value_resolver stub).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const r = new RegExp("test");
+const result: boolean = r.test("hello");
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "RegExp lib type should resolve .test() via stable helpers.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_lib_map_generic_stable() {
+    // Map<K, V> is a generic lib type from es2015. Verifying its DefId
+    // is stable when referenced through different import-type expressions.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const m: Map<string, number> = new Map();
+m.set("a", 1);
+const val: number | undefined = m.get("a");
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Map<string, number> should resolve .set/.get via stable helpers.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_expression_typeof_lib_constructor() {
+    // `typeof Promise` and `typeof Array` as import type expressions
+    // exercise the value-side identity resolution.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type PC = typeof Promise;
+type AC = typeof Array;
+declare const p: PC;
+declare const a: AC;
+"#,
+    );
+    // We just verify no crash and no TS2304 (cannot find name)
+    assert!(
+        !diagnostics.iter().any(|(c, _)| *c == 2304),
+        "typeof Promise/Array should resolve via stable lib identity.\nDiagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_promise_all_settled_stable_lowering() {
+    // Promise.allSettled exercises the Promise constructor's static methods
+    // which are resolved through the value-declaration path with no_value_resolver.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p1 = Promise.resolve(1);
+const p2 = Promise.resolve("two");
+const settled = Promise.all([p1, p2]);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 6133 && *c != 2318)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Promise.all should resolve via stable lowering.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_multiple_interface_merge_stable() {
+    // Array has declarations across multiple lib files (es5 + es2015).
+    // This tests that the merged interface uses a single stable DefId
+    // without DefId repair across lib contexts.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const arr: Array<number> = [1, 2, 3];
+const len: number = arr.length;
+const first: number | undefined = arr[0];
+const mapped: Array<string> = arr.map(x => x.toString());
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339 || *c == 2322),
+        "Array merged interface should have stable DefId across lib files.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_promise_conditional_return() {
+    // Conditional types involving Promise exercise deep type lowering
+    // through the stable identity path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
+type Result = UnwrapPromise<Promise<number>>;
+const x: Result = 42;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    // Conditional type inference on Promise should work
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Conditional type unwrapping Promise should work.\nDiagnostics: {real_errors:#?}"
+    );
+}

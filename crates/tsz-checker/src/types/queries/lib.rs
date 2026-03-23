@@ -5,7 +5,7 @@
 //! `queries/type_only.rs`.
 
 use super::lib_resolution::{
-    lib_def_id_from_node_in_lib_contexts, resolve_lib_context_fallback_arena,
+    lib_def_id_from_node_in_lib_contexts, no_value_resolver, resolve_lib_context_fallback_arena,
     resolve_lib_node_in_lib_contexts,
 };
 use crate::state::{CheckerState, MemberAccessLevel};
@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     &resolver,
                     &def_id_resolver,
-                    &|_| None,
+                    &no_value_resolver,
                 )
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
