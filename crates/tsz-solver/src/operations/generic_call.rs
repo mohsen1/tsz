@@ -1669,7 +1669,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Evaluate the instantiated constraint so concrete conditionals like
                 // `null extends string ? any : never` resolve to their branch (`never`)
                 // instead of remaining as unevaluated Conditional types.
-                let constraint_ty = self.interner.evaluate_type(constraint_ty_raw);
+                let constraint_ty = self.checker.evaluate_type(constraint_ty_raw);
+                // When the constraint is a deferred `keyof T` where T is a type parameter,
+                // skip the constraint validation. TypeScript defers this check to
+                // instantiation time because `keyof T` can't be resolved until T is known.
+                // Without this, `K extends keyof T` with inferred K = "content" fails
+                // even when T extends { content: C }.
+                if let Some(keyof_operand) =
+                    crate::visitor::keyof_inner_type(self.interner, constraint_ty)
+                    && matches!(
+                        self.interner.lookup(keyof_operand),
+                        Some(crate::TypeData::TypeParameter(_))
+                    )
+                {
+                    final_subst.insert(tp.name, ty);
+                    continue;
+                }
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
