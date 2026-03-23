@@ -7395,7 +7395,6 @@ const derived_value = obj.derived;
 /// implemented. Generic type parameters in interface extends clauses are not
 /// correctly resolved.
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_interface_extends_applies_type_arguments() {
     use crate::parser::ParserState;
 
@@ -7452,7 +7451,7 @@ const value = obj.value;
 
 /// Test that interface extends with type alias applies type arguments
 ///
-/// NOTE: Currently ignored - see `test_interface_extends_applies_type_arguments`.
+/// NOTE: Related test: `test_interface_extends_applies_type_arguments`.
 #[test]
 fn test_interface_extends_type_alias_applies_type_arguments() {
     use crate::parser::ParserState;
@@ -7495,7 +7494,6 @@ const value = obj.value;
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_interface_extends_class_applies_type_arguments() {
     use crate::parser::ParserState;
 
@@ -7730,7 +7728,7 @@ interface Derived extends Base<string> {
 
 /// Test that interface extends with matching generic arguments works
 ///
-/// NOTE: Currently ignored - see `test_interface_extends_applies_type_arguments`.
+/// NOTE: Related test: `test_interface_extends_applies_type_arguments`.
 #[test]
 fn test_interface_extends_generic_argument_match() {
     use crate::parser::ParserState;
@@ -16743,7 +16741,6 @@ const partial: PartialState = { nested: { value: 42 } };
 ///
 /// NOTE: Currently ignored - see `test_redux_pattern_reducers_map_object`.
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_redux_pattern_generic_function_with_conditional_return() {
     use crate::parser::ParserState;
 
