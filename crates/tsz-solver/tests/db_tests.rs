@@ -71,9 +71,12 @@ fn query_cache_caches_evaluate_and_subtype() {
     assert_eq!(db.eval_cache_len(), 0);
     assert_eq!(db.property_cache_len(), 0);
 
-    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    // Use a non-trivial pair for subtype caching: identity/top/bottom/error pairs
+    // are now handled by the QueryCache fast-path and never reach the cache.
+    let hello = interner.literal_string("hello");
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
     assert_eq!(db.subtype_cache_len(), 1);
-    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
     assert_eq!(db.subtype_cache_len(), 1);
 }
 
@@ -119,13 +122,15 @@ fn relation_cache_stats_track_hits_and_misses() {
     let db = QueryCache::new(&interner);
     db.reset_relation_cache_stats();
 
-    let key = RelationCacheKey::subtype(TypeId::STRING, TypeId::UNKNOWN, 0, 0);
+    // Use non-trivial pair to avoid QueryCache fast-path (identity/top/bottom/error).
+    let hello = interner.literal_string("hello");
+    let key = RelationCacheKey::subtype(hello, TypeId::STRING, 0, 0);
 
     assert_eq!(
         db.probe_subtype_cache(key),
         RelationCacheProbe::MissNotCached
     );
-    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
     assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(true));
 
     let stats = db.relation_cache_stats();
@@ -272,8 +277,11 @@ fn query_cache_statistics_reflects_cache_population() {
     let stats = cache.statistics();
     assert_eq!(stats, QueryCacheStatistics::default());
 
+    // Use non-trivial pairs to avoid QueryCache fast-path (identity/top/bottom/error).
+    let hello = interner.literal_string("hello");
+
     // Subtype check populates the subtype cache.
-    let _ = cache.is_subtype_of(TypeId::NUMBER, TypeId::NUMBER);
+    let _ = cache.is_subtype_of(hello, TypeId::STRING);
 
     // Assignability check populates the assignability cache.
     let _ = cache.is_assignable_to(TypeId::STRING, TypeId::ANY);

@@ -645,6 +645,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Check if `source` is assignable to `target` using TS compatibility rules.
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Fast identity check — avoids hash map lookup and is_assignable_impl entirely.
+        if source == target {
+            return true;
+        }
+
         // Without strictNullChecks, null and undefined are assignable to and from any type.
         // This check is at the top-level only (not in subtype member iteration) to avoid
         // incorrectly accepting types within union member comparisons.
