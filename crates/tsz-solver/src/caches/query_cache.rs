@@ -1034,6 +1034,20 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        // Fast identity/top/bottom paths — avoid cache key construction, RefCell
+        // borrow, and SubtypeChecker allocation entirely.
+        if source == target
+            || target == TypeId::UNKNOWN
+            || source == TypeId::NEVER
+            || source == TypeId::ERROR
+            || target == TypeId::ERROR
+        {
+            return true;
+        }
+        if target == TypeId::NEVER {
+            return false;
+        }
+
         let trace_enabled = query_trace::enabled();
         let trace_query_id = trace_enabled.then(|| {
             let query_id = query_trace::next_query_id();
@@ -1074,6 +1088,20 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        // Fast identity/top/bottom paths — avoid cache key construction, RefCell
+        // borrow, and CompatChecker allocation entirely.
+        if source == target
+            || target == TypeId::UNKNOWN
+            || source == TypeId::NEVER
+            || source == TypeId::ERROR
+            || target == TypeId::ERROR
+        {
+            return true;
+        }
+        if target == TypeId::NEVER && source != TypeId::NEVER {
+            return false;
+        }
+
         let trace_enabled = query_trace::enabled();
         let trace_query_id = trace_enabled.then(|| {
             let query_id = query_trace::next_query_id();

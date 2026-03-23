@@ -21,12 +21,17 @@ use crate::types::{PropertyInfo, RelationCacheKey, TypeId};
 
 #[test]
 fn cache_hit_after_positive_subtype_check() {
-    // After checking A <: B successfully, a second check should hit cache
+    // After checking A <: B successfully, a second check should hit cache.
+    // Use a non-trivial pair that goes through the full structural check
+    // (identity, top/bottom types are handled by the QueryCache fast-path
+    // and never reach the cache).
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    // First check: string <: unknown (true)
-    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    let hello = interner.literal_string("hello");
+
+    // First check: "hello" <: string (true, requires structural check)
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
 
     let stats_after_first = db.relation_cache_stats();
     let entries_after_first = stats_after_first.subtype_entries;
@@ -36,7 +41,7 @@ fn cache_hit_after_positive_subtype_check() {
     );
 
     // Second check: same pair should be a cache hit
-    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
 
     let stats_after_second = db.relation_cache_stats();
     // Entry count should not grow on cache hit
@@ -102,12 +107,15 @@ fn cache_miss_for_different_type_pairs() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    // Check string <: unknown
-    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    let hello = interner.literal_string("hello");
+    let world = interner.literal_string("world");
+
+    // Check "hello" <: string (non-trivial, goes through cache)
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
     let entries_after_first = db.relation_cache_stats().subtype_entries;
 
-    // Check number <: unknown (different source type)
-    assert!(db.is_subtype_of(TypeId::NUMBER, TypeId::UNKNOWN));
+    // Check "world" <: string (different source type)
+    assert!(db.is_subtype_of(world, TypeId::STRING));
     let entries_after_second = db.relation_cache_stats().subtype_entries;
 
     assert!(
@@ -198,11 +206,13 @@ fn cache_key_direction_a_b_vs_b_a() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    // never <: string (true) -- never is bottom type
-    assert!(db.is_subtype_of(TypeId::NEVER, TypeId::STRING));
+    let hello = interner.literal_string("hello");
 
-    // string </: never (false) -- string is not bottom
-    assert!(!db.is_subtype_of(TypeId::STRING, TypeId::NEVER));
+    // "hello" <: string (true - literal subtype of primitive)
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
+
+    // string </: "hello" (false - primitive is not subtype of literal)
+    assert!(!db.is_subtype_of(TypeId::STRING, hello));
 
     // Both directions should have cached entries
     let entries = db.relation_cache_stats().subtype_entries;
@@ -329,16 +339,18 @@ fn subtype_and_assignability_caches_are_separate() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    // Subtype check
-    db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN);
+    let hello = interner.literal_string("hello");
+
+    // Subtype check with non-trivial pair (avoids fast-path)
+    db.is_subtype_of(hello, TypeId::STRING);
     let sub_entries = db.relation_cache_stats().subtype_entries;
     let assign_entries = db.relation_cache_stats().assignability_entries;
 
     assert!(sub_entries >= 1, "Subtype cache should have entry");
     assert_eq!(assign_entries, 0, "Assignability cache should be empty");
 
-    // Assignability check
-    db.is_assignable_to(TypeId::STRING, TypeId::UNKNOWN);
+    // Assignability check with non-trivial pair
+    db.is_assignable_to(hello, TypeId::STRING);
     let sub_entries2 = db.relation_cache_stats().subtype_entries;
     let assign_entries2 = db.relation_cache_stats().assignability_entries;
 
@@ -383,14 +395,16 @@ fn cache_key_includes_flags() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    // Check with default flags (0)
-    db.is_subtype_of_with_flags(TypeId::STRING, TypeId::UNKNOWN, 0);
+    let hello = interner.literal_string("hello");
+
+    // Check with default flags (0) — use non-trivial pair to avoid fast-path
+    db.is_subtype_of_with_flags(hello, TypeId::STRING, 0);
     let entries_default = db.relation_cache_stats().subtype_entries;
 
     // Check with strict null checks flag (1)
     db.is_subtype_of_with_flags(
+        hello,
         TypeId::STRING,
-        TypeId::UNKNOWN,
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
     );
     let entries_strict = db.relation_cache_stats().subtype_entries;
@@ -463,9 +477,11 @@ fn cache_clear_removes_all_entries() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    // Populate caches
-    db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN);
-    db.is_assignable_to(TypeId::NUMBER, TypeId::UNKNOWN);
+    let hello = interner.literal_string("hello");
+
+    // Populate caches with non-trivial pairs (avoid fast-path)
+    db.is_subtype_of(hello, TypeId::STRING);
+    db.is_assignable_to(hello, TypeId::STRING);
 
     assert!(db.relation_cache_stats().subtype_entries >= 1);
     assert!(db.relation_cache_stats().assignability_entries >= 1);
@@ -523,10 +539,12 @@ fn probe_returns_hit_after_check() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    // Do the check to populate cache
-    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    let hello = interner.literal_string("hello");
 
-    let key = RelationCacheKey::subtype(TypeId::STRING, TypeId::UNKNOWN, 0, 0);
+    // Do a non-trivial check to populate cache (trivial pairs use fast-path)
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
+
+    let key = RelationCacheKey::subtype(hello, TypeId::STRING, 0, 0);
     assert_eq!(
         db.probe_subtype_cache(key),
         crate::RelationCacheProbe::Hit(true)
