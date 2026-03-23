@@ -414,20 +414,16 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 "#;
 
     let diagnostics = compile_and_get_diagnostics_with_lib(source);
-    // NOTE: tsc produces 0 errors for this code. We currently emit false positives:
-    // - TS2322: "Type 'Num' is not assignable to type 'Runtype<any>'"
-    // - TS2344: "Type 'O' does not satisfy the constraint '{ [x: string]: Runtype<any>; }'"
-    // Track current behavior to detect regressions; ideal target is 0 errors.
-    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
-
-    // Previous behavior: 1 TS2322 + 1 TS2344 false positives.
-    // After fixing cross-context type parameter constraint checking,
-    // the TS2322 and TS2344 false positives are eliminated.
-    // Current: 1 TS2345 remains (argument type mismatch in Obj call).
-    // Ideal target: 0 errors (tsc produces 0).
+    // NOTE: tsc produces 0 errors for this code. We currently emit false positives.
+    // Previous: 1 TS2322 + 1 TS2344, then 1 TS2345 false positive.
+    // After fixing recursive type variance (independent variance for self-referencing
+    // generics instead of invariance + structural fallback):
+    // 2 TS2322 false positives for "Num not assignable to Runtype<any>".
+    // Ideal target: 0 errors.
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
     assert_eq!(
-        ts2345_count, 1,
-        "Expected one TS2345 false positive for Obj call. Actual diagnostics: {diagnostics:#?}"
+        ts2322_count, 2,
+        "Expected two TS2322 false positives. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
