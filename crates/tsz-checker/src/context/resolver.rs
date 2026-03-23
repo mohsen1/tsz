@@ -380,7 +380,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         }
 
         // 2. For class instance types (Object/ObjectWithIndex), check the shape symbol
-        if let Some(sym_id) = tsz_solver::type_queries::data::get_object_symbol(interner, type_id) {
+        if let Some(sym_id) = crate::query_boundaries::common::object_symbol(interner, type_id) {
             // Use InheritanceGraph to get parent
             let parents = self.inheritance_graph.get_parents(sym_id);
             if let Some(&parent_sym_id) = parents.first() {

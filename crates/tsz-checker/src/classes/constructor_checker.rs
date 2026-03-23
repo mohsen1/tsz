@@ -335,7 +335,7 @@ impl<'a> CheckerState<'a> {
                 InstanceTypeKind::Function(_) => {
                     // Delegate to solver query for Function constructor return type
                     let return_type =
-                        tsz_solver::type_queries::data::construct_return_type_for_type(
+                        crate::query_boundaries::common::construct_return_type_for_type(
                             self.ctx.types,
                             current,
                         )?;
@@ -432,7 +432,7 @@ impl<'a> CheckerState<'a> {
             ConstructorReturnMergeKind::Callable(_) | ConstructorReturnMergeKind::Function(_) => {
                 // Delegate to solver: intersect construct/function return types
                 // with the base instance type.
-                let result = tsz_solver::type_queries::data::intersect_constructor_returns(
+                let result = crate::query_boundaries::common::intersect_constructor_returns(
                     self.ctx.types,
                     ctor_type,
                     base_instance_type,

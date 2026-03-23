@@ -175,7 +175,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 }
                 // Union of tuples all out of bounds → TS2339
-                else if let Some(members) = tsz_solver::type_queries::data::get_union_members(
+                else if let Some(members) = crate::query_boundaries::common::union_members(
                     self.ctx.types,
                     object_for_tuple_check,
                 ) {
