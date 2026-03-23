@@ -2143,20 +2143,28 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
         for (&old_sym_id, entry) in &lib_binder.semantic_defs {
             if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, old_sym_id)) {
-                // Keep first occurrence (declaration merging keeps first identity).
-                semantic_defs.entry(global_id).or_insert_with(|| {
-                    let mut remapped = entry.clone();
-                    // Update file_id to match the global symbol's decl_file_idx
-                    // so DefinitionStore composite key lookups stay consistent.
-                    remapped.file_id = global_symbols
-                        .get(global_id)
-                        .map_or(entry.file_id, |s| s.decl_file_idx);
-                    // Remap parent_namespace to global SymbolId
-                    remapped.parent_namespace = entry.parent_namespace.and_then(|old_parent| {
-                        lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
-                    });
-                    remapped
+                let mut remapped = entry.clone();
+                // Update file_id to match the global symbol's decl_file_idx
+                // so DefinitionStore composite key lookups stay consistent.
+                remapped.file_id = global_symbols
+                    .get(global_id)
+                    .map_or(entry.file_id, |s| s.decl_file_idx);
+                // Remap parent_namespace to global SymbolId
+                remapped.parent_namespace = entry.parent_namespace.and_then(|old_parent| {
+                    lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
                 });
+                // Cross-file merge: accumulate heritage, enum members, export
+                // flag, type params from subsequent declarations into the first
+                // occurrence's entry. This mirrors within-file accumulation in
+                // record_semantic_def_ext.
+                match semantic_defs.entry(global_id) {
+                    std::collections::hash_map::Entry::Occupied(mut existing) => {
+                        existing.get_mut().merge_cross_file(&remapped);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant) => {
+                        vacant.insert(remapped);
+                    }
+                }
             }
         }
     }
@@ -2541,10 +2549,20 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 remapped_entry.parent_namespace = entry
                     .parent_namespace
                     .and_then(|old_parent| id_remap.get(&old_parent).copied());
-                // Collect per-file entry (always insert — no cross-file merging here)
+                // Collect per-file entry (always insert — file-scoped identity).
                 file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
-                // Only insert the first occurrence (declaration merging keeps first identity)
-                semantic_defs.entry(new_sym_id).or_insert(remapped_entry);
+                // Cross-file merge: accumulate heritage, enum members, export
+                // flag, type params from subsequent declarations into the first
+                // occurrence's entry. This mirrors within-file accumulation in
+                // record_semantic_def_ext and the lib merge in Phase 1.6.
+                match semantic_defs.entry(new_sym_id) {
+                    std::collections::hash_map::Entry::Occupied(mut existing) => {
+                        existing.get_mut().merge_cross_file(&remapped_entry);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant) => {
+                        vacant.insert(remapped_entry);
+                    }
+                }
             }
         }
 
