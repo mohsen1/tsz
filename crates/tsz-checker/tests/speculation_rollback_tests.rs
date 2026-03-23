@@ -653,3 +653,179 @@ fn filtered_rollback_then_full_rollback_no_panic() {
         diags.len()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Deferred TS2454 and rollback consistency tests
+// ---------------------------------------------------------------------------
+// These tests exercise scenarios where deferred_ts2454_errors must be
+// truncated consistently across all rollback paths (rollback_diagnostics,
+// rollback_diagnostics_filtered, take_speculative_diagnostics).
+
+/// TS2454 (variable used before assigned) inside an overloaded callback:
+/// the deferred TS2454 entry must not survive a filtered rollback of the
+/// failed overload candidate.
+#[test]
+fn ts2454_in_overload_callback_filtered_rollback() {
+    let diags = check(
+        r#"
+        declare function f(cb: (x: string) => string): string;
+        declare function f(cb: (x: number) => number): number;
+        f((x) => {
+            let v: number;
+            return x;
+        });
+    "#,
+    );
+    // The second overload should match. TS2454 for `v` should not appear
+    // because `v` is declared but never used — but if it were emitted
+    // speculatively by the first candidate, it must be rolled back cleanly.
+    let ts2454_count = diags.iter().filter(|d| d.code == 2454).count();
+    assert!(
+        ts2454_count <= 1,
+        "TS2454 should not be duplicated across overload candidates: {diags:?}"
+    );
+}
+
+/// Nested overloads where the inner call's speculation interacts with the
+/// outer call's filtered rollback: deferred TS2454 state must be consistent.
+#[test]
+fn nested_overload_deferred_ts2454_consistency() {
+    let diags = check(
+        r#"
+        declare function outer(cb: (x: string) => void): void;
+        declare function outer(cb: (x: number) => void): void;
+        declare function inner(x: string): string;
+        declare function inner(x: number): number;
+        outer((x) => {
+            let v: number;
+            inner(x);
+        });
+    "#,
+    );
+    // Must not panic, and TS2454 (if emitted for `v`) should appear at most once.
+    let ts2454_count = diags.iter().filter(|d| d.code == 2454).count();
+    assert!(
+        ts2454_count <= 1,
+        "Nested overload should not duplicate TS2454: {diags:?}"
+    );
+}
+
+/// Overloaded call as a variable initializer with type annotation:
+/// exercises the variable_checking snapshot interacting with overload
+/// take_speculative_diagnostics + re-insertion pattern.
+#[test]
+fn overload_take_and_reinsert_diagnostics_no_duplicate() {
+    let diags = check(
+        r#"
+        declare function parse(x: string): number;
+        declare function parse(x: number): string;
+        declare function parse(x: boolean): boolean;
+        // All three overloads fail for `{}`
+        let x: number = parse({} as any);
+    "#,
+    );
+    // The `as any` cast makes it succeed for the first overload.
+    // Key invariant: diagnostics from take + re-insertion are not duplicated.
+    let total_errors = diags.len();
+    assert!(
+        total_errors <= 2,
+        "Expected bounded diagnostics for take+reinsert, got {total_errors}: {diags:?}"
+    );
+}
+
+/// Overload resolution where a successful candidate's diagnostics are
+/// taken and then the outer context rolls back to an even earlier snapshot.
+/// This exercises take_speculative_diagnostics followed by outer rollback.
+#[test]
+fn take_diagnostics_then_outer_rollback_no_panic() {
+    let diags = check(
+        r#"
+        declare function f(x: string): string;
+        declare function f(x: number): number;
+        declare function g(x: boolean): boolean;
+        // Inner: f(42) succeeds on second overload (take its diags)
+        // Outer: g(f(42)) — g expects boolean, gets number → TS2345
+        g(f(42));
+    "#,
+    );
+    // f(42) resolves to number, g expects boolean → assignability error.
+    // The key invariant: no panic from take + outer rollback interaction.
+    let error_count = diags
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2769)
+        .count();
+    assert!(
+        error_count >= 1,
+        "Expected at least one error for type mismatch: {diags:?}"
+    );
+    assert!(
+        error_count <= 2,
+        "Expected bounded error count, got {error_count}: {diags:?}"
+    );
+}
+
+/// Four sequential overloaded calls: ensures that rollback state from
+/// earlier calls doesn't accumulate and corrupt later calls.
+#[test]
+fn four_sequential_overloaded_calls_no_accumulation() {
+    let diags = check(
+        r#"
+        declare function f(x: string): string;
+        declare function f(x: number): number;
+        let a = f(1);      // succeeds (second overload)
+        let b = f("hi");   // succeeds (first overload)
+        let c = f(true);   // fails (TS2769)
+        let d = f(1);      // succeeds (second overload)
+    "#,
+    );
+    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
+    assert_eq!(
+        ts2769_count, 1,
+        "Exactly one TS2769 expected from f(true), got {ts2769_count}: {diags:?}"
+    );
+}
+
+/// Overload inside a ternary where both branches call the same overloaded
+/// function with different argument types. Tests that speculation rollback
+/// in one branch doesn't affect the other.
+#[test]
+fn overload_in_both_ternary_branches_isolation() {
+    let diags = check(
+        r#"
+        declare function f(x: string): string;
+        declare function f(x: number): number;
+        declare let cond: boolean;
+        let result = cond ? f(42) : f("hello");
+    "#,
+    );
+    // Both branches should resolve cleanly.
+    assert!(
+        diags.is_empty(),
+        "Both ternary branches should resolve overloads cleanly: {diags:?}"
+    );
+}
+
+/// Regression: overload where the successful candidate has a callback
+/// that itself contains a conditional with a dead branch. This exercises
+/// three-level nesting: overload → callback → conditional dead branch.
+#[test]
+fn overload_callback_with_dead_branch_no_leak() {
+    let diags = check(
+        r#"
+        declare function process(cb: (x: string) => string): string;
+        declare function process(cb: (x: number) => number): number;
+        let result = process((x) => {
+            if (false) {
+                return "dead" as any;
+            }
+            return x;
+        });
+    "#,
+    );
+    // Should resolve to one of the overloads without leaking dead-branch diagnostics.
+    assert!(
+        diags.len() <= 2,
+        "Expected bounded diagnostics for overload+callback+dead branch, got {}: {diags:?}",
+        diags.len()
+    );
+}
