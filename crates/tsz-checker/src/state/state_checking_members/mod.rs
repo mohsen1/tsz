@@ -2,6 +2,7 @@
 
 mod ambient_signature_checks;
 mod class_type_param_checks;
+mod function_declaration_checks;
 mod implicit_any_checks;
 mod index_signature_checks;
 mod interface_checks;
