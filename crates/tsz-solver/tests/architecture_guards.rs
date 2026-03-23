@@ -37,7 +37,7 @@ fn walk_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
 /// Per CLAUDE.md section 4: "Emitter importing Checker internals for semantic checks"
 /// is a forbidden shortcut.
 ///
-/// The emitter may use solver read-only APIs (TypeInterner, type_queries, visitor)
+/// The emitter may use solver read-only APIs (`TypeInterner`, `type_queries`, visitor)
 /// for declaration emit and type printing, but must NOT use relation/compatibility
 /// APIs that perform semantic validation.
 #[test]

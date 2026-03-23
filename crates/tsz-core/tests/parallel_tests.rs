@@ -5766,23 +5766,19 @@ fn cross_file_enum_members_accumulated_in_semantic_defs() {
     let members = &color_entry.enum_member_names;
     assert!(
         members.contains(&"Red".to_string()),
-        "Color should have member 'Red', got {:?}",
-        members
+        "Color should have member 'Red', got {members:?}"
     );
     assert!(
         members.contains(&"Green".to_string()),
-        "Color should have member 'Green', got {:?}",
-        members
+        "Color should have member 'Green', got {members:?}"
     );
     assert!(
         members.contains(&"Blue".to_string()),
-        "Color should have member 'Blue', got {:?}",
-        members
+        "Color should have member 'Blue', got {members:?}"
     );
     assert!(
         members.contains(&"Yellow".to_string()),
-        "Color should have member 'Yellow', got {:?}",
-        members
+        "Color should have member 'Yellow', got {members:?}"
     );
 }
 

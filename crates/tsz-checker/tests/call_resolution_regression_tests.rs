@@ -949,8 +949,7 @@ f("hello");
     let codes = get_codes(source);
     assert!(
         codes.contains(&2554) || codes.contains(&2345),
-        "Union callee with incompatible arity should emit error: got {:?}",
-        codes
+        "Union callee with incompatible arity should emit error: got {codes:?}"
     );
 }
 
