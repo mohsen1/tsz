@@ -740,6 +740,12 @@ impl<'a> CheckerState<'a> {
 
         // Regular for-of (ES2015+) - check sync iterability
         if self.is_iterable_type(expr_type) {
+            // Additional check: verify the iterator protocol is complete.
+            // The type returned by next() must have a 'value' property (TS2490).
+            // This catches custom iterator classes where next() returns the wrong type.
+            if !self.check_iterator_next_returns_value(expr_type, expr_idx) {
+                return false;
+            }
             return true;
         }
 
@@ -950,6 +956,103 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         catch_node.kind == tsz_parser::parser::syntax_kind_ext::CATCH_CLAUSE
+    }
+
+    /// Check that the iterator protocol's `next()` method returns a type with a `value` property.
+    ///
+    /// This follows the chain: type[Symbol.iterator]() → iterator → .next() → check .value
+    /// If `next()` returns a type without `value`, emits TS2490 and returns `false`.
+    /// Returns `true` if the protocol is valid or if we can't resolve the chain
+    /// (in which case we don't want to emit a false positive).
+    fn check_iterator_next_returns_value(
+        &mut self,
+        iterable_type: TypeId,
+        error_node: NodeIndex,
+    ) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        // Skip for primitive/built-in types that are always valid iterables
+        if iterable_type == TypeId::ANY
+            || iterable_type == TypeId::UNKNOWN
+            || iterable_type == TypeId::ERROR
+            || iterable_type == TypeId::STRING
+        {
+            return true;
+        }
+
+        // Step 1: Get [Symbol.iterator] property
+        let iterator_fn = self.resolve_property_access_with_env(iterable_type, "[Symbol.iterator]");
+        let iterator_fn_type = match &iterator_fn {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            _ => return true, // Can't resolve - don't emit false positive
+        };
+
+        // Step 2: Get the return type of calling [Symbol.iterator]()
+        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        if iterator_type == TypeId::ANY
+            || iterator_type == TypeId::UNKNOWN
+            || iterator_type == TypeId::ERROR
+        {
+            return true;
+        }
+
+        // Handle ThisType - substitute with the iterable type itself
+        let iterator_type = if is_this_type(self.ctx.types, iterator_type) {
+            iterable_type
+        } else {
+            iterator_type
+        };
+
+        // Step 3: Get .next() on the iterator
+        let next_result = self.resolve_property_access_with_env(iterator_type, "next");
+        let next_fn_type = match &next_result {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            _ => return true, // Can't resolve - don't emit false positive
+        };
+
+        // If next() resolves to any, try fallback on original iterable
+        let next_fn_type = if next_fn_type == TypeId::ANY && iterator_type != iterable_type {
+            let fallback_next = self.resolve_property_access_with_env(iterable_type, "next");
+            match &fallback_next {
+                PropertyAccessResult::Success { type_id, .. } if *type_id != TypeId::ANY => {
+                    *type_id
+                }
+                _ => return true,
+            }
+        } else {
+            next_fn_type
+        };
+
+        // Step 4: Get the return type of next()
+        let next_return = self.get_call_return_type(next_fn_type);
+        if next_return == TypeId::ANY
+            || next_return == TypeId::UNKNOWN
+            || next_return == TypeId::ERROR
+        {
+            return true;
+        }
+
+        // Step 5: Check if next()'s return type has a 'value' property
+        let value_result = self.resolve_property_access_with_env(next_return, "value");
+        match &value_result {
+            PropertyAccessResult::Success { .. } => true, // Has 'value' - protocol is valid
+            _ => {
+                // No 'value' property on next()'s return type - emit TS2490
+                if let Some((start, end)) = self.get_node_span(error_node) {
+                    let message = format_message(
+                        diagnostic_messages::THE_TYPE_RETURNED_BY_THE_METHOD_OF_AN_ITERATOR_MUST_HAVE_A_VALUE_PROPERTY,
+                        &["next"],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::THE_TYPE_RETURNED_BY_THE_METHOD_OF_AN_ITERATOR_MUST_HAVE_A_VALUE_PROPERTY,
+                    );
+                }
+                false
+            }
+        }
     }
 
     /// Emit TS2488: "Type '...' must have a '[Symbol.iterator]()' method that returns an iterator."
