@@ -40,6 +40,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) type_interner: Option<&'a TypeInterner>,
     /// Binder state for symbol resolution (used by `UsageAnalyzer`)
     pub(super) binder: Option<&'a BinderState>,
+    /// Precomputed export surface summary (replaces ad-hoc re-extraction).
+    pub(super) export_surface: Option<tsz_binder::ExportSurface>,
     /// Map of symbols to their usage kind (Type, Value, or Both) for import elision
     pub(super) used_symbols:
         Option<FxHashMap<SymbolId, crate::declaration_emitter::usage_analyzer::UsageKind>>,
@@ -203,6 +205,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_source_file_idx: None,
             type_interner: None,
             binder: None,
+            export_surface: None,
             used_symbols: None,
             foreign_symbols: None,
             current_arena: None,
@@ -275,6 +278,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_source_file_idx: None,
             type_interner: Some(type_interner),
             binder: Some(binder),
+            export_surface: None,
             used_symbols: None,
             foreign_symbols: None,
             current_arena: None,
@@ -363,6 +367,14 @@ impl<'a> DeclarationEmitter<'a> {
     /// This enables `UsageAnalyzer` to resolve symbols during import/export elision.
     pub const fn set_binder(&mut self, binder: Option<&'a BinderState>) {
         self.binder = binder;
+    }
+
+    /// Set a precomputed export surface summary.
+    ///
+    /// When set, the emitter uses the summary's overload pre-scan instead
+    /// of discovering overloads incrementally during the emit walk.
+    pub fn set_export_surface(&mut self, surface: tsz_binder::ExportSurface) {
+        self.export_surface = Some(surface);
     }
 
     /// Set the current file's arena and path for distinguishing local vs foreign symbols.
@@ -572,6 +584,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_non_exported_declaration = false;
         self.emitted_scope_marker = false;
         self.emitted_module_indicator = false;
+
+        // Seed overload tracking from precomputed ExportSurface if available.
+        // This replaces the incremental on-the-fly detection for top-level
+        // functions, ensuring overload grouping is correct even if the surface
+        // was built in a previous pass.
+        if let Some(ref surface) = self.export_surface {
+            self.function_names_with_overloads = surface.overloaded_functions.clone();
+        }
 
         // Prepare import metadata for elision BEFORE running UsageAnalyzer
         // This builds the SymbolId -> ModuleSpecifier map from existing imports
