@@ -271,14 +271,17 @@ impl<'a> GoToDefinition<'a> {
         // 4. If primary resolution succeeded, use the symbol
         //    But skip class/interface members resolved via scope chain for bare identifiers
         //    (they require `this.` qualification and shouldn't resolve as lexical names).
-        if let Some(symbol_id) = symbol_id_opt
+        //    Also skip for `super.member` — let the member access fallback handle it
+        //    to resolve to the base class, not the overriding derived class.
+        if !self.is_super_member_access(node_idx)
+            && let Some(symbol_id) = symbol_id_opt
             && !self.is_bare_class_member_reference(node_idx, symbol_id)
             && let Some(locations) = self.locations_from_symbol(symbol_id)
         {
             return Some(locations);
         }
 
-        // 5. Fallback: try member access resolution (obj.method, Class.staticProp)
+        // 5. Fallback: try member access resolution (obj.method, Class.staticProp, super.method)
         if let Some(locations) = self.try_member_access_fallback(root, node_idx) {
             return Some(locations);
         }
@@ -479,9 +482,19 @@ impl<'a> GoToDefinition<'a> {
         let node = self.arena.get(node_idx)?;
         let member_name = &self.source_text[node.pos as usize..node.end as usize];
 
-        // Resolve the expression (left side) to a symbol
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let expr_symbol_id = walker.resolve_node(root, access.expression)?;
+        // Resolve the expression (left side) to a symbol.
+        // Handle `super` keyword by finding the base class.
+        let is_super = self
+            .arena
+            .get(access.expression)
+            .map(|n| n.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16)
+            .unwrap_or(false);
+        let expr_symbol_id = if is_super {
+            self.resolve_super_base_class(access.expression)
+        } else {
+            let mut walker = ScopeWalker::new(self.arena, self.binder);
+            walker.resolve_node(root, access.expression)
+        }?;
         let expr_symbol = self.binder.symbols.get(expr_symbol_id)?;
 
         // Look up in members table (instance members)
@@ -1041,6 +1054,69 @@ impl<'a> GoToDefinition<'a> {
     /// Check if a resolved symbol is a class/interface member being referenced as a bare
     /// identifier (not through `this.member` or `obj.member`). Class members require
     /// `this.` qualification and shouldn't resolve as lexical names.
+    /// Check if the node is the member name in a `super.member` property access.
+    fn is_super_member_access(&self, node_idx: NodeIndex) -> bool {
+        let Some(ext) = self.arena.get_extended(node_idx) else {
+            return false;
+        };
+        let Some(parent) = self.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(parent) else {
+            return false;
+        };
+        if access.name_or_argument != node_idx {
+            return false;
+        }
+        self.arena
+            .get(access.expression)
+            .map(|n| n.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16)
+            .unwrap_or(false)
+    }
+
+    /// Resolve `super` to the base class symbol by walking up to the enclosing class
+    /// and finding its extends clause target.
+    fn resolve_super_base_class(&self, super_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        let mut current = super_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent = self.arena.get(ext.parent)?;
+            if parent.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class = self.arena.get_class(parent)?;
+                let heritage = class.heritage_clauses.as_ref()?;
+                for &clause_idx in &heritage.nodes {
+                    let clause_node = self.arena.get(clause_idx)?;
+                    let hd = self.arena.get_heritage(clause_node)?;
+                    if hd.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+                    for &type_idx in &hd.types.nodes {
+                        let type_node = self.arena.get(type_idx)?;
+                        let expr_idx =
+                            if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
+                                self.arena
+                                    .get_expr_type_args(type_node)
+                                    .map(|e| e.expression)?
+                            } else {
+                                type_idx
+                            };
+                        return self.binder.resolve_identifier(self.arena, expr_idx);
+                    }
+                }
+                return None;
+            }
+            current = ext.parent;
+        }
+    }
+
     fn is_bare_class_member_reference(&self, node_idx: NodeIndex, symbol_id: SymbolId) -> bool {
         // If this node IS the declaration name itself, it's not a "bare reference"
         if self.binder.node_symbols.contains_key(&node_idx.0) {
