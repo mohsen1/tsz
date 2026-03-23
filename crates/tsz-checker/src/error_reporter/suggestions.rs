@@ -123,6 +123,19 @@ impl<'a> CheckerState<'a> {
             return exports.iter().map(|(name, _)| name.clone()).collect();
         }
 
+        // For namespace/module types (e.g., `namespace A { ... }`), the solver's
+        // traversal classifies TypeQuery/Lazy as Terminal and returns no properties.
+        // Collect exported member names from the binder's symbol exports so that
+        // spelling suggestions (TS2551 "Did you mean?") work on namespace accesses.
+        if let Some(sym_id) = self.resolve_namespace_symbol_for_type(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::MODULE) != 0
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM) == 0
+            && let Some(exports) = symbol.exports.as_ref()
+        {
+            return exports.iter().map(|(name, _)| name.clone()).collect();
+        }
+
         // For primitive types (string, number, boolean, bigint, symbol), the solver's
         // traversal classifies them as Terminal and returns no properties. Resolve to
         // their boxed interface types (String, Number, etc.) so spelling suggestions
@@ -166,6 +179,22 @@ impl<'a> CheckerState<'a> {
         };
 
         TypeResolver::get_boxed_type(self.ctx.types, kind)
+    }
+
+    /// Resolve the binder SymbolId for a namespace/module type.
+    /// Uses `classify_namespace_member` to find the symbol backing the type.
+    fn resolve_namespace_symbol_for_type(&self, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
+        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+
+        match classify_namespace_member(self.ctx.types, type_id) {
+            NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id),
+            NamespaceMemberKind::TypeQuery(sym_ref) => Some(tsz_binder::SymbolId(sym_ref.0)),
+            NamespaceMemberKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                shape.symbol
+            }
+            _ => None,
+        }
     }
 
     // =========================================================================
