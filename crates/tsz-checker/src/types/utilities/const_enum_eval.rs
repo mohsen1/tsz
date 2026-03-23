@@ -3,11 +3,14 @@
 //! These are free functions (not methods on `CheckerState`) so they can be called
 //! from both `CheckerState` and `DeclarationChecker` contexts.
 //!
-//! Cycle detection: A thread-local visited set (`CONST_EVAL_VISITED`) tracks which
-//! enum member declarations are currently being evaluated.  This detects both direct
-//! self-references (`A = E.A`) and mutual recursion across enums
-//! (`enum E { A = F.B }; enum F { B = E.A }`).  A drop guard ensures cleanup even
-//! on panic.
+//! Cycle detection uses the shared `cycle_guard` module (`CycleSetId::ConstEnum`)
+//! to track which enum member declarations are currently being evaluated.  This
+//! detects both direct self-references (`A = E.A`) and mutual recursion across
+//! enums (`enum E { A = F.B }; enum F { B = E.A }`).  The `CycleGuard` RAII type
+//! ensures cleanup even on panic.
+//!
+//! Additionally, a depth counter (max 100) prevents stack overflow from deeply
+//! nested but non-cyclic expression trees.
 
 use super::cycle_guard::{self, CycleSetId};
 use tsz_parser::parser::NodeIndex;
@@ -236,8 +239,8 @@ fn resolve_cross_enum_element_access(
 
 /// Find an enum declaration by name in the same file and evaluate one of its members.
 ///
-/// Uses `CONST_EVAL_VISITED` to detect cycles across mutually-recursive enums
-/// (e.g., `const enum E { A = F.B }; const enum F { B = E.A }`).
+/// Uses the shared `CycleGuard` (`CycleSetId::ConstEnum`) to detect cycles across
+/// mutually-recursive enums (e.g., `const enum E { A = F.B }; const enum F { B = E.A }`).
 fn resolve_external_enum_member(
     arena: &tsz_parser::parser::NodeArena,
     current_enum_data: &tsz_parser::parser::node::EnumData,
