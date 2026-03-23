@@ -5657,3 +5657,284 @@ fn all_symbol_mappings_count_matches_semantic_defs_count() {
         semantic_defs_count
     );
 }
+
+// =============================================================================
+// Cross-file semantic_defs merge accumulation tests
+// =============================================================================
+
+#[test]
+fn cross_file_interface_heritage_accumulated_in_semantic_defs() {
+    // When an interface is declared across two files with different heritage
+    // clauses, the merged semantic_defs entry should accumulate both sets of
+    // heritage names.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Foo extends Bar { x: number }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Foo extends Baz { y: string }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let foo_entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo" && e.kind == crate::binder::SemanticDefKind::Interface)
+        .expect("expected semantic def for Foo");
+
+    assert!(
+        foo_entry.heritage_names.contains(&"Bar".to_string()),
+        "Foo should have heritage name 'Bar' from file a.ts, got {:?}",
+        foo_entry.heritage_names
+    );
+    assert!(
+        foo_entry.heritage_names.contains(&"Baz".to_string()),
+        "Foo should have heritage name 'Baz' from file b.ts, got {:?}",
+        foo_entry.heritage_names
+    );
+}
+
+#[test]
+fn cross_file_interface_heritage_survives_definition_store() {
+    // The DefinitionInfo in the shared DefinitionStore should also have the
+    // accumulated heritage names from both files.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Foo extends Bar { x: number }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Foo extends Baz { y: string }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let (&foo_sym, _) = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Foo" && e.kind == crate::binder::SemanticDefKind::Interface)
+        .expect("expected semantic def for Foo");
+
+    let def_id = program
+        .definition_store
+        .find_def_by_symbol(foo_sym.0)
+        .expect("Foo should have a DefId");
+
+    let info = program
+        .definition_store
+        .get(def_id)
+        .expect("Foo's DefinitionInfo should exist");
+
+    assert!(
+        info.heritage_names.contains(&"Bar".to_string()),
+        "DefinitionInfo should have heritage 'Bar', got {:?}",
+        info.heritage_names
+    );
+    assert!(
+        info.heritage_names.contains(&"Baz".to_string()),
+        "DefinitionInfo should have heritage 'Baz', got {:?}",
+        info.heritage_names
+    );
+}
+
+#[test]
+fn cross_file_enum_members_accumulated_in_semantic_defs() {
+    // When an enum is declared across two files (declaration merging), both
+    // files' member names should be accumulated in the merged semantic_defs.
+    let files = vec![
+        ("a.ts".to_string(), "enum Color { Red, Green }".to_string()),
+        (
+            "b.ts".to_string(),
+            "enum Color { Blue, Yellow }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let color_entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Color" && e.kind == crate::binder::SemanticDefKind::Enum)
+        .expect("expected semantic def for Color");
+
+    let members = &color_entry.enum_member_names;
+    assert!(
+        members.contains(&"Red".to_string()),
+        "Color should have member 'Red', got {:?}",
+        members
+    );
+    assert!(
+        members.contains(&"Green".to_string()),
+        "Color should have member 'Green', got {:?}",
+        members
+    );
+    assert!(
+        members.contains(&"Blue".to_string()),
+        "Color should have member 'Blue', got {:?}",
+        members
+    );
+    assert!(
+        members.contains(&"Yellow".to_string()),
+        "Color should have member 'Yellow', got {:?}",
+        members
+    );
+}
+
+#[test]
+fn cross_file_script_interfaces_merge_into_single_semantic_def() {
+    // Both files are script files (no import/export statements) so their
+    // top-level interface declarations share the global scope and merge.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Foo { x: number }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Foo { y: string }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Both declarations should merge into one semantic_def.
+    let foo_entries: Vec<_> = program
+        .semantic_defs
+        .values()
+        .filter(|e| e.name == "Foo" && e.kind == crate::binder::SemanticDefKind::Interface)
+        .collect();
+    assert_eq!(
+        foo_entries.len(),
+        1,
+        "Should have exactly one merged semantic_def for Foo"
+    );
+}
+
+#[test]
+fn cross_file_type_param_arity_update_in_semantic_defs() {
+    // If file A declares `interface Foo {}` (no type params) and file B
+    // declares `interface Foo<T> {}`, the merged entry should have arity 1.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Foo { x: number }".to_string(),
+        ),
+        ("b.ts".to_string(), "interface Foo<T> { y: T }".to_string()),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let foo_entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo" && e.kind == crate::binder::SemanticDefKind::Interface)
+        .expect("expected semantic def for Foo");
+
+    assert_eq!(
+        foo_entry.type_param_count, 1,
+        "Foo should have type_param_count=1 after cross-file merge with generic declaration"
+    );
+}
+
+#[test]
+fn cross_file_class_heritage_accumulated_in_semantic_defs() {
+    // Classes can merge with interfaces across files. Heritage names from
+    // both the class and interface declarations should be accumulated.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "class Foo extends Base { x = 1 }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Foo extends Extra { y: string }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // The merged symbol should have the Class kind (class takes precedence)
+    let foo_entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic def for Foo");
+
+    assert!(
+        foo_entry.heritage_names.contains(&"Base".to_string()),
+        "Foo should have heritage 'Base' from class declaration, got {:?}",
+        foo_entry.heritage_names
+    );
+    assert!(
+        foo_entry.heritage_names.contains(&"Extra".to_string()),
+        "Foo should have heritage 'Extra' from interface merge, got {:?}",
+        foo_entry.heritage_names
+    );
+}
+
+#[test]
+fn cross_file_semantic_def_identity_stable_in_definition_store() {
+    // Both files are script files (no import/export) so their top-level
+    // interface declarations merge in the global scope. The merged identity
+    // in DefinitionStore should reflect accumulated heritage from both files.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Widget extends Renderable { render(): void }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Widget extends Serializable { serialize(): string }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Should be exactly one semantic_def for Widget
+    let widget_entries: Vec<_> = program
+        .semantic_defs
+        .iter()
+        .filter(|(_, e)| e.name == "Widget")
+        .collect();
+    assert_eq!(
+        widget_entries.len(),
+        1,
+        "Should have exactly one merged semantic_def for Widget, got {}",
+        widget_entries.len()
+    );
+
+    let (&widget_sym, widget_entry) = widget_entries[0];
+    assert!(
+        widget_entry
+            .heritage_names
+            .contains(&"Renderable".to_string()),
+        "Widget heritage should include Renderable"
+    );
+    assert!(
+        widget_entry
+            .heritage_names
+            .contains(&"Serializable".to_string()),
+        "Widget heritage should include Serializable"
+    );
+
+    // The DefinitionStore should have exactly one DefId for this symbol
+    let def_id = program
+        .definition_store
+        .find_def_by_symbol(widget_sym.0)
+        .expect("Widget should have a DefId in DefinitionStore");
+
+    let info = program
+        .definition_store
+        .get(def_id)
+        .expect("Widget's DefinitionInfo should exist");
+
+    assert_eq!(info.kind, tsz_solver::def::DefKind::Interface);
+    assert!(info.heritage_names.contains(&"Renderable".to_string()));
+    assert!(info.heritage_names.contains(&"Serializable".to_string()));
+}

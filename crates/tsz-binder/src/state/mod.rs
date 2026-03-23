@@ -518,6 +518,49 @@ pub struct SemanticDefEntry {
     pub parent_namespace: Option<SymbolId>,
 }
 
+impl SemanticDefEntry {
+    /// Accumulate metadata from a cross-file declaration merge into this entry.
+    ///
+    /// When the same symbol appears in multiple files (e.g., cross-file interface
+    /// merging, or split enum declarations), the first file's entry is kept as the
+    /// canonical identity but subsequent files may contribute additional heritage
+    /// names, enum members, export visibility, and type parameter arity.
+    ///
+    /// This mirrors the within-file accumulation logic in `record_semantic_def_ext`
+    /// but runs during the merge phase in `parallel/core.rs`.
+    pub fn merge_cross_file(&mut self, other: &SemanticDefEntry) {
+        // Accumulate heritage names not already present.
+        for h in &other.heritage_names {
+            if !self.heritage_names.contains(h) {
+                self.heritage_names.push(h.clone());
+            }
+        }
+        // If the first declaration had no type params but a later file does
+        // (e.g., augmentation adds generics), update the arity.
+        if self.type_param_count == 0 && other.type_param_count > 0 {
+            self.type_param_count = other.type_param_count;
+        }
+        // If the later declaration is exported, mark as exported.
+        if other.is_exported {
+            self.is_exported = true;
+        }
+        // Accumulate enum members from later declarations.
+        for m in &other.enum_member_names {
+            if !self.enum_member_names.contains(m) {
+                self.enum_member_names.push(m.clone());
+            }
+        }
+        // Promote abstract flag if any declaration is abstract.
+        if other.is_abstract {
+            self.is_abstract = true;
+        }
+        // Promote const flag if any declaration is const (for enums).
+        if other.is_const {
+            self.is_const = true;
+        }
+    }
+}
+
 // =============================================================================
 // BinderFileSummary - Lightweight file summary for dependency graphs
 // (test-only: used to verify binder captures exports/heritage correctly;
