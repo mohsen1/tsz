@@ -201,9 +201,7 @@ impl<'a> Printer<'a> {
         } else {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             // tsc preserves these and places the body on a new line when comments exist.
-            if !body_is_block
-                && let Some(body_node) = self.arena.get(func.body)
-            {
+            if !body_is_block && let Some(body_node) = self.arena.get(func.body) {
                 self.emit_comments_before_pos(body_node.pos);
             }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
