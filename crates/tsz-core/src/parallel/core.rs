@@ -1765,7 +1765,7 @@ pub fn pre_populate_definition_store(
     store
 }
 
-/// Resolve heritage names to DefIds in a pre-populated `DefinitionStore`.
+/// Resolve heritage names to `DefId`s in a pre-populated `DefinitionStore`.
 ///
 /// For each class/interface with `extends_names` or `implements_names`, look up
 /// the target by name in the store's `name_to_defs` index and wire:

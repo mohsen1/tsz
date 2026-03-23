@@ -968,10 +968,10 @@ impl<'a> CheckerContext<'a> {
                 };
 
                 // Skip if extends is already wired (from pre-populate Pass 3)
-                if let Some(info) = self.definition_store.get(def_id) {
-                    if info.extends.is_some() {
-                        continue;
-                    }
+                if let Some(info) = self.definition_store.get(def_id)
+                    && info.extends.is_some()
+                {
+                    continue;
                 }
 
                 // Resolve extends_names → extends
