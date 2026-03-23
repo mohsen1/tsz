@@ -11945,3 +11945,67 @@ fn test_accessor_keyword_preserved_on_class_field() {
         "static accessor keyword should be preserved: {output}"
     );
 }
+
+// =====================================================================
+// Template literal enum evaluation
+// =====================================================================
+
+#[test]
+fn test_enum_template_literal_value_vs_tsc() {
+    // tsc evaluates template literals in enum members: `${E.A}_world` -> "hello_world"
+    let result = emit_dts("export enum E {\n    A = \"hello\",\n    B = `${E.A}_world`,\n}\n");
+    assert!(result.contains("B = \"hello_world\""), "Should evaluate template literal enum value: {result}");
+}
+
+#[test]
+fn test_enum_template_literal_chained_vs_tsc() {
+    // Multiple levels of template literal evaluation in enums
+    let result = emit_dts(r#"export enum Actions {
+    Click = "click",
+    Hover = "hover",
+    OnClick = `on_${Actions.Click}`,
+    OnHover = `on_${Actions.Hover}`,
+    Nested = `prefix_${Actions.OnClick}_suffix`,
+}
+"#);
+    let expected = r#"export declare enum Actions {
+    Click = "click",
+    Hover = "hover",
+    OnClick = "on_click",
+    OnHover = "on_hover",
+    Nested = "prefix_on_click_suffix"
+}
+"#;
+    assert_eq!(result, expected, "Template literal chained enum values should match tsc");
+}
+
+#[test]
+fn test_enum_template_literal_multiple_spans_vs_tsc() {
+    // Template literal with multiple substitutions
+    let result = emit_dts(r#"export enum E {
+    A = "x",
+    B = "y",
+    C = `${E.A}_${E.B}_z`,
+}
+"#);
+    assert!(result.contains(r#"C = "x_y_z""#), "Should evaluate multi-span template: {result}");
+}
+
+#[test]
+fn test_enum_no_substitution_template_vs_tsc() {
+    // No-substitution template backtick literal should evaluate to string
+    let result = emit_dts("export enum E {\n    A = `hello`,\n}\n");
+    assert!(result.contains("A = \"hello\""), "No-sub template should produce string: {result}");
+}
+
+#[test]
+fn test_probe_string_enum_concat() {
+    let result = emit_dts(r#"export enum S {
+    Prefix = "PRE",
+    Full = Prefix + "_SUFFIX",
+}
+"#);
+    eprintln!("STRING_ENUM_CONCAT: {:?}", result);
+    // tsc evaluates: Full = "PRE_SUFFIX"
+    assert!(result.contains(r#"Full = "PRE_SUFFIX""#), "Should evaluate string concat: {result}");
+}

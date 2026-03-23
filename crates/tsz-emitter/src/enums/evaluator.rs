@@ -369,6 +369,11 @@ impl<'a> EnumEvaluator<'a> {
                 }
             }
 
+            // Template expression with substitutions: `prefix${expr}suffix`
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                self.evaluate_template_expression(idx)
+            }
+
             _ => EnumValue::Computed,
         }
     }
@@ -416,6 +421,57 @@ impl<'a> EnumEvaluator<'a> {
         }
 
         None
+    }
+
+    /// Evaluate a template expression with substitutions: `` `head${expr}middle${expr}tail` ``
+    /// Each substitution expression is recursively evaluated; if all parts resolve to
+    /// strings (or stringifiable numbers), the result is concatenated into a single string.
+    fn evaluate_template_expression(&self, idx: NodeIndex) -> EnumValue {
+        let Some(node) = self.arena.get(idx) else {
+            return EnumValue::Computed;
+        };
+        let Some(template) = self.arena.get_template_expr(node) else {
+            return EnumValue::Computed;
+        };
+
+        // Start with the head text
+        let Some(head_node) = self.arena.get(template.head) else {
+            return EnumValue::Computed;
+        };
+        let Some(head_lit) = self.arena.get_literal(head_node) else {
+            return EnumValue::Computed;
+        };
+        let mut result = head_lit.text.clone();
+
+        // Process each template span: expression + literal (middle or tail)
+        for &span_idx in &template.template_spans.nodes {
+            let Some(span_node) = self.arena.get(span_idx) else {
+                return EnumValue::Computed;
+            };
+            let Some(span) = self.arena.get_template_span(span_node) else {
+                return EnumValue::Computed;
+            };
+
+            // Evaluate the interpolated expression
+            let expr_value = self.evaluate_expression(span.expression);
+            match &expr_value {
+                EnumValue::String(s) => result.push_str(s),
+                EnumValue::Number(n) => result.push_str(&n.to_string()),
+                EnumValue::Float(f) => result.push_str(&f.to_string()),
+                EnumValue::Computed => return EnumValue::Computed,
+            }
+
+            // Append the literal part (middle or tail)
+            let Some(lit_node) = self.arena.get(span.literal) else {
+                return EnumValue::Computed;
+            };
+            let Some(lit) = self.arena.get_literal(lit_node) else {
+                return EnumValue::Computed;
+            };
+            result.push_str(&lit.text);
+        }
+
+        EnumValue::String(result)
     }
 
     /// Parse a numeric literal string to i64
