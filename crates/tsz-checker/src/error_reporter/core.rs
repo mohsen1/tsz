@@ -166,7 +166,7 @@ impl<'a> CheckerState<'a> {
 
         let type_id = self.evaluate_type_with_env(type_id);
         if tsz_solver::is_generic_application(self.ctx.types, type_id) {
-            let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+            let widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
             if let Some(def_id) = constructor_display_def {
                 self.ctx
                     .definition_store
@@ -177,7 +177,7 @@ impl<'a> CheckerState<'a> {
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
-        let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+        let widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
         if let Some(def_id) = constructor_display_def {
             self.ctx
                 .definition_store
@@ -1415,9 +1415,9 @@ impl<'a> CheckerState<'a> {
                 let display_type =
                     if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
                         let evaluated = self.evaluate_type_for_assignability(display_type);
-                        tsz_solver::widening::widen_type(self.ctx.types, evaluated)
+                        crate::query_boundaries::common::widen_type(self.ctx.types, evaluated)
                     } else {
-                        tsz_solver::widening::widen_type(self.ctx.types, display_type)
+                        crate::query_boundaries::common::widen_type(self.ctx.types, display_type)
                     };
                 return self.format_assignability_type_for_message(display_type, target);
             }
@@ -1491,7 +1491,7 @@ impl<'a> CheckerState<'a> {
             let display_type =
                 if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
                     let evaluated = self.evaluate_type_for_assignability(display_type);
-                    tsz_solver::widening::widen_type(self.ctx.types, evaluated)
+                    crate::query_boundaries::common::widen_type(self.ctx.types, evaluated)
                 } else {
                     display_type
                 };

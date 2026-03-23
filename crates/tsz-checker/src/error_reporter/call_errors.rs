@@ -24,7 +24,7 @@ impl<'a> CheckerState<'a> {
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
 
-        let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+        let widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
         if widened != type_id {
             return widened;
         }
@@ -204,7 +204,7 @@ impl<'a> CheckerState<'a> {
                 direct_arg_type
             }
         } else {
-            tsz_solver::widening::widen_type(self.ctx.types, arg_type)
+            crate::query_boundaries::common::widen_type(self.ctx.types, arg_type)
         };
         self.format_type_for_assignability_message(display_type)
     }
