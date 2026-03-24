@@ -251,10 +251,21 @@ pub(super) fn collect_diagnostics(
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
 
+    // Cache module specifiers per file — collected once, reused in prepare_binders
+    // and check_file_for_parallel to avoid 3× redundant AST traversals.
+    let mut cached_module_specifiers: Vec<
+        Vec<(
+            String,
+            tsz::parser::NodeIndex,
+            tsz::module_resolver::ImportKind,
+        )>,
+    > = Vec::with_capacity(program.files.len());
+
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
             let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+            cached_module_specifiers.push(module_specifiers.clone());
             let file_path = Path::new(&file.file_name);
 
             for (specifier, specifier_node, import_kind) in &module_specifiers {
@@ -488,12 +499,11 @@ pub(super) fn collect_diagnostics(
                 .map(|&file_idx| {
                     let file = &program.files[file_idx];
                     let mut binder = create_binder_from_bound_file(file, program, file_idx);
-                    let module_specifiers =
-                        collect_module_specifiers(&file.arena, file.source_file);
 
                     // Bridge raw module specifiers to resolved export tables using
                     // the pre-computed resolved_module_paths map (no FS calls needed).
-                    for (specifier, _, _) in &module_specifiers {
+                    // Uses cached specifiers from build_resolved_module_maps.
+                    for (specifier, _, _) in &cached_module_specifiers[file_idx] {
                         if let Some(&target_idx) =
                             resolved_module_paths.get(&(file_idx, specifier.clone()))
                         {
@@ -657,10 +667,12 @@ pub(super) fn collect_diagnostics(
             let file_path = PathBuf::from(&file.file_name);
 
             let mut binder = create_binder_from_bound_file(file, program, file_idx);
-            let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+
+            // Use cached specifiers from build_resolved_module_maps.
+            let module_specifiers = &cached_module_specifiers[file_idx];
 
             // Bridge multi-file module resolution for ES module imports.
-            for (specifier, _, _) in &module_specifiers {
+            for (specifier, _, _) in module_specifiers {
                 if let Some(resolved) = resolve_module_specifier(
                     Path::new(&file.file_name),
                     specifier,
@@ -712,7 +724,7 @@ pub(super) fn collect_diagnostics(
 
             // Build resolved_modules set for backward compatibility
             let mut resolved_modules = rustc_hash::FxHashSet::default();
-            for (specifier, _, _) in &module_specifiers {
+            for (specifier, _, _) in module_specifiers {
                 if resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
                     || resolved_module_paths.contains_key(&(file_idx, specifier.clone()))
                 {
@@ -1249,18 +1261,13 @@ pub(super) fn check_file_for_parallel<'a>(
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
     let query_cache = QueryCache::new(&program.type_interner);
 
-    let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
-
-    // Build resolved_modules from the pre-computed resolved module maps
-    let resolved_modules: FxHashSet<String> = module_specifiers
+    // Build resolved_modules directly from the pre-computed resolved_module_specifiers
+    // set (populated in build_resolved_module_maps). This avoids a redundant
+    // collect_module_specifiers AST traversal — the third call per file.
+    let resolved_modules: FxHashSet<String> = resolved_module_specifiers
         .iter()
-        .filter(|(specifier, _, _)| {
-            project_env
-                .resolved_module_paths
-                .contains_key(&(file_idx, specifier.clone()))
-                || resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
-        })
-        .map(|(specifier, _, _)| specifier.clone())
+        .filter(|(idx, _)| *idx == file_idx)
+        .map(|(_, spec)| spec.clone())
         .collect();
 
     let mut checker = CheckerState::with_options(
