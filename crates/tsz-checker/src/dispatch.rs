@@ -434,6 +434,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     {
                         return TypeId::NUMBER;
                     }
+
+                    // Determine result type: bigint for bigint operands, number otherwise.
+                    let result_type = {
+                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.checker.ctx.types);
+                        let resolved = self.checker.evaluate_type_with_env(operand_type);
+                        if evaluator.is_bigint_like(resolved) {
+                            TypeId::BIGINT
+                        } else {
+                            TypeId::NUMBER
+                        }
+                    };
                     let mut arithmetic_ok = true;
                     {
                         use tsz_solver::BinaryOpEvaluator;
@@ -494,6 +505,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             }
                         }
                     }
+                    return result_type;
                 }
                 TypeId::NUMBER
             }

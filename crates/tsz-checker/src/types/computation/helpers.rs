@@ -562,9 +562,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                TypeId::NUMBER
+                // Return bigint for bigint operands, number otherwise.
+                {
+                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let resolved = self.evaluate_type_with_env(operand_type);
+                    if evaluator.is_bigint_like(resolved) {
+                        TypeId::BIGINT
+                    } else {
+                        TypeId::NUMBER
+                    }
+                }
             }
-            // ~ (bitwise NOT) returns number
+            // ~ (bitwise NOT) — returns bigint for bigint operands, number otherwise.
             // Note: tsc does NOT validate operand types for ~ in general,
             // but DOES emit TS2469 when the operand is a symbol type.
             k if k == SyntaxKind::TildeToken as u16 => {
@@ -590,7 +599,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                TypeId::NUMBER
+                // Return bigint for bigint operands, number otherwise.
+                {
+                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let resolved = self.evaluate_type_with_env(operand_type);
+                    if evaluator.is_bigint_like(resolved) {
+                        TypeId::BIGINT
+                    } else {
+                        TypeId::NUMBER
+                    }
+                }
             }
             // ++ and -- require numeric operand and valid l-value
             k if k == SyntaxKind::PlusPlusToken as u16
@@ -654,6 +672,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // Determine the result type: bigint for bigint operands, number otherwise.
+                // tsc returns the same numeric type as the operand for ++/--.
+                let result_type = {
+                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let resolved = self.evaluate_type_with_env(operand_type);
+                    if evaluator.is_bigint_like(resolved) {
+                        TypeId::BIGINT
+                    } else {
+                        TypeId::NUMBER
+                    }
+                };
+
                 // Only check lvalue and assignment restrictions when arithmetic
                 // type is valid (matches TSC: TS2357 is skipped when TS2356 fires).
                 if arithmetic_ok {
@@ -673,7 +703,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                TypeId::NUMBER
+                result_type
             }
             // delete returns boolean and checks that operand is a property reference
             k if k == SyntaxKind::DeleteKeyword as u16 => {
