@@ -475,17 +475,16 @@ impl<'a> FlowAnalyzer<'a> {
                 for (i, param) in params.iter().enumerate() {
                     if let Some(&arg_idx) = args.get(i)
                         && let Some(&arg_type) = node_types.get(&arg_idx.0)
-                    {
-                        if let Some(inferred) = self.infer_type_param_from_union(
+                        && let Some(inferred) = self.infer_type_param_from_union(
                             param.type_id,
                             arg_type,
                             pred_param_name,
-                        ) {
-                            return TypePredicate {
-                                type_id: Some(inferred),
-                                ..predicate.clone()
-                            };
-                        }
+                        )
+                    {
+                        return TypePredicate {
+                            type_id: Some(inferred),
+                            ..predicate.clone()
+                        };
                     }
                 }
             }
@@ -563,10 +562,10 @@ impl<'a> FlowAnalyzer<'a> {
                     let db = self.interner.as_type_database();
                     let env = env_ref.borrow();
                     // First try to resolve Lazy types via the environment
-                    if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(m) {
-                        if let Some(resolved) = env.get_def(def_id) {
-                            return resolved;
-                        }
+                    if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(m)
+                        && let Some(resolved) = env.get_def(def_id)
+                    {
+                        return resolved;
                     }
                     // Then try Application evaluation
                     let result =
