@@ -971,15 +971,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     key_type,
                 );
-                let key_is_symbol_like =
-                    crate::query_boundaries::common::is_symbol_or_unique_symbol(
-                        self.ctx.types,
-                        key_type,
-                    );
                 if !key_is_string
                     && !key_is_number
                     && !key_is_type_param
-                    && !key_is_symbol_like
                     && key_type != TypeId::NEVER
                 {
                     let check_key = if key_type == TypeId::ERROR {
@@ -987,14 +981,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.resolve_lazy_type(key_type)
                     };
-                    // Re-check after resolution (lazy types may resolve to
-                    // valid key types like symbol or unique symbol).
-                    let resolved_is_symbol_like =
-                        crate::query_boundaries::common::is_symbol_or_unique_symbol(
-                            self.ctx.types,
-                            check_key,
-                        );
-                    if !resolved_is_symbol_like
+                    if true
                         && let Some(invalid_member) =
                             crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
                     {
