@@ -622,6 +622,136 @@ impl<'a> CheckerState<'a> {
         Some(has_export || is_export_wrapper)
     }
 
+    /// Get the enclosing `ModuleBlock` for a variable declaration, if any.
+    ///
+    /// Walks: VariableDeclaration → VariableDeclarationList → VariableStatement → ModuleBlock
+    /// (accounting for an optional ExportDeclaration wrapper between VariableStatement and
+    /// ModuleBlock).
+    pub(crate) fn var_decl_enclosing_module_block(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let ext = self.ctx.arena.get_extended(decl_idx)?;
+        let decl_list_idx = ext.parent;
+        let decl_list_ext = self.ctx.arena.get_extended(decl_list_idx)?;
+        let var_stmt_idx = decl_list_ext.parent;
+        let var_stmt = self.ctx.arena.get(var_stmt_idx)?;
+        if var_stmt.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return None;
+        }
+
+        let var_stmt_ext = self.ctx.arena.get_extended(var_stmt_idx)?;
+        let parent_idx = var_stmt_ext.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+
+        if parent.kind == syntax_kind_ext::MODULE_BLOCK {
+            return Some(parent_idx);
+        }
+        // Handle ExportDeclaration wrapper
+        if parent.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let gp_ext = self.ctx.arena.get_extended(parent_idx)?;
+            let gp = self.ctx.arena.get(gp_ext.parent)?;
+            if gp.kind == syntax_kind_ext::MODULE_BLOCK {
+                return Some(gp_ext.parent);
+            }
+        }
+        None
+    }
+
+    /// Check whether a declaration is inside a non-exported namespace at some
+    /// level of its ancestor chain. This is used to distinguish declarations in
+    /// separately-scoped namespace bodies from those in merged exported namespaces.
+    ///
+    /// Returns `true` if there is a `ModuleDeclaration` ancestor that is NOT
+    /// exported (i.e., no `export` keyword), meaning the declaration is in a
+    /// local (non-exported) namespace body.
+    pub(crate) fn is_in_non_exported_namespace_body(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        for _ in 0..10 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent.kind == syntax_kind_ext::MODULE_BLOCK {
+                // Found a module block. Check its parent (the ModuleDeclaration).
+                let Some(mb_ext) = self.ctx.arena.get_extended(parent_idx) else {
+                    return false;
+                };
+                let mod_decl_idx = mb_ext.parent;
+                let Some(mod_decl) = self.ctx.arena.get(mod_decl_idx) else {
+                    return false;
+                };
+                if mod_decl.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    // Check if this module declaration is exported.
+                    // For `namespace X.Y.Z`, each dot-segment is a nested
+                    // ModuleDeclaration, and the export keyword is on the
+                    // outermost one. For `namespace X { namespace Y { } }`,
+                    // Y's export status is determined by its own modifiers.
+                    let is_exported = if let Some(mod_data) = self.ctx.arena.get_module(mod_decl) {
+                        self.ctx.arena.has_modifier_ref(
+                            mod_data.modifiers.as_ref(),
+                            SyntaxKind::ExportKeyword,
+                        )
+                    } else {
+                        false
+                    };
+                    if !is_exported {
+                        // Check if this module is a nested part of a dot-notation
+                        // declaration like `namespace X.Y.Z`. In that case, the
+                        // inner Y/Z are implicitly exported.
+                        let Some(mod_ext) = self.ctx.arena.get_extended(mod_decl_idx) else {
+                            return false; // Can't determine, assume not non-exported
+                        };
+                        let Some(mod_parent) = self.ctx.arena.get(mod_ext.parent) else {
+                            return false;
+                        };
+                        // If the parent of this ModuleDeclaration is another
+                        // ModuleDeclaration (dot-notation nesting), the inner
+                        // module is implicitly exported. Don't flag it.
+                        if mod_parent.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            // It IS a dot-notation nested module. Continue walking up.
+                        } else if mod_parent.kind == syntax_kind_ext::MODULE_BLOCK {
+                            // This is a nested namespace inside another namespace
+                            // body (e.g. `namespace X { namespace Z { } }`).
+                            // It's non-exported and its members don't merge with
+                            // exported members.
+                            return true;
+                        }
+                        // If the parent is SourceFile or anything else, this is a
+                        // top-level namespace. Top-level namespaces don't need
+                        // `export` to participate in merging — they merge by name
+                        // with other top-level namespaces.
+                    }
+                }
+            }
+
+            // Stop at source file
+            if parent.kind == syntax_kind_ext::SOURCE_FILE {
+                return false;
+            }
+            current = parent_idx;
+        }
+        false
+    }
+
+    /// Check whether two variable declarations are in different `ModuleBlock` nodes
+    /// of the same merged namespace. When this is the case, TS2403 should not be
+    /// emitted because TSC treats each namespace body as a separate declaration
+    /// context for variable identity.
+    pub(crate) fn are_decls_in_different_namespace_bodies(
+        &self,
+        decl_a: NodeIndex,
+        decl_b: NodeIndex,
+    ) -> bool {
+        if let Some(mb_a) = self.var_decl_enclosing_module_block(decl_a) {
+            if let Some(mb_b) = self.var_decl_enclosing_module_block(decl_b) {
+                return mb_a != mb_b;
+            }
+        }
+        false
+    }
+
     /// Check if a `TypeQuery` type transitively leads back to the target symbol
     /// through a chain of typeof references in variable declarations.
     pub(crate) fn check_transitive_type_query_circularity(
