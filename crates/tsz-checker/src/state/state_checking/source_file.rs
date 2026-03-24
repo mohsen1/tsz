@@ -116,6 +116,26 @@ impl<'a> CheckerState<'a> {
                 self.ctx.is_in_ambient_declaration_file = true;
             }
 
+            // TS2563: Emit when the module body has too many flow nodes for
+            // control flow analysis. tsc uses MaxFlowGraphNodeCount = 2000.
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                const MAX_FLOW_GRAPH_NODE_COUNT: usize = 2000;
+                let flow_node_count = self.ctx.binder.flow_nodes.len();
+                if flow_node_count > MAX_FLOW_GRAPH_NODE_COUNT {
+                    if let Some(&first_stmt) = sf.statements.nodes.first() {
+                        if let Some(first_node) = self.ctx.arena.get(first_stmt) {
+                            self.ctx.error(
+                                first_node.pos,
+                                0,
+                                diagnostic_messages::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS.to_string(),
+                                diagnostic_codes::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS,
+                            );
+                        }
+                    }
+                }
+            }
+
             let prev_unreachable = self.ctx.is_unreachable;
             let prev_reported = self.ctx.has_reported_unreachable;
             let suppress_grammar = self.has_syntax_parse_errors();
