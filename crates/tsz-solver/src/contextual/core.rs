@@ -975,6 +975,27 @@ impl<'a> ContextualTypeContext<'a> {
             return collect_single_or_union(self.interner, elem_types);
         }
 
+        // Handle Intersection explicitly - collect tuple element types from all members
+        // and intersect them. This ensures that when the contextual type is an intersection
+        // of mapped types like `Results<T> & Errors<E>`, the element contextual type
+        // includes properties from ALL members, enabling contextual typing of callbacks
+        // in every intersection member.
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let elem_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_tuple_element_type_inner(index, element_count)
+                })
+                .collect();
+            return match elem_types.len() {
+                0 => None,
+                1 => Some(elem_types[0]),
+                _ => Some(self.interner.intersection(elem_types)),
+            };
+        }
+
         // Handle Application explicitly - evaluate to resolve type aliases
         if let Some(TypeData::Application(_)) = self.interner.lookup(expected) {
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);

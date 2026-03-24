@@ -541,20 +541,38 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        // For intersections, collect element types from all tuple members.
-        // Pick the most specific (non-any) type to preserve contextual narrowing.
-        // e.g., `[any] & [1]` at index 0 should return `1`, not `any`.
+        // For intersections, collect element types from ALL members and intersect them.
+        // This ensures that when the contextual type is e.g. `[{data: T}] & [{error: E}]`,
+        // the element contextual type is `{data: T} & {error: E}`, not just `{data: T}`.
+        // Without intersecting, callbacks in the second member lose contextual typing.
         let members = self.db.type_list(TypeListId(list_id));
-        let mut result: Option<TypeId> = None;
-        for &member in members.iter() {
-            let mut extractor = TupleElementExtractor::new(self.db, self.index, self.element_count);
-            if let Some(ty) = extractor.extract(member)
-                && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
-            {
-                result = Some(ty);
+        let elem_types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor =
+                    TupleElementExtractor::new(self.db, self.index, self.element_count);
+                extractor.extract(member)
+            })
+            .collect();
+        match elem_types.len() {
+            0 => None,
+            1 => Some(elem_types[0]),
+            _ => {
+                // Filter out `any` types to preserve specificity (e.g., `[any] & [1]` → `1`)
+                let non_any: Vec<TypeId> = elem_types
+                    .iter()
+                    .copied()
+                    .filter(|&t| t != TypeId::ANY)
+                    .collect();
+                if non_any.is_empty() {
+                    Some(TypeId::ANY)
+                } else if non_any.len() == 1 {
+                    Some(non_any[0])
+                } else {
+                    Some(self.db.intersection(non_any))
+                }
             }
         }
-        result
     }
 
     fn default_output() -> Self::Output {
