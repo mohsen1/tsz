@@ -998,6 +998,21 @@ impl<'a> TypeInstantiator<'a> {
                             array_type
                         };
                     }
+
+                    // PRIMITIVE PASSTHROUGH: tsc's instantiateMappedType returns the
+                    // source type unchanged when it is a primitive (null, undefined,
+                    // string, number, boolean, etc.). This matches the evaluate_application
+                    // passthrough but also covers mapped types that appear nested inside
+                    // unions or other compound types (not just at the top level of a type
+                    // alias body). Without this, `{ [K in keyof null]: null[K] }` inside
+                    // a union evaluates to `{}` instead of `null`.
+                    if crate::visitors::visitor_predicates::is_primitive_type(
+                        self.interner,
+                        resolved,
+                    ) {
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return resolved;
+                    }
                 }
 
                 tracing::trace!(
