@@ -435,13 +435,20 @@ impl<'a> CheckerState<'a> {
 
             if all_plus && operand_nodes.len() > 1 {
                 let mut operand_types = Vec::with_capacity(operand_nodes.len());
+                let mut has_error = false;
 
                 for node_idx in operand_nodes {
                     let ty = self.get_type_of_node(node_idx);
                     if ty == TypeId::ERROR {
-                        return TypeId::ERROR;
+                        has_error = true;
+                        // Continue checking remaining operands to emit diagnostics
+                        // for all unresolved names (e.g., both `e` in `e + e`).
                     }
                     operand_types.push(ty);
+                }
+
+                if has_error {
+                    return TypeId::ERROR;
                 }
 
                 if let Some(ty) =
