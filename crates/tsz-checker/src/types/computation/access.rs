@@ -892,6 +892,34 @@ impl<'a> CheckerState<'a> {
                 use_index_signature_check = false;
                 result_type = Some(effective_write_result(type_id, write_type));
             }
+
+            // Fallback: well-known symbols (Symbol.hasInstance, Symbol.iterator, etc.)
+            // are stored as "[Symbol.xxx]" in class/interface types, not "__unique_N".
+            // When the __unique_N lookup fails, try the [Symbol.xxx] format.
+            if result_type.is_none() {
+                let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    let sym_name = &symbol.escaped_name;
+                    // Check if the parent is the Symbol global constructor
+                    if symbol.parent.is_some()
+                        && let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent)
+                        && parent_sym.escaped_name == "Symbol"
+                    {
+                        let well_known_name = format!("[Symbol.{sym_name}]");
+                        let result =
+                            self.resolve_property_access_with_env(resolved_type, &well_known_name);
+                        if let PropertyAccessResult::Success {
+                            type_id,
+                            write_type,
+                            ..
+                        } = result
+                        {
+                            use_index_signature_check = false;
+                            result_type = Some(effective_write_result(type_id, write_type));
+                        }
+                    }
+                }
+            }
         }
 
         // Handle `symbol` (primitive) index on types with late-bound (computed) members.

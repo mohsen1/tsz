@@ -987,7 +987,13 @@ impl<'a> CheckerState<'a> {
                     TypeId::UNKNOWN
                 }
             });
-            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            // When a setter parameter has no type annotation, its type is UNKNOWN
+            // (sentinel). Filter out so we fall back to getter type, matching tsc.
+            let write_type = accessor
+                .setter
+                .filter(|&t| t != TypeId::UNKNOWN)
+                .or(accessor.getter)
+                .unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
                 name,
@@ -1770,7 +1776,13 @@ impl<'a> CheckerState<'a> {
                     TypeId::UNKNOWN
                 }
             });
-            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            // When a setter parameter has no type annotation, its type is UNKNOWN
+            // (sentinel). Filter out so we fall back to getter type, matching tsc.
+            let write_type = accessor
+                .setter
+                .filter(|&t| t != TypeId::UNKNOWN)
+                .or(accessor.getter)
+                .unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             partial_ctor_props.push(PropertyInfo {
                 name,

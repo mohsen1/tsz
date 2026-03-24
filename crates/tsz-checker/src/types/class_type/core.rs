@@ -1034,7 +1034,15 @@ impl<'a> CheckerState<'a> {
                     TypeId::UNKNOWN
                 }
             });
-            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            // When a setter parameter has no type annotation, its type is UNKNOWN
+            // (sentinel). In tsc, the setter type is inferred from the getter's
+            // return type. Filter out the UNKNOWN sentinel so we fall back to the
+            // getter type, matching tsc behavior for unannotated setters.
+            let write_type = accessor
+                .setter
+                .filter(|&t| t != TypeId::UNKNOWN)
+                .or(accessor.getter)
+                .unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
                 name,
