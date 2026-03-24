@@ -118,6 +118,10 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         flow_type: TypeId,
     ) {
+        // TS7005/TS7034 for evolving arrays only applies when noImplicitAny is enabled
+        if !self.ctx.no_implicit_any() {
+            return;
+        }
         let pending = self.ctx.pending_implicit_any_vars.get(&sym_id).copied();
         let reported = self.ctx.reported_implicit_any_vars.get(&sym_id).copied();
         if pending.is_none() && reported.is_none() {
