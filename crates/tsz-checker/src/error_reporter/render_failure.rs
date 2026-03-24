@@ -976,15 +976,18 @@ impl<'a> CheckerState<'a> {
         let ordered_names =
             self.sort_missing_property_names_for_display(target_type, &filtered_names);
         // tsc lists up to 5 properties inline (TS2739), and uses "and N more"
-        // truncation (TS2740) when there are 6+.
+        // truncation (TS2740) when there are 6+. For TS2740, tsc lists the
+        // first 4 properties then "and N more" (where N = total - 4).
+        let is_truncated = ordered_names.len() > 5;
+        let display_count = if is_truncated { 4 } else { 5 };
         let prop_list: Vec<String> = ordered_names
             .iter()
-            .take(5)
+            .take(display_count)
             .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
             .collect();
         let props_joined = prop_list.join(", ");
-        if ordered_names.len() > 5 {
-            let more_count = (ordered_names.len() - 5).to_string();
+        if is_truncated {
+            let more_count = (ordered_names.len() - display_count).to_string();
             let message = format_message(
                 diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                 &[&src_str, &tgt_str, &props_joined, &more_count],
