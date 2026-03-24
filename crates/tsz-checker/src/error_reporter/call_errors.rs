@@ -1033,7 +1033,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // When the object literal has properties that all matched the target (elaborated
+        // == false), but the only missing properties are Object.prototype methods
+        // (valueOf, toString, etc.), suppress the error — those methods are implicitly
+        // present from Object.prototype. However, only suppress when the source actually
+        // HAS properties; an empty object literal `{}` has no properties to satisfy the
+        // target, so the structural mismatch is real and should produce TS2322/TS2345.
         if !elaborated
+            && !obj.elements.nodes.is_empty()
             && self.should_suppress_object_literal_call_mismatch(source_type, effective_param_type)
         {
             return true;
