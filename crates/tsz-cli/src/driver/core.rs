@@ -34,8 +34,7 @@ use super::resolution::{
     ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
     collect_import_bindings, collect_module_specifiers, collect_module_specifiers_from_text,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
-    implied_resolution_mode_for_file, resolve_module_specifier, resolve_type_package_entry,
-    resolve_type_package_from_roots,
+    resolve_module_specifier, resolve_type_package_entry, resolve_type_package_from_roots,
 };
 use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
