@@ -7,6 +7,7 @@ mod cache;
 mod cli;
 mod options_convert;
 mod runner;
+mod server_pool;
 mod test_parser;
 mod text_decode;
 mod tsc_results;
