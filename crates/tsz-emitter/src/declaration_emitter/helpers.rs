@@ -8939,15 +8939,12 @@ impl<'a> DeclarationEmitter<'a> {
     /// define specific subpath conditions or mappings.
     fn exports_has_explicit_subpaths(exports: &serde_json::Value) -> bool {
         match exports {
-            // "exports": "./index.js" — main entry only, no subpath restrictions
-            serde_json::Value::String(_) => false,
-            // "exports": ["./index.js", ...] — fallback list, no subpath restrictions
-            serde_json::Value::Array(_) => false,
             // "exports": { ".": ..., "./foo": ... } — check for subpath keys
             serde_json::Value::Object(map) => {
                 // If any key starts with "./" (not just "."), there are explicit subpaths
                 map.keys().any(|k| k.starts_with("./"))
             }
+            // String, Array, and other forms — no subpath restrictions
             _ => false,
         }
     }
