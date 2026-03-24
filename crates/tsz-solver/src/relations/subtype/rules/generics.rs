@@ -617,13 +617,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if any_checked && all_ok && !needs_structural_fallback {
             return Some(SubtypeResult::True);
         }
-        // Variance failures are definitive even with structural fallback.
-        // The structural fallback flag means "don't trust True because mapped
-        // modifiers could change the structure". But a False result (type args
-        // are incompatible) is trustworthy: if the type arguments fail the
-        // invariant/covariant/contravariant check, the generic types cannot be
-        // compatible regardless of how modifiers transform the structure.
-        if any_checked && !all_ok {
+        // When structural fallback is needed (e.g., mapped type modifiers like
+        // Readonly, Partial, Required), variance failures are NOT definitive.
+        // The expanded structural types may normalize away differences between
+        // type arguments. For example, Partial<{a, foo}> and Partial<{a, b, bar}>
+        // can have compatible structures despite incompatible type arguments.
+        // This matches the check at line 405 in check_application_expansion_target.
+        if any_checked && !all_ok && !needs_structural_fallback {
             return Some(SubtypeResult::False);
         }
 
