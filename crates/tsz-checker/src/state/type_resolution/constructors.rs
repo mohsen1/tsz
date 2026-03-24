@@ -96,7 +96,8 @@ impl<'a> CheckerState<'a> {
             .map(|sig| {
                 let mut args = type_args.clone();
                 if args.len() < sig.type_params.len() {
-                    for param in sig.type_params.iter().skip(args.len()) {
+                    for (param_index, param) in sig.type_params.iter().enumerate().skip(args.len())
+                    {
                         let fallback = if missing_type_args_become_any {
                             TypeId::ANY
                         } else {
@@ -105,7 +106,18 @@ impl<'a> CheckerState<'a> {
                                 .or(param.constraint)
                                 .unwrap_or(TypeId::UNKNOWN)
                         };
-                        args.push(fallback);
+                        // Substitute earlier type params in the default
+                        // (e.g., `U = T` → `U = number` when T = number)
+                        let substitution = tsz_solver::TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &sig.type_params[..param_index],
+                            &args,
+                        );
+                        args.push(tsz_solver::instantiate_type_preserving_meta(
+                            self.ctx.types,
+                            fallback,
+                            &substitution,
+                        ));
                     }
                 }
                 if args.len() > sig.type_params.len() {
@@ -205,14 +217,27 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|sig| {
                         let mut args = type_args.clone();
-                        // Fill in default type arguments if needed
+                        // Fill in default type arguments if needed.
+                        // Defaults may reference earlier type params (e.g., `U = T`),
+                        // so we must substitute already-resolved args into each default.
                         if args.len() < sig.type_params.len() {
-                            for param in sig.type_params.iter().skip(args.len()) {
+                            for (param_index, param) in
+                                sig.type_params.iter().enumerate().skip(args.len())
+                            {
                                 let fallback = param
                                     .default
                                     .or(param.constraint)
                                     .unwrap_or(TypeId::UNKNOWN);
-                                args.push(fallback);
+                                let substitution = tsz_solver::TypeSubstitution::from_args(
+                                    self.ctx.types,
+                                    &sig.type_params[..param_index],
+                                    &args,
+                                );
+                                args.push(tsz_solver::instantiate_type_preserving_meta(
+                                    self.ctx.types,
+                                    fallback,
+                                    &substitution,
+                                ));
                             }
                         }
                         if args.len() > sig.type_params.len() {
