@@ -247,7 +247,11 @@ fn test_union_property_missing_on_fresh_object_literal_member_yields_undefined()
 }
 
 #[test]
-fn test_union_property_missing_on_non_fresh_member_stays_missing_with_fresh_empty_object() {
+fn test_union_property_with_fresh_empty_object_yields_union_with_undefined() {
+    // When a union contains a fresh empty object (from `options || {}`),
+    // properties that exist on other members should resolve successfully.
+    // The fresh empty member contributes `undefined` to the result type.
+    // This matches tsc's behavior where `(options || {}).x` is valid.
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
@@ -255,6 +259,27 @@ fn test_union_property_missing_on_non_fresh_member_stays_missing_with_fresh_empt
     let declared = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
     let fresh_empty = interner.object_fresh(vec![]);
     let union = interner.union(vec![declared, fresh_empty]);
+
+    let result = evaluator.resolve_property_access(union, "x");
+    let Some((type_id, _)) = result.success_info() else {
+        panic!("expected Success, got {result:?}");
+    };
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    assert_eq!(type_id, expected);
+}
+
+#[test]
+fn test_union_property_with_non_fresh_empty_object_stays_missing() {
+    // When a union contains a non-fresh empty object (from type annotations
+    // like `T | {}`), the property should NOT be found. This matches tsc's
+    // behavior where `declare const x: {a:number}|{}; x.a` errors.
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x = interner.intern_string("x");
+    let declared = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
+    let non_fresh_empty = interner.object(vec![]);
+    let union = interner.union(vec![declared, non_fresh_empty]);
 
     assert_property_not_found(&evaluator.resolve_property_access(union, "x"));
 }
