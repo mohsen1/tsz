@@ -91,6 +91,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
+        // Stop structural recursion when source or target is `any`.
+        //
+        // tsc's inferTypes returns early for `any` in either position (after
+        // the direct TypeParameter check above). Without this guard, union
+        // simplification can leak `any` through structural decomposition:
+        // e.g., `boolean | any` → `any` in a callback parameter would add
+        // `any` as a contra-candidate for placeholders nested inside the
+        // target union, polluting inference with `any` where `boolean` is the
+        // correct inference from another property.
+        //
+        // Direct placeholder targets are already handled above (the placeholder
+        // check adds `any` as a candidate when appropriate), so this only
+        // prevents structural *recursion* with `any`.
+        if source == TypeId::ANY || target == TypeId::ANY {
+            return;
+        }
+
         // Recurse structurally
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);
@@ -1397,6 +1414,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let evaluated_target = self.checker.evaluate_type(target);
                 let same_base_application =
                     s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+                tracing::trace!(
+                    source = source.0,
+                    target = target.0,
+                    s_base = s_app.base.0,
+                    t_base = t_app.base.0,
+                    same_base_application,
+                    eval_s = evaluated_source.0,
+                    eval_t = evaluated_target.0,
+                    "constrain Application-Application"
+                );
                 // When the target Application's type args contain inference
                 // placeholders, always prefer direct arg-level matching.
                 // The solver's evaluate_type cannot properly substitute
@@ -1409,6 +1436,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let allow_direct_arg_constraints = same_base_application
                     && (target_has_placeholder_args
                         || self.should_directly_constrain_same_base_application(source, target));
+                // When bases differ but arities match and the target has
+                // placeholder args, seed direct type argument constraints as a
+                // supplement. The structural path (via evaluated Object types)
+                // loses precision when union simplification reduces `T | any`
+                // to `any` — direct arg matching preserves the original type
+                // arguments (e.g., `boolean` and `any` from
+                // `MyPromise<boolean, any>`).
+                //
+                // This mirrors tsc's behavior for interfaces extending other
+                // interfaces with identity type argument mappings (e.g.,
+                // `DoNothingAlias<T,U> extends MyPromise<T,U>`), where inference
+                // matches type arguments directly through the inheritance chain.
+                if !same_base_application
+                    && s_app.args.len() == t_app.args.len()
+                    && t_app.args.iter().any(|arg| var_map.contains_key(arg))
+                {
+                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+                        self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
+                    }
+                }
                 let promise_like_arg_pair = if !same_base_application {
                     self.checker
                         .promise_like_type_argument(source)
