@@ -664,6 +664,19 @@ impl<'a> CheckerState<'a> {
                         let resolved = self.get_type_of_symbol(base_sym_id);
                         if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                             base_type = Some(resolved);
+                        } else if !self.ctx.lib_contexts.is_empty() {
+                            // Fallback: if get_type_of_symbol returned UNKNOWN/ERROR
+                            // (e.g., due to circular heritage chains like
+                            // IteratorObject <-> Iterator in esnext.iterator.d.ts),
+                            // try resolving via lib type resolution which has
+                            // dedicated cycle-breaking logic.
+                            if let Some(lib_type) =
+                                self.resolve_lib_type_by_name(&base_symbol.escaped_name)
+                            {
+                                if lib_type != TypeId::ERROR && lib_type != TypeId::UNKNOWN {
+                                    base_type = Some(lib_type);
+                                }
+                            }
                         }
                     }
 
