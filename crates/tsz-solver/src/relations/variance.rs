@@ -188,6 +188,14 @@ struct VarianceVisitor<'a, 'b> {
     /// Stack of polarities to track current position in the type graph.
     /// true = Positive (Covariant), false = Negative (Contravariant)
     polarity_stack: Vec<bool>,
+    /// Mapped type iteration variable names whose constraints should NOT be
+    /// re-visited during template traversal. The constraint is already
+    /// accounted for at the mapped type level (visit_mapped line 590).
+    /// Without this, `{ [K in keyof T]: T[K] }` would double-count T's
+    /// appearance in `keyof T` (once from the mapped constraint, once from
+    /// K's TypeParamInfo.constraint inside the template), incorrectly making
+    /// T invariant instead of covariant.
+    mapped_type_param_names: Vec<Atom>,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -201,6 +209,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
                 crate::recursion::RecursionProfile::Variance,
             ),
             polarity_stack: vec![true], // Start with positive (covariant) polarity
+            mapped_type_param_names: Vec::new(),
         }
     }
 
@@ -425,10 +434,15 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             self.add_occurrence(current_polarity);
         }
 
-        // Also check constraint (at current polarity)
-        if let Some(constraint) = info.constraint {
-            let current_polarity = self.get_current_polarity();
-            self.visit_with_polarity(constraint, current_polarity);
+        // Also check constraint (at current polarity), but skip if this
+        // is a mapped type iteration variable whose constraint was already
+        // visited at the mapped type level.
+        let skip_constraint = self.mapped_type_param_names.contains(&info.name);
+        if !skip_constraint {
+            if let Some(constraint) = info.constraint {
+                let current_polarity = self.get_current_polarity();
+                self.visit_with_polarity(constraint, current_polarity);
+            }
         }
 
         // Default type (at current polarity)
@@ -590,12 +604,16 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         self.visit_with_polarity(mapped.constraint, !current_polarity);
 
         // Template type is COVARIANT with respect to T.
+        // Mark the iteration variable so visit_type_parameter won't re-visit
+        // its constraint (already handled above).
+        self.mapped_type_param_names.push(mapped.type_param.name);
         self.visit_with_polarity(mapped.template, current_polarity);
 
         // Name type (if present) is COVARIANT
         if let Some(name_type) = mapped.name_type {
             self.visit_with_polarity(name_type, current_polarity);
         }
+        self.mapped_type_param_names.pop();
     }
 
     /// Index access: both object and key are at current polarity.
