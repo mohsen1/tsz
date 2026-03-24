@@ -356,7 +356,7 @@ impl<'a> CheckerState<'a> {
             .get_symbol_with_libs(parent_sym, &lib_binders);
 
         let parent_name = parent_symbol
-            .map(|s| s.escaped_name.clone())
+            .map(|s| self.get_qualified_symbol_name(parent_sym, s))
             .unwrap_or_default();
 
         // Look up the member in the parent's exports
@@ -399,6 +399,38 @@ impl<'a> CheckerState<'a> {
             flags,
             is_type_only,
         })
+    }
+
+    /// Construct a fully-qualified name for a symbol by walking up the parent chain.
+    ///
+    /// For a namespace `foo.bar.baz`, the symbol for `baz` has parent `bar` and
+    /// grandparent `foo`. This produces `"foo.bar.baz"` instead of just `"baz"`.
+    /// This matches tsc's behavior in TS2694 messages.
+    fn get_qualified_symbol_name(&self, _sym_id: SymbolId, symbol: &tsz_binder::Symbol) -> String {
+        let mut parts = vec![symbol.escaped_name.clone()];
+        let mut current = symbol.parent;
+        while current != SymbolId::NONE {
+            let Some(parent) = self.ctx.binder.get_symbol(current) else {
+                break;
+            };
+            // Only include namespace/module parents in the qualified name.
+            // Stop at the source file or non-namespace scope.
+            if (parent.flags
+                & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                    | tsz_binder::symbol_flags::VALUE_MODULE))
+                == 0
+            {
+                break;
+            }
+            // Skip internal/generated names (e.g., source file symbols starting with '"')
+            if parent.escaped_name.starts_with('"') || parent.escaped_name.starts_with("__") {
+                break;
+            }
+            parts.push(parent.escaped_name.clone());
+            current = parent.parent;
+        }
+        parts.reverse();
+        parts.join(".")
     }
 
     /// Report a wrong-meaning diagnostic for a symbol that was found but has

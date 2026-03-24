@@ -638,7 +638,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find the first parameter property modifier in a modifier list.
-    /// Returns the NodeIndex of the first public/private/protected/readonly/override keyword.
+    /// Returns the `NodeIndex` of the first public/private/protected/readonly/override keyword.
     pub(crate) fn find_first_parameter_property_modifier(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
