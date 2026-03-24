@@ -63,7 +63,7 @@ fn test_try_evaluate_mapped_constraint_union_with_non_literal_member() {
 #[test]
 fn test_try_get_keyof_keys_object_with_index_returns_properties() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -90,7 +90,7 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
 #[test]
 fn test_try_get_keyof_keys_empty_object_returns_none() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object(vec![]);
     assert!(checker.try_get_keyof_keys(obj).is_none());
@@ -108,7 +108,7 @@ fn test_try_get_keyof_keys_resolves_reference() {
 
     let mut env = TypeEnvironment::new();
     env.insert_def(def_id, resolved);
-    let checker = SubtypeChecker::with_resolver(&interner, &env);
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
     let ref_type = interner.lazy(def_id);
     let keys = checker

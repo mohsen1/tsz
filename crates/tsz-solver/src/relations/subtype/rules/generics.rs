@@ -1505,13 +1505,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // When the operand is a TypeParameter with a constraint, resolve through
         // the constraint. E.g., for `keyof T` where `T extends { content: C }`,
         // the keys are determined by the constraint `{ content: C }`.
-        if let Some(tp) = type_param_info(self.interner, operand) {
-            if let Some(constraint) = tp.constraint {
-                // Evaluate the constraint first (e.g., Application(IData, [C]) → { content: C })
-                let evaluated = self.evaluate_type(constraint);
-                if evaluated != operand {
-                    return self.try_get_keyof_keys_depth(evaluated, depth + 1);
-                }
+        if let Some(tp) = type_param_info(self.interner, operand)
+            && let Some(constraint) = tp.constraint
+        {
+            // Evaluate the constraint first (e.g., Application(IData, [C]) → { content: C })
+            let evaluated = self.evaluate_type(constraint);
+            if evaluated != operand {
+                return self.try_get_keyof_keys_depth(evaluated, depth + 1);
             }
         }
 

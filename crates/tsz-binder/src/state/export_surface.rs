@@ -212,17 +212,17 @@ impl ExportSurface {
         //    are independently tagged and the original `from_binder()` puts
         //    them in both section 0 and section 5.
         for (name, sym_id) in binder.file_locals.iter() {
-            if let Some(symbol) = binder.get_symbol(*sym_id) {
-                if symbol.is_exported {
-                    surface.file_exported_locals.insert(
-                        name.clone(),
-                        ExportedSymbol {
-                            symbol_id: *sym_id,
-                            flags: symbol.flags,
-                            is_type_only: symbol.is_type_only,
-                        },
-                    );
-                }
+            if let Some(symbol) = binder.get_symbol(*sym_id)
+                && symbol.is_exported
+            {
+                surface.file_exported_locals.insert(
+                    name.clone(),
+                    ExportedSymbol {
+                        symbol_id: *sym_id,
+                        flags: symbol.flags,
+                        is_type_only: symbol.is_type_only,
+                    },
+                );
             }
         }
 
@@ -271,12 +271,11 @@ impl ExportSurface {
                             has_export = true;
                         }
                         // Also detect overloads
-                        if func.body.is_none() {
-                            if let Some(name_node) = arena.get(func.name) {
-                                if let Some(ident) = arena.get_identifier(name_node) {
-                                    self.overloaded_functions.insert(ident.escaped_text.clone());
-                                }
-                            }
+                        if func.body.is_none()
+                            && let Some(name_node) = arena.get(func.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                        {
+                            self.overloaded_functions.insert(ident.escaped_text.clone());
                         }
                     }
                 }
