@@ -1824,18 +1824,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Build a contextual type from a binding pattern's structure.
-    ///
-    /// Used to provide contextual typing for array literals in destructuring
-    /// initializers so that `var [a, b, c] = [1, "hello", true]` produces
-    /// positional tuple types (a=number, b=string) instead of a widened union.
-    ///
-    /// - Array binding patterns → tuple types with `any` elements
-    /// - Object binding patterns → object types with properties typed from defaults
-    /// - Nested patterns → recursively structured contextual types
-    ///
-    /// When a binding element has a default initializer (e.g., `{ f = (x: string) => x.length }`),
-    /// the default's type is used instead of `any`. This enables contextual typing to flow
-    /// from binding pattern defaults into generic function return type seeding.
+    /// Array patterns → tuple with `any`; object patterns → typed properties.
+    /// Default initializers (e.g., `{ f = (x: string) => x.length }`) seed
+    /// property types instead of `any` to enable contextual typing.
     #[allow(dead_code)]
     pub(crate) fn build_contextual_type_from_pattern(
         &mut self,
