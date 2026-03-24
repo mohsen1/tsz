@@ -486,6 +486,16 @@ impl<'a> NarrowingContext<'a> {
     pub fn narrow_by_instanceof_false(&self, source_type: TypeId, instance_type: TypeId) -> TypeId {
         let resolved_source = self.resolve_type(source_type);
 
+        // When the instance type is itself a union (e.g., the RHS of instanceof was
+        // `typeof A | typeof B`), we can't narrow in the false branch. At runtime the
+        // RHS variable holds a single constructor, so `!(x instanceof b)` only tells
+        // us x is not an instance of whichever constructor b happens to be — we don't
+        // know which one. The correct behavior is to keep the source type unchanged.
+        if union_list_id(self.db, self.resolve_type(instance_type)).is_some() {
+            trace!("instanceof false: instance type is a union, no narrowing");
+            return source_type;
+        }
+
         // Check if the instance type is the global Object interface.
         // All non-primitive values are instances of Object at runtime,
         // so the false branch of `instanceof Object` keeps only primitives.
