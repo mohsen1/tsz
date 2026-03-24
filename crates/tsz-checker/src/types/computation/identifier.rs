@@ -380,6 +380,11 @@ impl<'a> CheckerState<'a> {
                 if self.is_in_ambient_computed_property_context() {
                     return TypeId::ERROR;
                 }
+                // Don't emit TS1361 for `typeof X` in type positions — the
+                // identifier is used as a type query, not a runtime value.
+                if self.is_in_type_query_context(idx) {
+                    return TypeId::ERROR;
+                }
                 self.report_wrong_meaning(
                     name,
                     idx,
