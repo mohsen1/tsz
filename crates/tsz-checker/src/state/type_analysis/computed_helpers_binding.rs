@@ -626,6 +626,18 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Do NOT treat declaration-form export defaults (interface, type alias, enum)
+        // as wrapper expressions. These are named declarations, not expressions, and
+        // should be resolved via their declared name in file_locals instead.
+        if let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) {
+            match clause_node.kind {
+                syntax_kind_ext::INTERFACE_DECLARATION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION => return None,
+                _ => {}
+            }
+        }
+
         Some((export_decl.export_clause, export_decl_idx))
     }
 
