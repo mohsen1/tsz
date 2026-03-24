@@ -487,6 +487,13 @@ impl<'a> NarrowingContext<'a> {
         let resolved_source = self.resolve_type(source_type);
         let resolved_instance = self.resolve_type(instance_type);
 
+        // When the instance type is `any` (e.g., from a constructor with signature
+        // `new(...args: any[]): any`, such as Function subclasses), we can't narrow
+        // in the false branch because everything is assignable to `any`.
+        if instance_type == TypeId::ANY || resolved_instance == TypeId::ANY {
+            return source_type;
+        }
+
         // When the instance type is a union (e.g., from `a instanceof b` where b has
         // type `typeof A | typeof B`), the false branch cannot narrow because we
         // can't determine which specific constructor was tested at runtime.
