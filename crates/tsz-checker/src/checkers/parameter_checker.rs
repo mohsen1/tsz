@@ -624,14 +624,33 @@ impl<'a> CheckerState<'a> {
             // If the parameter has parameter property modifiers (public/private/protected/readonly),
             // it's a parameter property which is only allowed in constructors.
             // Decorators on parameters are NOT parameter properties.
-            if self.has_parameter_property_modifier(&param.modifiers) {
+            // tsc reports the error at the modifier keyword, not the parameter name.
+            if let Some(modifier_idx) =
+                self.find_first_parameter_property_modifier(&param.modifiers)
+            {
                 self.error_at_node(
-                    param_idx,
+                    modifier_idx,
                     "A parameter property is only allowed in a constructor implementation.",
                     diagnostic_codes::A_PARAMETER_PROPERTY_IS_ONLY_ALLOWED_IN_A_CONSTRUCTOR_IMPLEMENTATION,
                 );
             }
         }
+    }
+
+    /// Find the first parameter property modifier in a modifier list.
+    /// Returns the NodeIndex of the first public/private/protected/readonly/override keyword.
+    pub(crate) fn find_first_parameter_property_modifier(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        use tsz_scanner::SyntaxKind;
+        let arena = self.ctx.arena;
+        arena
+            .find_modifier(modifiers, SyntaxKind::PublicKeyword)
+            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::PrivateKeyword))
+            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::ProtectedKeyword))
+            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::ReadonlyKeyword))
+            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::OverrideKeyword))
     }
 
     // =========================================================================
