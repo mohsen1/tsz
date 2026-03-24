@@ -162,12 +162,19 @@ impl BinderState {
                                     if !existing_mut.declarations.contains(&decl) {
                                         existing_mut.declarations.push(decl);
                                     }
-                                    // Always track the arena — multiple lib files may
-                                    // reuse the same NodeIndex (cross-arena collision)
-                                    self.declaration_arenas
+                                    // Track the arena — multiple lib files may
+                                    // reuse the same NodeIndex (cross-arena collision).
+                                    // Deduplicate by pointer: if the same lib file is
+                                    // merged more than once (e.g. through overlapping
+                                    // reference chains), skip duplicate arenas so that
+                                    // interface members are not lowered multiple times.
+                                    let arenas = self
+                                        .declaration_arenas
                                         .entry((existing_id, decl))
-                                        .or_default()
-                                        .push(Arc::clone(&lib_ctx.arena));
+                                        .or_default();
+                                    if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
+                                        arenas.push(Arc::clone(&lib_ctx.arena));
+                                    }
                                 }
                                 // Update value_declaration if not set
                                 if existing_mut.value_declaration.is_none()
