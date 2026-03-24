@@ -1063,8 +1063,15 @@ impl<'a> CheckerState<'a> {
             if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             {
+                // Report at the accessibility modifier (public/private/protected/readonly)
+                // to match tsc's diagnostic location, not at the binding pattern.
+                let error_node = param
+                    .modifiers
+                    .as_ref()
+                    .and_then(|mods| mods.nodes.first().copied())
+                    .unwrap_or(param_idx);
                 self.error_at_node(
-                    param_idx,
+                    error_node,
                     diagnostic_messages::A_PARAMETER_PROPERTY_MAY_NOT_BE_DECLARED_USING_A_BINDING_PATTERN,
                     diagnostic_codes::A_PARAMETER_PROPERTY_MAY_NOT_BE_DECLARED_USING_A_BINDING_PATTERN,
                 );
