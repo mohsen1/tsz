@@ -433,6 +433,32 @@ impl<'a> CheckerState<'a> {
                 // Evaluate operand for side effects / flow analysis
                 let operand_type = self.get_type_of_node(unary.operand);
 
+                // TS18050: unary +/- on literal null/undefined keyword
+                // tsc emits TS18050 "The value 'X' cannot be used here" for `-undefined`, `-null`,
+                // `+undefined`, `+null` even without strictNullChecks.
+                if (operand_type == TypeId::UNDEFINED || operand_type == TypeId::NULL)
+                    && self.is_literal_null_or_undefined_node(unary.operand)
+                {
+                    let value_name = if operand_type == TypeId::NULL {
+                        "null"
+                    } else {
+                        "undefined"
+                    };
+                    if let Some(operand_node) = self.ctx.arena.get(unary.operand) {
+                        let message = format_message(
+                            diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
+                            &[value_name],
+                        );
+                        self.ctx.error(
+                            operand_node.pos,
+                            operand_node.end.saturating_sub(operand_node.pos),
+                            message,
+                            diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                        );
+                    }
+                    return TypeId::NUMBER;
+                }
+
                 // TS18046: unary +/- on unknown is not allowed (strictNullChecks only)
                 if operand_type == TypeId::UNKNOWN && self.error_is_of_type_unknown(unary.operand) {
                     return TypeId::ERROR;
