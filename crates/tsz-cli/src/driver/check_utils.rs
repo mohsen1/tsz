@@ -52,8 +52,8 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             // Scan the source text for helper function declarations.
             // A `declare module "tslib" { export {}; }` with no helpers will not match.
             let source = &tslib_file.arena.source_files.first().map(|sf| &sf.text);
-            if let Some(source) = source {
-                if source.contains("__importStar")
+            if let Some(source) = source
+                && (source.contains("__importStar")
                     || source.contains("__importDefault")
                     || source.contains("__extends")
                     || source.contains("__rest")
@@ -62,10 +62,9 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                     || source.contains("__awaiter")
                     || source.contains("__generator")
                     || source.contains("__spread")
-                    || source.contains("__values")
-                {
-                    return Vec::new();
-                }
+                    || source.contains("__values"))
+            {
+                return Vec::new();
             }
         }
 
