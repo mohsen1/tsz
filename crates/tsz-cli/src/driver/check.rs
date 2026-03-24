@@ -264,11 +264,10 @@ pub(super) fn collect_diagnostics(
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
-            let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
-            cached_module_specifiers.push(module_specifiers.clone());
+            cached_module_specifiers.push(collect_module_specifiers(&file.arena, file.source_file));
             let file_path = Path::new(&file.file_name);
 
-            for (specifier, specifier_node, import_kind) in &module_specifiers {
+            for (specifier, specifier_node, import_kind) in &cached_module_specifiers[file_idx] {
                 let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
                     Span::new(spec_node.pos, spec_node.end)
                 } else {
@@ -491,6 +490,9 @@ pub(super) fn collect_diagnostics(
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
 
+        // Pre-compute merged augmentations once for all files (avoids O(N²) per-file recomputation)
+        let merged_augmentations = MergedAugmentations::from_program(program);
+
         // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
         let per_file_binders: Vec<BinderState> = {
             let _prep_span = tracing::info_span!("prepare_binders").entered();
@@ -498,7 +500,12 @@ pub(super) fn collect_diagnostics(
                 .iter()
                 .map(|&file_idx| {
                     let file = &program.files[file_idx];
-                    let mut binder = create_binder_from_bound_file(file, program, file_idx);
+                    let mut binder = create_binder_from_bound_file_with_augmentations(
+                        file,
+                        program,
+                        file_idx,
+                        &merged_augmentations,
+                    );
 
                     // Bridge raw module specifiers to resolved export tables using
                     // the pre-computed resolved_module_paths map (no FS calls needed).

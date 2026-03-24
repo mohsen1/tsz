@@ -839,10 +839,79 @@ pub(super) const fn is_checker_grammar_code_suppressed_in_js(code: u32) -> bool 
     )
 }
 
+/// Pre-computed merged augmentation data shared across all per-file binders.
+/// Computing this once avoids O(N_files²) iteration in `create_binder_from_bound_file`.
+pub(super) struct MergedAugmentations {
+    pub module_augmentations: rustc_hash::FxHashMap<String, Vec<tsz::binder::ModuleAugmentation>>,
+    pub augmentation_target_modules: rustc_hash::FxHashMap<tsz::binder::SymbolId, String>,
+    pub global_augmentations: rustc_hash::FxHashMap<String, Vec<tsz::binder::GlobalAugmentation>>,
+}
+
+impl MergedAugmentations {
+    /// Build merged augmentations from all files in the program. Call once per compilation.
+    pub fn from_program(program: &MergedProgram) -> Self {
+        let mut module_augmentations: rustc_hash::FxHashMap<
+            String,
+            Vec<tsz::binder::ModuleAugmentation>,
+        > = rustc_hash::FxHashMap::default();
+        let mut augmentation_target_modules: rustc_hash::FxHashMap<tsz::binder::SymbolId, String> =
+            rustc_hash::FxHashMap::default();
+        let mut global_augmentations: rustc_hash::FxHashMap<
+            String,
+            Vec<tsz::binder::GlobalAugmentation>,
+        > = rustc_hash::FxHashMap::default();
+
+        for file in &program.files {
+            for (spec, augs) in &file.module_augmentations {
+                module_augmentations
+                    .entry(spec.clone())
+                    .or_default()
+                    .extend(augs.iter().map(|aug| {
+                        tsz::binder::ModuleAugmentation::with_arena(
+                            aug.name.clone(),
+                            aug.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+            for (&sym_id, module_spec) in &file.augmentation_target_modules {
+                augmentation_target_modules.insert(sym_id, module_spec.clone());
+            }
+            for (name, decls) in &file.global_augmentations {
+                global_augmentations
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(decls.iter().map(|aug| {
+                        tsz::binder::GlobalAugmentation::with_arena(
+                            aug.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+        }
+
+        Self {
+            module_augmentations,
+            augmentation_target_modules,
+            global_augmentations,
+        }
+    }
+}
+
 pub(super) fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
+) -> BinderState {
+    let augmentations = MergedAugmentations::from_program(program);
+    create_binder_from_bound_file_with_augmentations(file, program, file_idx, &augmentations)
+}
+
+pub(super) fn create_binder_from_bound_file_with_augmentations(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    augmentations: &MergedAugmentations,
 ) -> BinderState {
     let mut file_locals = SymbolTable::new();
 
@@ -858,60 +927,6 @@ pub(super) fn create_binder_from_bound_file(
         }
     }
 
-    // Merge module augmentations from all files
-    // When checking a file, we need access to augmentations from all other files
-    let mut merged_module_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<tsz::binder::ModuleAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (spec, augs) in &other_file.module_augmentations {
-            merged_module_augmentations
-                .entry(spec.clone())
-                .or_default()
-                .extend(augs.iter().map(|aug| {
-                    tsz::binder::ModuleAugmentation::with_arena(
-                        aug.name.clone(),
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
-    // Merge augmentation target module mappings from all files
-    let mut merged_augmentation_target_modules: rustc_hash::FxHashMap<
-        tsz::binder::SymbolId,
-        String,
-    > = rustc_hash::FxHashMap::default();
-    for other_file in &program.files {
-        for (&sym_id, module_spec) in &other_file.augmentation_target_modules {
-            merged_augmentation_target_modules.insert(sym_id, module_spec.clone());
-        }
-    }
-
-    // Merge global augmentations from all files
-    // Each augmentation is tagged with its source arena for cross-file resolution.
-    let mut merged_global_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<tsz::binder::GlobalAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (name, decls) in &other_file.global_augmentations {
-            merged_global_augmentations
-                .entry(name.clone())
-                .or_default()
-                .extend(decls.iter().map(|aug| {
-                    tsz::binder::GlobalAugmentation::with_arena(
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -920,9 +935,9 @@ pub(super) fn create_binder_from_bound_file(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: merged_global_augmentations,
-            module_augmentations: merged_module_augmentations,
-            augmentation_target_modules: merged_augmentation_target_modules,
+            global_augmentations: augmentations.global_augmentations.clone(),
+            module_augmentations: augmentations.module_augmentations.clone(),
+            augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
