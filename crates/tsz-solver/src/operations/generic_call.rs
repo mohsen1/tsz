@@ -1657,6 +1657,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Constraint checking is deferred until ALL type parameters are resolved.
         // This handles cases like `<T extends U, U>` where T's constraint references
         // U, which may not be in final_subst until later iterations.
+        let mut constraint_fallback_tp_names: FxHashSet<tsz_common::Atom> = FxHashSet::default();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             if let Some(constraint) = tp.constraint {
                 let ty = final_subst.get(tp.name).unwrap_or(TypeId::ERROR);
@@ -1758,10 +1759,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else {
                         // Fall back to constraint type so argument checking emits TS2345
                         final_subst.insert(tp.name, constraint_ty);
+                        constraint_fallback_tp_names.insert(tp.name);
                     }
                 }
             }
         }
+
+        // Check if the rest param's type parameter was explicitly replaced by
+        // its constraint during the fallback path above. This only matches when
+        // the constraint check FAILED and the code fell through to the fallback
+        // (not when the constraint was naturally resolved as the inferred type).
+        let rest_param_from_constraint_fallback = func.params.last().is_some_and(|p| {
+            if !p.rest {
+                return false;
+            }
+            if let Some(crate::TypeData::TypeParameter(tp_info)) = self.interner.lookup(p.type_id) {
+                constraint_fallback_tp_names.contains(&tp_info.name)
+            } else {
+                false
+            }
+        });
 
         let instantiated_params: Vec<ParamInfo> = func
             .params
@@ -1777,22 +1794,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             })
             .collect();
-        let (min_args, max_args) = self.arg_count_bounds(&instantiated_params);
-        if arg_types.len() < min_args {
-            return CallResult::ArgumentCountMismatch {
-                expected_min: min_args,
-                expected_max: max_args,
-                actual: arg_types.len(),
-            };
-        }
-        if let Some(max) = max_args
-            && arg_types.len() > max
-        {
-            return CallResult::ArgumentCountMismatch {
-                expected_min: min_args,
-                expected_max: Some(max),
-                actual: arg_types.len(),
-            };
+        if !rest_param_from_constraint_fallback {
+            let (min_args, max_args) = self.arg_count_bounds(&instantiated_params);
+            if arg_types.len() < min_args {
+                return CallResult::ArgumentCountMismatch {
+                    expected_min: min_args,
+                    expected_max: max_args,
+                    actual: arg_types.len(),
+                };
+            }
+            if let Some(max) = max_args
+                && arg_types.len() > max
+            {
+                return CallResult::ArgumentCountMismatch {
+                    expected_min: min_args,
+                    expected_max: Some(max),
+                    actual: arg_types.len(),
+                };
+            }
         }
 
         // Validate `this` after final substitution so generic `this` params are fully
