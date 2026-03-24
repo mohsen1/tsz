@@ -122,17 +122,16 @@ impl<'a> CheckerState<'a> {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 const MAX_FLOW_GRAPH_NODE_COUNT: usize = 2000;
                 let flow_node_count = self.ctx.binder.flow_nodes.len();
-                if flow_node_count > MAX_FLOW_GRAPH_NODE_COUNT {
-                    if let Some(&first_stmt) = sf.statements.nodes.first() {
-                        if let Some(first_node) = self.ctx.arena.get(first_stmt) {
-                            self.ctx.error(
-                                first_node.pos,
-                                0,
-                                diagnostic_messages::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS.to_string(),
-                                diagnostic_codes::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS,
-                            );
-                        }
-                    }
+                if flow_node_count > MAX_FLOW_GRAPH_NODE_COUNT
+                    && let Some(&first_stmt) = sf.statements.nodes.first()
+                    && let Some(first_node) = self.ctx.arena.get(first_stmt)
+                {
+                    self.ctx.error(
+                        first_node.pos,
+                        0,
+                        diagnostic_messages::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS.to_string(),
+                        diagnostic_codes::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS,
+                    );
                 }
             }
 
