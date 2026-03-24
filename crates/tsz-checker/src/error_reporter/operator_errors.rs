@@ -284,8 +284,18 @@ impl<'a> CheckerState<'a> {
         // Binary + / +=: emit TS2469 only when one side is symbol and the other is string
         //   or any. If both symbol or symbol+number, fall through to TS2365.
         // Arithmetic (-, *, /, etc.): never TS2469 — use TS2362/TS2363 instead.
-        let left_is_symbol = evaluator.is_symbol_like(left_type);
-        let right_is_symbol = evaluator.is_symbol_like(right_type);
+        //
+        // Also check constraint-resolved types for type parameters like `S extends symbol`.
+        // Without this, `S + ''` would emit TS2365 instead of TS2469.
+        let resolve_tp_constraint = |type_id: TypeId| -> TypeId {
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)
+                .filter(|&c| c != TypeId::UNKNOWN && c != type_id)
+                .unwrap_or(type_id)
+        };
+        let left_is_symbol = evaluator.is_symbol_like(left_type)
+            || evaluator.is_symbol_like(resolve_tp_constraint(left_type));
+        let right_is_symbol = evaluator.is_symbol_like(right_type)
+            || evaluator.is_symbol_like(resolve_tp_constraint(right_type));
 
         if left_is_symbol || right_is_symbol {
             let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
