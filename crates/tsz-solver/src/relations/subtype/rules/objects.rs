@@ -434,12 +434,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Without this condition, we would incorrectly reject valid assignments like:
         // - { a: string } <: { a?: string } (required to optional)
         // - { x: undefined } <: { x?: number } (undefined to optional)
-        // TypeId::NONE is a sentinel for "no distinct write type" (used by readonly
-        // properties from the lowering pass). Treat NONE as "same as type_id" so
-        // readonly properties don't falsely trigger the split-accessor write check.
-        let has_split_accessor = (source.write_type != TypeId::NONE
-            && source.write_type != source.type_id)
-            || (target.write_type != TypeId::NONE && target.write_type != target.type_id);
+        // TypeScript treats readonly as a usage constraint, not a structural one:
+        // `{ readonly x: T }` IS assignable to `{ x: T }`. When the source
+        // property is readonly, its write_type is irrelevant (it may be NONE or
+        // a sentinel value), so skip the write check entirely.
+        // TypeId::NONE is also a sentinel for "no distinct write type" (used by
+        // readonly properties from the lowering pass). Treat NONE as "same as
+        // type_id" so it doesn't falsely trigger split-accessor detection.
+        let has_split_accessor = if source.readonly {
+            false
+        } else {
+            (source.write_type != TypeId::NONE && source.write_type != source.type_id)
+                || (target.write_type != TypeId::NONE && target.write_type != target.type_id)
+        };
 
         if !target.readonly && has_split_accessor {
             let source_write = self.bind_property_receiver_this(
