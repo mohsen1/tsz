@@ -1703,74 +1703,53 @@ impl<'a> CheckerState<'a> {
                             })
                     })
                 } {
-                    // Check if there are any type-only default exports (like
-                    // `type Bar = {}; export default Bar`). When present, tsc
-                    // emits both TS2528 (for ALL) and TS2323 (for value-level only).
-                    // Without type-only exports, tsc emits only TS2323.
-                    let has_type_only_default = export_default_indices.iter().any(|&idx| {
-                        self.ctx
-                            .arena
-                            .get_export_decl_at(idx)
-                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
-                            .is_some_and(|c| {
-                                if c.kind != SyntaxKind::Identifier as u16 {
-                                    return false;
-                                }
-                                let ed = self.ctx.arena.get_export_decl_at(idx);
-                                let clause_idx = ed.map(|ed| ed.export_clause).unwrap_or(idx);
-                                if let Some(name) = self.node_text(clause_idx)
-                                    && let Some(sym_id) =
-                                        self.resolve_name_at_node(&name, clause_idx)
-                                    && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-                                {
-                                    return !sym.has_any_flags(symbol_flags::VALUE);
-                                }
-                                false
-                            })
-                    });
-                    if has_type_only_default {
-                        // TS2528 for ALL default exports when type-only exports present.
-                        for &export_idx in &export_default_indices {
-                            let anchor = self.get_default_export_anchor(export_idx);
-                            self.error_at_node(
-                                anchor,
-                                diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                                diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                            );
-                        }
-                    }
-                    // TS2323 for value-level exports only (skip type-only identifiers).
+                    // tsc emits TS2323 for value default exports (not type-only)
+                    // that conflict, PLUS TS2528 for ALL default exports.
                     for &export_idx in &export_default_indices {
                         let default_anchor = self.get_default_export_anchor(export_idx);
-                        let clause_node = self
+                        let clause_idx = self
                             .ctx
                             .arena
                             .get_export_decl_at(export_idx)
-                            .and_then(|ed| self.ctx.arena.get(ed.export_clause));
-                        let is_type_only_identifier = clause_node.is_some_and(|c| {
-                            if c.kind != SyntaxKind::Identifier as u16 {
-                                return false;
-                            }
-                            let ed = self.ctx.arena.get_export_decl_at(export_idx);
-                            let clause_idx = ed.map(|ed| ed.export_clause).unwrap_or(export_idx);
-                            if let Some(name) = self.node_text(clause_idx)
-                                && let Some(sym_id) = self.resolve_name_at_node(&name, clause_idx)
-                                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-                            {
-                                return !sym.has_any_flags(symbol_flags::VALUE);
-                            }
-                            false
-                        });
-                        if !is_type_only_identifier {
-                            let is_expr = clause_node
-                                .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16);
-                            let anchor = if is_expr { export_idx } else { default_anchor };
+                            .map(|ed| ed.export_clause)
+                            .unwrap_or(NodeIndex::NONE);
+                        let clause_kind = self.ctx.arena.get(clause_idx).map(|c| c.kind);
+                        let is_ident = clause_kind == Some(SyntaxKind::Identifier as u16);
+                        let is_class_decl = clause_kind == Some(syntax_kind_ext::CLASS_DECLARATION);
+
+                        // Check if an identifier refers to a type-only symbol
+                        // (e.g., type alias). tsc doesn't emit TS2323 for those.
+                        let is_type_only_ident = is_ident
+                            && self
+                                .resolve_identifier_symbol(clause_idx)
+                                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                .is_some_and(|sym| {
+                                    use tsz_binder::symbols::symbol_flags;
+                                    let value_flags = symbol_flags::FUNCTION
+                                        | symbol_flags::VARIABLE
+                                        | symbol_flags::CLASS
+                                        | symbol_flags::ENUM
+                                        | symbol_flags::ENUM_MEMBER;
+                                    (sym.flags & value_flags) == 0
+                                        && (sym.flags & symbol_flags::TYPE) != 0
+                                });
+
+                        // TS2323 only for value exports (identifiers that resolve
+                        // to values, or class declarations).
+                        if (is_ident && !is_type_only_ident) || is_class_decl {
+                            let anchor = if is_ident { export_idx } else { default_anchor };
                             self.error_at_node(
                                 anchor,
                                 "Cannot redeclare exported variable 'default'.",
                                 diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                             );
                         }
+                        // TS2528 for all default exports
+                        self.error_at_node(
+                            default_anchor,
+                            diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                        );
                     }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
