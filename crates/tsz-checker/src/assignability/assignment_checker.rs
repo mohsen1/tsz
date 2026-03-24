@@ -1437,17 +1437,41 @@ impl<'a> CheckerState<'a> {
             let Some(spread_expr) = spread_expr else {
                 continue;
             };
-            // If the spread expression is a binary assignment (x = a), emit TS1186
+            // If the spread expression is a binary assignment (x = a), emit TS1186.
+            // tsc anchors this at the `=` operator token, not at the spread element's
+            // `...` prefix or the left-hand name. Scan from the left operand's end to
+            // find the `=` position.
             if let Some(spread_node) = self.ctx.arena.get(spread_expr)
                 && spread_node.kind == syntax_kind_ext::BINARY_EXPRESSION
                 && let Some(bin) = self.ctx.arena.get_binary_expr(spread_node)
                 && bin.operator_token == SyntaxKind::EqualsToken as u16
             {
-                self.error_at_node_msg(
-                    element_idx,
-                    diagnostic_codes::A_REST_ELEMENT_CANNOT_HAVE_AN_INITIALIZER,
-                    &[],
-                );
+                // Find the `=` token position between left and right operands
+                let eq_pos = self.ctx.arena.get(bin.left).map(|left_node| {
+                    let search_start = left_node.end as usize;
+                    self.ctx
+                        .arena
+                        .source_files
+                        .first()
+                        .and_then(|sf| {
+                            sf.text[search_start..]
+                                .find('=')
+                                .map(|offset| (search_start + offset) as u32)
+                        })
+                        .unwrap_or(left_node.end)
+                });
+                if let Some(pos) = eq_pos {
+                    let message = tsz_common::diagnostics::get_message_template(
+                        diagnostic_codes::A_REST_ELEMENT_CANNOT_HAVE_AN_INITIALIZER,
+                    )
+                    .unwrap_or("");
+                    self.error_at_position(
+                        pos,
+                        1,
+                        message,
+                        diagnostic_codes::A_REST_ELEMENT_CANNOT_HAVE_AN_INITIALIZER,
+                    );
+                }
             }
         }
     }
