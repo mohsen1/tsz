@@ -418,6 +418,11 @@ impl<'a> CheckerState<'a> {
                         let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
                             continue;
                         };
+                        // Filter out string-literal ambient module symbols (e.g., `declare module "foobar"`)
+                        // — they should not resolve as bare identifiers.
+                        if self.is_string_literal_module_symbol(file_sym_id, &lib_binders) {
+                            continue;
+                        }
                         trace!(
                             name = name,
                             file_sym_id = ?file_sym_id,
@@ -474,7 +479,11 @@ impl<'a> CheckerState<'a> {
                     true
                 })
             {
-                return Some(sym_id);
+                // Filter out string-literal ambient module symbols (e.g., `declare module "foobar"`)
+                // — they should not resolve as bare identifiers.
+                if !self.is_string_literal_module_symbol(sym_id, &lib_binders) {
+                    return Some(sym_id);
+                }
             }
 
             // Cross-file namespace body fallback: if we're inside a namespace body
