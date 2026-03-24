@@ -441,6 +441,13 @@ pub fn check_application_variance<R: TypeResolver>(
     if variances.iter().any(|v| v.rejection_unreliable()) {
         return None;
     }
+
+    // When structural fallback is needed (mapped types with modifiers like
+    // +?/-?/+readonly/-readonly), variance failures are NOT definitive.
+    // Return None to fall through to structural comparison.
+    if needs_structural_fallback {
+        return None;
+    }
     Some(false)
 }
 

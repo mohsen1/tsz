@@ -427,6 +427,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 return SubtypeResult::False;
                             }
                         }
+                        // When variance check fails but structural fallback is needed
+                        // (mapped types with modifiers like Partial<T>, Required<T>),
+                        // evaluate both applications to their structural forms and
+                        // compare directly. This handles cases like Partial<{a}> vs
+                        // Partial<{a, b}> where both expand to all-optional objects
+                        // that are mutually assignable despite differing type arguments.
+                        if any_checked && !all_ok && needs_structural_fallback {
+                            let source_type =
+                                self.interner.application(s_app.base, s_app.args.clone());
+                            let target_type =
+                                self.interner.application(t_app.base, t_app.args.clone());
+                            let s_eval = self.evaluate_type(source_type);
+                            let t_eval = self.evaluate_type(target_type);
+                            if s_eval != source_type || t_eval != target_type {
+                                return self.check_subtype(s_eval, t_eval);
+                            }
+                        }
                     }
                 }
             }
@@ -506,13 +523,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.check_subtype(source, t_struct)
             }
             (None, None) => {
-                // Compatibility fallback: when both applications share the same base and
-                // cannot be structurally expanded (e.g. lib/interface generic applications),
-                // apply a covariant argument check before failing hard.
-                //
-                // This mirrors common TS behavior for readonly/out-position generic uses and
-                // avoids broad false-positive assignability failures from an expansion miss.
-                if same_application_family {
+                // Evaluation fallback: when try_expand_application fails for both sides
+                // (common for lib type aliases like Partial<T>, Required<T>, Readonly<T>
+                // where the resolver can't resolve the definition body), try full type
+                // evaluation. This can resolve Application types through the evaluation
+                // pipeline (including mapped type expansion) to produce concrete objects.
+                let source_type = self.interner.application(s_app.base, s_app.args.clone());
+                let target_type = self.interner.application(t_app.base, t_app.args.clone());
+                let s_eval = self.evaluate_type(source_type);
+                let t_eval = self.evaluate_type(target_type);
+                if s_eval != source_type || t_eval != target_type {
+                    self.check_subtype(s_eval, t_eval)
+                } else if same_application_family {
+                    // Compatibility fallback: when both applications share the same base and
+                    // cannot be structurally expanded or evaluated, apply a covariant
+                    // argument check before failing hard.
                     let mut all_ok = true;
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         if !self.check_subtype(*s_arg, *t_arg).is_true() {
