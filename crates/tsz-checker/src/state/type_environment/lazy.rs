@@ -848,7 +848,7 @@ impl<'a> CheckerState<'a> {
     /// member so that downstream consumers (e.g., the solver's `this` type
     /// checking in union call resolution) can inspect their callable shapes.
     ///
-    /// The solver's NoopResolver can't resolve Lazy types, so this resolution
+    /// The solver's `NoopResolver` can't resolve Lazy types, so this resolution
     /// must happen in the checker before passing types to the solver.
     pub(crate) fn resolve_lazy_members_in_union(&mut self, type_id: TypeId) -> TypeId {
         use crate::query_boundaries::common;
