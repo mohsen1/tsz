@@ -1258,20 +1258,51 @@ impl<'a> CheckerState<'a> {
                         NodeIndex::NONE
                     };
                     if !defer_property_not_found && !suppress_missing_property_for_literal_default {
-                        // In tsc, destructuring from `object` uses the apparent type `{}`
-                        // in error messages (getApparentType(object) = {}).
-                        if parent_type == TypeId::OBJECT {
-                            self.error_property_not_exist_with_apparent_type(
-                                prop_name_str,
-                                "{}",
-                                error_node,
+                        // When the computed key is a unique symbol that doesn't exist
+                        // on the parent type, emit TS2538 ("Type 'X' cannot be used as
+                        // an index type") instead of TS2339 ("Property does not exist").
+                        // tsc treats unique symbol keys that don't match a declared
+                        // property as index-type errors, not property-not-found errors.
+                        let emitted_ts2538 = if let Some(ce) = computed_expr {
+                            let key_type = self.get_binding_element_computed_key_type_with_request(
+                                pattern_idx,
+                                ce,
+                                request,
                             );
+                            if common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type) {
+                                let key_type_str = self.format_type(key_type);
+                                let message = crate::diagnostics::format_message(
+                                    crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                                    &[&key_type_str],
+                                );
+                                self.error_at_node(
+                                    ce,
+                                    &message,
+                                    crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                                );
+                                true
+                            } else {
+                                false
+                            }
                         } else {
-                            self.error_property_not_exist_at(
-                                prop_name_str,
-                                parent_type,
-                                error_node,
-                            );
+                            false
+                        };
+                        if !emitted_ts2538 {
+                            // In tsc, destructuring from `object` uses the apparent type `{}`
+                            // in error messages (getApparentType(object) = {}).
+                            if parent_type == TypeId::OBJECT {
+                                self.error_property_not_exist_with_apparent_type(
+                                    prop_name_str,
+                                    "{}",
+                                    error_node,
+                                );
+                            } else {
+                                self.error_property_not_exist_at(
+                                    prop_name_str,
+                                    parent_type,
+                                    error_node,
+                                );
+                            }
                         }
                     }
                     TypeId::ANY
