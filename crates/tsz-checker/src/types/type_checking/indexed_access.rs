@@ -959,6 +959,24 @@ impl<'a> CheckerState<'a> {
                         )
                     }
                 };
+                // When the constrained object is still a deferred indexed access,
+                // try evaluating it further. If it resolves to a concrete type,
+                // use that for validation. Otherwise, check if the evaluated type
+                // has index signatures or properties that validate the index.
+                let constrained_object_type =
+                    if tsz_solver::is_index_access_type(self.ctx.types, constrained_object_type) {
+                        let evaluated =
+                            self.evaluate_type_for_assignability(constrained_object_type);
+                        if evaluated != TypeId::ERROR
+                            && !tsz_solver::is_index_access_type(self.ctx.types, evaluated)
+                        {
+                            evaluated
+                        } else {
+                            constrained_object_type
+                        }
+                    } else {
+                        constrained_object_type
+                    };
                 if constrained_object_type != TypeId::ERROR
                     // When the constrained object is still a deferred indexed access
                     // (e.g., T[keyof T] where T is unconstrained), or resolves to
