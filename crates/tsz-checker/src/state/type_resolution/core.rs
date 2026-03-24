@@ -836,6 +836,14 @@ impl<'a> CheckerState<'a> {
                 return type_param;
             }
 
+            // TS1212/TS1213/TS1214: Strict-mode reserved word used as type reference
+            // (even when it doesn't resolve to a type parameter)
+            if crate::state_checking::is_strict_mode_reserved_name(name)
+                && self.is_strict_mode_for_node(type_name_idx)
+            {
+                self.emit_strict_mode_reserved_word_error(type_name_idx, name, true);
+            }
+
             // Named type without type arguments — check generics, apply defaults
             return self.resolve_simple_type_reference(idx, type_name_idx, name, type_ref);
         }
