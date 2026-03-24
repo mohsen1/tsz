@@ -672,6 +672,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2590 early check: tsc's removeSubtypes counts pairwise iterations
+        // and bails at 1,000,000. For n unique types, worst-case is n*(n-1),
+        // so n >= 1001 triggers the limit. Apply literal widening first
+        // (matching BCT behavior) so that e.g. 5001 number literals become 1
+        // unique `number`, but 1002 distinct object literals stay as 1002.
+        {
+            let unique_count = {
+                let mut seen = rustc_hash::FxHashSet::default();
+                for &ty in &element_types {
+                    // Widen literals to their primitive base type before counting,
+                    // matching tsc's BCT behavior where literals are widened first.
+                    let widened =
+                        crate::query_boundaries::common::widen_literal_type(self.ctx.types, ty);
+                    seen.insert(widened);
+                }
+                seen.len() as u64
+            };
+            if unique_count * (unique_count.saturating_sub(1)) >= 1_000_000 {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                    diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                );
+                return factory.array(TypeId::ERROR);
+            }
+        }
+
         // Use Solver API for Best Common Type computation (Solver-First architecture)
         // When preserve_literal_types is set (e.g., inside generic call argument collection),
         // skip BCT's literal widening by computing the union directly. This preserves
