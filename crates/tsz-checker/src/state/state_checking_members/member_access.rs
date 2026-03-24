@@ -471,6 +471,58 @@ impl<'a> CheckerState<'a> {
             && self.ctx.binder.is_external_module())
     }
 
+    /// Check if an identifier is inside `export default expr` within a namespace.
+    /// When TS1319 is the correct diagnostic, name resolution (TS2304/TS2552)
+    /// produces false positives that should be suppressed.
+    pub(crate) fn should_suppress_name_in_export_default_namespace(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut cur = idx;
+        for _ in 0..8 {
+            let Some(n) = self.ctx.arena.get(cur) else {
+                break;
+            };
+            // Heritage clauses should always emit TS2304 — stop.
+            if n.kind == syntax_kind_ext::HERITAGE_CLAUSE {
+                break;
+            }
+            let is_export_default = if n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                !self
+                    .ctx
+                    .arena
+                    .get_export_assignment(n)
+                    .is_some_and(|data| data.is_export_equals)
+            } else if n.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_export_decl_at(cur)
+                    .is_some_and(|data| data.is_default_export)
+            } else {
+                false
+            };
+            if is_export_default {
+                let mut ns = cur;
+                for _ in 0..8 {
+                    if let Some(nn) = self.ctx.arena.get(ns)
+                        && nn.kind == syntax_kind_ext::MODULE_DECLARATION
+                    {
+                        return true;
+                    }
+                    match self.ctx.arena.get_extended(ns) {
+                        Some(e) if e.parent.is_some() => ns = e.parent,
+                        _ => break,
+                    }
+                }
+                break;
+            }
+            match self.ctx.arena.get_extended(cur) {
+                Some(e) if e.parent.is_some() => cur = e.parent,
+                _ => break,
+            }
+        }
+        false
+    }
+
     fn collect_unqualified_identifier_references(
         &self,
         node_idx: NodeIndex,

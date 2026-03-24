@@ -222,55 +222,8 @@ impl<'a> CheckerState<'a> {
 
         // Suppress TS2304/TS2552 for expression inside `export default` in a namespace.
         // TS1319 is the correct diagnostic; name resolution produces false positives.
-        // However, do NOT suppress when the identifier is inside a heritage clause
-        // (implements/extends) — those should always emit TS2304 for unresolved names.
-        {
-            let mut cur = idx;
-            for _ in 0..8 {
-                if let Some(n) = self.ctx.arena.get(cur) {
-                    // Heritage clauses (implements/extends) should always emit
-                    // TS2304 for unresolved names — stop walking before we reach
-                    // any enclosing export/namespace that would suppress.
-                    if n.kind == syntax_kind_ext::HERITAGE_CLAUSE {
-                        break;
-                    }
-                    // Check for both ExportAssignment and ExportDeclaration
-                    // with default export. The parser may produce either.
-                    let is_export_default = if n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
-                        !self
-                            .ctx
-                            .arena
-                            .get_export_assignment(n)
-                            .is_some_and(|data| data.is_export_equals)
-                    } else if n.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                        self.ctx
-                            .arena
-                            .get_export_decl_at(cur)
-                            .is_some_and(|data| data.is_default_export)
-                    } else {
-                        false
-                    };
-                    if is_export_default {
-                        let mut ns = cur;
-                        for _ in 0..8 {
-                            if let Some(nn) = self.ctx.arena.get(ns)
-                                && nn.kind == syntax_kind_ext::MODULE_DECLARATION
-                            {
-                                return;
-                            }
-                            match self.ctx.arena.get_extended(ns) {
-                                Some(e) if e.parent.is_some() => ns = e.parent,
-                                _ => break,
-                            }
-                        }
-                        break;
-                    }
-                }
-                match self.ctx.arena.get_extended(cur) {
-                    Some(e) if e.parent.is_some() => cur = e.parent,
-                    _ => break,
-                }
-            }
+        if self.should_suppress_name_in_export_default_namespace(idx) {
+            return;
         }
 
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
@@ -946,6 +899,13 @@ impl<'a> CheckerState<'a> {
         suggestions: &[String],
         idx: NodeIndex,
     ) {
+        // Suppress TS2552 for expression inside `export default` in a namespace,
+        // mirroring the TS2304 suppression in error_cannot_find_name_at.
+        // TS1319 is the correct diagnostic; name resolution produces false positives.
+        if self.should_suppress_name_in_export_default_namespace(idx) {
+            return;
+        }
+
         // tsc caps spelling suggestions at 10 per file.
         if self.ctx.spelling_suggestions_emitted >= 10 {
             self.error_at_node(
