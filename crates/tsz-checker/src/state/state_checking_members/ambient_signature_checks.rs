@@ -396,11 +396,17 @@ impl<'a> CheckerState<'a> {
             && (self.has_private_modifier(&prop.modifiers)
                 || self.is_private_identifier_name(prop.name));
         let is_static = self.has_static_modifier(&prop.modifiers);
+        // tsc suppresses TS7008 for `static prototype` since TS2699 already fires
+        let is_static_prototype = is_static
+            && self
+                .get_member_name_display_text(prop.name)
+                .is_some_and(|n| n == "prototype");
         if self.ctx.no_implicit_any()
             && effective_declared_type.is_none()
             && prop.initializer.is_none()
             && prop.type_annotation.is_none()
             && !is_private_in_ambient
+            && !is_static_prototype
             // Constructor assignments only apply to instance properties, not static
             && (is_static || !self.property_assigned_in_enclosing_class_constructor(prop.name))
             // TSC also suppresses TS7008 for static properties assigned in class
