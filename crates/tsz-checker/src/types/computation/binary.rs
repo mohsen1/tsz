@@ -353,22 +353,15 @@ impl<'a> CheckerState<'a> {
                 ty,
             ) {
                 None => true, // Unconstrained type param may be primitive
-                Some(c) => {
-                    // A type param constrained to `{}` may still be primitive
-                    if tsz_solver::is_empty_object_type(self.ctx.types, c) {
-                        return true;
-                    }
-                    self.type_may_represent_primitive(c)
-                }
+                Some(c) => self.type_may_represent_primitive(c),
             };
         }
 
-        // Empty object type `{}` may represent a primitive value — `{}` matches
-        // any non-null, non-undefined value including strings, numbers, booleans.
-        // tsc emits TS2638 for `"prop" in x` when x has type `{}`.
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
+        // Note: empty object type `{}` does NOT trigger TS2638 in tsc.
+        // While `{}` accepts any non-null non-undefined value including primitives,
+        // tsc treats it as an object type for the `in` operator check.
+        // TS2638 only fires for unconstrained type parameters or types that
+        // explicitly include primitive union members.
 
         // Union: any member may represent primitive
         if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
