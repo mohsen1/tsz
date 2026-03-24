@@ -400,7 +400,6 @@ impl<'a> FlowAnalyzer<'a> {
         let type_params = flow_query::extract_predicate_signature(self.interner, callee_type)
             .map(|sig| sig.type_params)
             .unwrap_or_default();
-
         if type_params.is_empty() {
             return predicate.clone();
         }
@@ -458,7 +457,151 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
+        // Case 3: The predicate type is a TypeParameter whose corresponding
+        // parameter type is a wrapper (e.g., `Result<T>` instead of just `T`).
+        // Case 1 failed because param.type_id != pred_type, and Case 2 failed
+        // because param.type_id is not directly a TypeParameter.
+        //
+        // Handle the common pattern where the parameter type is a union
+        // containing the type parameter:
+        //   `function isSuccess<T>(result: T | "FAILURE"): result is T`
+        //   param type = T | "FAILURE", arg type = number | "FAILURE"
+        //   → infer T = number (subtract fixed union members from arg type)
+        if let Some(tsz_solver::TypeData::TypeParameter(pred_param_info)) =
+            self.interner.lookup(pred_type)
+        {
+            let pred_param_name = pred_param_info.name;
+            if type_params.iter().any(|tp| tp.name == pred_param_name) {
+                for (i, param) in params.iter().enumerate() {
+                    if let Some(&arg_idx) = args.get(i)
+                        && let Some(&arg_type) = node_types.get(&arg_idx.0)
+                    {
+                        if let Some(inferred) = self.infer_type_param_from_union(
+                            param.type_id,
+                            arg_type,
+                            pred_param_name,
+                        ) {
+                            return TypePredicate {
+                                type_id: Some(inferred),
+                                ..predicate.clone()
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
         predicate.clone()
+    }
+
+    /// Attempt to infer a type parameter from a union-typed parameter.
+    ///
+    /// When a parameter type is a union like `T | "FAILURE"` and the argument type
+    /// is `number | "FAILURE"`, we can infer T = number by subtracting the fixed
+    /// (non-type-parameter) union members from the argument type.
+    ///
+    /// Returns `Some(inferred_type)` if inference succeeds, `None` otherwise.
+    fn infer_type_param_from_union(
+        &self,
+        param_type: TypeId,
+        arg_type: TypeId,
+        target_param_name: Atom,
+    ) -> Option<TypeId> {
+        use tsz_solver::TypeData;
+
+        // Evaluate/expand the parameter type to get its structural form.
+        // Type aliases like `Result<T>` may be represented as Application types
+        // that need expansion to reveal the underlying union `T | "FAILURE"`.
+        // Use the type environment's resolver for Application types.
+        let expanded_param = if let Some(env_ref) = &self.type_environment {
+            let db = self.interner.as_type_database();
+            let env = env_ref.borrow();
+            let result =
+                tsz_solver::ApplicationEvaluator::new(db, &*env).evaluate_or_original(param_type);
+            if result == param_type {
+                tsz_solver::evaluate_type(self.interner, param_type)
+            } else {
+                result
+            }
+        } else {
+            tsz_solver::evaluate_type(self.interner, param_type)
+        };
+        // Get union members of the (expanded) parameter type
+        let param_members = tsz_solver::type_queries::get_union_members(
+            self.interner.as_type_database(),
+            expanded_param,
+        )?;
+
+        // Check if any member is the target type parameter
+        let has_target_param = param_members.iter().any(|&m| {
+            matches!(
+                self.interner.lookup(m),
+                Some(TypeData::TypeParameter(info)) if info.name == target_param_name
+            )
+        });
+        if !has_target_param {
+            return None;
+        }
+
+        // Collect the fixed (non-type-parameter) members from the parameter type.
+        // Evaluate each to resolve Lazy/Application types to their concrete forms
+        // (e.g., `FAILURE` alias → `"FAILURE"` literal) so TypeId comparison works
+        // when subtracting from arg members.
+        let fixed_members: Vec<TypeId> = param_members
+            .iter()
+            .copied()
+            .filter(|&m| {
+                !matches!(
+                    self.interner.lookup(m),
+                    Some(TypeData::TypeParameter(info)) if info.name == target_param_name
+                )
+            })
+            .map(|m| {
+                // Resolve Lazy/Application types to their concrete forms.
+                // Lazy(DefId) types are type aliases that need resolver lookup.
+                if let Some(env_ref) = &self.type_environment {
+                    let db = self.interner.as_type_database();
+                    let env = env_ref.borrow();
+                    // First try to resolve Lazy types via the environment
+                    if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(m) {
+                        if let Some(resolved) = env.get_def(def_id) {
+                            return resolved;
+                        }
+                    }
+                    // Then try Application evaluation
+                    let result =
+                        tsz_solver::ApplicationEvaluator::new(db, &*env).evaluate_or_original(m);
+                    if result != m {
+                        return result;
+                    }
+                }
+                tsz_solver::evaluate_type(self.interner, m)
+            })
+            .collect();
+
+        // Get union members of the argument type (or treat as single-member)
+        let arg_members =
+            tsz_solver::type_queries::get_union_members(self.interner.as_type_database(), arg_type)
+                .unwrap_or_else(|| vec![arg_type]);
+
+        // Subtract the fixed members from the argument type
+        let remaining: Vec<TypeId> = arg_members
+            .iter()
+            .copied()
+            .filter(|arg_m| !fixed_members.contains(arg_m))
+            .collect();
+
+        if remaining.is_empty() {
+            return None;
+        }
+
+        // Build the inferred type from the remaining members
+        let inferred = if remaining.len() == 1 {
+            remaining[0]
+        } else {
+            self.interner.union(remaining)
+        };
+        Some(inferred)
     }
 
     pub(crate) fn apply_type_predicate_narrowing(
