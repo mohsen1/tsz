@@ -60,6 +60,7 @@ impl<'a> CheckerContext<'a> {
             file_is_esm_map: None,
             spelling_suggestions_emitted: 0,
             no_implicit_override: false,
+            types_extending_array: FxHashSet::default(),
             symbol_types: FxHashMap::with_capacity_and_hasher(
                 binder.symbols.len() / 2,
                 Default::default(),

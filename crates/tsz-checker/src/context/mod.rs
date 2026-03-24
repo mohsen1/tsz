@@ -279,6 +279,11 @@ pub struct CheckerContext<'a> {
     /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
     pub spelling_suggestions_emitted: u32,
 
+    /// TypeIds that represent interfaces extending arrays/tuples.
+    /// Used to suppress false TS2559 (weak type) violations for these types,
+    /// since they inherit non-optional members from Array.prototype.
+    pub types_extending_array: FxHashSet<TypeId>,
+
     // --- Caches ---
     /// Cached types for symbols.
     pub symbol_types: FxHashMap<SymbolId, TypeId>,

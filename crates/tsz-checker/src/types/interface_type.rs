@@ -898,13 +898,16 @@ impl<'a> CheckerState<'a> {
             // - Weak type detection (TS2559): the intersection prevents false weak-type violations
             //   because the target is not a standalone object.
             // - Assignability: array/tuple sources can be checked against the tuple base.
+            // Track the result so the checker can also suppress false NoCommonProperties failures.
             (_, InterfaceMergeKind::Other)
                 if tsz_solver::type_queries::is_array_or_tuple_type(
                     self.ctx.types,
                     base_resolved,
                 ) && derived != TypeId::ANY =>
             {
-                factory.intersection(vec![derived, base])
+                let result = factory.intersection(vec![derived, base]);
+                self.ctx.types_extending_array.insert(result);
+                result
             }
             _ => derived,
         }
