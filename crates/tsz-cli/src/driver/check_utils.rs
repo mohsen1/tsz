@@ -36,6 +36,39 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             return Vec::new();
         }
 
+        // When the file is a `tslib.d.ts` that contains `declare module "tslib" { ... }`,
+        // the file-level exports are empty but the module declarations contain the helpers.
+        // Check if the tslib module has non-empty ambient exports, OR if the source text
+        // of the file contains actual helper function declarations (the binder may not
+        // always register ambient module function declarations as module exports).
+        if program.declared_modules.contains("tslib") {
+            let tslib_ambient_has_exports = program
+                .module_exports
+                .get("tslib")
+                .is_some_and(|exports| !exports.is_empty());
+            if tslib_ambient_has_exports {
+                return Vec::new();
+            }
+            // Scan the source text for helper function declarations.
+            // A `declare module "tslib" { export {}; }` with no helpers will not match.
+            let source = &tslib_file.arena.source_files.first().map(|sf| &sf.text);
+            if let Some(source) = source {
+                if source.contains("__importStar")
+                    || source.contains("__importDefault")
+                    || source.contains("__extends")
+                    || source.contains("__rest")
+                    || source.contains("__decorate")
+                    || source.contains("__metadata")
+                    || source.contains("__awaiter")
+                    || source.contains("__generator")
+                    || source.contains("__spread")
+                    || source.contains("__values")
+                {
+                    return Vec::new();
+                }
+            }
+        }
+
         return emit_ts2343_for_missing_helpers(
             program,
             options,
