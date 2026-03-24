@@ -959,14 +959,10 @@ impl<'a> CheckerState<'a> {
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
 
-                // TS2538: Type cannot be used as an index type.
-                // For computed property names in destructuring, tsc rejects
-                // types like `any`, `void`, `boolean`, etc. through its
-                // `isValidIndexType` check.  Symbol/unique-symbol types pass
-                // the general validity check but are handled separately below
-                // (they can't match string/number index signatures).
-                // ERROR types from failed expressions are treated as `any`
-                // for this check — tsc cascades TS2538 after prior expression errors.
+                // TS2538: Reject invalid index types (any/void/boolean/etc.) and
+                // symbol/unique-symbol types (can't match string/number index sigs;
+                // matching symbol properties resolved earlier).
+                // ERROR types from failed expressions are treated as `any`.
                 let key_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
                     self.ctx.types,
                     key_type,
@@ -981,11 +977,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.resolve_lazy_type(key_type)
                     };
-                    if true
-                        && let Some(invalid_member) =
-                            crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
-                    {
-                        let key_type_str = self.format_type(invalid_member);
+                    let is_invalid = crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key);
+                    // Symbol types pass the general validity check but can't
+                    // index into objects through string/number index signatures.
+                    let is_symbol = key_type != TypeId::ERROR
+                        && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type);
+                    let ts2538_type = is_invalid.or(if is_symbol { Some(key_type) } else { None });
+                    if let Some(err_type) = ts2538_type {
+                        let key_type_str = self.format_type(err_type);
                         let message = crate::diagnostics::format_message(
                             crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                             &[&key_type_str],
@@ -1003,10 +1002,8 @@ impl<'a> CheckerState<'a> {
                 // through string/number index signatures in destructuring.
                 // If the object had a property matching the specific symbol,
                 // it would have been resolved earlier via get_computed_binding_element_type_from_parent.
-                // When the parent type is or contains a type parameter (e.g.
-                // `T extends { [sym]: string }`), the constraint may have the
-                // matching symbol property. Defer the check to instantiation
-                // time to avoid false positives on generic destructuring.
+                // When the parent type contains type parameters, defer to
+                // instantiation to avoid false positives on generic destructuring.
                 let parent_has_type_params = common_query::contains_type_parameters(
                     self.ctx.types.as_type_database(),
                     parent_type,
