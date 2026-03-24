@@ -122,26 +122,23 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
         if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
             if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
-                // tsc points TS1319 at the `default` keyword for class/function
-                // declarations, but at the `export` keyword for expression exports.
-                // Use the default keyword position when available (class/function);
-                // fall back to the export node (expression exports).
-                if let Some(default_pos) = export_decl.default_keyword_pos {
-                    // Check if this is a class/function declaration export
-                    // by looking at the export clause node kind
-                    let has_declaration = self
-                        .ctx
-                        .arena
-                        .get(export_decl.export_clause)
-                        .is_some_and(|n| {
-                            matches!(
-                                n.kind,
-                                syntax_kind_ext::CLASS_DECLARATION
-                                    | syntax_kind_ext::FUNCTION_DECLARATION
-                                    | syntax_kind_ext::CLASS_EXPRESSION
-                            )
-                        });
-                    if has_declaration {
+                // tsc points TS1319 at `default` for class/function/interface declarations
+                // but at the node start (`export`) for expression exports.
+                let clause_is_declaration = self
+                    .ctx
+                    .arena
+                    .get(export_decl.export_clause)
+                    .is_some_and(|n| {
+                        matches!(
+                            n.kind,
+                            syntax_kind_ext::CLASS_DECLARATION
+                                | syntax_kind_ext::FUNCTION_DECLARATION
+                                | syntax_kind_ext::INTERFACE_DECLARATION
+                                | syntax_kind_ext::CLASS_EXPRESSION
+                        )
+                    });
+                if clause_is_declaration {
+                    if let Some(default_pos) = export_decl.default_keyword_pos {
                         self.error_at_position(
                             default_pos,
                             7, // length of "default"
