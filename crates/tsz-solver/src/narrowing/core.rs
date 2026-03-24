@@ -1485,7 +1485,7 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
-            TypeGuard::Instanceof(instance_type, is_explicit_global) => {
+            TypeGuard::Instanceof(instance_type, _is_explicit_global) => {
                 // TypeScript narrows `any` via instanceof for specific constructors
                 // (e.g. Error, Date) but NOT for Function or Object. Handle this
                 // in the sense-specific branches below.
