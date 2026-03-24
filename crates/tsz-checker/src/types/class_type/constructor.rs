@@ -31,10 +31,6 @@ struct AccessorAggregate {
     visibility: Visibility,
 }
 
-// =============================================================================
-// Class Constructor Type Resolution
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
     fn merge_static_late_bound_index_value(
         &self,
@@ -1936,14 +1932,8 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Push enclosing function's type parameters into scope temporarily.
-    ///
-    /// When computing a class constructor type during symbol resolution
-    /// (`compute_type_of_symbol`), the `type_parameter_scope` may be empty
-    /// because we're not inside the function body walk. This method walks
-    /// up the AST from the class node to find the enclosing function and
-    /// pushes its type parameters into scope, returning the updates needed
-    /// to pop them later.
+    /// Push enclosing function's type parameters into scope temporarily,
+    /// returning the updates needed to pop them later.
     fn push_enclosing_function_type_params(
         &mut self,
         class_idx: NodeIndex,
