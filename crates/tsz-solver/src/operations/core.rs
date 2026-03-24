@@ -73,6 +73,15 @@ pub trait AssignabilityChecker {
     fn promise_like_type_argument(&mut self, _type_id: TypeId) -> Option<TypeId> {
         None
     }
+
+    /// Get a type resolver for variance computation and type parameter lookup.
+    ///
+    /// This is used during inference constraint collection to compute the variance
+    /// of type parameters in type alias Applications. The checker implements this
+    /// to provide its full resolver context.
+    fn type_resolver(&self) -> Option<&dyn crate::TypeResolver> {
+        None
+    }
 }
 
 // =============================================================================

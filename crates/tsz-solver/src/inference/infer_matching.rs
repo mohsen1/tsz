@@ -10,10 +10,12 @@
 
 use crate::def::DefId;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_generic, instantiate_type};
+use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
     CallSignature, CallableShapeId, FunctionShape, FunctionShapeId, InferencePriority,
     IntrinsicKind, LiteralValue, MappedTypeId, ObjectShapeId, ParamInfo, TemplateLiteralId,
     TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
+    Variance,
 };
 use tsz_common::interner::Atom;
 
@@ -649,6 +651,20 @@ impl<'a> InferenceContext<'a> {
         Some(instantiated)
     }
 
+    /// Compute the variances of each type parameter for a type application's base type.
+    ///
+    /// Given a base type (e.g., the `Func1` in `Func1<T>`), this resolves the DefId
+    /// and computes how each type parameter is used (covariantly, contravariantly, etc.).
+    /// Returns `None` if no resolver is available or the base isn't a resolvable definition.
+    fn compute_application_variances(&self, base: TypeId) -> Option<std::sync::Arc<[Variance]>> {
+        let resolver = self.resolver?;
+        let def_id = match self.interner.lookup(base)? {
+            TypeData::Lazy(def_id) => def_id,
+            _ => return None,
+        };
+        compute_type_param_variances_with_resolver(self.interner, resolver, def_id)
+    }
+
     /// Infer from function types, handling variance correctly
     fn infer_functions(
         &mut self,
@@ -1160,10 +1176,35 @@ impl<'a> InferenceContext<'a> {
         let target_info = self.interner.type_application(target_app);
 
         // When both applications share the same base type, infer directly from
-        // type arguments (e.g., MyPromise<boolean, any> vs MyPromise<T, U>).
+        // type arguments, respecting the variance of each type parameter position.
+        // This matches tsc's inferFromTypeArguments: contravariant type parameters
+        // (e.g., T in `type Func<T> = (x: T) => void`) swap source/target direction
+        // so that inference candidates are correctly categorized.
         if source_info.base == target_info.base {
-            for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
-                self.infer_from_types(*source_arg, *target_arg, priority)?;
+            // Try to compute variances for the base type's type parameters.
+            // This requires a resolver and a Lazy(DefId) base type.
+            let variances = self.compute_application_variances(source_info.base);
+            for (i, (source_arg, target_arg)) in source_info
+                .args
+                .iter()
+                .zip(target_info.args.iter())
+                .enumerate()
+            {
+                let variance = variances
+                    .as_ref()
+                    .and_then(|v| v.get(i).copied())
+                    .unwrap_or(Variance::COVARIANT);
+                if variance.is_contravariant() {
+                    // Contravariant position: swap source and target so that
+                    // candidates are recorded as contra-candidates (via in_contra_mode)
+                    // or equivalently, infer in the reverse direction.
+                    let was_contra = self.in_contra_mode;
+                    self.in_contra_mode = !was_contra;
+                    self.infer_from_types(*source_arg, *target_arg, priority)?;
+                    self.in_contra_mode = was_contra;
+                } else {
+                    self.infer_from_types(*source_arg, *target_arg, priority)?;
+                }
             }
             return Ok(());
         }
