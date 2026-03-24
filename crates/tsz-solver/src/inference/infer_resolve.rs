@@ -304,8 +304,24 @@ impl<'a> InferenceContext<'a> {
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
-        let upper_bounds_only =
-            candidates.is_empty() && contra_candidates.is_empty() && !upper_bounds.is_empty();
+        // Filter out TypeParameter contra-candidates: these are typically
+        // leaked original type parameters from contextual typing of overloaded
+        // generic calls. They should not drive inference over concrete covariant
+        // candidates. This matches the intent of has_concrete_contra_candidates.
+        let concrete_contra_candidates: Vec<_> = contra_candidates
+            .iter()
+            .filter(|c| {
+                !matches!(
+                    self.interner.lookup(c.type_id),
+                    Some(TypeData::TypeParameter(_))
+                )
+            })
+            .cloned()
+            .collect();
+
+        let upper_bounds_only = candidates.is_empty()
+            && concrete_contra_candidates.is_empty()
+            && !upper_bounds.is_empty();
 
         let declared_constraint = self.declared_constraints.get(&root).copied();
 
@@ -317,7 +333,7 @@ impl<'a> InferenceContext<'a> {
                 &upper_bounds,
                 declared_constraint,
             );
-            if !contra_candidates.is_empty() {
+            if !concrete_contra_candidates.is_empty() {
                 // Match tsc's getInferredType: when both co- and contra-variant
                 // inferences exist, prefer the covariant result ONLY IF:
                 //   1. It is not never or any
@@ -338,7 +354,7 @@ impl<'a> InferenceContext<'a> {
                     TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
                 );
                 let covariant_assignable_to_contra = !covariant_is_uninformative
-                    && contra_candidates.iter().any(|c| {
+                    && concrete_contra_candidates.iter().any(|c| {
                         // Use the external (full checker) assignability test when
                         // available, falling back to the simplified BCT is_subtype.
                         // The BCT checker cannot resolve Lazy (interface/class) types
@@ -354,15 +370,15 @@ impl<'a> InferenceContext<'a> {
                 if covariant_assignable_to_contra {
                     covariant_result
                 } else {
-                    self.resolve_from_contra_candidates(&contra_candidates)
+                    self.resolve_from_contra_candidates(&concrete_contra_candidates)
                 }
             } else {
                 covariant_result
             }
-        } else if !contra_candidates.is_empty() {
+        } else if !concrete_contra_candidates.is_empty() {
             // Only contravariant candidates: use intersection (matches tsc behavior).
             // In tsc, when only contraCandidates exist, getIntersectionType is used.
-            self.resolve_from_contra_candidates(&contra_candidates)
+            self.resolve_from_contra_candidates(&concrete_contra_candidates)
         } else if !upper_bounds.is_empty() {
             // RESTORED: Fall back to upper bounds (constraints) when no candidates exist.
             // This matches TypeScript: un-inferred generics default to their constraint.
@@ -1528,26 +1544,25 @@ impl<'a> InferenceContext<'a> {
                     _ => true,
                 });
             }
+            // Filter out TypeParameter contra-candidates: these are typically
+            // leaked original type parameters from contextual typing of overloaded
+            // generic calls. They should not drive inference over concrete covariant
+            // candidates. This matches the intent of has_concrete_contra_candidates.
+            let concrete_contra_candidates: Vec<_> = info
+                .contra_candidates
+                .iter()
+                .filter(|c| {
+                    !matches!(
+                        self.interner.lookup(c.type_id),
+                        Some(TypeData::TypeParameter(_))
+                    )
+                })
+                .cloned()
+                .collect();
             let result = if !candidates.is_empty() {
                 let covariant_result =
                     self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc);
-                // Filter out raw TypeParameter contra-candidates that are NOT
-                // inference placeholders. These arise from incomplete Application
-                // evaluation: when the solver evaluates Collection<__infer_T>, it
-                // may not fully substitute the interface's T in method parameters,
-                // causing the original T to leak into contra-candidates via
-                // contra-variant function parameter matching. These spurious
-                // TypeParameter candidates should not override the covariant result.
-                let concrete_contra_candidates: Vec<_> = info
-                    .contra_candidates
-                    .iter()
-                    .filter(|c| {
-                        !matches!(
-                            self.interner.lookup(c.type_id),
-                            Some(TypeData::TypeParameter(_))
-                        )
-                    })
-                    .collect();
+                // (TypeParameter filtering already done above)
                 if !concrete_contra_candidates.is_empty() {
                     // Match tsc's getInferredType: prefer covariant ONLY IF it's
                     // assignable to some contra-candidate. Otherwise use contra result.
@@ -1566,13 +1581,13 @@ impl<'a> InferenceContext<'a> {
                     if covariant_assignable_to_contra {
                         covariant_result
                     } else {
-                        self.resolve_from_contra_candidates(&info.contra_candidates)
+                        self.resolve_from_contra_candidates(&concrete_contra_candidates)
                     }
                 } else {
                     covariant_result
                 }
-            } else if !info.contra_candidates.is_empty() {
-                self.resolve_from_contra_candidates(&info.contra_candidates)
+            } else if !concrete_contra_candidates.is_empty() {
+                self.resolve_from_contra_candidates(&concrete_contra_candidates)
             } else {
                 // All covariant candidates were filtered; fall back to upper bounds
                 if info.upper_bounds.len() == 1 {
