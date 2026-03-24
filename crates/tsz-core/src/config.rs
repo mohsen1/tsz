@@ -784,6 +784,7 @@ pub fn resolve_compiler_options(
             resolved.checker.no_implicit_this = true;
             resolved.checker.use_unknown_in_catch_variables = true;
             resolved.checker.always_strict = true;
+            resolved.checker.strict_builtin_iterator_return = true;
             resolved.printer.always_strict = true;
         } else {
             resolved.checker.no_implicit_any = false;
@@ -794,6 +795,7 @@ pub fn resolve_compiler_options(
             resolved.checker.no_implicit_this = false;
             resolved.checker.use_unknown_in_catch_variables = false;
             resolved.checker.always_strict = false;
+            resolved.checker.strict_builtin_iterator_return = false;
             resolved.printer.always_strict = false;
         }
     }
