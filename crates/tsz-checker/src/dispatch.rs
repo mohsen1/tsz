@@ -1261,13 +1261,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 // Get the operand type (strip the ! assertion — removes null/undefined)
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr_ex(node) {
+                    let inner_expr = self
+                        .checker
+                        .ctx
+                        .arena
+                        .skip_parenthesized_and_assertions(unary.expression);
                     let needs_context = request.contextual_type.is_some()
-                        && self.checker.argument_needs_contextual_type(
-                            self.checker
-                                .ctx
-                                .arena
-                                .skip_parenthesized_and_assertions(unary.expression),
-                        );
+                        && (self.checker.argument_needs_contextual_type(inner_expr)
+                            || self.checker.ctx.arena.get(inner_expr).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::CALL_EXPRESSION
+                                    || n.kind == syntax_kind_ext::NEW_EXPRESSION
+                            }));
                     if needs_context {
                         self.checker.clear_type_cache_recursive(unary.expression);
                     }

@@ -485,6 +485,28 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When source (return type) is a union like `E | null`, decompose it
+        // and try each non-nullish member against the target contextual type.
+        // This handles the common pattern `querySelector<E>(...): E | null`
+        // where the contextual type `SVGRectElement` should infer E = SVGRectElement.
+        if let Some(source_members) = common::union_members(self.ctx.types, source) {
+            for member in source_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+            {
+                self.collect_return_context_substitution(
+                    member,
+                    target,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
         if let Some(target_members) = common::union_members(self.ctx.types, target) {
             let before_len = substitution.len();
             for member in target_members
