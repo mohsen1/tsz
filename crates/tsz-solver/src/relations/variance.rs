@@ -728,10 +728,10 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Track when the target parameter appears as the object of an indexed
         // access. This indicates that the type mapping S → S["key"] may
         // normalize away differences between type arguments.
-        if let Some(TypeData::TypeParameter(tp)) = self.computer.db.lookup(object_type) {
-            if tp.name == self.target_param {
-                self.seen_target_in_index_access = true;
-            }
+        if let Some(TypeData::TypeParameter(tp)) = self.computer.db.lookup(object_type)
+            && tp.name == self.target_param
+        {
+            self.seen_target_in_index_access = true;
         }
         let before = self.result;
         self.visit_with_polarity(object_type, current_polarity);
