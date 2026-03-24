@@ -4,6 +4,16 @@
 
 use clap::Parser;
 
+/// Backend mode for running conformance tests.
+#[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum RunMode {
+    /// Use `tsz --batch` process pool (existing behavior).
+    #[default]
+    Cli,
+    /// Use `tsz-server --protocol legacy` for cached lib loading.
+    Server,
+}
+
 /// TypeScript Conformance Test Runner
 ///
 /// High-performance Rust implementation for testing tsz TypeScript compiler
@@ -98,6 +108,15 @@ pub struct Args {
     #[arg(long, default_value_t = 1536)]
     pub max_worker_rss_mb: usize,
 
+    /// Backend mode: "cli" (default, tsz --batch) or "server" (tsz-server --protocol legacy).
+    #[arg(long, default_value = "cli", value_enum)]
+    pub mode: RunMode,
+
+    /// Path to tsz-server binary (used when --mode=server).
+    /// Defaults to tsz-server next to the tsz binary.
+    #[arg(long)]
+    pub server_binary: Option<String>,
+
     /// Write structured parity diff artifacts for failed tests.
     #[arg(long)]
     pub write_diff_artifacts: bool,
@@ -115,6 +134,20 @@ impl Args {
             // No additional validation needed
         }
         Ok(())
+    }
+
+    /// Resolve the tsz-server binary path.
+    #[allow(dead_code)] // Used once server mode is wired up
+    pub fn resolved_server_binary(&self) -> String {
+        if let Some(ref bin) = self.server_binary {
+            return bin.clone();
+        }
+        let tsz = &self.tsz_binary;
+        if tsz.ends_with("/tsz") || tsz.ends_with("\\tsz") {
+            format!("{}-server", tsz)
+        } else {
+            "tsz-server".to_string()
+        }
     }
 
     /// Check if verbose mode should be enabled (either explicitly or via print_test_files)
