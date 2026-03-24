@@ -1171,6 +1171,7 @@ impl<'a> CheckerState<'a> {
                         }
 
                         let mut import_has_value = false;
+                        let mut import_has_type = false;
                         let mut visited = Vec::new();
                         if let Some(resolved_id) = self.resolve_alias_symbol(sym_id, &mut visited)
                             // When resolve_alias_symbol returns the SAME symbol, it
@@ -1209,6 +1210,12 @@ impl<'a> CheckerState<'a> {
                                 has_value = any_instantiated;
                             }
                             import_has_value = has_value;
+                            // Check if the imported symbol carries type semantics
+                            // (e.g. enum, class, interface). When it does, local type
+                            // aliases or interfaces with the same name conflict.
+                            if (resolved_sym.flags & symbol_flags::TYPE) != 0 {
+                                import_has_type = true;
+                            }
                             if (resolved_sym.flags & symbol_flags::ALIAS) != 0
                                 && sym.import_module.is_some()
                                 && sym.import_name.is_none()
@@ -1220,7 +1227,9 @@ impl<'a> CheckerState<'a> {
                         // Cross-file fallback: when resolve_alias_symbol returns the alias
                         // itself (can't resolve cross-file), check the exported symbol's
                         // flags directly in the target file's binder.
-                        if !import_has_value && let Some(ref module_name) = sym.import_module {
+                        if (!import_has_value || !import_has_type)
+                            && let Some(ref module_name) = sym.import_module
+                        {
                             let export_name = sym.import_name.as_deref().unwrap_or(&name);
                             // Try declared modules (module_exports)
                             // Use global_module_binder_index for O(1) lookup instead of O(N) binder scan
@@ -1238,13 +1247,20 @@ impl<'a> CheckerState<'a> {
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
-                                            && (target_sym.flags
+                                        {
+                                            if (target_sym.flags
                                                 & (symbol_flags::VALUE
                                                     | symbol_flags::EXPORT_VALUE))
                                                 != 0
-                                        {
-                                            import_has_value = true;
-                                            break;
+                                            {
+                                                import_has_value = true;
+                                            }
+                                            if (target_sym.flags & symbol_flags::TYPE) != 0 {
+                                                import_has_type = true;
+                                            }
+                                            if import_has_value {
+                                                break;
+                                            }
                                         }
                                     }
                                 } else {
@@ -1254,13 +1270,20 @@ impl<'a> CheckerState<'a> {
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
-                                            && (target_sym.flags
+                                        {
+                                            if (target_sym.flags
                                                 & (symbol_flags::VALUE
                                                     | symbol_flags::EXPORT_VALUE))
                                                 != 0
-                                        {
-                                            import_has_value = true;
-                                            break;
+                                            {
+                                                import_has_value = true;
+                                            }
+                                            if (target_sym.flags & symbol_flags::TYPE) != 0 {
+                                                import_has_type = true;
+                                            }
+                                            if import_has_value {
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -1269,7 +1292,7 @@ impl<'a> CheckerState<'a> {
                             // (module_exports → named re-exports → wildcard re-exports)
                             // to find the actual exported symbol.  Using file_locals directly
                             // would pick up globals leaked by create_binder_from_bound_file.
-                            if !import_has_value
+                            if (!import_has_value || !import_has_type)
                                 && let Some(target_idx) =
                                     self.ctx.resolve_import_target(module_name)
                             {
@@ -1287,6 +1310,9 @@ impl<'a> CheckerState<'a> {
                                             != 0
                                         {
                                             import_has_value = true;
+                                        }
+                                        if (resolved_sym.flags & symbol_flags::TYPE) != 0 {
+                                            import_has_type = true;
                                         }
                                         // Non-type-only re-export aliases forward values
                                         if !import_has_value
@@ -1444,17 +1470,24 @@ impl<'a> CheckerState<'a> {
                                         // conflict with imports.
                                         | syntax_kind_ext::EXPORT_SPECIFIER
                                         | syntax_kind_ext::EXPORT_DECLARATION
-                                        // Type aliases live in the type declaration space
-                                        // and do not conflict with value imports.
-                                        | syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                        // Interface declarations are also type-only and
-                                        // do not conflict with value imports.
-                                        | syntax_kind_ext::INTERFACE_DECLARATION
                                 ) {
+                                    return false;
+                                }
+                                // Type aliases and interfaces live in the type declaration
+                                // space. They only conflict with imports that also carry
+                                // type semantics (e.g. enums, classes).
+                                if !import_has_type
+                                    && matches!(
+                                        decl_node.kind,
+                                        syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                            | syntax_kind_ext::INTERFACE_DECLARATION
+                                    )
+                                {
                                     return false;
                                 }
                                 // Non-import, non-type local declarations (var, function,
                                 // class, namespace, enum) conflict with value imports.
+                                // Type declarations conflict when the import has type meaning.
                                 true
                             } else {
                                 false
@@ -1478,14 +1511,17 @@ impl<'a> CheckerState<'a> {
                                     }
                                     // Skip type-only symbols (type aliases, interfaces) — they
                                     // live in the type declaration space and don't conflict
-                                    // with value imports.
-                                    let type_only_flags = symbol_flags::TYPE_ALIAS
-                                        | symbol_flags::INTERFACE
-                                        | symbol_flags::TYPE_PARAMETER;
-                                    if (other_sym.flags & type_only_flags) != 0
-                                        && (other_sym.flags & symbol_flags::VALUE) == 0
-                                    {
-                                        continue;
+                                    // with value-only imports. When the import also carries
+                                    // type semantics (e.g. enum, class), they DO conflict.
+                                    if !import_has_type {
+                                        let type_only_flags = symbol_flags::TYPE_ALIAS
+                                            | symbol_flags::INTERFACE
+                                            | symbol_flags::TYPE_PARAMETER;
+                                        if (other_sym.flags & type_only_flags) != 0
+                                            && (other_sym.flags & symbol_flags::VALUE) == 0
+                                        {
+                                            continue;
+                                        }
                                     }
                                     // Must have a declaration in the same scope
                                     let decl_in_same_scope =
@@ -1528,7 +1564,7 @@ impl<'a> CheckerState<'a> {
                                                 return false;
                                             }
                                             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                                                !matches!(
+                                                if matches!(
                                                     decl_node.kind,
                                                     syntax_kind_ext::EXPORT_SPECIFIER
                                                         | syntax_kind_ext::EXPORT_DECLARATION
@@ -1538,9 +1574,21 @@ impl<'a> CheckerState<'a> {
                                                         | syntax_kind_ext::NAMED_IMPORTS
                                                         | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                                                         | syntax_kind_ext::IMPORT_DECLARATION
-                                                        | syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                                        | syntax_kind_ext::INTERFACE_DECLARATION
-                                                )
+                                                ) {
+                                                    return false;
+                                                }
+                                                // Type declarations only conflict when
+                                                // the import also carries type semantics.
+                                                if !import_has_type
+                                                    && matches!(
+                                                        decl_node.kind,
+                                                        syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                            | syntax_kind_ext::INTERFACE_DECLARATION
+                                                    )
+                                                {
+                                                    return false;
+                                                }
+                                                true
                                             } else {
                                                 false
                                             }
@@ -1564,6 +1612,9 @@ impl<'a> CheckerState<'a> {
                                 &message,
                                 diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             );
+                        // Record so TS2456 can be suppressed for type aliases
+                        // whose apparent circularity is caused by this conflict.
+                        self.ctx.import_conflict_names.insert(name.clone());
                     }
                 }
             }

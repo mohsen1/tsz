@@ -595,6 +595,10 @@ pub struct CheckerContext<'a> {
     /// members on the resolution stack between the target and the current
     /// alias are marked circular.
     pub circular_type_aliases: FxHashSet<SymbolId>,
+    /// Names for which TS2440 (import conflicts with local declaration) was
+    /// emitted.  Used to suppress TS2456 for type aliases whose apparent
+    /// circularity is caused by the name conflict rather than a real cycle.
+    pub import_conflict_names: FxHashSet<String>,
     /// Tracks module specifiers whose namespace types are currently being computed.
     /// Prevents infinite recursion when circular module imports eagerly resolve all exports
     /// (e.g. react's `prop-types` ↔ `react` cycle in react16.d.ts).

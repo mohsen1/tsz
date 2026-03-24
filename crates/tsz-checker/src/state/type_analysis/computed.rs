@@ -935,7 +935,19 @@ impl<'a> CheckerState<'a> {
                     // malformed type parameter lists).  tsc does the same:
                     // it skips semantic circularity errors when syntax errors
                     // are present.
-                    if !self.has_parse_errors() {
+                    // Suppress TS2456 when:
+                    // 1. The file has parse errors (syntax errors take priority)
+                    // 2. The type alias has an import alias partner — the apparent
+                    //    circularity is caused by the name conflict (TS2440 will
+                    //    be emitted instead during statement checking).
+                    let has_import_partner = self
+                        .ctx
+                        .binder
+                        .alias_partners
+                        .get(&sym_id)
+                        .and_then(|&partner_id| self.ctx.binder.get_symbol(partner_id))
+                        .is_some_and(|partner| partner.flags & symbol_flags::ALIAS != 0);
+                    if !self.has_parse_errors() && !has_import_partner {
                         let name = escaped_name;
                         let message = format_message(
                             diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
