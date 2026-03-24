@@ -960,11 +960,11 @@ impl<'a> CheckerState<'a> {
                 let key_is_number = key_type == TypeId::NUMBER;
 
                 // TS2538: Type cannot be used as an index type.
-                // For computed property names in destructuring, tsc allows
-                // `symbol` and `unique symbol` types (they are valid property
-                // keys), but rejects `any`, `void`, `boolean`, etc. through
-                // its `isValidIndexType` check.  We match this by allowing
-                // symbol-like types to pass without the strict validation.
+                // For computed property names in destructuring, tsc rejects
+                // types like `any`, `void`, `boolean`, etc. through its
+                // `isValidIndexType` check.  Symbol/unique-symbol types pass
+                // the general validity check but are handled separately below
+                // (they can't match string/number index signatures).
                 // ERROR types from failed expressions are treated as `any`
                 // for this check — tsc cascades TS2538 after prior expression errors.
                 let key_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
@@ -997,6 +997,30 @@ impl<'a> CheckerState<'a> {
                             crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                         );
                     }
+                }
+
+                // TS2538: symbol and unique symbol types cannot index into objects
+                // through string/number index signatures in destructuring.
+                // If the object had a property matching the specific symbol,
+                // it would have been resolved earlier via get_computed_binding_element_type_from_parent.
+                if !key_is_string
+                    && !key_is_number
+                    && !key_is_type_param
+                    && key_type != TypeId::NEVER
+                    && key_type != TypeId::ERROR
+                    && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
+                {
+                    let key_type_str = self.format_type(key_type);
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        &[&key_type_str],
+                    );
+                    let error_node = computed_expr.unwrap_or(element_data.property_name);
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                    );
                 }
 
                 if key_is_string || key_is_number {
