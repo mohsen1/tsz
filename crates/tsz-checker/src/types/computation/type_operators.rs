@@ -153,10 +153,10 @@ impl<'a> CheckerState<'a> {
                     // Also check if the resolved type is still a Lazy pointing
                     // to the same DefId — factory.lazy(def_id) may intern to a
                     // different TypeId than the original operand.
-                    if let Some(resolved_def) = tsz_solver::lazy_def_id(self.ctx.types, resolved) {
-                        if resolved_def == def_id {
-                            return deferred_keyof;
-                        }
+                    if let Some(resolved_def) = tsz_solver::lazy_def_id(self.ctx.types, resolved)
+                        && resolved_def == def_id
+                    {
+                        return deferred_keyof;
                     }
                     // Recursively get keyof of the resolved type
                     return self.get_keyof_type(resolved);

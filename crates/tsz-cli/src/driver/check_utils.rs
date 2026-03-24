@@ -205,7 +205,7 @@ pub(super) fn required_helpers(
     if es_module_interop {
         let mut helpers = detect_es_module_interop_helpers(file);
         if !helpers.is_empty() {
-            result.extend(helpers.drain(..));
+            result.append(&mut helpers);
         }
     }
 
@@ -219,7 +219,7 @@ pub(super) fn required_helpers(
 /// - `import { default as X } from "m"` (non-type-only) → `__importDefault` at `default` keyword
 /// - `export { default } from "m"` or `export { default as X } from "m"` → `__importDefault` at `default` keyword
 /// - `export * as ns from "m"` → `__importStar` at export statement
-/// - `export * from "m"` (no export_clause) → `__exportStar` at export statement
+/// - `export * from "m"` (no `export_clause`) → `__exportStar` at export statement
 ///
 /// Note: `import X from "m"` (bare default import) does NOT require __importDefault in tsc.
 fn detect_es_module_interop_helpers(file: &BoundFile) -> Vec<(&'static str, u32, u32)> {
