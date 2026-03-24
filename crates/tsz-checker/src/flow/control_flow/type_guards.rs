@@ -9,6 +9,7 @@ use tsz_solver::{SymbolRef, TypeGuard, TypeId, TypeResolver, TypeofKind};
 use crate::state::MAX_TREE_WALK_ITERATIONS;
 
 use super::FlowAnalyzer;
+use crate::query_boundaries::flow_analysis as flow_query;
 
 impl<'a> FlowAnalyzer<'a> {
     /// Check if a reference node is a mutable variable (let/var) as opposed to const.
@@ -432,30 +433,45 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(predicates) = self.call_type_predicates
             && let Some((predicate, params)) = predicates.get(&condition.0)
         {
-            // When the instantiated predicate type equals the full argument type,
-            // it means inference failed to subtract fixed members (e.g.,
-            // `isSuccess<T>(result: Result<T>): result is T` maps T to the full
-            // arg type instead of the inferred portion). Skip this path and fall
-            // through to the callee-type-based resolution (step 3+) which can
-            // use resolve_generic_predicate with the uninstantiated signature.
-            let should_skip = if let Some(pred_type) = predicate.type_id
-                && matches!(
-                    self.interner.lookup(pred_type),
-                    Some(tsz_solver::TypeData::Union(_))
-                ) {
-                if let Some(node_types) = self.node_types
-                    && let Some(&arg_idx) = call.arguments.as_ref().and_then(|a| a.nodes.first())
-                    && let Some(&arg_type) = node_types.get(&arg_idx.0)
-                {
-                    pred_type == arg_type
-                } else {
-                    false
-                }
+            // When the solver infers T = ArgType (full argument type instead of the
+            // narrowed subtype), the predicate type becomes a union matching the argument.
+            // This happens when the parameter type is a type alias like `Result<T> = T | "FAILURE"`
+            // and inference maps T to the full argument (number | "FAILURE") instead of
+            // subtracting the concrete union members (yielding just number).
+            // Detect: if the original predicate was a type parameter AND the instantiated
+            // predicate type equals the argument type for the predicated parameter,
+            // the inference was trivial. Skip cache and let the fallback resolve it.
+            let should_skip_cache = if let Some(pred_ty) = predicate.type_id
+                && tsz_solver::type_queries::get_union_members(self.interner, pred_ty).is_some()
+                && let Some(param_idx) = predicate.parameter_index
+            {
+                let callee_idx = self.skip_parens_and_assertions(call.expression);
+                let orig_is_type_param = self
+                    .node_types
+                    .and_then(|nt| nt.get(&callee_idx.0).copied())
+                    .and_then(|callee_type| {
+                        flow_query::extract_predicate_signature(self.interner, callee_type)
+                    })
+                    .and_then(|sig| sig.predicate.type_id)
+                    .is_some_and(|orig_pred| {
+                        flow_query::type_param_info(self.interner, orig_pred).is_some()
+                    });
+                // Only skip if the predicate type matches the argument type
+                // (indicating T was set to the full argument type, not a proper subset)
+                let pred_matches_arg = orig_is_type_param
+                    && call
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.nodes.get(param_idx))
+                        .and_then(|&arg_idx| {
+                            self.node_types.and_then(|nt| nt.get(&arg_idx.0).copied())
+                        })
+                        .is_some_and(|arg_type| arg_type == pred_ty);
+                pred_matches_arg
             } else {
                 false
             };
-
-            if !should_skip {
+            if !should_skip_cache {
                 let target_node = self.predicate_target_expression(call, predicate, params)?;
                 let guard = if let Some(type_id) = predicate.type_id {
                     TypeGuard::Predicate {
@@ -467,7 +483,7 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 return Some((guard, target_node, is_optional));
             }
-            // Fall through to step 3 for callee-type-based resolution
+            // else: fall through to step 3 (callee-type-based resolution)
         }
 
         // 3. Resolve callee type (skip parens/assertions to handle (isString as any)(x))
