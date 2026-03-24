@@ -1319,10 +1319,10 @@ foo({ x: false, y: 0, z: "" });
 }
 
 #[test]
-fn test_generic_callback_return_mismatch_reports_ts2345_for_simple_expression_body() {
-    // tsc reports TS2345 on the whole argument for expression-bodied arrow functions
-    // with simple expression bodies (not object/array literals), rather than
-    // elaborating with TS2322 on the body expression.
+fn test_generic_callback_return_mismatch_reports_ts2345_for_identifier_expression_body() {
+    // For expression-bodied arrow functions with identifier bodies (like `undefined`),
+    // we report TS2345 on the outer argument rather than TS2322 on the body.
+    // This avoids false elaboration when the identifier references a complex type.
     let source = r#"
 function someGenerics3<T>(producer: () => T) { }
 someGenerics3<number>(() => undefined);
@@ -1338,11 +1338,11 @@ someGenerics3<number>(() => undefined);
 
     assert!(
         has_ts2345,
-        "Expected TS2345 for simple expression-bodied callback return mismatch, got: {diagnostics:?}"
+        "Expected TS2345 on the outer argument for identifier body, got: {diagnostics:?}"
     );
     assert!(
         !has_ts2322,
-        "Did not expect inner TS2322 for simple expression body, got: {diagnostics:?}"
+        "Did not expect inner TS2322 for identifier expression body, got: {diagnostics:?}"
     );
 }
 

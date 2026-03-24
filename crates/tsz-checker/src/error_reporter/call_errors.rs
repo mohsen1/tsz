@@ -708,8 +708,7 @@ impl<'a> CheckerState<'a> {
             {
                 self.try_elaborate_object_literal_arg_error(func.body, expected_return_type)
             }
-            k if k == SyntaxKind::Identifier as u16
-                || k == SyntaxKind::StringLiteral as u16
+            k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
                 || k == SyntaxKind::TrueKeyword as u16
                 || k == SyntaxKind::FalseKeyword as u16
@@ -718,12 +717,58 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == syntax_kind_ext::CALL_EXPRESSION
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                // For expression-bodied arrows with simple literal/expression bodies,
+                // check if the return expression type is assignable to the expected
+                // return type. tsc reports TS2322 on the return expression when the
+                // type violates the expected return type (e.g., returning a string
+                // where Function is expected in a property assignment context).
+                //
+                // Skip void expected return types: void-returning callbacks accept any
+                // return value, so elaborating would produce false positives.
+                // Skip when the function is a direct call argument in a non-generic
+                // call: tsc only elaborates callback returns in generic call contexts
+                // or non-call contexts (property assignments, return statements).
+                if expected_return_type == TypeId::VOID {
+                    return false;
+                }
+                // Check if the function expression is a direct call argument.
+                // tsc only elaborates callback return types in non-call contexts
+                // (property assignments, variable declarations, return statements).
+                // In call argument contexts, tsc reports TS2345 on the argument.
+                if let Some(ext) = self.ctx.arena.get_extended(arg_idx) {
+                    let parent_idx = ext.parent;
+                    if parent_idx != NodeIndex::NONE {
+                        if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
+                            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                                || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                let body_type = self.get_type_of_node(func.body);
+                if body_type == TypeId::ERROR
+                    || body_type == TypeId::ANY
+                    || expected_return_type == TypeId::ERROR
+                    || expected_return_type == TypeId::ANY
+                    || self.is_assignable_to(body_type, expected_return_type)
+                {
+                    return false;
+                }
+                // Widen literal types for display (e.g. "abc" → string) to match tsc behavior
+                let display_type = self.widen_type_for_display(body_type);
+                self.error_type_not_assignable_at(display_type, expected_return_type, func.body);
+                true
+            }
+            k if k == SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::CONDITIONAL_EXPRESSION =>
             {
-                // tsc does not elaborate simple expression-bodied arrow functions.
-                // It reports TS2345 at the call argument level, not TS2322 on the
-                // return expression. Let the caller emit TS2345 instead.
+                // Identifiers may reference complex types (e.g., function references)
+                // and conditionals need branch-level elaboration. Let the caller
+                // handle these at the argument/assignment level.
                 false
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
