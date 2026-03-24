@@ -285,10 +285,10 @@ impl<'a> CheckerState<'a> {
         for &member_idx in member_nodes {
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.escaped_name == name
+                && (symbol.flags & symbol_flags::STATIC == 0)
             {
-                if symbol.escaped_name == name && (symbol.flags & symbol_flags::STATIC == 0) {
-                    return true;
-                }
+                return true;
             }
         }
         false
