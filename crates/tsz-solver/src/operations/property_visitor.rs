@@ -652,19 +652,28 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     nullable_causes.push(cause);
                 }
                 // PropertyNotFound: if a non-empty-object member is missing the property,
-                // the property does not exist on the union. Empty object types ({}) are
-                // only treated as partial in the fresh object-literal normalization lane.
-                // For ordinary unions like `T | {}`, read access must still report that
-                // the property does not exist until the expression is widened by a write
-                // or other widening position.
+                // the property does not exist on the union.
+                //
+                // Fresh empty object types ({} from object literal expressions, e.g.
+                // `options || {}`) are treated as partial: they contribute `undefined`
+                // for any property that exists on other members. This matches tsc's
+                // behavior where `(x || {}).prop` is allowed when `x` has `prop`.
+                // Non-fresh empty objects (from type annotations like `T | {}`) are NOT
+                // treated as partial — tsc reports TS2339 for those.
                 //
                 // If the union also contains nullable members (null/undefined), tsc
                 // prioritizes reporting "possibly null/undefined" (TS18049) over
                 // "property does not exist" (TS2339). So we defer the PropertyNotFound
                 // decision until after all members have been processed.
                 PropertyAccessResult::PropertyNotFound { .. } => {
-                    if fresh_object_union && crate::is_empty_object_type(self.interner(), member) {
-                        // Empty object: treat as partial, property yields undefined
+                    let is_fresh_empty = crate::is_empty_object_type(self.interner(), member)
+                        && (fresh_object_union
+                            || crate::relations::freshness::is_fresh_object_type(
+                                self.interner(),
+                                member,
+                            ));
+                    if is_fresh_empty {
+                        // Fresh empty object: treat as partial, property yields undefined
                         valid_results.push(TypeId::UNDEFINED);
                         valid_write_results.push(TypeId::UNDEFINED);
                         all_from_index = false;
