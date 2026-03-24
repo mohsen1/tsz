@@ -624,9 +624,10 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Plain mapped types like `Record<P, T> = { [K in P]: T }` do NOT need
         // fallback because the key set P is a direct type argument, not derived
         // through `keyof`, so variance correctly captures the relationship.
-        if mapped.optional_modifier.is_some() || mapped.readonly_modifier.is_some() {
-            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
-        } else if self.constraint_uses_keyof_of_target(mapped.constraint) {
+        if mapped.optional_modifier.is_some()
+            || mapped.readonly_modifier.is_some()
+            || self.constraint_uses_keyof_of_target(mapped.constraint)
+        {
             self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
         }
 

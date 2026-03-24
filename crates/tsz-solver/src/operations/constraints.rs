@@ -588,7 +588,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 self.interner.lookup(evaluated)
                             {
                                 let inner = self.interner.type_list(inner_members);
-                                if inner.iter().any(|&m| m == source) {
+                                if inner.contains(&source) {
                                     return true;
                                 }
                             }

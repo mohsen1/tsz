@@ -562,8 +562,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Note: This suppression is intentionally NOT applied for variable declarations
     /// (see `try_elaborate_object_literal_properties_for_var_init`), because it can
-    /// silence real errors like `var b: Boolean = {}` where the Object.prototype
-    /// valueOf() return type is incompatible with the target's requirements.
+    /// silence real errors like `var b: Boolean = {}` where the `Object.prototype`
+    /// `valueOf()` return type is incompatible with the target's requirements.
     pub(crate) fn should_suppress_object_literal_call_mismatch(
         &mut self,
         source_type: TypeId,

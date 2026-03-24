@@ -364,14 +364,14 @@ impl<'a> CheckerState<'a> {
         // never terminates. tsc handles this the same way.
         // Wrapped self-calls (e.g., `return [fn][0]()`) are handled separately via
         // TS7023 and keep `any` as their return type.
-        if result == TypeId::ANY && return_context.is_none() {
-            if let Some(sym_id) = self.ctx.binder.get_node_symbol(function_idx)
-                && self.ctx.symbol_resolution_set.contains(&sym_id)
-                && self.all_returns_are_direct_self_calls(body_idx, sym_id)
-            {
-                self.ctx.rollback_return_type(&snap);
-                return TypeId::NEVER;
-            }
+        if result == TypeId::ANY
+            && return_context.is_none()
+            && let Some(sym_id) = self.ctx.binder.get_node_symbol(function_idx)
+            && self.ctx.symbol_resolution_set.contains(&sym_id)
+            && self.all_returns_are_direct_self_calls(body_idx, sym_id)
+        {
+            self.ctx.rollback_return_type(&snap);
+            return TypeId::NEVER;
         }
 
         // Fix Lazy class return types: when a method body returns a class reference
