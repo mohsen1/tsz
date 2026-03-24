@@ -831,8 +831,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
-        // Property access on `never` returns `never` (bottom type propagation).
-        // In TypeScript, this is an error: Property 'X' does not exist on type 'never'.
+        // Property access on `never` emits TS2339 and returns `error` type.
+        // In TypeScript, `never` has no properties — accessing any property is an error.
+        // Returning `error` (not `never`) matches tsc behavior: when a property doesn't
+        // exist, tsc returns `errorType` which suppresses cascading diagnostics (e.g.
+        // TS2322 on `ab.y = 'hello'` when `ab: never`).
         if object_type == TypeId::NEVER {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;
@@ -845,7 +848,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
-            return TypeId::NEVER;
+            return TypeId::ERROR;
         }
 
         // Enforce private/protected access modifiers when possible.
