@@ -434,8 +434,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Without this condition, we would incorrectly reject valid assignments like:
         // - { a: string } <: { a?: string } (required to optional)
         // - { x: undefined } <: { x?: number } (undefined to optional)
+        // TypeId::NONE is a sentinel for "no distinct write type" (used by readonly
+        // properties from the lowering pass). Treat NONE as "same as type_id" so
+        // readonly properties don't falsely trigger the split-accessor write check.
         let has_split_accessor =
-            source.write_type != source.type_id || target.write_type != target.type_id;
+            (source.write_type != TypeId::NONE && source.write_type != source.type_id)
+                || (target.write_type != TypeId::NONE && target.write_type != target.type_id);
 
         if !target.readonly && has_split_accessor {
             let source_write = self.bind_property_receiver_this(
@@ -858,7 +862,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
                 if !t_prop.readonly
-                    && (sp.write_type != sp.type_id || t_prop.write_type != t_prop.type_id)
+                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
+                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
                 {
                     let source_write = self.bind_property_receiver_this(
                         source_receiver,
@@ -1146,11 +1151,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Get the effective write type of an optional property.
+    /// Falls back to `type_id` when `write_type` is `NONE` (readonly sentinel).
     pub(crate) fn optional_property_write_type(&self, prop: &PropertyInfo) -> TypeId {
+        let write = if prop.write_type == TypeId::NONE { prop.type_id } else { prop.write_type };
         if prop.optional && !self.exact_optional_property_types {
-            self.interner.union2(prop.write_type, TypeId::UNDEFINED)
+            self.interner.union2(write, TypeId::UNDEFINED)
         } else {
-            prop.write_type
+            write
         }
     }
 
