@@ -248,6 +248,18 @@ impl CheckerState<'_> {
         };
         let param_type_map = self.js_class_body_param_type_map(body_idx);
 
+        // Check if the enclosing function has a JSDoc @this tag.
+        // When @this provides an explicit type for `this`, all properties
+        // from `this.x` assignments inherit their types from the @this type,
+        // so TS7008 should be suppressed.
+        let enclosing_has_this_tag = self
+            .ctx
+            .arena
+            .get_extended(body_idx)
+            .map(|ext| ext.parent)
+            .and_then(|func_idx| self.get_jsdoc_for_function(func_idx))
+            .is_some_and(|jsdoc| jsdoc.contains("@this"));
+
         // Phase 1: Detect `var/let/const alias = this` patterns
         let this_aliases = self.collect_this_aliases(&stmts);
 
@@ -330,19 +342,12 @@ impl CheckerState<'_> {
                     // an explicitly-typed source (e.g., a parameter with @param {any}).
                     // If so, the member's `any` type is explicit, not implicit.
                     //
-                    // Also treat `this.z = this.y` (property access on `this`) as
-                    // explicit: the property type comes from the constructor, so the
-                    // `any` is due to incomplete prototype-method `this` context, not
-                    // a genuinely untyped source. tsc does not emit TS7008 here.
-                    if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
-                        && rhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        && let Some(rhs_access) = self.ctx.arena.get_access_expr(rhs_node)
-                        && self
-                            .ctx
-                            .arena
-                            .get(rhs_access.expression)
-                            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
-                    {
+                    // Also treat expressions rooted on `this` as explicit:
+                    // `this.z = this.y`, `this[x] = this[y].bind(this)`, etc.
+                    // The property type comes from the class/constructor, so the
+                    // `any` is due to incomplete `this` context during class building,
+                    // not a genuinely untyped source. tsc does not emit TS7008 here.
+                    if self.expression_roots_in_this(rhs_idx) {
                         any_is_explicit = true;
                     }
                     if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
@@ -401,7 +406,7 @@ impl CheckerState<'_> {
                 TypeId::ANY
             };
 
-            if self.ctx.no_implicit_any() && !any_is_explicit {
+            if self.ctx.no_implicit_any() && !any_is_explicit && !enclosing_has_this_tag {
                 let implicit_type = if type_id == TypeId::ANY {
                     Some("any")
                 } else if tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
@@ -508,6 +513,33 @@ impl CheckerState<'_> {
             }
         }
         aliases
+    }
+
+    /// Check if an expression is rooted in `this` — i.e., is `this`,
+    /// `this.x`, `this[x]`, `this.x.bind(...)`, `this[x].call(...)`, etc.
+    /// Used to suppress TS7008 when the `any` type comes from incomplete
+    /// `this` context during class type building, not a genuinely untyped source.
+    fn expression_roots_in_this(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::ThisKeyword as u16 => true,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.ctx
+                    .arena
+                    .get_access_expr(node)
+                    .is_some_and(|a| self.expression_roots_in_this(a.expression))
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .ctx
+                .arena
+                .get_call_expr(node)
+                .is_some_and(|c| self.expression_roots_in_this(c.expression)),
+            _ => false,
+        }
     }
 
     /// Extract a `this.propName = rhs`, `alias.propName = rhs`,

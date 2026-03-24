@@ -337,6 +337,10 @@ pub struct CompilerOptions {
     /// Preserve const enum declarations in emitted code.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub preserve_const_enums: Option<bool>,
+    /// Options that had TS5024 type errors — should NOT have defaults applied.
+    /// This is set during tsconfig parsing and is not deserialized from JSON.
+    #[serde(skip)]
+    pub invalidated_options: Vec<String>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -915,8 +919,15 @@ pub fn resolve_compiler_options(
             resolved.allow_synthetic_default_imports = true;
             resolved.checker.allow_synthetic_default_imports = true;
         }
-    } else {
+    } else if !options
+        .invalidated_options
+        .iter()
+        .any(|k| k == "esModuleInterop")
+    {
         // tsc 6.0 defaults esModuleInterop to true when not explicitly set.
+        // But do NOT apply the default when TS5024 fired for this option —
+        // tsc treats a type-mismatched value as if the option was never set
+        // (no default, stays false).
         resolved.es_module_interop = true;
         resolved.checker.es_module_interop = true;
         resolved.printer.es_module_interop = true;
@@ -1035,6 +1046,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
     let mut suppress_excess = false;
     let mut suppress_any_index = false;
     let mut no_implicit_use_strict = false;
+
+    // Track options that had TS5024 type errors — defaults should not be applied for these.
+    let mut ts5024_keys_outer: Vec<String> = Vec::new();
 
     // Check compiler options for unknown/miscased keys
     if let Some(obj) = raw.as_object_mut()
@@ -2072,6 +2086,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
             }
         }
+
+        // Propagate ts5024_keys out of this scope for use in resolve_compiler_options.
+        ts5024_keys_outer = ts5024_keys;
     }
 
     // TS5024 for top-level tsconfig properties with wrong types.
@@ -2109,7 +2126,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         obj.insert("files".to_string(), serde_json::Value::Null);
     }
 
-    let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
+    let mut config: TsConfig =
+        serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
+
+    // Attach TS5024 invalidated keys so resolve_compiler_options knows not to apply defaults.
+    if let Some(ref mut opts) = config.compiler_options {
+        opts.invalidated_options = ts5024_keys_outer;
+    }
 
     Ok(ParsedTsConfig {
         config,
@@ -2841,12 +2864,15 @@ fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
 /// Every `Option` field in `CompilerOptions` uses `.or()` — child wins when present.
 macro_rules! merge_options {
     ($child:expr, $base:expr, $Struct:ident { $($field:ident),* $(,)? }) => {
-        $Struct { $( $field: $child.$field.or($base.$field), )* }
+        $Struct { $( $field: $child.$field.or($base.$field), )* ..Default::default() }
     };
 }
 
 fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> CompilerOptions {
-    merge_options!(
+    // Merge invalidated_options from both base and child (child takes priority).
+    let mut invalidated = child.invalidated_options.clone();
+    invalidated.extend(base.invalidated_options.iter().cloned());
+    let mut merged = merge_options!(
         child,
         base,
         CompilerOptions {
@@ -2926,7 +2952,9 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             allow_umd_global_access,
             preserve_const_enums,
         }
-    )
+    );
+    merged.invalidated_options = invalidated;
+    merged
 }
 
 fn parse_script_target(value: &str) -> Result<ScriptTarget> {
