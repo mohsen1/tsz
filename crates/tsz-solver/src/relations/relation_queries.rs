@@ -435,23 +435,10 @@ pub fn check_application_variance<R: TypeResolver>(
         return Some(true);
     }
 
-    // When structural fallback is needed, variance failures are NOT definitive.
-    // The type parameter may appear through complex type operations (indexed access,
-    // mapped types with modifiers) where different type arguments can produce
-    // structurally equivalent results despite not being subtypes of each other.
-    // Examples:
-    // - `S["base"] & S["new"]` produces the same structure for `{base: B, new: N}`
-    //   and `{base: B, new: N & B}` despite type arguments not being subtypes.
-    // - Homomorphic mapped types with non-identity templates: `ToA<{x:n}>` is
-    //   assignable to `ToA<{}>` because `ToA<{}>` evaluates to `{}`.
-    if needs_structural_fallback {
-        return None;
-    }
-
-    // Without structural fallback concerns, variance failures are definitive:
-    // if the type arguments fail the variance check, the generic types
-    // cannot be compatible.
-    Some(false)
+    // Variance failure is not definitive — return None to fall through to
+    // structural comparison. TypeScript always falls through when
+    // typeArgumentsRelatedTo fails.
+    None
 }
 
 #[cfg(test)]

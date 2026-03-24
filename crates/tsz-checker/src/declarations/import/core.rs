@@ -879,16 +879,39 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         } else {
-                            // TS2305: Symbol doesn't exist in the module at all
-                            let message = format_message(
-                                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                                &[&quoted_module, import_name],
-                            );
-                            self.error_at_node(
-                                specifier.name,
-                                &message,
-                                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                            );
+                            // Check for spelling suggestions (TS2724) before TS2305
+                            let export_names: Vec<&str> = exports_table
+                                .iter()
+                                .map(|(name, _)| name.as_str())
+                                .collect();
+                            if let Some(suggestion) =
+                                tsz_parser::parser::spelling::get_spelling_suggestion(
+                                    import_name,
+                                    &export_names,
+                                )
+                            {
+                                // TS2724: did you mean?
+                                let message = format_message(
+                                    diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+                                    &[&quoted_module, import_name, suggestion],
+                                );
+                                self.error_at_node(
+                                    specifier.name,
+                                    &message,
+                                    diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+                                );
+                            } else {
+                                // TS2305: Symbol doesn't exist in the module at all
+                                let message = format_message(
+                                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                                    &[&quoted_module, import_name],
+                                );
+                                self.error_at_node(
+                                    specifier.name,
+                                    &message,
+                                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                                );
+                            }
                         }
                     }
                 } else {
