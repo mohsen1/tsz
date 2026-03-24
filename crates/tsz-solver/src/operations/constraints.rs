@@ -529,6 +529,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 return;
                             }
                         }
+
+                        // When the target Application has placeholder args and expands
+                        // to a union, expand it first and use Union-Union logic with
+                        // fixed member filtering. This prevents source members that match
+                        // fixed target members (e.g., "FAILURE" in `T | "FAILURE"`) from
+                        // being incorrectly added as inference candidates.
+                        //
+                        // Without this, `number | "FAILURE"` against `MyResult<T>` (where
+                        // `MyResult<T> = T | "FAILURE"`) would decompose the source into
+                        // `number` and `"FAILURE"`, constrain each against the Application
+                        // individually, and infer T = number | "FAILURE" instead of T = number.
+                        let t_app_args_clone = t_app.args.clone();
+                        let has_placeholder = {
+                            let mut visited = FxHashSet::default();
+                            t_app_args_clone
+                                .iter()
+                                .any(|arg| self.type_contains_placeholder(*arg, var_map, &mut visited))
+                        };
+                        if has_placeholder
+                            && let Some(expanded) = self.checker.expand_type_alias_application(target)
+                            && expanded != target
+                            && matches!(self.interner.lookup(expanded), Some(TypeData::Union(_)))
+                        {
+                            // Redirect to Union-Union path with the expanded target
+                            self.constrain_types(ctx, var_map, source, expanded, priority);
+                            return;
+                        }
+
                         for &member in s_members.iter() {
                             self.constrain_types(ctx, var_map, member, target, priority);
                         }
