@@ -1161,6 +1161,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        // No `return` property found in the object shape — skip the check.
+        // Types without shapes (built-in iterators, generics) don't get TS2767
+        // because their `return` methods come from parameterized interfaces and
+        // are always valid methods.
         false
     }
 
