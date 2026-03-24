@@ -687,6 +687,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     });
                 }
                 if !t_prop.readonly
+                    && !sp.readonly
                     && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
                         || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
                 {
@@ -895,6 +896,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     });
                 }
                 if !t_prop.readonly
+                    && !sp.readonly
                     && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
                         || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
                 {
