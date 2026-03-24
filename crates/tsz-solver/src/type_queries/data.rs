@@ -620,6 +620,32 @@ pub fn extract_type_params_for_call(
     }
 }
 
+/// For a callable type with overloads, returns the distinct type-parameter counts
+/// that the overloads accept. Returns `None` for non-callable types or types with
+/// only one signature. Used by the checker to emit TS2743 when no overload matches
+/// the provided type argument count.
+pub fn overload_type_param_counts(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<usize>> {
+    match db.lookup(type_id) {
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            // Collect all signatures (call + construct)
+            let all_sigs = shape
+                .call_signatures
+                .iter()
+                .chain(shape.construct_signatures.iter());
+            let mut counts: Vec<usize> = all_sigs.map(|sig| sig.type_params.len()).collect();
+            counts.sort_unstable();
+            counts.dedup();
+            if counts.len() >= 2 {
+                Some(counts)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Get a `CallableShape` for any callable type (Function or Callable).
 ///
 /// For Callable types: returns the shape directly.

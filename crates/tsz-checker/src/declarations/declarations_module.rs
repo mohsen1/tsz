@@ -214,13 +214,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             {
                 // First check: is the direct parent a valid context (SourceFile or ModuleBlock)?
                 // If not, emit TS1234 (wrong context takes priority over nesting check).
+                // Note: when the module declaration is wrapped in `export`, the immediate
+                // parent is EXPORT_DECLARATION. In that case, check the grandparent.
                 let is_valid_context = if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
                     let parent = ext.parent;
                     if parent.is_none() {
                         true
                     } else if let Some(parent_node) = self.ctx.arena.get(parent) {
-                        parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                        if parent_node.kind == syntax_kind_ext::SOURCE_FILE
                             || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                        {
+                            true
+                        } else if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            // Look through export wrapper to check grandparent
+                            self.ctx
+                                .arena
+                                .get_extended(parent)
+                                .and_then(|gp_ext| self.ctx.arena.get(gp_ext.parent))
+                                .map_or(true, |gp_node| {
+                                    gp_node.kind == syntax_kind_ext::SOURCE_FILE
+                                        || gp_node.kind == syntax_kind_ext::MODULE_BLOCK
+                                })
+                        } else {
+                            false
+                        }
                     } else {
                         true
                     }

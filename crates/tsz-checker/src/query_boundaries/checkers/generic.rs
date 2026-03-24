@@ -99,6 +99,15 @@ pub(crate) fn extract_type_params_for_call(
     tsz_solver::type_queries::data::extract_type_params_for_call(db, callee_type, type_arg_count)
 }
 
+/// For callable types with overloads, returns the distinct type-parameter counts
+/// accepted by different overloads. Used to emit TS2743 instead of TS2558.
+pub(crate) fn overload_type_param_counts(
+    db: &dyn TypeDatabase,
+    callee_type: TypeId,
+) -> Option<Vec<usize>> {
+    tsz_solver::type_queries::data::overload_type_param_counts(db, callee_type)
+}
+
 // =========================================================================
 // Index-key classification
 // =========================================================================
