@@ -1194,8 +1194,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return Some(true);
         }
 
-        // unknown is not assignable to non-top types
+        // unknown is not assignable to non-top types, UNLESS the target is
+        // the decomposed form of unknown: `{} | null | undefined`.
+        // In TypeScript, `unknown === {} | null | undefined`, so unknown must
+        // be assignable to any union that covers all three constituents.
         if source == TypeId::UNKNOWN {
+            if self.empty_object_with_nullish_target(target).is_some() {
+                return Some(true);
+            }
             return Some(false);
         }
 

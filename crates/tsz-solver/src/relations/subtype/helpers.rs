@@ -316,14 +316,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             candidates.push(evaluated);
         }
 
-        if let Some(info) = type_param_info(self.interner, object_type)
-            && let Some(constraint) = info.constraint
-            && !crate::visitor::is_type_parameter(self.interner, constraint)
-            && !crate::visitor::is_this_type(self.interner, constraint)
-        {
-            self.collect_index_access_upper_bound_candidates(
-                constraint, key_type, original, candidates,
-            );
+        if let Some(info) = type_param_info(self.interner, object_type) {
+            if let Some(constraint) = info.constraint
+                && !crate::visitor::is_type_parameter(self.interner, constraint)
+                && !crate::visitor::is_this_type(self.interner, constraint)
+            {
+                self.collect_index_access_upper_bound_candidates(
+                    constraint, key_type, original, candidates,
+                );
+            } else if info.constraint.is_none() {
+                // Unconstrained type parameters have implicit constraint `unknown`.
+                // T[K] for unconstrained T has upper bound `unknown` because T
+                // could be any type and its properties could have any value.
+                if !candidates.contains(&TypeId::UNKNOWN) {
+                    candidates.push(TypeId::UNKNOWN);
+                }
+            }
         }
 
         if let Some(info) = type_param_info(self.interner, key_type)

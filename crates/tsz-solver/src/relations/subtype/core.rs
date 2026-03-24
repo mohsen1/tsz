@@ -779,6 +779,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
 
+            // IndexAccess upper bound check: when source is T[K] (an index access
+            // involving type parameters), compute the upper bound and check it
+            // against the full target union. For unconstrained T, T[K]'s upper
+            // bound is `unknown`, and `unknown <: {} | null | undefined` succeeds.
+            if self.check_index_access_source_upper_bound_subtype(source, target) {
+                return SubtypeResult::True;
+            }
+
             // Trace: Source is not a subtype of any union member
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {

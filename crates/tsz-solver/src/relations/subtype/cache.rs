@@ -193,6 +193,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // In TypeScript, `unknown` equals `{} | null | undefined`. When the
+        // source is `unknown` and the target is a union containing all three
+        // constituents, unknown is assignable. This is also handled by the compat
+        // layer (empty_object_with_nullish_target), but the subtype layer needs
+        // it too for nested checks that bypass compat.
+        if source == TypeId::UNKNOWN {
+            if let Some(members) = union_list_id(self.interner, target) {
+                let member_list = self.interner.type_list(members);
+                let empty_obj = self.interner.object(vec![]);
+                let parts = [TypeId::NULL, TypeId::UNDEFINED, empty_obj];
+                let all_ok = parts.iter().all(|&part| {
+                    member_list
+                        .iter()
+                        .any(|&member| part == member || self.check_subtype(part, member).is_true())
+                });
+                if all_ok {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Fast path: distinct disjoint unit types are never subtypes.
         // This avoids expensive structural checks for large unions of literals/enum members.
         // Guard: when both are Literal types with the same value but different TypeIds
