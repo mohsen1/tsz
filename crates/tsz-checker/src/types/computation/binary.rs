@@ -386,6 +386,28 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Format the apparent type for display in TS2638 error messages.
+    ///
+    /// tsc uses the apparent type in the "may represent a primitive" message:
+    /// - `unknown` → `{}`
+    /// - unconstrained type parameter → `{}`
+    /// - constrained type parameter → the constraint type string
+    fn format_apparent_type_for_in_operator(&self, ty: TypeId) -> String {
+        if ty == TypeId::UNKNOWN {
+            return "{}".to_string();
+        }
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
+            return match crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                ty,
+            ) {
+                None => "{}".to_string(),
+                Some(c) => self.format_type(c),
+            };
+        }
+        self.format_type(ty)
+    }
+
     /// Get the type of a binary expression.
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
@@ -819,7 +841,10 @@ impl<'a> CheckerState<'a> {
                 } else if self.type_may_represent_primitive(right_type) {
                     // TS2638: Type '{}' may represent a primitive value, which is not
                     // permitted as the right operand of the 'in' operator.
-                    let type_str = self.format_type(right_type);
+                    // tsc displays the apparent type in the error message: for `unknown`
+                    // and unconstrained type params, that's `{}`; for constrained type
+                    // params, it's the constraint type.
+                    let type_str = self.format_apparent_type_for_in_operator(right_type);
                     self.error_at_node_msg(
                         right_idx,
                         tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
