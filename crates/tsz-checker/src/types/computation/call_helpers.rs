@@ -992,6 +992,16 @@ impl<'a> CheckerState<'a> {
                     &TypingRequest::with_contextual_type(target_prop_type),
                 );
 
+                // If the speculative result still contains any of the type parameters
+                // being inferred, skip it. Including such types in the partial can
+                // poison Round 1 inference by creating self-referential constraints
+                // (e.g., T appearing in both source and target positions).
+                // This happens when a zero-param callback's return type references T
+                // through the un-instantiated contextual return type.
+                if self.type_contains_any_type_param(value_type, type_param_names) {
+                    continue;
+                }
+
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
             // Shorthand properties are never contextually sensitive
