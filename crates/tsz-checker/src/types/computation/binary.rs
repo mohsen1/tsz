@@ -346,6 +346,11 @@ impl<'a> CheckerState<'a> {
     /// primitive values — only type parameters that COULD be instantiated with a
     /// primitive at runtime trigger the diagnostic.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
+        // `unknown` may represent any value including primitives — TS2638
+        if ty == TypeId::UNKNOWN {
+            return true;
+        }
+
         // Type parameters: check if constraint is missing or could be primitive
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
