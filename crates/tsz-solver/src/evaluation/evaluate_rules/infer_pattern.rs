@@ -696,14 +696,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if let Some(rest_index) = rest_index {
-            if rest_index + 1 != pattern_len {
-                return false;
-            }
-            if source_len < rest_index {
+            let prefix_len = rest_index;
+            let suffix_len = pattern_len - rest_index - 1;
+            let min_source = prefix_len + suffix_len;
+
+            if source_len < min_source {
                 return false;
             }
 
-            for i in 0..rest_index {
+            // Match prefix elements (before rest)
+            for i in 0..prefix_len {
                 let source_elem = &source_elems[i];
                 let pattern_elem = &pattern_elems[i];
                 if source_elem.rest || pattern_elem.rest {
@@ -726,8 +728,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
+            // Match suffix elements (after rest, from end of source)
+            for i in 0..suffix_len {
+                let source_idx = source_len - suffix_len + i;
+                let pattern_idx = rest_index + 1 + i;
+                let source_elem = &source_elems[source_idx];
+                let pattern_elem = &pattern_elems[pattern_idx];
+                if source_elem.rest || pattern_elem.rest {
+                    return false;
+                }
+                let source_type = if source_elem.optional {
+                    self.interner()
+                        .union2(source_elem.type_id, TypeId::UNDEFINED)
+                } else {
+                    source_elem.type_id
+                };
+                if !self.match_infer_pattern(
+                    source_type,
+                    pattern_elem.type_id,
+                    bindings,
+                    visited,
+                    checker,
+                ) {
+                    return false;
+                }
+            }
+
+            // Build rest tuple from middle elements (between prefix and suffix)
+            let rest_start = prefix_len;
+            let rest_end = source_len - suffix_len;
             let mut rest_elems = Vec::new();
-            for source_elem in &source_elems[rest_index..] {
+            for source_elem in &source_elems[rest_start..rest_end] {
                 if source_elem.rest {
                     return false;
                 }
