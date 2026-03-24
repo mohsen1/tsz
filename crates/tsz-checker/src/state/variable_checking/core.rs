@@ -1880,7 +1880,6 @@ impl<'a> CheckerState<'a> {
                                     && !is_non_exported_ns_var
                                     && !is_other_non_exported_ns_var
                                     && !has_ns_export_visibility_mismatch
-                                    && !self.ctx.is_js_file()
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
                                     && let Some(ref name) = var_name
                                 {
