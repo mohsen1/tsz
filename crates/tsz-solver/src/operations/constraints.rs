@@ -543,12 +543,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let t_app_args_clone = t_app.args.clone();
                         let has_placeholder = {
                             let mut visited = FxHashSet::default();
-                            t_app_args_clone
-                                .iter()
-                                .any(|arg| self.type_contains_placeholder(*arg, var_map, &mut visited))
+                            t_app_args_clone.iter().any(|arg| {
+                                self.type_contains_placeholder(*arg, var_map, &mut visited)
+                            })
                         };
                         if has_placeholder
-                            && let Some(expanded) = self.checker.expand_type_alias_application(target)
+                            && let Some(expanded) =
+                                self.checker.expand_type_alias_application(target)
                             && expanded != target
                             && matches!(self.interner.lookup(expanded), Some(TypeData::Union(_)))
                         {
