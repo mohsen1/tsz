@@ -741,6 +741,10 @@ impl<'a> CheckerState<'a> {
     /// Emits TS2673 for private constructors and TS2674 for protected constructors
     /// when called from an invalid scope (outside the class or hierarchy).
     ///
+    /// Returns `true` if an accessibility error was emitted, so the caller can
+    /// skip further call resolution (tsc suppresses argument-count and
+    /// type-mismatch errors when the constructor is inaccessible).
+    ///
     /// tsc checks ALL enclosing classes in the scope chain, not just the immediately
     /// enclosing one. A nested class inside a method of class A can access A's
     /// private/protected constructor because it's lexically within A's scope.
@@ -748,10 +752,10 @@ impl<'a> CheckerState<'a> {
         &mut self,
         new_expr_idx: tsz_parser::parser::NodeIndex,
         constructor_type: TypeId,
-    ) {
+    ) -> bool {
         // Skip check for `any` and `error` types
         if constructor_type == TypeId::ANY || constructor_type == TypeId::ERROR {
-            return;
+            return false;
         }
 
         // Check if constructor is private or protected
@@ -759,13 +763,13 @@ impl<'a> CheckerState<'a> {
         let is_protected = self.is_protected_ctor(constructor_type);
 
         if !is_private && !is_protected {
-            return; // Public constructor - no restrictions
+            return false; // Public constructor - no restrictions
         }
 
         // Find the class symbol being instantiated
         let class_sym = match self.class_symbol_from_new_expr(new_expr_idx) {
             Some(sym) => sym,
-            None => return, // Can't determine class - skip check
+            None => return false, // Can't determine class - skip check
         };
 
         // Walk ALL enclosing classes in the scope chain. If ANY enclosing class
@@ -779,13 +783,13 @@ impl<'a> CheckerState<'a> {
         if enclosing_classes.is_empty() {
             // No enclosing class - external instantiation
             self.emit_constructor_access_error(new_expr_idx, class_sym, is_private);
-            return;
+            return true;
         }
 
         for &enclosing_sym in &enclosing_classes {
             if enclosing_sym == class_sym {
                 // Same class - always allowed (even for private constructors)
-                return;
+                return false;
             }
             if is_protected {
                 // Check the inheritance graph first (fast path).
@@ -799,13 +803,14 @@ impl<'a> CheckerState<'a> {
                     || self.is_heritage_derived_from(enclosing_sym, class_sym)
                 {
                     // Protected constructor accessible from subclass
-                    return;
+                    return false;
                 }
             }
         }
 
         // None of the enclosing classes grant access
         self.emit_constructor_access_error(new_expr_idx, class_sym, is_private);
+        true
     }
 
     /// Find the class symbol from a `new` expression node.
