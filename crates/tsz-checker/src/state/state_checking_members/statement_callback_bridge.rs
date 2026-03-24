@@ -122,13 +122,46 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
         if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
             if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
-                // tsc points TS1319 at the `export` keyword, spanning the
-                // entire `export default` statement.
-                self.error_at_node(
-                    export_idx,
-                    crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                    crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                );
+                // tsc points TS1319 at the `default` keyword for class/function
+                // declarations, but at the `export` keyword for expression exports.
+                // Use the default keyword position when available (class/function);
+                // fall back to the export node (expression exports).
+                if let Some(default_pos) = export_decl.default_keyword_pos {
+                    // Check if this is a class/function declaration export
+                    // by looking at the export clause node kind
+                    let has_declaration = self
+                        .ctx
+                        .arena
+                        .get(export_decl.export_clause)
+                        .is_some_and(|n| {
+                            matches!(
+                                n.kind,
+                                syntax_kind_ext::CLASS_DECLARATION
+                                    | syntax_kind_ext::FUNCTION_DECLARATION
+                                    | syntax_kind_ext::CLASS_EXPRESSION
+                            )
+                        });
+                    if has_declaration {
+                        self.error_at_position(
+                            default_pos,
+                            7, // length of "default"
+                            crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                            crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                        );
+                    } else {
+                        self.error_at_node(
+                            export_idx,
+                            crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                            crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                        );
+                    }
+                } else {
+                    self.error_at_node(
+                        export_idx,
+                        crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                        crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                    );
+                }
                 // tsc does not further resolve the exported expression when
                 // the export default is invalid in a namespace context.
                 return;
