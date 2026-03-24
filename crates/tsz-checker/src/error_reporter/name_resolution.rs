@@ -228,9 +228,44 @@ impl<'a> CheckerState<'a> {
 
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
         // before any TS2304 suppression logic. This fires independently of TS2304.
-        // tsc always emits these regardless of other parse errors in the file.
+        // tsc emits these only when the identifier is used as a DECLARATION name
+        // (function name, parameter, variable binding), not when it's used as a
+        // value reference in expression position. For example, `foo(public ...)` in
+        // a class body should not emit TS1213 — `public` is a valid expression
+        // identifier even in strict mode.
+        let is_declaration_site = self.ctx.arena.get_extended(idx).is_some_and(|ext| {
+            let parent = ext.parent;
+            self.ctx.arena.get(parent).is_some_and(|pn| {
+                use tsz_parser::parser::syntax_kind_ext;
+                matches!(
+                    pn.kind,
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::ARROW_FUNCTION
+                        || k == syntax_kind_ext::PARAMETER
+                        || k == syntax_kind_ext::VARIABLE_DECLARATION
+                        || k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::CLASS_EXPRESSION
+                        || k == syntax_kind_ext::INTERFACE_DECLARATION
+                        || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        || k == syntax_kind_ext::ENUM_DECLARATION
+                        || k == syntax_kind_ext::MODULE_DECLARATION
+                        || k == syntax_kind_ext::METHOD_DECLARATION
+                        || k == syntax_kind_ext::METHOD_SIGNATURE
+                        || k == syntax_kind_ext::PROPERTY_DECLARATION
+                        || k == syntax_kind_ext::PROPERTY_SIGNATURE
+                        || k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR
+                        || k == syntax_kind_ext::BINDING_ELEMENT
+                        || k == syntax_kind_ext::IMPORT_SPECIFIER
+                        || k == syntax_kind_ext::EXPORT_SPECIFIER
+                        || k == syntax_kind_ext::TYPE_PARAMETER
+                )
+            })
+        });
         if crate::state_checking::is_strict_mode_reserved_name(name)
             && self.ctx.checking_computed_property_name.is_none()
+            && is_declaration_site
         {
             // Detect class context by walking up the AST (enclosing_class may not
             // be set during type resolution or other non-statement-walk phases).
