@@ -24,7 +24,7 @@ mod node_children;
 mod node_modifiers;
 mod node_view;
 pub mod parse_rules;
-pub(crate) mod spelling;
+pub mod spelling;
 pub mod state;
 mod state_declarations;
 mod state_declarations_exports;
