@@ -37,6 +37,19 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
+        // Filter out `any` when there are more specific candidates.
+        // `any` in contravariant positions (e.g., from `boolean | any = any` in
+        // interface method signatures) doesn't carry useful inference information
+        // and should not override concrete candidates like `boolean`.
+        // This matches tsc's behavior where `any` is treated as uninformative
+        // during inference resolution.
+        if contra_types.len() > 1 {
+            let has_non_any = contra_types.iter().any(|&t| t != TypeId::ANY);
+            if has_non_any {
+                contra_types.retain(|&t| t != TypeId::ANY);
+            }
+        }
+
         if contra_types.len() <= 1 {
             return contra_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
