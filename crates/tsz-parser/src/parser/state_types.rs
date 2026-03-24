@@ -930,11 +930,16 @@ impl ParserState {
         // Parse the import call: import("./module")
         let saved_import_type_options_context = self.in_import_type_options_context;
         self.in_import_type_options_context = true;
+        let diag_count_before = self.parse_diagnostics.len();
         let argument = self.parse_import_expression();
         self.in_import_type_options_context = saved_import_type_options_context;
 
         // Check that the argument is a string literal (TS1141)
-        if let Some(call_node) = self.arena.get(argument)
+        // Only emit if the import expression parsed without errors — if there are
+        // already parse errors (e.g. during error recovery on garbage input), the
+        // TS1141 would be cascading noise that tsc does not emit.
+        if self.parse_diagnostics.len() == diag_count_before
+            && let Some(call_node) = self.arena.get(argument)
             && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
             && let Some(call_data) = self.arena.get_call_expr(call_node)
             && let Some(args) = &call_data.arguments
