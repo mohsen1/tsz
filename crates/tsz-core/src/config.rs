@@ -1262,6 +1262,11 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 &'static str,
                 &'static dyn Fn(&serde_json::Value) -> Option<&'static str>,
             );
+            // When `strict` is explicitly set, options like `alwaysStrict` are
+            // implicitly derived from it. tsc only emits TS5107 for options that
+            // are explicitly set by the user, not for those derived from `strict`.
+            let strict_is_explicit = compiler_opts.contains_key("strict");
+
             let value_deprecations: &[DeprecationCheck] = &[
                 ("alwaysStrict", &|v| {
                     if v == &serde_json::Value::Bool(false) {
@@ -1319,6 +1324,11 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }),
             ];
             for (key, check_fn) in value_deprecations {
+                // Skip deprecation for strict sub-options when `strict` is explicitly
+                // set. tsc only warns when the option is directly set by the user.
+                if strict_is_explicit && *key == "alwaysStrict" {
+                    continue;
+                }
                 if let Some(value) = compiler_opts.get(*key)
                     && let Some(display_value) = check_fn(value)
                 {
