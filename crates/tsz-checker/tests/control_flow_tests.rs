@@ -4174,7 +4174,7 @@ function foo(v: number) {
 
 /// Regression: flow merge must preserve distinct class types even when one is
 /// structurally assignable to the other.  When two switch(true) blocks use
-/// the same union variable, the BRANCH_LABEL merge at the end of the first
+/// the same union variable, the `BRANCH_LABEL` merge at the end of the first
 /// switch must keep *both* members so that instanceof narrowing in the second
 /// switch can still select the narrower type.
 ///

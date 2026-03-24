@@ -579,7 +579,7 @@ impl<'a> CheckerState<'a> {
 
         // Function-like parent kinds whose body-block should NOT be considered
         // a "bare block".
-        fn is_function_like(kind: u16) -> bool {
+        const fn is_function_like(kind: u16) -> bool {
             kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || kind == syntax_kind_ext::FUNCTION_EXPRESSION
                 || kind == syntax_kind_ext::ARROW_FUNCTION
