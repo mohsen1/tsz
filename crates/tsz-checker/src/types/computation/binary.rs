@@ -339,12 +339,12 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type "may represent a primitive value" for TS2638.
-    /// In tsc, this check fires for:
-    /// - Type parameters whose constraint is missing or could represent a primitive
-    /// - Empty object types like `{}` (they accept any non-nullish value including
-    ///   primitives like strings, numbers, booleans)
-    /// - Unions where any member may represent a primitive
-    /// - Intersections where all members may represent a primitive
+    ///
+    /// In tsc, this check ONLY fires for instantiable/type-parameter types whose
+    /// constraint is missing or could represent a primitive. Concrete object types
+    /// like `{}` do NOT trigger TS2638 even though they structurally accept
+    /// primitive values — only type parameters that COULD be instantiated with a
+    /// primitive at runtime trigger the diagnostic.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
         // Type parameters: check if constraint is missing or could be primitive
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
@@ -357,11 +357,10 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Note: empty object type `{}` does NOT trigger TS2638 in tsc.
-        // While `{}` accepts any non-null non-undefined value including primitives,
-        // tsc treats it as an object type for the `in` operator check.
-        // TS2638 only fires for unconstrained type parameters or types that
-        // explicitly include primitive union members.
+        // Concrete types (including empty object `{}`) are never "may represent
+        // primitive" — only type parameters can be instantiated with primitives.
+        // tsc does not emit TS2638 for `'a' in {}` or `'a' in x` where x is a
+        // concrete object type.
 
         // Union: any member may represent primitive
         if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
