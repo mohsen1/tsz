@@ -9,10 +9,11 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
+use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
     CallSignature, FunctionShape, MappedModifier, ObjectShape, ObjectShapeId, ParamInfo,
     PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
-    TypePredicate, Visibility,
+    TypePredicate, Variance, Visibility,
 };
 use crate::utils;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -56,6 +57,63 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Decrement depth on return
         self.constraint_recursion_depth
             .set(self.constraint_recursion_depth.get() - 1);
+    }
+
+    /// Constrain type arguments of two Applications with the same base type,
+    /// respecting the variance of each type parameter position.
+    ///
+    /// For contravariant positions (e.g., T in `type Func<T> = (x: T) => void`),
+    /// the source and target are swapped so that inference produces contra-candidates
+    /// (resolved via intersection/most-specific) rather than covariant candidates.
+    /// This matches tsc's `inferFromTypeArguments` which checks variance flags.
+    fn constrain_application_type_args(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        base: TypeId,
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+        priority: crate::types::InferencePriority,
+    ) {
+        // Try to compute variances for the base type's type parameters.
+        let variances = self.compute_application_variances(base);
+        for (i, (s_arg, t_arg)) in source_args.iter().zip(target_args.iter()).enumerate() {
+            let variance = variances
+                .as_ref()
+                .and_then(|v| v.get(i).copied())
+                .unwrap_or(Variance::COVARIANT);
+            if variance.is_contravariant() {
+                // Contravariant: swap source and target so the inference engine
+                // sees the narrower type as source (lower bound on the target
+                // placeholder). This causes the placeholder to pick the
+                // intersection of candidates instead of the union.
+                let was_contra = ctx.in_contra_mode;
+                ctx.in_contra_mode = !was_contra;
+                self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
+                ctx.in_contra_mode = was_contra;
+            } else {
+                self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
+            }
+        }
+    }
+
+    /// Compute the variances of each type parameter for a type application's base type.
+    fn compute_application_variances(&self, base: TypeId) -> Option<std::sync::Arc<[Variance]>> {
+        let def_id = match self.interner.lookup(base)? {
+            TypeData::Lazy(def_id) => def_id,
+            _ => return None,
+        };
+        // Use the checker's resolver which has type alias definitions,
+        // falling back to the interner's resolver (which lacks them).
+        let resolver = self
+            .checker
+            .type_resolver()
+            .unwrap_or_else(|| self.interner.as_type_resolver());
+        compute_type_param_variances_with_resolver(
+            self.interner.as_type_database(),
+            resolver,
+            def_id,
+        )
     }
 
     /// Inner implementation of `constrain_types`
@@ -1452,9 +1510,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && s_app.args.len() == t_app.args.len()
                     && t_app.args.iter().any(|arg| var_map.contains_key(arg))
                 {
-                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
-                    }
+                    // Use the TARGET base variance for direct arg matching.
+                    // When the target type alias is contravariant (e.g., Func2<T> = ((x: T) => void) | undefined),
+                    // the direct constraint should also be contravariant.
+                    self.constrain_application_type_args(
+                        ctx,
+                        var_map,
+                        t_app.base,
+                        &s_app.args,
+                        &t_app.args,
+                        priority,
+                    );
                 }
                 let promise_like_arg_pair = if !same_base_application {
                     self.checker
@@ -1475,9 +1541,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Since bases match, use direct argument unification to capture
                     // the type argument relationship (e.g., Bacon → T from
                     // Boxified<Bacon> vs Boxified<T>).
-                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
-                    }
+                    self.constrain_application_type_args(
+                        ctx,
+                        var_map,
+                        s_app.base,
+                        &s_app.args,
+                        &t_app.args,
+                        priority,
+                    );
                 } else if evaluated_source != source || evaluated_target != target {
                     // For same-base Applications, prefer direct type argument matching
                     // (matches tsc alias inference). Structural decomposition of evaluated
@@ -1485,9 +1556,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // SelectOptions<Thing> vs SelectOptions<KeyT> where the union branches
                     // Array<{key:T}> | Array<T> get cross-matched incorrectly).
                     if allow_direct_arg_constraints {
-                        for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                            self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
-                        }
+                        self.constrain_application_type_args(
+                            ctx,
+                            var_map,
+                            s_app.base,
+                            &s_app.args,
+                            &t_app.args,
+                            priority,
+                        );
                     } else {
                         self.constrain_types(
                             ctx,
@@ -1501,9 +1577,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                 } else if allow_direct_arg_constraints {
-                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
-                    }
+                    self.constrain_application_type_args(
+                        ctx,
+                        var_map,
+                        s_app.base,
+                        &s_app.args,
+                        &t_app.args,
+                        priority,
+                    );
                 } else if let Some((s_inner, t_inner)) = promise_like_arg_pair {
                     self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
                 }

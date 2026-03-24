@@ -97,6 +97,10 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
                     .flatten()
             })
     }
+
+    fn type_resolver(&self) -> Option<&dyn tsz_solver::TypeResolver> {
+        Some(&self.state.ctx)
+    }
 }
 
 // =============================================================================
