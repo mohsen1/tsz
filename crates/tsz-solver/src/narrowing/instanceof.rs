@@ -495,6 +495,15 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // When the instance type is a union (e.g., `A | B` from `instanceof (A | B)`),
+        // don't narrow on the false branch. A union constructor can't provide definitive
+        // information about what types are excluded — the value might still be any of the
+        // source union's members. This matches tsc's behavior where `!(x instanceof b)`
+        // with `b: typeof A | typeof B` does not narrow `x`.
+        if union_list_id(self.db, instance_type).is_some() {
+            return source_type;
+        }
+
         // Check if the instance type is the global Object interface.
         // All non-primitive values are instances of Object at runtime,
         // so the false branch of `instanceof Object` keeps only primitives.
