@@ -624,9 +624,9 @@ impl<'a> CheckerState<'a> {
 
     /// Get the enclosing `ModuleBlock` for a variable declaration, if any.
     ///
-    /// Walks: VariableDeclaration → VariableDeclarationList → VariableStatement → ModuleBlock
-    /// (accounting for an optional ExportDeclaration wrapper between VariableStatement and
-    /// ModuleBlock).
+    /// Walks: `VariableDeclaration` → `VariableDeclarationList` → `VariableStatement` → `ModuleBlock`
+    /// (accounting for an optional `ExportDeclaration` wrapper between `VariableStatement` and
+    /// `ModuleBlock`).
     pub(crate) fn var_decl_enclosing_module_block(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(decl_idx)?;
         let decl_list_idx = ext.parent;
@@ -744,10 +744,10 @@ impl<'a> CheckerState<'a> {
         decl_a: NodeIndex,
         decl_b: NodeIndex,
     ) -> bool {
-        if let Some(mb_a) = self.var_decl_enclosing_module_block(decl_a) {
-            if let Some(mb_b) = self.var_decl_enclosing_module_block(decl_b) {
-                return mb_a != mb_b;
-            }
+        if let Some(mb_a) = self.var_decl_enclosing_module_block(decl_a)
+            && let Some(mb_b) = self.var_decl_enclosing_module_block(decl_b)
+        {
+            return mb_a != mb_b;
         }
         false
     }
