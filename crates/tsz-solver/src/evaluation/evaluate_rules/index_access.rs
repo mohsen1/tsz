@@ -1287,14 +1287,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ANY;
         }
 
-        // Error type propagation: if the object type is ERROR (e.g., from a failed
-        // module import), return ERROR to suppress cascading diagnostics.
+        // Error type propagation: if the object or index type is ERROR (e.g., from
+        // a failed module import), return ERROR to suppress cascading diagnostics.
         // Without this, `Out[T]` where `Out` comes from a missing module would
         // produce false TS2322 errors instead of silently propagating the error.
-        // Note: We only check the object type, not the index type, to avoid
-        // interfering with valid generic type resolution where the index type
-        // is a type parameter.
-        if evaluated_object == TypeId::ERROR {
+        if evaluated_object == TypeId::ERROR || evaluated_index == TypeId::ERROR {
             return TypeId::ERROR;
         }
 
