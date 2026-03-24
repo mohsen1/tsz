@@ -737,17 +737,13 @@ impl<'a> CheckerState<'a> {
                 // tsc only elaborates callback return types in non-call contexts
                 // (property assignments, variable declarations, return statements).
                 // In call argument contexts, tsc reports TS2345 on the argument.
-                if let Some(ext) = self.ctx.arena.get_extended(arg_idx) {
-                    let parent_idx = ext.parent;
-                    if parent_idx != NodeIndex::NONE {
-                        if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
-                            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
-                            {
-                                return false;
-                            }
-                        }
-                    }
+                if let Some(ext) = self.ctx.arena.get_extended(arg_idx)
+                    && ext.parent != NodeIndex::NONE
+                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                    && (parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                        || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                {
+                    return false;
                 }
                 let body_type = self.get_type_of_node(func.body);
                 if body_type == TypeId::ERROR

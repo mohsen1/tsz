@@ -672,10 +672,10 @@ impl<'a> CheckerState<'a> {
                             // dedicated cycle-breaking logic.
                             if let Some(lib_type) =
                                 self.resolve_lib_type_by_name(&base_symbol.escaped_name)
+                                && lib_type != TypeId::ERROR
+                                && lib_type != TypeId::UNKNOWN
                             {
-                                if lib_type != TypeId::ERROR && lib_type != TypeId::UNKNOWN {
-                                    base_type = Some(lib_type);
-                                }
+                                base_type = Some(lib_type);
                             }
                         }
                     }
