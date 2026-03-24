@@ -276,20 +276,19 @@ fn detect_es_module_interop_helpers(file: &BoundFile) -> Vec<(&'static str, u32,
                         continue;
                     }
                     // Check if property_name (the original name) is "default"
-                    if let Some(prop_node) = file.arena.get(specifier.property_name) {
-                        if prop_node.kind == SyntaxKind::DefaultKeyword as u16
+                    if let Some(prop_node) = file.arena.get(specifier.property_name)
+                        && (prop_node.kind == SyntaxKind::DefaultKeyword as u16
                             || file
                                 .arena
                                 .get_identifier(prop_node)
-                                .is_some_and(|id| id.escaped_text == "default")
-                        {
-                            helpers.push((
-                                "__importDefault",
-                                prop_node.pos,
-                                prop_node.end.saturating_sub(prop_node.pos),
-                            ));
-                            break;
-                        }
+                                .is_some_and(|id| id.escaped_text == "default"))
+                    {
+                        helpers.push((
+                            "__importDefault",
+                            prop_node.pos,
+                            prop_node.end.saturating_sub(prop_node.pos),
+                        ));
+                        break;
                     }
                 }
             }

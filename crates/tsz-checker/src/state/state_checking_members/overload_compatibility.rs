@@ -269,27 +269,18 @@ impl<'a> CheckerState<'a> {
         // from the full type system, matching tsc's isImplementationCompatibleWithOverload which
         // uses the actual inferred return type rather than `any`. This correctly detects cases
         // like `function f() { return f; }` where the return type is `typeof f`, not `any`.
-        if impl_return_override == Some(tsz_solver::TypeId::ANY) {
-            if let Some(ret) = get_function_return_type(self.ctx.types, impl_type) {
-                if ret == tsz_solver::TypeId::ANY {
-                    // The return was our ANY override. Try to get the inferred return type.
-                    let node_type = self.get_type_of_node(impl_node_idx);
-                    if node_type != tsz_solver::TypeId::ERROR {
-                        if let Some(inferred_ret) =
-                            get_function_return_type(self.ctx.types, node_type)
-                        {
-                            if inferred_ret != tsz_solver::TypeId::ERROR
-                                && inferred_ret != tsz_solver::TypeId::ANY
-                            {
-                                impl_type = replace_function_return_type(
-                                    self.ctx.types,
-                                    impl_type,
-                                    inferred_ret,
-                                );
-                            }
-                        }
-                    }
-                }
+        if impl_return_override == Some(tsz_solver::TypeId::ANY)
+            && let Some(ret) = get_function_return_type(self.ctx.types, impl_type)
+            && ret == tsz_solver::TypeId::ANY
+        {
+            // The return was our ANY override. Try to get the inferred return type.
+            let node_type = self.get_type_of_node(impl_node_idx);
+            if node_type != tsz_solver::TypeId::ERROR
+                && let Some(inferred_ret) = get_function_return_type(self.ctx.types, node_type)
+                && inferred_ret != tsz_solver::TypeId::ERROR
+                && inferred_ret != tsz_solver::TypeId::ANY
+            {
+                impl_type = replace_function_return_type(self.ctx.types, impl_type, inferred_ret);
             }
         }
 
