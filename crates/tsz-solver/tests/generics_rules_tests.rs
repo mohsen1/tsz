@@ -266,7 +266,9 @@ fn test_non_interface_invariant_application_structural_fallback_accepts_equivale
         env: &env,
         def_id: invariant_arg,
         symbol: None,
-        variances: Arc::from(vec![Variance::COVARIANT | Variance::CONTRAVARIANT]),
+        variances: Arc::from(vec![
+            Variance::COVARIANT | Variance::CONTRAVARIANT | Variance::NEEDS_STRUCTURAL_FALLBACK,
+        ]),
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
 
@@ -361,7 +363,9 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         env: &env,
         def_id: t_def,
         symbol: None,
-        variances: Arc::from(vec![Variance::COVARIANT | Variance::CONTRAVARIANT]),
+        variances: Arc::from(vec![
+            Variance::COVARIANT | Variance::CONTRAVARIANT | Variance::NEEDS_STRUCTURAL_FALLBACK,
+        ]),
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
 
