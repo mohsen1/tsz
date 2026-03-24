@@ -245,8 +245,7 @@ impl<'a> CheckerState<'a> {
 
         // 3. Get the implementation's type using manual lowering
         // When the implementation has no return type annotation, lower_return_type returns ERROR.
-        // Use ANY as the return type override to avoid false TS2394 errors, since `any` is
-        // assignable to any return type (matching TypeScript's behavior for untyped implementations).
+        // Use ANY as the return type override initially to avoid ERROR propagation.
         let impl_return_override = self.get_impl_return_type_override(impl_node_idx);
         let mut impl_type =
             lowering.lower_signature_from_declaration(impl_node_idx, impl_return_override);
@@ -262,6 +261,22 @@ impl<'a> CheckerState<'a> {
                 impl_type = node_type;
             } else if impl_type == tsz_solver::TypeId::ERROR {
                 return;
+            }
+        }
+
+        // When the implementation has no return type annotation, the manual lowering
+        // used ANY as the return type. But TSC uses the actual inferred return type
+        // from the body for overload compatibility (via getReturnTypeOfSignature).
+        // Try to get the inferred return type and use it instead of ANY.
+        if impl_return_override.is_some() {
+            let inferred_type = self.get_type_of_node(impl_node_idx);
+            if inferred_type != tsz_solver::TypeId::ERROR {
+                let inferred_ret = get_function_return_type(self.ctx.types, inferred_type);
+                if let Some(ret) = inferred_ret
+                    && ret != tsz_solver::TypeId::ERROR
+                {
+                    impl_type = replace_function_return_type(self.ctx.types, impl_type, ret);
+                }
             }
         }
 
