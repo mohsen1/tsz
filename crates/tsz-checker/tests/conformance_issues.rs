@@ -6388,28 +6388,23 @@ class DerivedInterface implements Base {
         .cloned()
         .collect();
 
-    let ts2416_messages: Vec<_> = relevant_diagnostics
+    // When implementing a CLASS (not interface), tsc emits TS2720 ("Did you mean
+    // to extend?") as a single error instead of individual TS2416 errors.
+    let ts2720_messages: Vec<_> = relevant_diagnostics
         .iter()
-        .filter(|(code, _)| *code == 2416)
+        .filter(|(code, _)| *code == 2720)
         .map(|(_, message)| message.clone())
         .collect();
 
     assert_eq!(
-        ts2416_messages.len(),
-        2,
-        "Expected TS2416 for both incompatible implemented class members.\nActual errors: {relevant_diagnostics:#?}"
+        ts2720_messages.len(),
+        1,
+        "Expected single TS2720 for implementing a class with incompatible members.\nActual errors: {relevant_diagnostics:#?}"
     );
     assert!(
-        ts2416_messages
-            .iter()
-            .any(|message| message.contains("Property 'n'")),
-        "Expected TS2416 for property 'n'. Actual TS2416 diagnostics: {ts2416_messages:#?}"
-    );
-    assert!(
-        ts2416_messages
-            .iter()
-            .any(|message| message.contains("Property 'fn'")),
-        "Expected TS2416 for method 'fn'. Actual TS2416 diagnostics: {ts2416_messages:#?}"
+        ts2720_messages[0].contains("incorrectly implements class"),
+        "Expected TS2720 message about incorrectly implementing class. Got: {}",
+        ts2720_messages[0]
     );
 }
 
