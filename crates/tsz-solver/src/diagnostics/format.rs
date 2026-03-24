@@ -754,6 +754,9 @@ impl<'a> TypeFormatter<'a> {
             let formatted = self.format(prop.type_id).into_owned();
             if self.preserve_optional_property_surface_syntax {
                 formatted
+            } else if prop.type_id == TypeId::NEVER {
+                // `never | undefined` simplifies to `undefined`; tsc displays just `undefined`
+                "undefined".to_string()
             } else if !self.type_contains_undefined(prop.type_id) {
                 format!("{formatted} | undefined")
             } else {
@@ -3380,6 +3383,32 @@ mod tests {
         assert_eq!(
             result, "{ x?: string | undefined; }",
             "tsc shows '| undefined' for optional object properties"
+        );
+    }
+
+    #[test]
+    fn optional_property_never_shows_as_undefined() {
+        // When the property type is `never` and it's optional, tsc displays just `undefined`
+        // since `never | undefined = undefined`.
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let obj = db.object(vec![PropertyInfo {
+            name: db.intern_string("x"),
+            type_id: TypeId::NEVER,
+            write_type: TypeId::NEVER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: crate::types::Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }]);
+        let result = fmt.format(obj);
+        assert_eq!(
+            result, "{ x?: undefined; }",
+            "Optional never property displays as undefined, not 'never | undefined'"
         );
     }
 
