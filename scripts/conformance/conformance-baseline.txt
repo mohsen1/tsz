@@ -14,6 +14,7 @@ FAIL TypeScript/tests/cases/compiler/checkSuperCallBeforeThisAccess.ts | expecte
 FAIL TypeScript/tests/cases/compiler/checkerInitializationCrash.ts | expected:[TS2300] actual:[]
 FAIL TypeScript/tests/cases/compiler/circularInlineMappedGenericTupleTypeNoCrash.ts | expected:[TS2589] actual:[TS2345,TS2488]
 FAIL TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping3.ts | expected:[TS2301] actual:[TS2663]
+FAIL TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected:[TS2344,TS2430] actual:[TS2344,TS7031]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts | expected:[TS2344,TS2430] actual:[]
@@ -95,7 +96,7 @@ FAIL TypeScript/tests/cases/compiler/emitCapturingThisInTupleDestructuring1.ts |
 FAIL TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile2.ts | expected:[TS4094] actual:[TS4094]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject2.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[TS2345]
+FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[]
 FAIL TypeScript/tests/cases/compiler/erasableSyntaxOnly.ts | expected:[TS1294] actual:[TS7055]
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType03.ts | expected:[TS2339,TS2702,TS2713,TS2749] actual:[TS2694,TS2702]
 FAIL TypeScript/tests/cases/compiler/errorInUnnamedClassExpression.ts | expected:[TS1253,TS2715,TS7008] actual:[TS2715]
@@ -138,7 +139,6 @@ FAIL TypeScript/tests/cases/compiler/exportDefaultProperty2.ts | expected:[] act
 FAIL TypeScript/tests/cases/compiler/exportEqualsClassRedeclarationError.ts | expected:[TS2300] actual:[TS2300]
 FAIL TypeScript/tests/cases/compiler/exportSpecifierReferencingOuterDeclaration3.ts | expected:[TS2694] actual:[TS2694]
 FAIL TypeScript/tests/cases/compiler/exportSpecifierReferencingOuterDeclaration4.ts | expected:[TS2694] actual:[TS2749]
-FAIL TypeScript/tests/cases/compiler/expressionTypeNodeShouldError.ts | expected:[TS1005,TS1389] actual:[TS1005,TS1389]
 FAIL TypeScript/tests/cases/compiler/expressionWithJSDocTypeArguments.ts | expected:[TS8020,TS17019,TS17020] actual:[TS1110,TS17019,TS17020]
 FAIL TypeScript/tests/cases/compiler/extendAndImplementTheSameBaseType2.ts | expected:[TS2322,TS2564,TS2720] actual:[TS2322,TS2416,TS2564]
 FAIL TypeScript/tests/cases/compiler/extractInferenceImprovement.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
@@ -560,7 +560,6 @@ FAIL TypeScript/tests/cases/compiler/topFunctionTypeNotCallable.ts | expected:[T
 FAIL TypeScript/tests/cases/compiler/truthinessCallExpressionCoercion2.ts | expected:[TS2774] actual:[TS2339,TS2774]
 FAIL TypeScript/tests/cases/compiler/truthinessPromiseCoercion.ts | expected:[TS2801] actual:[]
 FAIL TypeScript/tests/cases/compiler/tsxDefaultImports.ts | expected:[] actual:[TS2339]
-FAIL TypeScript/tests/cases/compiler/tsxFragmentChildrenCheck.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/tsxInferenceShouldNotYieldAnyOnUnions.tsx | expected:[TS7026] actual:[TS7006,TS7026]
 FAIL TypeScript/tests/cases/compiler/tsxInvokeComponentType.tsx | expected:[TS2741] actual:[TS2741]
 FAIL TypeScript/tests/cases/compiler/tsxNotUsingApparentTypeOfSFC.tsx | expected:[TS2322,TS2769] actual:[TS2322]
@@ -798,7 +797,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/comparisonOp
 FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/instanceofOperator/instanceofOperatorWithInvalidOperands.es2015.ts | expected:[TS2358,TS2359,TS2860,TS2861] actual:[TS2358,TS2359]
 FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/logicalOrOperator/logicalOrExpressionIsContextuallyTyped.ts | expected:[TS2353,TS2872] actual:[TS2353,TS2872]
 FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/logicalOrOperator/logicalOrOperatorWithTypeParameters.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/expressions/commaOperator/commaOperatorWithoutOperand.ts | expected:[TS1109] actual:[TS1109]
 FAIL TypeScript/tests/cases/conformance/expressions/conditonalOperator/conditionalOperatorConditionIsBooleanType.ts | expected:[TS2454] actual:[TS2454]
 FAIL TypeScript/tests/cases/conformance/expressions/conditonalOperator/conditionalOperatorWithoutIdenticalBCT.ts | expected:[TS2322,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/argumentExpressionContextualTyping.ts | expected:[TS2345,TS7031] actual:[TS2345,TS7031]
@@ -810,7 +808,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInference.ts | expected:[TS2322,TS2345,TS2403] actual:[TS2322,TS2345,TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInferenceWithConstraints.ts | expected:[TS2322,TS2344,TS2345,TS2349,TS2403] actual:[TS2322,TS2344,TS2345,TS2349,TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/functions/contextuallyTypedIifeStrict.ts | expected:[TS7006,TS18048] actual:[TS7006,TS18048]
-FAIL TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator1.ts | expected:[TS2869] actual:[TS2869]
 FAIL TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralNormalization.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/expressions/operators/incrementAndDecrement.ts | expected:[TS1005,TS1109] actual:[TS2357,TS2364,TS2584]
 FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChain.3.ts | expected:[TS2322] actual:[TS2322]
@@ -2064,7 +2061,6 @@ PASS TypeScript/tests/cases/compiler/classOverloadForFunction.ts
 PASS TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
 PASS TypeScript/tests/cases/compiler/classPropInitializationInferenceWithElementAccess.ts
 PASS TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
-PASS TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance1.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance2.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance3.ts
@@ -6702,6 +6698,7 @@ PASS TypeScript/tests/cases/compiler/tsxAttributeQuickinfoTypesSameAsObjectLiter
 PASS TypeScript/tests/cases/compiler/tsxAttributesHasInferrableIndex.tsx
 PASS TypeScript/tests/cases/compiler/tsxDeepAttributeAssignabilityError.tsx
 PASS TypeScript/tests/cases/compiler/tsxDiscriminantPropertyInference.tsx
+PASS TypeScript/tests/cases/compiler/tsxFragmentChildrenCheck.ts
 PASS TypeScript/tests/cases/compiler/tsxNoTypeAnnotatedSFC.tsx
 PASS TypeScript/tests/cases/compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx
 PASS TypeScript/tests/cases/compiler/tsxSpreadDoesNotReportExcessProps.tsx
@@ -9350,6 +9347,7 @@ PASS TypeScript/tests/cases/conformance/expressions/commaOperator/commaOperatorW
 PASS TypeScript/tests/cases/conformance/expressions/commaOperator/commaOperatorWithSecondOperandNumberType.ts
 PASS TypeScript/tests/cases/conformance/expressions/commaOperator/commaOperatorWithSecondOperandObjectType.ts
 PASS TypeScript/tests/cases/conformance/expressions/commaOperator/commaOperatorWithSecondOperandStringType.ts
+PASS TypeScript/tests/cases/conformance/expressions/commaOperator/commaOperatorWithoutOperand.ts
 PASS TypeScript/tests/cases/conformance/expressions/commaOperator/commaOperatorsMultipleOperators.ts
 PASS TypeScript/tests/cases/conformance/expressions/conditonalOperator/conditionalOperatorConditionIsNumberType.ts
 PASS TypeScript/tests/cases/conformance/expressions/conditonalOperator/conditionalOperatorConditionIsObjectType.ts
@@ -9404,6 +9402,7 @@ PASS TypeScript/tests/cases/conformance/expressions/newOperator/newOperatorConfo
 PASS TypeScript/tests/cases/conformance/expressions/newOperator/newOperatorErrorCases.ts
 PASS TypeScript/tests/cases/conformance/expressions/newOperator/newOperatorErrorCases_noImplicitAny.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingAssignmentVsPrivateFieldsJsEmit1.ts
+PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator1.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator10.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator11.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator12.ts
