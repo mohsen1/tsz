@@ -909,14 +909,19 @@ impl Runner {
                     let mut compile_result = filter_lib_diagnostics_tsz(compile_result);
                     let (mut tsc_error_codes, mut tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
 
-                    // In server mode, filter config-level diagnostics from expected results.
-                    // The server doesn't process tsconfig.json and cannot emit:
-                    // - TS5107: option deprecated in TS 6.0+
-                    // - TS5101: flag deprecated
-                    if server_pool.is_some() {
-                        tsc_error_codes.retain(|&c| c != 5107 && c != 5101);
-                        tsc_fps.retain(|fp| fp.code != 5107 && fp.code != 5101);
-                    }
+                    // Filter deprecation diagnostics from both sides.
+                    // tsc's conformance harness uses ignoreDeprecations to suppress
+                    // TS5107/TS5101, so the tsc-cache doesn't include them. Our
+                    // compiler may still emit them. Filter from both sides to avoid
+                    // false mismatches on deprecated option warnings.
+                    tsc_error_codes.retain(|&c| c != 5107 && c != 5101);
+                    tsc_fps.retain(|fp| fp.code != 5107 && fp.code != 5101);
+                    compile_result
+                        .error_codes
+                        .retain(|&c| c != 5107 && c != 5101);
+                    compile_result
+                        .diagnostic_fingerprints
+                        .retain(|fp| fp.code != 5107 && fp.code != 5101);
 
                     // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
                     // and suppresses downstream errors caused by missing lib types.
