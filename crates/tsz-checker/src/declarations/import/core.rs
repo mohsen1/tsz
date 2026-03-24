@@ -1704,7 +1704,40 @@ impl<'a> CheckerState<'a> {
                     })
                 } {
                     // tsc emits TS2323 for value default exports (not type-only)
-                    // that conflict, PLUS TS2528 for ALL default exports.
+                    // that conflict. TS2528 is only emitted when there is at least
+                    // one type-only default export (e.g., `export default Bar` where
+                    // `Bar` is a type alias). When all defaults are values/classes,
+                    // only TS2323 is emitted.
+                    let mut has_type_only_default = false;
+                    for &export_idx in &export_default_indices {
+                        let clause_idx = self
+                            .ctx
+                            .arena
+                            .get_export_decl_at(export_idx)
+                            .map(|ed| ed.export_clause)
+                            .unwrap_or(NodeIndex::NONE);
+                        let clause_kind = self.ctx.arena.get(clause_idx).map(|c| c.kind);
+                        let is_ident = clause_kind == Some(SyntaxKind::Identifier as u16);
+                        if is_ident {
+                            let is_type_only = self
+                                .resolve_identifier_symbol(clause_idx)
+                                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                .is_some_and(|sym| {
+                                    use tsz_binder::symbols::symbol_flags;
+                                    let value_flags = symbol_flags::FUNCTION
+                                        | symbol_flags::VARIABLE
+                                        | symbol_flags::CLASS
+                                        | symbol_flags::ENUM
+                                        | symbol_flags::ENUM_MEMBER;
+                                    (sym.flags & value_flags) == 0
+                                        && (sym.flags & symbol_flags::TYPE) != 0
+                                });
+                            if is_type_only {
+                                has_type_only_default = true;
+                            }
+                        }
+                    }
+
                     for &export_idx in &export_default_indices {
                         let default_anchor = self.get_default_export_anchor(export_idx);
                         let clause_idx = self
@@ -1744,12 +1777,14 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                             );
                         }
-                        // TS2528 for all default exports
-                        self.error_at_node(
-                            default_anchor,
-                            diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                        );
+                        // TS2528 only when there's at least one type-only default export
+                        if has_type_only_default {
+                            self.error_at_node(
+                                default_anchor,
+                                diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                                diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                            );
+                        }
                     }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
