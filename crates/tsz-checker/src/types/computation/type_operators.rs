@@ -140,6 +140,24 @@ impl<'a> CheckerState<'a> {
             TypeResolutionKind::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     let resolved = self.get_type_of_symbol(sym_id);
+                    // Guard: if resolution returned the same Lazy type (symbol is
+                    // currently being resolved — circular placeholder), bail out.
+                    // Without this, the recursive get_keyof_type call loops forever
+                    // because the same Lazy placeholder is returned from the cache
+                    // each time. In debug mode this was masked by stack exhaustion,
+                    // but in release mode LLVM tail-call optimizes the recursion
+                    // into an infinite loop with no stack growth.
+                    if resolved == operand {
+                        return deferred_keyof;
+                    }
+                    // Also check if the resolved type is still a Lazy pointing
+                    // to the same DefId — factory.lazy(def_id) may intern to a
+                    // different TypeId than the original operand.
+                    if let Some(resolved_def) = tsz_solver::lazy_def_id(self.ctx.types, resolved) {
+                        if resolved_def == def_id {
+                            return deferred_keyof;
+                        }
+                    }
                     // Recursively get keyof of the resolved type
                     return self.get_keyof_type(resolved);
                 }
@@ -147,6 +165,11 @@ impl<'a> CheckerState<'a> {
             TypeResolutionKind::Application => {
                 // Evaluate application types first
                 let evaluated = self.evaluate_type_for_assignability(operand);
+                // Guard: if evaluation couldn't reduce the type, bail out to
+                // prevent infinite recursion.
+                if evaluated == operand {
+                    return deferred_keyof;
+                }
                 return self.get_keyof_type(evaluated);
             }
             TypeResolutionKind::Resolved => {}
