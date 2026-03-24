@@ -912,7 +912,13 @@ pub fn resolve_compiler_options(
         resolved.custom_conditions = custom_conditions.clone();
     }
 
-    if let Some(es_module_interop) = options.es_module_interop {
+    let esmodule_invalidated = options
+        .invalidated_options
+        .iter()
+        .any(|k| k == "esModuleInterop");
+    if let Some(es_module_interop) = options.es_module_interop
+        && !esmodule_invalidated
+    {
         resolved.es_module_interop = es_module_interop;
         resolved.checker.es_module_interop = es_module_interop;
         resolved.printer.es_module_interop = es_module_interop;
@@ -921,11 +927,7 @@ pub fn resolve_compiler_options(
             resolved.allow_synthetic_default_imports = true;
             resolved.checker.allow_synthetic_default_imports = true;
         }
-    } else if !options
-        .invalidated_options
-        .iter()
-        .any(|k| k == "esModuleInterop")
-    {
+    } else if !esmodule_invalidated {
         // tsc 6.0 defaults esModuleInterop to true when not explicitly set.
         // But do NOT apply the default when TS5024 fired for this option —
         // tsc treats a type-mismatched value as if the option was never set
