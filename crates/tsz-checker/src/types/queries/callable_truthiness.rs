@@ -476,10 +476,9 @@ impl<'a> CheckerState<'a> {
         // Check for Application with PROMISE_BASE via solver query
         if let Some(base) =
             tsz_solver::type_queries::get_application_base(self.ctx.types.as_type_database(), ty)
+            && base == TypeId::PROMISE_BASE
         {
-            if base == TypeId::PROMISE_BASE {
-                return true;
-            }
+            return true;
         }
         // Also check via the global Promise type classification
         self.is_global_promise_type(ty)
