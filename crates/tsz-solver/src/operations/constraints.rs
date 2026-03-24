@@ -1389,8 +1389,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let evaluated_target = self.checker.evaluate_type(target);
                 let same_base_application =
                     s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+                // When the target Application's type args contain inference
+                // placeholders, always prefer direct arg-level matching.
+                // The solver's evaluate_type cannot properly substitute
+                // placeholders in interface members (it lacks the checker's
+                // TypeEnvironment resolver), so structural matching on the
+                // evaluated body introduces spurious TypeParameter references
+                // (contra-candidates from unsubstituted method parameters).
+                let target_has_placeholder_args =
+                    same_base_application && t_app.args.iter().any(|arg| var_map.contains_key(arg));
                 let allow_direct_arg_constraints = same_base_application
-                    && self.should_directly_constrain_same_base_application(source, target);
+                    && (target_has_placeholder_args
+                        || self.should_directly_constrain_same_base_application(source, target));
                 let promise_like_arg_pair = if !same_base_application {
                     self.checker
                         .promise_like_type_argument(source)
