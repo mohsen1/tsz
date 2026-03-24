@@ -101,6 +101,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        // Prevent duplicate TS1212/TS1213/TS1214 at the same position.
+        // Multiple paths (type resolution, identifier resolution, parameter checking)
+        // can trigger this for the same identifier; tsc only emits one.
+        if let Some(node) = self.ctx.arena.get(name_idx) {
+            let pos = node.pos;
+            let already_emitted = self.ctx.diagnostics.iter().any(|d| {
+                d.start == pos
+                    && (d.code == diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE
+                        || d.code == diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO
+                        || d.code == diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY)
+            });
+            if already_emitted {
+                return;
+            }
+        }
         if use_class_message && self.ctx.enclosing_class.is_some() {
             let message = format_message(
                 diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
