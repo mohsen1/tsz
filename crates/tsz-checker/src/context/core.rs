@@ -962,11 +962,12 @@ impl<'a> CheckerContext<'a> {
     /// - TS2536 uses the same scheme so nested indexed-access failures can report
     ///   multiple distinct messages at the same indexed-access start.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
-        // TS2304 ("Cannot find name") and TS2552 ("Cannot find name ... Did you mean?")
-        // are suppressed when TS2301 already exists at the same position, since TS2301
+        // TS2304 ("Cannot find name"), TS2552 ("Cannot find name ... Did you mean?"),
+        // and TS2663 ("Did you mean the instance member 'this.X'?") are suppressed when
+        // TS2301 already exists at the same position, since TS2301
         // ("Initializer of instance member cannot reference identifier declared in constructor")
-        // already explains the problem.
-        if (code == 2304 || code == 2552)
+        // already explains the problem more precisely.
+        if (code == 2304 || code == 2552 || code == 2663)
             && self
                 .diagnostics
                 .iter()
@@ -975,10 +976,13 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         if code == 2301 {
-            self.diagnostics
-                .retain(|diag| !(diag.start == start && (diag.code == 2304 || diag.code == 2552)));
+            self.diagnostics.retain(|diag| {
+                !(diag.start == start
+                    && (diag.code == 2304 || diag.code == 2552 || diag.code == 2663))
+            });
             self.emitted_diagnostics.remove(&(start, 2304));
             self.emitted_diagnostics.remove(&(start, 2552));
+            self.emitted_diagnostics.remove(&(start, 2663));
         }
 
         // TS2304 and TS2552 are mutually exclusive at the same position.
@@ -1026,7 +1030,7 @@ impl<'a> CheckerContext<'a> {
     /// - TS2430 (incorrectly extends interface) uses (start ^ `message_hash`, code) to allow
     ///   multiple per-base diagnostics at the same interface name position.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
-        if diag.code == 2304
+        if (diag.code == 2304 || diag.code == 2552 || diag.code == 2663)
             && self
                 .diagnostics
                 .iter()
@@ -1035,9 +1039,13 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         if diag.code == 2301 {
-            self.diagnostics
-                .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
+            self.diagnostics.retain(|existing| {
+                !(existing.start == diag.start
+                    && (existing.code == 2304 || existing.code == 2552 || existing.code == 2663))
+            });
             self.emitted_diagnostics.remove(&(diag.start, 2304));
+            self.emitted_diagnostics.remove(&(diag.start, 2552));
+            self.emitted_diagnostics.remove(&(diag.start, 2663));
         }
         // TS2304 and TS2552 are mutually exclusive at the same position.
         // TS2552 (with spelling suggestion) takes priority over TS2304 (without).
