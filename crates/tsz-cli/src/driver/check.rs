@@ -912,7 +912,10 @@ pub(super) fn collect_diagnostics(
     }
 
     diagnostics.extend(detect_missing_tslib_helper_diagnostics(
-        program, options, base_dir,
+        program,
+        options,
+        base_dir,
+        &file_is_esm_map,
     ));
 
     // Use the aggregated query-cache statistics. In the parallel path, these
