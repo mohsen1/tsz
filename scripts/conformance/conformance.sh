@@ -16,6 +16,7 @@ BUILD_PROFILE="dist-fast"
 
 # Binary paths (will be updated based on profile)
 TSZ_BIN="$REPO_ROOT/.target/dist-fast/tsz"
+SERVER_BIN="$REPO_ROOT/.target/dist-fast/tsz-server"
 CACHE_GEN_BIN="$REPO_ROOT/.target/dist-fast/generate-tsc-cache"
 RUNNER_BIN="$REPO_ROOT/.target/dist-fast/tsz-conformance"
 
@@ -395,6 +396,7 @@ run_tests() {
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
+        --server-binary "$SERVER_BIN" \
         --workers $WORKERS \
         --print-test \
         "${runner_flags[@]}" \
@@ -473,6 +475,7 @@ areas_analysis() {
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
+        --server-binary "$SERVER_BIN" \
         --workers $WORKERS \
         --print-test \
         "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
@@ -616,6 +619,7 @@ snapshot_tests() {
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
+        --server-binary "$SERVER_BIN" \
         --workers $WORKERS \
         --print-test \
         "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null || true
@@ -795,6 +799,7 @@ while [ $i -lt ${#@} ]; do
         i=$((i + 1))
         BUILD_PROFILE="${@:$((i+1)):1}"
         TSZ_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/tsz"
+        SERVER_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/tsz-server"
         CACHE_GEN_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/generate-tsc-cache"
         RUNNER_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/tsz-conformance"
     else
