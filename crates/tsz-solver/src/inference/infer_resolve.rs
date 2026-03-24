@@ -41,12 +41,32 @@ impl<'a> InferenceContext<'a> {
             return contra_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
 
+        // Filter out `any` from the tournament when there are non-any candidates.
+        // In tsc, `any` inferences from structural decomposition (e.g., matching
+        // a method with `(t: any)` against `(t: T | U)`) don't override more
+        // specific inferences from other call signatures. Since `any` is a subtype
+        // of everything, it always wins the tournament incorrectly.
+        let non_any: Vec<TypeId> = contra_types
+            .iter()
+            .copied()
+            .filter(|&t| t != TypeId::ANY)
+            .collect();
+        let effective_types = if non_any.is_empty() {
+            &contra_types
+        } else {
+            &non_any
+        };
+
+        if effective_types.len() <= 1 {
+            return effective_types.first().copied().unwrap_or(TypeId::UNKNOWN);
+        }
+
         // Tournament: find the most-specific candidate in O(N).
         // The most-specific type must be a subtype of all others.
         // Walk the list, keeping the current "winner" — replace it whenever
         // a new candidate is a subtype of it.
-        let mut winner = contra_types[0];
-        for &candidate in &contra_types[1..] {
+        let mut winner = effective_types[0];
+        for &candidate in &effective_types[1..] {
             if self.is_subtype(candidate, winner) {
                 winner = candidate;
             }
@@ -54,14 +74,14 @@ impl<'a> InferenceContext<'a> {
 
         // Verify the winner is actually a subtype of ALL candidates (O(N)).
         // If verification fails, there's no single most-specific type.
-        let verified = contra_types
+        let verified = effective_types
             .iter()
             .all(|&other| winner == other || self.is_subtype(winner, other));
 
         if verified {
             winner
         } else {
-            self.interner.intersection(contra_types)
+            self.interner.intersection(effective_types.to_vec())
         }
     }
 
