@@ -8900,7 +8900,14 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
                         && let Ok(pkg_json) =
                             serde_json::from_str::<serde_json::Value>(&pkg_content)
-                        && pkg_json.get("exports").is_some()
+                        && let Some(exports) = pkg_json.get("exports")
+                        // Only fire TS2883 when `exports` contains explicit subpath
+                        // entries (an object with "./" keys). A simple string exports
+                        // (e.g., `"exports": "./index.js"`) specifies only the main
+                        // entry but tsc doesn't treat other subpaths as non-portable
+                        // in that case — the declaration emitter can still structurally
+                        // inline the type.
+                        && Self::exports_has_explicit_subpaths(exports)
                     {
                         // Build "from" path: ./node_modules/pkg/subpath
                         let mut path_parts: Vec<String> = components[nm_idx..]
@@ -8924,6 +8931,25 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    /// Check whether an `exports` field in package.json contains explicit subpath
+    /// entries (e.g., `"./foo": "./foo.js"`). Returns false for a simple string or
+    /// array export (which only maps the main entry), and true for objects that
+    /// define specific subpath conditions or mappings.
+    fn exports_has_explicit_subpaths(exports: &serde_json::Value) -> bool {
+        match exports {
+            // "exports": "./index.js" — main entry only, no subpath restrictions
+            serde_json::Value::String(_) => false,
+            // "exports": ["./index.js", ...] — fallback list, no subpath restrictions
+            serde_json::Value::Array(_) => false,
+            // "exports": { ".": ..., "./foo": ... } — check for subpath keys
+            serde_json::Value::Object(map) => {
+                // If any key starts with "./" (not just "."), there are explicit subpaths
+                map.keys().any(|k| k.starts_with("./"))
+            }
+            _ => false,
+        }
     }
 
     /// Get the source file path for a symbol via the binder's `symbol_arenas` and `arena_to_path`.

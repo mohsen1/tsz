@@ -24,10 +24,10 @@ set -uo pipefail
 # ─── Detect system RAM ──────────────────────────────────────────────
 
 detect_system_ram_mb() {
-    if command -v sysctl &>/dev/null; then
-        sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1048576}'
-    elif [[ -f /proc/meminfo ]]; then
+    if [[ -f /proc/meminfo ]]; then
         awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo
+    elif command -v sysctl &>/dev/null && sysctl -n hw.memsize &>/dev/null; then
+        sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1048576}'
     else
         echo 16384 # fallback: assume 16GB
     fi
