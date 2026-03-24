@@ -834,21 +834,36 @@ impl<'a> CheckerState<'a> {
                 let leading_fixed = rest_pos.unwrap_or(elems.len());
 
                 // Determine the element type based on position in the tuple.
-                let raw_elem = if !has_rest {
+                // Also track whether the element is optional (e.g., `string?`
+                // in `[string, string?]`). Optional tuple elements include
+                // `undefined` in their type.
+                let (raw_elem, is_optional) = if !has_rest {
                     // Fixed-length tuple: direct element access or out-of-bounds.
-                    elems.get(element_index).map(|e| e.type_id)
+                    let elem = elems.get(element_index);
+                    (elem.map(|e| e.type_id), elem.is_some_and(|e| e.optional))
                 } else if element_index < leading_fixed {
                     // In the leading fixed region — guaranteed to exist.
-                    Some(elems[element_index].type_id)
+                    let elem = &elems[element_index];
+                    (Some(elem.type_id), elem.optional)
                 } else {
                     // In the rest region or trailing fixed region. At
                     // destructuring time, we can't distinguish them, so use
                     // the rest element type (unwrapped from Array<T>).
-                    rest_type_id
-                        .map(|ty| query::array_element_type(self.ctx.types, ty).unwrap_or(ty))
+                    (
+                        rest_type_id
+                            .map(|ty| query::array_element_type(self.ctx.types, ty).unwrap_or(ty)),
+                        false,
+                    )
                 };
 
                 if let Some(elem_type) = raw_elem {
+                    // Optional tuple elements (e.g., `string?` in `[string, string?]`)
+                    // include `undefined` in their type. Add it if not already present.
+                    let elem_type = if is_optional {
+                        self.add_undefined_if_missing_for_destructuring(elem_type)
+                    } else {
+                        elem_type
+                    };
                     // With noUncheckedIndexedAccess, elements at indices >=
                     // the minimum guaranteed tuple length (non_rest_count =
                     // leading_fixed + trailing_fixed) may not exist at runtime.
