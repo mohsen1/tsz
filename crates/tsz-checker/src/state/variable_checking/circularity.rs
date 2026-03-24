@@ -1,4 +1,8 @@
 //! Circular initializer/return-site helpers for variable checking.
+//!
+//! This module includes:
+//! - Circular type-annotation detection (`find_circular_reference_in_type_node`)
+//! - Circular initializer/return-site detection for variable declarations
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -6,6 +10,7 @@ use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
     fn identifier_is_non_value_name_position(&self, node_idx: NodeIndex) -> bool {
@@ -500,5 +505,215 @@ impl<'a> CheckerState<'a> {
             self.has_static_modifier(&prop.modifiers) == is_static
                 && self.get_property_name(prop.name).as_deref() == Some(property_name)
         })
+    }
+
+    // =========================================================================
+    // Circular type-annotation reference detection
+    // =========================================================================
+
+    pub(crate) fn find_circular_reference_in_type_node(
+        &self,
+        type_idx: NodeIndex,
+        target_sym: SymbolId,
+        in_lazy_context: bool,
+    ) -> Option<NodeIndex> {
+        self.find_circular_reference_impl(type_idx, target_sym, in_lazy_context, true)
+    }
+
+    /// `follow_aliases`: whether to follow type references to type alias
+    /// bodies. Only one level of alias following is performed to prevent
+    /// false positives from multi-step chains through structural wrapping.
+    fn find_circular_reference_impl(
+        &self,
+        type_idx: NodeIndex,
+        target_sym: SymbolId,
+        in_lazy_context: bool,
+        follow_aliases: bool,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(type_idx)?;
+
+        // Function types are safe boundaries (recursion always allowed)
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_TYPE | syntax_kind_ext::CONSTRUCTOR_TYPE
+        ) {
+            return None;
+        }
+
+        // Type literals and mapped types introduce a lazy context where "bare" recursion is allowed
+        let is_lazy_boundary = matches!(
+            node.kind,
+            syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::MAPPED_TYPE
+        );
+        let current_lazy = in_lazy_context || is_lazy_boundary;
+
+        // Follow type references to type aliases to detect transitive circularity.
+        // E.g., `var x: T5[]` where `type T5 = typeof x` — the type reference T5
+        // needs to be followed to its body to discover the `typeof x` query.
+        // Only follow one level of alias indirection to avoid false positives
+        // from multi-step chains through structural wrapping (generic applications).
+        if follow_aliases
+            && node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let ref_sym = self
+                .ctx
+                .binder
+                .get_node_symbol(type_ref.type_name)
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .resolve_identifier(self.ctx.arena, type_ref.type_name)
+                });
+            if let Some(sym_id) = ref_sym {
+                let is_type_alias = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
+                if is_type_alias
+                    && let Some(decls) = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map(|s| s.declarations.clone())
+                {
+                    for &decl_idx in &decls {
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && let Some(alias) = self.ctx.arena.get_type_alias(decl_node)
+                            && alias.type_node.is_some()
+                        {
+                            // Don't follow further aliases from within this body
+                            if let Some(found) = self.find_circular_reference_impl(
+                                alias.type_node,
+                                target_sym,
+                                current_lazy,
+                                false,
+                            ) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            if let Some(query) = self.ctx.arena.get_type_query(node) {
+                // Check if the query references the target symbol
+                // We need to know if it's a "bare" reference or a property access
+                let expr_node = self.ctx.arena.get(query.expr_name)?;
+                let is_bare_identifier = expr_node.kind == SyntaxKind::Identifier as u16;
+                // Extract the symbol referenced by the query
+                let mut referenced_sym = None;
+                let mut error_node = query.expr_name;
+                if is_bare_identifier {
+                    referenced_sym =
+                        self.ctx
+                            .binder
+                            .get_node_symbol(query.expr_name)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .resolve_identifier(self.ctx.arena, query.expr_name)
+                            });
+                } else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                    if let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) {
+                        // Check left side
+                        if let Some(node) = self.ctx.arena.get(qn.left)
+                            && node.kind == SyntaxKind::Identifier as u16
+                        {
+                            referenced_sym =
+                                self.ctx.binder.get_node_symbol(qn.left).or_else(|| {
+                                    self.ctx.binder.resolve_identifier(self.ctx.arena, qn.left)
+                                });
+                            error_node = qn.left;
+                        }
+                    }
+                } else if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                {
+                    // Check expression
+                    if let Some(node) = self.ctx.arena.get(access.expression)
+                        && node.kind == SyntaxKind::Identifier as u16
+                    {
+                        referenced_sym = self
+                            .ctx
+                            .binder
+                            .get_node_symbol(access.expression)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .resolve_identifier(self.ctx.arena, access.expression)
+                            });
+                        error_node = access.expression;
+                    }
+                }
+                if let Some(sym) = referenced_sym
+                    && sym == target_sym
+                {
+                    // Found a reference to the target symbol!
+                    // If we are in a lazy context AND it's a bare identifier, it's safe.
+                    if current_lazy && is_bare_identifier {
+                        return None;
+                    }
+                    return Some(error_node);
+                }
+                // Also check type arguments if any (always recursive)
+                if let Some(ref args) = query.type_arguments {
+                    for &arg_idx in &args.nodes {
+                        if let Some(found) = self.find_circular_reference_impl(
+                            arg_idx,
+                            target_sym,
+                            current_lazy,
+                            follow_aliases,
+                        ) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+        // Explicitly recurse into type annotations of members, as generic get_children might miss them
+        if matches!(
+            node.kind,
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
+        ) {
+            if let Some(accessor) = self.ctx.arena.get_accessor(node)
+                && accessor.type_annotation.is_some()
+                && let Some(found) = self.find_circular_reference_impl(
+                    accessor.type_annotation,
+                    target_sym,
+                    current_lazy,
+                    follow_aliases,
+                )
+            {
+                return Some(found);
+            }
+        } else if matches!(
+            node.kind,
+            syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::PROPERTY_DECLARATION
+        ) && let Some(prop) = self.ctx.arena.get_property_decl(node)
+            && prop.type_annotation.is_some()
+            && let Some(found) = self.find_circular_reference_impl(
+                prop.type_annotation,
+                target_sym,
+                current_lazy,
+                follow_aliases,
+            )
+        {
+            return Some(found);
+        }
+
+        // Recursive descent
+        for child in self.ctx.arena.get_children(type_idx) {
+            if let Some(found) =
+                self.find_circular_reference_impl(child, target_sym, current_lazy, follow_aliases)
+            {
+                return Some(found);
+            }
+        }
+
+        None
     }
 }
