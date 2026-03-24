@@ -83,7 +83,23 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return None;
         }
 
-        // 1. Handle Target Union (OR logic)
+        // 1. Handle Source Union (AND logic) — MUST run before target union.
+        // (A | B) -> T : Valid if A -> T AND B -> T
+        // When both source and target are unions, decomposing the source first
+        // ensures each source member is checked against the ENTIRE target union.
+        // If target union were decomposed first, the check would incorrectly
+        // require the entire source union to match a single target member.
+        if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
+            let members = self.interner.type_list(members);
+            for &member in members.iter() {
+                if let Some(false) = self.private_brand_assignability_override(member, target) {
+                    return Some(false); // Fail if any member fails
+                }
+            }
+            return None; // All passed or fell back
+        }
+
+        // 2. Handle Target Union (OR logic)
         // S -> (A | B) : Valid if S -> A OR S -> B
         if let Some(TypeData::Union(members)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members);
@@ -95,18 +111,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
             }
             return Some(false); // Failed against all members
-        }
-
-        // 2. Handle Source Union (AND logic)
-        // (A | B) -> T : Valid if A -> T AND B -> T
-        if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
-            let members = self.interner.type_list(members);
-            for &member in members.iter() {
-                if let Some(false) = self.private_brand_assignability_override(member, target) {
-                    return Some(false); // Fail if any member fails
-                }
-            }
-            return None; // All passed or fell back
         }
 
         // 3. Handle Target Intersection (AND logic)
