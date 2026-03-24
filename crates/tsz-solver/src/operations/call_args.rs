@@ -911,7 +911,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    /// Check if a function arg type contains TypeParameters whose names match the
+    /// Check if a function arg type contains `TypeParameter`s whose names match the
     /// caller's type parameter names (from the substitution). This detects when the
     /// checker's contextual typing leaked unresolved type parameters from overload
     /// signatures into arg types. Only checks function parameter positions, since
@@ -937,7 +937,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    /// Recursively check if a type references any TypeParameter whose name is a key
+    /// Recursively check if a type references any `TypeParameter` whose name is a key
     /// in the given substitution (i.e., one of the caller's type parameter names).
     fn type_references_substitution_keys(
         &self,
