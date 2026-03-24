@@ -698,9 +698,17 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // For non-union types without index signatures, emit TS2339.
-            // Skip if the object has any index signature — TS7015 handles those.
-            if !is_union_or_intersection && !has_any_index_signature {
+            // For non-union types without index signatures, generally fall
+            // through to TS7053. tsc emits TS7053 for element access with
+            // literal keys on types without matching properties.
+            //
+            // Exception: when the receiver is an object literal expression
+            // (e.g., `{}["hi"]`), tsc emits TS2339 instead of TS7053.
+            // Named types like `interface Empty {}` get TS7053.
+            if !is_union_or_intersection
+                && !has_any_index_signature
+                && self.is_object_literal_element_access_receiver(expr_idx)
+            {
                 let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
                 let message =
                     format!("Property '{prop_name_str}' does not exist on type '{object_str}'.");
@@ -714,11 +722,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For non-union types with number literal indices and no index sigs, emit TS2339.
+        // For non-union types with number literal indices and no index sigs,
+        // generally fall through to TS7053. Exception: object literal expression
+        // receivers (e.g., `{}[10]`) get TS2339.
         if !is_union_or_intersection
             && !has_any_index_signature
             && let Some(num) =
                 tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
+            && self.is_object_literal_element_access_receiver(expr_idx)
         {
             let prop_name = if num.fract() == 0.0 && num.is_finite() {
                 format!("{}", num as i64)
@@ -819,6 +830,27 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
         );
+    }
+
+    /// Check if the receiver of an element access expression is an object literal
+    /// expression (e.g., `{}["hi"]`). Used to distinguish TS2339 vs TS7053 for
+    /// literal-keyed element access on types without index signatures.
+    fn is_object_literal_element_access_receiver(&self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(access.expression)
+            .is_some_and(|receiver| {
+                receiver.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            })
     }
 
     /// Check if an identifier node refers to a variable declared in a for-in statement.
