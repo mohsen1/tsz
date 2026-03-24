@@ -219,7 +219,12 @@ impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
     }
 
     fn visit_ref(&mut self, _symbol_ref: u32) -> bool {
-        true
+        // Named type references (interfaces, classes) are NOT symbol-like.
+        // The `Symbol` wrapper object type (from lib.d.ts) is not the same
+        // as the `symbol` primitive — only the primitive is valid for
+        // computed property names. Unique symbols are handled by
+        // visit_unique_symbol below.
+        false
     }
 
     fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> bool {

@@ -900,6 +900,19 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|expr_node| self.ctx.arena.get_identifier(expr_node).is_some());
 
         if !is_computed_identifier && let Some(name) = self.get_property_name(name_idx) {
+            // When the syntactic resolver returns a `[Symbol.xxx]` name but the
+            // property access expression resolves to ERROR (e.g. `Symbol.nonsense`
+            // where `nonsense` doesn't exist on SymbolConstructor), discard the
+            // name. This prevents creating a phantom named property in the object
+            // type, which would cause false TS2322 errors on assignment.
+            if name.starts_with("[Symbol.") {
+                if let Some(computed) = self.ctx.arena.get_computed_property(name_node) {
+                    let expr_type = self.get_type_of_node(computed.expression);
+                    if expr_type == TypeId::ERROR {
+                        return None;
+                    }
+                }
+            }
             return Some(name);
         }
 
