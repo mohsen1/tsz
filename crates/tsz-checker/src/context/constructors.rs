@@ -142,6 +142,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: FxHashSet::default(),
             circular_type_aliases: FxHashSet::default(),
+            import_conflict_names: FxHashSet::default(),
             module_namespace_resolution_set: FxHashSet::default(),
             import_type_alias_types: FxHashMap::default(),
             symbol_resolution_depth: Cell::new(0),
