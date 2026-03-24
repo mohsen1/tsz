@@ -1531,7 +1531,24 @@ impl<'a> InferenceContext<'a> {
             let result = if !candidates.is_empty() {
                 let covariant_result =
                     self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc);
-                if !info.contra_candidates.is_empty() {
+                // Filter out raw TypeParameter contra-candidates that are NOT
+                // inference placeholders. These arise from incomplete Application
+                // evaluation: when the solver evaluates Collection<__infer_T>, it
+                // may not fully substitute the interface's T in method parameters,
+                // causing the original T to leak into contra-candidates via
+                // contra-variant function parameter matching. These spurious
+                // TypeParameter candidates should not override the covariant result.
+                let concrete_contra_candidates: Vec<_> = info
+                    .contra_candidates
+                    .iter()
+                    .filter(|c| {
+                        !matches!(
+                            self.interner.lookup(c.type_id),
+                            Some(TypeData::TypeParameter(_))
+                        )
+                    })
+                    .collect();
+                if !concrete_contra_candidates.is_empty() {
                     // Match tsc's getInferredType: prefer covariant ONLY IF it's
                     // assignable to some contra-candidate. Otherwise use contra result.
                     let covariant_is_uninformative = matches!(
@@ -1539,7 +1556,7 @@ impl<'a> InferenceContext<'a> {
                         TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
                     );
                     let covariant_assignable_to_contra = !covariant_is_uninformative
-                        && info.contra_candidates.iter().any(|c| {
+                        && concrete_contra_candidates.iter().any(|c| {
                             if let Some(ref mut ext) = external_is_subtype {
                                 ext(covariant_result, c.type_id)
                             } else {

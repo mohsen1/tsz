@@ -1156,7 +1156,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let source_is_function = self.type_evaluates_to_function(source_for_inference);
             let target_is_function = self.type_evaluates_to_function(contextual_target_type);
-            if source_is_function || target_is_function {
+            // Skip constrain_return_context_structure when the target contains inference
+            // placeholders. The solver's evaluate_type() cannot fully resolve Application
+            // types that contain placeholders (it lacks the checker's TypeEnvironment
+            // resolver), so function-signature matching on partially evaluated types can
+            // introduce spurious upper bounds from unsubstituted TypeParameters in the
+            // interface body. The main constrain_types call above already handles
+            // Application argument matching correctly via same-base unification.
+            placeholder_visited.clear();
+            let target_has_placeholders = self.type_contains_placeholder(
+                contextual_target_type,
+                &var_map,
+                &mut placeholder_visited,
+            );
+            if (source_is_function || target_is_function) && !target_has_placeholders {
                 self.constrain_return_context_structure(
                     &mut infer_ctx,
                     &var_map,
