@@ -1598,6 +1598,7 @@ impl<'a> CheckerState<'a> {
                                             // Module-scoped variables don't merge with globals.
                                             if !is_in_function_scope
                                                 && !is_bare_declaration
+                                                && !self.ctx.is_js_file()
                                                 && !self.are_var_decl_types_compatible(
                                                     lib_type, final_type,
                                                 )
@@ -1670,6 +1671,7 @@ impl<'a> CheckerState<'a> {
                                     && !is_non_exported_ns_var
                                     && !is_other_non_exported_ns_var
                                     && !has_ns_export_visibility_mismatch
+                                    && !self.ctx.is_js_file()
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
                                     && let Some(ref name) = var_name
                                 {

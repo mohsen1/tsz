@@ -1325,19 +1325,22 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return None;
         }
 
-        // Weak type violations
-        let violates = self.violates_weak_union(source, target);
-        if violates {
-            return Some(SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            });
-        }
-        if self.violates_weak_type(source, target) {
-            return Some(SubtypeFailureReason::NoCommonProperties {
-                source_type: source,
-                target_type: target,
-            });
+        // Weak type violations — must respect skip_weak_type_checks,
+        // matching the guard in is_assignable_impl (TS2559 suppression).
+        if !self.skip_weak_type_checks {
+            let violates = self.violates_weak_union(source, target);
+            if violates {
+                return Some(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            if self.violates_weak_type(source, target) {
+                return Some(SubtypeFailureReason::NoCommonProperties {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
         }
 
         // Excess property checking (TS2353)
