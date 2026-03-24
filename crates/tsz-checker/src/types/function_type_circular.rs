@@ -145,6 +145,45 @@ impl<'a> CheckerState<'a> {
         has_circular_return_in_all_paths(function_sym)
     }
 
+    /// Check if ALL return expressions in a function body are direct (non-wrapped)
+    /// self-calls. Used to detect purely recursive functions like
+    /// `function fn2(n) { return fn2(n); }` whose return type should be `never`.
+    ///
+    /// Returns `false` if any return is NOT a direct self-call (has a base case),
+    /// or if any self-call is wrapped (goes through array/property access etc.),
+    /// or if the body has no return statements.
+    pub(crate) fn all_returns_are_direct_self_calls(
+        &self,
+        body_idx: NodeIndex,
+        function_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        // Every return must have a self-call (direct or wrapped)
+        if !self.function_body_has_wrapped_self_call_in_every_return(body_idx, function_sym, false)
+        {
+            return false;
+        }
+        // None of the returns should be wrapped (they must all be direct)
+        !self.function_has_wrapped_self_call_in_return_expression_for_sym(body_idx, function_sym)
+    }
+
+    /// Check if any return expression in a function body has a WRAPPED self-call
+    /// (goes through array access, property access, etc.).
+    fn function_has_wrapped_self_call_in_return_expression_for_sym(
+        &self,
+        body_idx: NodeIndex,
+        function_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return self.statement_has_wrapped_self_call_in_return(body_idx, function_sym, true);
+        }
+
+        self.expression_has_wrapped_self_call_in_return(body_idx, function_sym, true)
+    }
+
     fn function_body_has_wrapped_self_call_in_every_return(
         &self,
         body_idx: NodeIndex,
