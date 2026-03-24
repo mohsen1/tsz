@@ -1003,9 +1003,18 @@ impl<'a> CheckerState<'a> {
                 // through string/number index signatures in destructuring.
                 // If the object had a property matching the specific symbol,
                 // it would have been resolved earlier via get_computed_binding_element_type_from_parent.
+                // When the parent type is or contains a type parameter (e.g.
+                // `T extends { [sym]: string }`), the constraint may have the
+                // matching symbol property. Defer the check to instantiation
+                // time to avoid false positives on generic destructuring.
+                let parent_has_type_params = common_query::contains_type_parameters(
+                    self.ctx.types.as_type_database(),
+                    parent_type,
+                );
                 if !key_is_string
                     && !key_is_number
                     && !key_is_type_param
+                    && !parent_has_type_params
                     && key_type != TypeId::NEVER
                     && key_type != TypeId::ERROR
                     && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
