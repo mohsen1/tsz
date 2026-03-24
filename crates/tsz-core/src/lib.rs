@@ -671,6 +671,7 @@ impl CompilerOptions {
             ignore_deprecations: false,
             allow_umd_global_access: false,
             preserve_const_enums: false,
+            strict_builtin_iterator_return: strict,
         }
     }
 }

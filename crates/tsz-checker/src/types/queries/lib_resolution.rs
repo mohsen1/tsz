@@ -747,11 +747,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // TS 6.0 lib intrinsic: defaults to `undefined` unless
-        // `strictBuiltinIteratorReturn` is disabled.
-        // We currently model default strict behavior.
+        // TS 6.0 lib intrinsic: resolves to `undefined` when
+        // `strictBuiltinIteratorReturn` is enabled (implied by `--strict`),
+        // or `any` when disabled.
         if name == "BuiltinIteratorReturn" {
-            return Some(TypeId::UNDEFINED);
+            return if self.ctx.compiler_options.strict_builtin_iterator_return {
+                Some(TypeId::UNDEFINED)
+            } else {
+                Some(TypeId::ANY)
+            };
         }
 
         // Check shared cross-file lib cache first

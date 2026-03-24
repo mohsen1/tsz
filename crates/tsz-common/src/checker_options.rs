@@ -153,6 +153,9 @@ pub struct CheckerOptions {
     /// When true, keep const enum declarations in emitted code.
     /// When false (default), const enums are erased and don't affect control flow.
     pub preserve_const_enums: bool,
+    /// When true, built-in iterators (Array, Map, Set, etc.) have `BuiltinIteratorReturn`
+    /// resolved to `undefined` instead of `any`. Implied by `--strict` (TS 5.6+).
+    pub strict_builtin_iterator_return: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -233,6 +236,7 @@ impl Default for CheckerOptions {
             ignore_deprecations: false,
             allow_umd_global_access: false,
             preserve_const_enums: false,
+            strict_builtin_iterator_return: true,
         }
     }
 }
@@ -252,6 +256,7 @@ impl CheckerOptions {
             self.strict_property_initialization = true;
             self.use_unknown_in_catch_variables = true;
             self.always_strict = true;
+            self.strict_builtin_iterator_return = true;
             // exactOptionalPropertyTypes and other opts are not implied by --strict
         }
         self
