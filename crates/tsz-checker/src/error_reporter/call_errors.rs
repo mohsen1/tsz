@@ -895,6 +895,17 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
+        // When the source object literal is missing required properties from the
+        // target, don't elaborate into per-property TS2322 errors. tsc reports
+        // TS2345 at the argument level with "Property 'X' is missing" elaboration
+        // in these cases, rather than TS2322 on individual matching properties.
+        // Without this guard, widened property types (e.g., a string literal `'name'`
+        // widened to `string`) can produce false TS2322 errors like
+        // `Type '"name"' is not assignable to type '"name"'`.
+        if self.target_has_missing_required_properties_from_source(&obj, effective_param_type) {
+            return false;
+        }
+
         let diagnostics_before_epc = self.ctx.diagnostics.len();
         self.check_object_literal_excess_properties(source_type, effective_param_type, arg_idx);
         let had_excess_property = self.ctx.diagnostics[diagnostics_before_epc..]
@@ -954,13 +965,41 @@ impl<'a> CheckerState<'a> {
             // This preserves literal types that were narrowed by contextual typing
             // (e.g., `value: "hello"` in a mapped type context stays as `"hello"`,
             // not widened to `string`).
+            //
+            // When the cached type is widened (e.g., `string` for a `'name'` literal)
+            // and fails assignability, fall back to the literal type. This avoids
+            // spurious TS2322 errors like `Type '"name"' is not assignable to type
+            // '"name"'` where the source was widened during arg collection but the
+            // target preserves the literal from inference.
             let is_function_value = self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
                 matches!(
                     node.kind,
                     syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
                 )
             });
-            let source_prop_type = self.get_type_of_node(prop_value_idx);
+            let cached_prop_type = self.get_type_of_node(prop_value_idx);
+            let source_prop_type = if !is_function_value
+                && cached_prop_type != TypeId::ERROR
+                && cached_prop_type != TypeId::ANY
+                && target_prop_type != TypeId::ERROR
+                && target_prop_type != TypeId::ANY
+                && !self.is_assignable_to(cached_prop_type, target_prop_type)
+            {
+                // If the cached type fails, try the literal type from the initializer.
+                // When a generic call widens literals during inference (e.g., `'name'` → string),
+                // the literal type may actually be assignable to the inferred target.
+                if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
+                    if self.is_assignable_to(literal_type, target_prop_type) {
+                        literal_type
+                    } else {
+                        cached_prop_type
+                    }
+                } else {
+                    cached_prop_type
+                }
+            } else {
+                cached_prop_type
+            };
 
             if is_function_value
                 && target_prop_type != target_prop_type_for_diagnostic
@@ -1056,6 +1095,85 @@ impl<'a> CheckerState<'a> {
         }
 
         elaborated
+    }
+
+    /// Check whether the target type has required properties that are not present
+    /// in the source object literal.
+    ///
+    /// When missing required properties are detected, tsc reports TS2345 at the
+    /// whole argument level with "Property 'X' is missing" elaboration. Elaborating
+    /// into per-property TS2322 errors in this case produces misleading diagnostics
+    /// because widened literal types (e.g., `'name'` widened to `string`) can fail
+    /// comparison against their inferred target literal types.
+    fn target_has_missing_required_properties_from_source(
+        &mut self,
+        obj: &tsz_parser::parser::node::LiteralExprData,
+        target_type: TypeId,
+    ) -> bool {
+        // Collect source property names from the object literal
+        let mut source_prop_names = std::collections::HashSet::new();
+        for &elem_idx in &obj.elements.nodes {
+            if let Some(prop_name) = self.object_literal_property_name_from_elem(elem_idx) {
+                source_prop_names.insert(prop_name);
+            }
+        }
+
+        // Get target property names and check for missing required ones.
+        // We use the solver's object shape to get the canonical set of target properties.
+        let target_type = self.resolve_type_for_property_access(target_type);
+        let target_type = self.evaluate_type_with_env(target_type);
+        let target_type = self.resolve_lazy_type(target_type);
+        let target_type = self.evaluate_application_type(target_type);
+
+        // Object.prototype methods that are implicitly present on all objects.
+        // These should not count as "missing" for the purpose of suppressing
+        // per-property elaboration, matching `should_suppress_object_literal_call_mismatch`.
+        static OBJECT_PROTO_METHODS: &[&str] = &[
+            "constructor",
+            "toString",
+            "toLocaleString",
+            "valueOf",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ];
+
+        if let Some(shape) = crate::query_boundaries::assignability::object_shape_for_type(
+            self.ctx.types,
+            target_type,
+        ) {
+            for prop in shape.properties.iter() {
+                if prop.optional {
+                    continue;
+                }
+                let name = self.ctx.types.resolve_atom(prop.name);
+                if !source_prop_names.contains(name.as_str())
+                    && !OBJECT_PROTO_METHODS.contains(&name.as_str())
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Extract a property name from an object literal element node.
+    fn object_literal_property_name_from_elem(&self, elem_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let elem_node = self.ctx.arena.get(elem_idx)?;
+        match elem_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                self.object_literal_property_name_text(prop.name)
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let prop = self.ctx.arena.get_shorthand_property(elem_node)?;
+                self.object_literal_property_name_text(prop.name)
+            }
+            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => None,
+            _ => None,
+        }
     }
 
     /// Elaborate array literal element type mismatches with TS2322.
