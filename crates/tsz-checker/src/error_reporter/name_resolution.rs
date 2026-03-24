@@ -234,19 +234,16 @@ impl<'a> CheckerState<'a> {
                     if n.kind == syntax_kind_ext::HERITAGE_CLAUSE {
                         break;
                     }
-                    if n.kind == syntax_kind_ext::EXPORT_DECLARATION
-                        || n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    {
+                    if n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
                         // Only suppress for `export default`, not `export =`.
                         // `export = A` should still emit TS2304 when A is unresolved.
                         // TS1319 ("A default export must be at the top level...") is
                         // the correct diagnostic for `export default` in a namespace.
-                        let is_export_equals = n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                            && self
-                                .ctx
-                                .arena
-                                .get_export_assignment(n)
-                                .is_some_and(|data| data.is_export_equals);
+                        let is_export_equals = self
+                            .ctx
+                            .arena
+                            .get_export_assignment(n)
+                            .is_some_and(|data| data.is_export_equals);
                         if !is_export_equals {
                             let mut ns = cur;
                             for _ in 0..8 {
