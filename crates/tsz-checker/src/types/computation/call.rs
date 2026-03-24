@@ -1851,6 +1851,10 @@ impl<'a> CheckerState<'a> {
         // Resolve applications/lazy refs to callable forms before solver dispatch.
         let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
         let callee_type_for_call = self.resolve_lazy_type(callee_type_for_call);
+        // For union types, resolve Lazy members so the solver can inspect their
+        // callable shapes (e.g., for `this` type checks in TS2684). The solver's
+        // NoopResolver can't resolve Lazy types, so we do it here.
+        let callee_type_for_call = self.resolve_lazy_members_in_union(callee_type_for_call);
 
         // Boxed/global `Function` is callable in TS even without explicit signatures.
         let callee_type_for_call =

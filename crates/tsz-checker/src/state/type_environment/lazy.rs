@@ -844,6 +844,35 @@ impl<'a> CheckerState<'a> {
         self.resolve_lazy_type_inner(type_id, &mut visited)
     }
 
+    /// For union types whose members are Lazy(DefId) references, resolve each
+    /// member so that downstream consumers (e.g., the solver's `this` type
+    /// checking in union call resolution) can inspect their callable shapes.
+    ///
+    /// The solver's NoopResolver can't resolve Lazy types, so this resolution
+    /// must happen in the checker before passing types to the solver.
+    pub(crate) fn resolve_lazy_members_in_union(&mut self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common;
+        let Some(members) = common::union_members(self.ctx.types, type_id) else {
+            return type_id;
+        };
+        let mut changed = false;
+        let resolved_members: Vec<_> = members
+            .iter()
+            .map(|&member| {
+                let resolved = self.resolve_lazy_type(member);
+                let resolved = self.evaluate_application_type(resolved);
+                if resolved != member {
+                    changed = true;
+                }
+                resolved
+            })
+            .collect();
+        if !changed {
+            return type_id;
+        }
+        self.ctx.types.union(resolved_members)
+    }
+
     fn resolve_lazy_type_inner(
         &mut self,
         type_id: TypeId,
