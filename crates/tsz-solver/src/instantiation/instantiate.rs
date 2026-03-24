@@ -123,10 +123,21 @@ impl TypeSubstitution {
     /// (like `instantiate_generic`) should use `is_identity_for` instead.
     pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
         self.map.iter().all(|(&name, &type_id)| {
-            matches!(
-                interner.lookup(type_id),
-                Some(TypeData::TypeParameter(info)) if info.name == name
-            )
+            // Check that the substitution maps a name to the UNCONSTRAINED
+            // TypeParameter with that name. If the target has a constraint or
+            // default, it may differ from the TypeParameter in the body being
+            // instantiated, so the substitution is NOT identity.
+            //
+            // This prevents false identity when a type alias's unconstrained `T`
+            // (the body) would be substituted with a constrained `T extends C`
+            // (from the caller). Without this check, `{ "T" → T_constrained }`
+            // would be treated as identity, leaving the body's unconstrained T
+            // unsubstituted.
+            if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id) {
+                info.name == name && info.constraint.is_none() && info.default.is_none()
+            } else {
+                false
+            }
         })
     }
 
