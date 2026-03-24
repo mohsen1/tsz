@@ -525,9 +525,10 @@ impl<'a> FlowAnalyzer<'a> {
         //   `function isSuccess<T>(result: T | "FAILURE"): result is T`
         //   param type = T | "FAILURE", arg type = number | "FAILURE"
         //   → infer T = number (subtract fixed union members from arg type)
-        if let Some(tsz_solver::TypeData::TypeParameter(pred_param_info)) =
-            self.interner.lookup(pred_type)
-        {
+        if let Some(pred_param_info) = tsz_solver::type_queries::get_type_parameter_info(
+            self.interner.as_type_database(),
+            pred_type,
+        ) {
             let pred_param_name = pred_param_info.name;
             if type_params.iter().any(|tp| tp.name == pred_param_name) {
                 for (i, param) in params.iter().enumerate() {
@@ -564,8 +565,6 @@ impl<'a> FlowAnalyzer<'a> {
         arg_type: TypeId,
         target_param_name: Atom,
     ) -> Option<TypeId> {
-        use tsz_solver::TypeData;
-
         // Evaluate/expand the parameter type to get its structural form.
         // Type aliases like `Result<T>` may be represented as Application types
         // that need expansion to reveal the underlying union `T | "FAILURE"`.
@@ -590,12 +589,12 @@ impl<'a> FlowAnalyzer<'a> {
         )?;
 
         // Check if any member is the target type parameter
-        let has_target_param = param_members.iter().any(|&m| {
-            matches!(
-                self.interner.lookup(m),
-                Some(TypeData::TypeParameter(info)) if info.name == target_param_name
-            )
-        });
+        let db = self.interner.as_type_database();
+        let is_target_param = |m: TypeId| -> bool {
+            tsz_solver::type_queries::get_type_parameter_info(db, m)
+                .is_some_and(|info| info.name == target_param_name)
+        };
+        let has_target_param = param_members.iter().any(|&m| is_target_param(m));
         if !has_target_param {
             return None;
         }
@@ -607,12 +606,7 @@ impl<'a> FlowAnalyzer<'a> {
         let fixed_members: Vec<TypeId> = param_members
             .iter()
             .copied()
-            .filter(|&m| {
-                !matches!(
-                    self.interner.lookup(m),
-                    Some(TypeData::TypeParameter(info)) if info.name == target_param_name
-                )
-            })
+            .filter(|&m| !is_target_param(m))
             .map(|m| {
                 // Resolve Lazy/Application types to their concrete forms.
                 // Lazy(DefId) types are type aliases that need resolver lookup.
@@ -620,7 +614,7 @@ impl<'a> FlowAnalyzer<'a> {
                     let db = self.interner.as_type_database();
                     let env = env_ref.borrow();
                     // First try to resolve Lazy types via the environment
-                    if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(m)
+                    if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(db, m)
                         && let Some(resolved) = env.get_def(def_id)
                     {
                         return resolved;
