@@ -452,18 +452,13 @@ impl<'a> CheckerState<'a> {
                     if should_skip_lib_symbol(sym_id) {
                         return false;
                     }
-                    if let Some(owner_idx) = decorator_owner
-                        && symbol.declarations.iter().any(|&decl_idx| {
-                            // Allow the decorator owner itself — only filter out
-                            // declarations strictly inside it (e.g., class members).
-                            // The class name should be resolvable from its own
-                            // decorator; TDZ checks handle validity.
-                            decl_idx != owner_idx
-                                && self.node_is_within_decorator_owner(decl_idx, owner_idx)
-                        })
-                    {
-                        return false;
-                    }
+                    // NOTE: We intentionally skip the decorator_owner check here.
+                    // Cross-file symbols have NodeIndex values from different arenas,
+                    // so `node_is_within_decorator_owner` would walk parent pointers
+                    // in the wrong arena, causing false positives when indices
+                    // coincidentally overlap with nodes inside the class declaration.
+                    // Cross-file symbols can never be inside the current file's
+                    // decorator owner, so this filter is unnecessary.
 
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
