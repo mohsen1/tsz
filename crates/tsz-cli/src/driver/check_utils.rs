@@ -26,16 +26,20 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
 
     // Resolved via program files — check exports directly.
     if let Some(tslib_file) = tslib_file {
+        // Check both the file-path key and the ambient module specifier "tslib".
+        // When tslib.d.ts contains `declare module "tslib" { ... }`, the binder
+        // stores exports under the ambient module specifier, not the file path.
         let tslib_exports_empty = program
             .module_exports
             .get(&tslib_file.file_name)
+            .or_else(|| program.module_exports.get("tslib"))
             .is_none_or(tsz_binder::SymbolTable::is_empty);
 
         if !tslib_exports_empty {
             return Vec::new();
         }
 
-        return emit_ts2343_for_missing_helpers(program, options, &tslib_file.file_name);
+        return emit_ts2343_for_missing_helpers(program, options, &tslib_file.file_name, base_dir);
     }
 
     // Check if tslib is declared as an ambient module (`declare module "tslib" { ... }`).
@@ -50,7 +54,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             return Vec::new();
         }
 
-        return emit_ts2343_for_missing_helpers(program, options, "tslib");
+        return emit_ts2343_for_missing_helpers(program, options, "tslib", base_dir);
     }
 
     // Check the filesystem: tslib may exist in node_modules but not be part of
@@ -85,14 +89,28 @@ fn emit_ts2343_for_missing_helpers(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
     tslib_key: &str,
+    base_dir: &Path,
 ) -> Vec<Diagnostic> {
+    let is_node_module = options.printer.module.is_node_module();
     let mut result = Vec::new();
     for file in &program.files {
         if file.file_name == tslib_key || file.file_name.ends_with(".d.ts") {
             continue;
         }
 
-        for (helper_name, start, length) in required_helpers(file, options.checker.target, false) {
+        // For Node16/NodeNext module kinds, esModuleInterop helpers are only
+        // needed for CJS-format files. ESM files use native import/export.
+        let file_es_module_interop = if is_node_module && options.es_module_interop {
+            let mode = implied_resolution_mode_for_file(Path::new(&file.file_name), base_dir);
+            // CJS files need helpers, ESM files don't
+            mode == "require"
+        } else {
+            options.es_module_interop
+        };
+
+        for (helper_name, start, length) in
+            required_helpers(file, options.checker.target, file_es_module_interop)
+        {
             result.push(Diagnostic::error(
                 file.file_name.clone(),
                 start,
@@ -127,6 +145,7 @@ pub(super) fn required_helpers(
     target: tsz_common::ScriptTarget,
     es_module_interop: bool,
 ) -> Vec<(&'static str, u32, u32)> {
+    let mut result = Vec::new();
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
     let mut first_decorator: Option<(u32, u32)> = None;
@@ -181,24 +200,31 @@ pub(super) fn required_helpers(
     }
 
     // esModuleInterop helpers: __importStar for namespace imports/re-exports,
-    // __importDefault for default named imports/re-exports.
-    if es_module_interop && let Some(helper) = detect_es_module_interop_helper(file) {
-        return vec![helper];
+    // __importDefault for default named imports/re-exports,
+    // __exportStar for `export * from "m"`.
+    if es_module_interop {
+        let mut helpers = detect_es_module_interop_helpers(file);
+        if !helpers.is_empty() {
+            result.extend(helpers.drain(..));
+        }
     }
 
-    Vec::new()
+    result
 }
 
-/// Detect esModuleInterop helpers needed in a file.
+/// Detect ALL esModuleInterop helpers needed in a file.
 ///
 /// Patterns:
 /// - `import * as X from "m"` (non-type-only) → `__importStar` at import statement
 /// - `import { default as X } from "m"` (non-type-only) → `__importDefault` at `default` keyword
 /// - `export { default } from "m"` or `export { default as X } from "m"` → `__importDefault` at `default` keyword
 /// - `export * as ns from "m"` → `__importStar` at export statement
+/// - `export * from "m"` (no export_clause) → `__exportStar` at export statement
 ///
 /// Note: `import X from "m"` (bare default import) does NOT require __importDefault in tsc.
-fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u32, u32)> {
+fn detect_es_module_interop_helpers(file: &BoundFile) -> Vec<(&'static str, u32, u32)> {
+    let mut helpers = Vec::new();
+
     for node_idx_raw in 0..file.arena.len() {
         let node_idx = NodeIndex(node_idx_raw as u32);
         let Some(node) = file.arena.get(node_idx) else {
@@ -225,7 +251,8 @@ fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u3
 
             // `import * as X from "m"` → NAMESPACE_IMPORT
             if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
-                return Some(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
+                helpers.push(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
+                continue;
             }
 
             // `import { ..., default as X, ... } from "m"` → NAMED_IMPORTS with a `default` specifier
@@ -243,20 +270,22 @@ fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u3
                     // Check if property_name (the original name) is "default"
                     if let Some(prop_node) = file.arena.get(specifier.property_name) {
                         if prop_node.kind == SyntaxKind::DefaultKeyword as u16 {
-                            return Some((
+                            helpers.push((
                                 "__importDefault",
                                 prop_node.pos,
                                 prop_node.end.saturating_sub(prop_node.pos),
                             ));
+                            break;
                         }
                         if let Some(ident) = file.arena.get_identifier(prop_node)
                             && ident.escaped_text == "default"
                         {
-                            return Some((
+                            helpers.push((
                                 "__importDefault",
                                 prop_node.pos,
                                 prop_node.end.saturating_sub(prop_node.pos),
                             ));
+                            break;
                         }
                     }
                 }
@@ -273,13 +302,16 @@ fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u3
                 continue;
             }
 
+            // `export * from "m"` — no export_clause means wildcard re-export → `__exportStar`
             let Some(clause_node) = file.arena.get(export_decl.export_clause) else {
+                helpers.push(("__exportStar", node.pos, node.end.saturating_sub(node.pos)));
                 continue;
             };
 
             // `export * as ns from "m"` — the export_clause is a plain identifier (not NAMED_EXPORTS)
             if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
-                return Some(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
+                helpers.push(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
+                continue;
             }
 
             // `export { default } from "m"` or `export { default as X } from "m"` → NAMED_EXPORTS
@@ -305,27 +337,29 @@ fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u3
                         continue;
                     };
                     if check_node.kind == SyntaxKind::DefaultKeyword as u16 {
-                        return Some((
+                        helpers.push((
                             "__importDefault",
                             check_node.pos,
                             check_node.end.saturating_sub(check_node.pos),
                         ));
+                        break;
                     }
                     if let Some(ident) = file.arena.get_identifier(check_node)
                         && ident.escaped_text == "default"
                     {
-                        return Some((
+                        helpers.push((
                             "__importDefault",
                             check_node.pos,
                             check_node.end.saturating_sub(check_node.pos),
                         ));
+                        break;
                     }
                 }
             }
         }
     }
 
-    None
+    helpers
 }
 
 /// Determine which ES decorator helpers are needed for a file.
