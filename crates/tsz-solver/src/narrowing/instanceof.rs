@@ -486,6 +486,14 @@ impl<'a> NarrowingContext<'a> {
     pub fn narrow_by_instanceof_false(&self, source_type: TypeId, instance_type: TypeId) -> TypeId {
         let resolved_source = self.resolve_type(source_type);
 
+        // When the instance type is a union (e.g., from `a instanceof b` where b has
+        // type `typeof A | typeof B`), the false branch cannot narrow because we
+        // can't determine which specific constructor was tested at runtime.
+        // Return the source unchanged, matching tsc's behavior.
+        if union_list_id(self.db, self.resolve_type(instance_type)).is_some() {
+            return source_type;
+        }
+
         // Check if the instance type is the global Object interface.
         // All non-primitive values are instances of Object at runtime,
         // so the false branch of `instanceof Object` keeps only primitives.
