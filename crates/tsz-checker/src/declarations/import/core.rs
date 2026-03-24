@@ -1642,12 +1642,35 @@ impl<'a> CheckerState<'a> {
                     // (export default foo) accompanies a class, not for anonymous
                     // expressions (export default {...}). multipleExportDefault3/4
                     // have class + object literal and expect TS2528.
+                    // Also, if the identifier refers to a type-only binding (e.g.,
+                    // a type alias), tsc uses TS2528 instead of TS2323.
                     export_default_indices.iter().any(|&idx| {
                         self.ctx
                             .arena
                             .get_export_decl_at(idx)
                             .and_then(|ed| self.ctx.arena.get(ed.export_clause))
-                            .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16)
+                            .is_some_and(|c| {
+                                if c.kind != SyntaxKind::Identifier as u16 {
+                                    return false;
+                                }
+                                // Check if identifier refers to a value (not type-only).
+                                // tsc uses TS2528 for type-only default exports (e.g.,
+                                // `type Bar = {}; export default Bar`).
+                                let ed = self.ctx.arena.get_export_decl_at(idx);
+                                let clause_idx = ed.map(|ed| ed.export_clause).unwrap_or(idx);
+                                if let Some(name) = self.node_text(clause_idx) {
+                                    if let Some(sym_id) =
+                                        self.resolve_name_at_node(&name, clause_idx)
+                                    {
+                                        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                                            // Only treat as TS2323 if the symbol has value flags
+                                            return sym.has_any_flags(symbol_flags::VALUE);
+                                        }
+                                    }
+                                }
+                                // If we can't resolve, treat as value (conservative)
+                                true
+                            })
                     })
                 } {
                     for &export_idx in &export_default_indices {
