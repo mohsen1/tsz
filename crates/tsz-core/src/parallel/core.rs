@@ -1856,6 +1856,22 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         let top_level_ids: FxHashSet<SymbolId> =
             lib_binder.file_locals.iter().map(|(_, id)| *id).collect();
 
+        // For external module lib files (e.g. esnext.iterator.d.ts with
+        // `export {}`), build a set of declaration NodeIndices from
+        // `declare global { ... }` blocks. Module-scoped declarations
+        // must NOT be merged into existing global symbols.
+        let global_aug_nodes: Option<FxHashSet<NodeIndex>> = if lib_binder.is_external_module {
+            let mut nodes = FxHashSet::default();
+            for augs in lib_binder.global_augmentations.values() {
+                for aug in augs {
+                    nodes.insert(aug.node);
+                }
+            }
+            Some(nodes)
+        } else {
+            None
+        };
+
         // Process all symbols in this lib binder
         for i in 0..lib_binder.symbols.len() {
             let local_id = SymbolId(i as u32);
@@ -1871,6 +1887,11 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // IMPORTANT: Only merge top-level symbols (those in file_locals)
                 // Nested symbols (namespace members, etc.) should NEVER be merged across scopes
                 let global_id = if is_top_level {
+                    // For external module lib binders (e.g. esnext.iterator.d.ts
+                    // with `export {}`), do NOT merge top-level symbols into
+                    // the global symbol table. Their module-scoped declarations
+                    // (class/interface) would contaminate global symbols with
+                    // the same name. Global contributions come solely via
                     let name_atom = name_interner.intern(&lib_sym.escaped_name);
                     if let Some(&existing_id) = merged_symbols.get(&name_atom) {
                         // Symbol already exists - check if we can merge
@@ -1879,11 +1900,34 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                                 // Merge: reuse existing symbol ID
                                 // Merge declarations from this lib
                                 if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
-                                    existing_mut.flags |= lib_sym.flags;
-                                    append_unique_declarations(
-                                        &mut existing_mut.declarations,
-                                        &lib_sym.declarations,
-                                    );
+                                    // For external module lib binders, only merge
+                                    // declarations from `declare global` blocks.
+                                    // Module-scoped declarations would contaminate
+                                    // global symbols (e.g. module-scoped class Iterator
+                                    // in esnext.iterator.d.ts vs global interface Iterator).
+                                    if let Some(ref aug_nodes) = global_aug_nodes {
+                                        let filtered: Vec<_> = lib_sym
+                                            .declarations
+                                            .iter()
+                                            .copied()
+                                            .filter(|d| aug_nodes.contains(d))
+                                            .collect();
+                                        if !filtered.is_empty() {
+                                            append_unique_declarations(
+                                                &mut existing_mut.declarations,
+                                                &filtered,
+                                            );
+                                        }
+                                        // Do NOT merge flags from external module symbols
+                                        // to avoid contaminating global types with
+                                        // module-scoped CLASS flag etc.
+                                    } else {
+                                        existing_mut.flags |= lib_sym.flags;
+                                        append_unique_declarations(
+                                            &mut existing_mut.declarations,
+                                            &lib_sym.declarations,
+                                        );
+                                    }
                                 }
                                 existing_id
                             } else {
@@ -2148,6 +2192,14 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     for lib_binder in &lib_binders {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
         for (name, &local_id) in lib_binder.file_locals.iter() {
+            // When a lib file is an external module (has `export {}`), its
+            // file_locals contain module-scoped declarations that must NOT
+            // pollute the global scope. Only include symbols that originate
+            // from `declare global { ... }` blocks.
+            if lib_binder.is_external_module && !lib_binder.global_augmentations.contains_key(name)
+            {
+                continue;
+            }
             if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) {
                 // Only keep the first mapping for each name (lib files are processed in order)
                 let name_atom = name_interner.intern(name);

@@ -139,6 +139,23 @@ impl BinderState {
         for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
+            // For external module lib files (e.g. esnext.iterator.d.ts with
+            // `export {}`), build a set of declaration NodeIndices from
+            // `declare global { ... }` blocks. Module-scoped declarations
+            // must NOT be merged into existing global symbols.
+            let global_aug_nodes: Option<rustc_hash::FxHashSet<tsz_parser::NodeIndex>> =
+                if lib_ctx.binder.is_external_module {
+                    let mut nodes = rustc_hash::FxHashSet::default();
+                    for augs in lib_ctx.binder.global_augmentations.values() {
+                        for aug in augs {
+                            nodes.insert(aug.node);
+                        }
+                    }
+                    Some(nodes)
+                } else {
+                    None
+                };
+
             // Process all symbols in this lib binder
             for i in 0..lib_ctx.binder.symbols.len() {
                 let Ok(local_idx) = u32::try_from(i) else {
@@ -157,23 +174,38 @@ impl BinderState {
                         if Self::can_merge_symbols(existing_sym.flags, lib_sym.flags) {
                             // Merge: reuse existing symbol ID, merge declarations
                             if let Some(existing_mut) = self.symbols.get_mut(existing_id) {
-                                existing_mut.flags |= lib_sym.flags;
-                                for &decl in &lib_sym.declarations {
-                                    if !existing_mut.declarations.contains(&decl) {
-                                        existing_mut.declarations.push(decl);
+                                if let Some(ref aug_nodes) = global_aug_nodes {
+                                    // For external module lib binders, only merge
+                                    // declarations from `declare global` blocks.
+                                    for &decl in &lib_sym.declarations {
+                                        if !aug_nodes.contains(&decl) {
+                                            continue;
+                                        }
+                                        if !existing_mut.declarations.contains(&decl) {
+                                            existing_mut.declarations.push(decl);
+                                        }
+                                        let arenas = self
+                                            .declaration_arenas
+                                            .entry((existing_id, decl))
+                                            .or_default();
+                                        if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
+                                            arenas.push(Arc::clone(&lib_ctx.arena));
+                                        }
                                     }
-                                    // Track the arena — multiple lib files may
-                                    // reuse the same NodeIndex (cross-arena collision).
-                                    // Deduplicate by pointer: if the same lib file is
-                                    // merged more than once (e.g. through overlapping
-                                    // reference chains), skip duplicate arenas so that
-                                    // interface members are not lowered multiple times.
-                                    let arenas = self
-                                        .declaration_arenas
-                                        .entry((existing_id, decl))
-                                        .or_default();
-                                    if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
-                                        arenas.push(Arc::clone(&lib_ctx.arena));
+                                    // Do NOT merge flags from external module symbols.
+                                } else {
+                                    existing_mut.flags |= lib_sym.flags;
+                                    for &decl in &lib_sym.declarations {
+                                        if !existing_mut.declarations.contains(&decl) {
+                                            existing_mut.declarations.push(decl);
+                                        }
+                                        let arenas = self
+                                            .declaration_arenas
+                                            .entry((existing_id, decl))
+                                            .or_default();
+                                        if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
+                                            arenas.push(Arc::clone(&lib_ctx.arena));
+                                        }
                                     }
                                 }
                                 // Update value_declaration if not set
@@ -321,6 +353,19 @@ impl BinderState {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
             for (name, &local_id) in lib_ctx.binder.file_locals.iter() {
+                // When a lib file is an external module (has `export {}`), its
+                // file_locals contain module-scoped declarations that must NOT
+                // pollute the global scope. Only merge symbols that originate
+                // from `declare global { ... }` blocks (tracked in
+                // global_augmentations).  This prevents e.g. the module-scoped
+                // `class Iterator` in es2025.iterator.d.ts from contaminating
+                // the global `Iterator` interface from es2015.iterable.d.ts.
+                if lib_ctx.binder.is_external_module
+                    && !lib_ctx.binder.global_augmentations.contains_key(name)
+                {
+                    continue;
+                }
+
                 if let Some(&new_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) {
                     // Only add if not already present (user symbols take precedence)
                     if !self.file_locals.has(name) {
