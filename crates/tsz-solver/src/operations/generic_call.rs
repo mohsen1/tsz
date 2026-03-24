@@ -1036,6 +1036,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 saw_deferred_arg = true;
             }
 
+            // When the checker contextually types an inline arrow using the union of
+            // overload signatures, the arrow's parameter types may contain the original
+            // (pre-substitution) type parameters from the caller's signature (e.g., `T`
+            // from `map<T, U>(c: C<T>, f: (x: T) => U)`). These leaked type parameters
+            // would create spurious constraints in Round 1, poisoning inference.
+            // Defer such args to Round 2, where they will be re-typed with the specific
+            // overload's contextual type after type parameters are resolved from Round 1.
+            if self.arg_contains_callers_type_params(contextual_arg_type, &substitution) {
+                saw_deferred_arg = true;
+                continue;
+            }
+
             // Direct placeholders (inference variables) are validated by final
             // constraint resolution below. Skipping eager checks here avoids
             // duplicate expensive assignability work on hot generic-call paths.

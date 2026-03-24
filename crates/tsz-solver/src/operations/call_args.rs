@@ -911,6 +911,73 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Check if a function arg type contains TypeParameters whose names match the
+    /// caller's type parameter names (from the substitution). This detects when the
+    /// checker's contextual typing leaked unresolved type parameters from overload
+    /// signatures into arg types. Only checks function parameter positions, since
+    /// those are the ones that cause inference poisoning in Round 1.
+    pub(crate) fn arg_contains_callers_type_params(
+        &self,
+        arg_type: TypeId,
+        substitution: &crate::instantiation::instantiate::TypeSubstitution,
+    ) -> bool {
+        if substitution.map().is_empty() {
+            return false;
+        }
+        // Only check function types - the issue is specifically when contextual typing
+        // leaks caller type params into a function arg's parameter types.
+        match self.interner.lookup(arg_type) {
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                shape.params.iter().any(|param| {
+                    self.type_references_substitution_keys(param.type_id, substitution)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// Recursively check if a type references any TypeParameter whose name is a key
+    /// in the given substitution (i.e., one of the caller's type parameter names).
+    fn type_references_substitution_keys(
+        &self,
+        ty: TypeId,
+        substitution: &crate::instantiation::instantiate::TypeSubstitution,
+    ) -> bool {
+        match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info)) => {
+                // Check if this type parameter's name matches one of the caller's type params
+                let name = self.interner.resolve_atom(info.name);
+                if name.as_str().starts_with("__infer_") {
+                    return false; // Inference placeholders are fine
+                }
+                substitution.map().contains_key(&info.name)
+            }
+            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
+                let members = self.interner.type_list(members);
+                members
+                    .iter()
+                    .any(|&m| self.type_references_substitution_keys(m, substitution))
+            }
+            Some(TypeData::Array(elem)) => {
+                self.type_references_substitution_keys(elem, substitution)
+            }
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner.tuple_list(elements);
+                elements
+                    .iter()
+                    .any(|e| self.type_references_substitution_keys(e.type_id, substitution))
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                app.args
+                    .iter()
+                    .any(|&a| self.type_references_substitution_keys(a, substitution))
+            }
+            _ => false,
+        }
+    }
+
     #[inline]
     pub(crate) fn type_contains_placeholder(
         &self,
