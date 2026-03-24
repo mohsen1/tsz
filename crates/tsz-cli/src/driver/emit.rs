@@ -293,12 +293,10 @@ pub(crate) fn emit_outputs(
                     emitter
                 };
 
-                // In node16/nodenext module modes, module resolution already enforces
-                // portability via the exports map (TS2307 for blocked paths), so the
-                // TS2883 non-portable type check is redundant and matches tsc behavior.
-                if context.options.printer.module.is_node_module() {
-                    emitter.set_skip_portability_check(true);
-                }
+                // NOTE: tsc still emits TS2883 for non-portable inferred type
+                // references even in node16/nodenext mode. The exports map blocks
+                // direct imports (TS2307) but doesn't suppress the portability
+                // check on inferred types in declaration emit.
 
                 // Precompute the export surface summary for this file.
                 // This seeds the overload pre-scan so the emitter doesn't
