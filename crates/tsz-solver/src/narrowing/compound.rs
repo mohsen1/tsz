@@ -188,7 +188,7 @@ impl<'a> NarrowingContext<'a> {
     /// This is used for instanceof fallback: if we're on the true branch of
     /// an instanceof check but couldn't narrow to the specific instance type,
     /// at least narrow to exclude primitives (which can never pass instanceof).
-    pub(crate) fn narrow_to_objectish(&self, source_type: TypeId) -> TypeId {
+    pub fn narrow_to_objectish(&self, source_type: TypeId) -> TypeId {
         // ANY and UNKNOWN are kept as-is
         if source_type == TypeId::ANY {
             return TypeId::ANY;

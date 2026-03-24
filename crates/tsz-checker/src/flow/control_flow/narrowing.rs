@@ -714,22 +714,31 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // Extract instance type from constructor expression (AST -> TypeId)
-        let instance_type = self.instance_type_from_constructor(bin.right);
-
-        // When the constructor can't be resolved to a specific instance type:
-        // - True branch: value passed instanceof, so it must be non-primitive.
-        //   Use TypeId::OBJECT as a conservative narrowing target.
-        // - False branch: we don't know which constructor was tested, so we
-        //   can't exclude any types. Return source unchanged.
-        let instance_type = match instance_type {
+        // Extract instance type from constructor expression (AST -> TypeId).
+        // If we can't determine the instance type:
+        // - True branch: narrow to object-like types (instanceof always returns
+        //   false for null/undefined/primitives)
+        // - False branch: keep source type unchanged (we can't exclude anything
+        //   without knowing the constructor)
+        // We must NOT fall back to TypeId::OBJECT because the solver would treat
+        // it as `instanceof Object` and incorrectly exclude all non-primitives
+        // from the false branch.
+        let instance_type = match self.instance_type_from_constructor(bin.right) {
             Some(t) => t,
             None => {
                 if is_true_branch {
-                    TypeId::OBJECT
-                } else {
-                    return type_id;
+                    // Even without knowing the constructor, instanceof true
+                    // means the value is definitely an object (not null/undefined).
+                    let env_borrow;
+                    let narrowing = if let Some(env) = &self.type_environment {
+                        env_borrow = env.borrow();
+                        self.make_narrowing_context().with_resolver(&*env_borrow)
+                    } else {
+                        self.make_narrowing_context()
+                    };
+                    return narrowing.narrow_to_objectish(type_id);
                 }
+                return type_id;
             }
         };
 

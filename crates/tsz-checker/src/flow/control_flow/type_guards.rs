@@ -330,11 +330,13 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 return Some((TypeGuard::Instanceof(instance_type, false), target, false));
             }
-            // If we can't resolve the constructor to a specific instance type,
-            // don't emit a type guard. Without knowing the constructor, we can't
-            // narrow on the false branch (we don't know what to exclude), and on
-            // the true branch any non-primitive narrowing would be too aggressive
-            // when the constructor might not be Object.
+            // If we can't determine the instance type (e.g., unknown constructor like
+            // `new PersonMixin()` where PersonMixin extends Function), don't create a
+            // type guard. Without knowing what the constructor produces, we can't
+            // meaningfully narrow in either branch.
+            // Note: We must NOT fall back to TypeId::OBJECT here because that would
+            // cause the false branch to incorrectly exclude all non-primitive types
+            // (treating it as `instanceof Object`).
             return None;
         }
 

@@ -1542,14 +1542,10 @@ impl<'a> NarrowingContext<'a> {
                     self.narrow_to_objectish(source_type)
                 } else {
                     // Negative: !(x instanceof Class)
-                    // Only do aggressive false-branch narrowing (excluding all non-primitives
-                    // for Object, or all array-likes for Array) when the constructor was
-                    // explicitly named `Object`/`Function` in the source code. When the
-                    // instance type merely resolves to Object (e.g., from a fallback or
-                    // a constructor whose type extends Function), be conservative.
-                    if !is_explicit_global && self.is_object_interface(*instance_type) {
-                        return source_type;
-                    }
+                    // Keep primitives (they can never pass instanceof) and exclude
+                    // non-primitive types assignable to the instance type.
+                    // For `instanceof Object`, this correctly excludes all non-primitives
+                    // since every non-primitive is an Object instance at runtime.
                     self.narrow_by_instanceof_false(source_type, *instance_type)
                 }
             }
