@@ -1441,6 +1441,14 @@ bitflags::bitflags! {
         /// because modifiers can transform mutually-assignable type arguments into
         /// structurally incompatible results (e.g., Required<{a?}> vs Required<{b?}>).
         const NEEDS_STRUCTURAL_FALLBACK = 1 << 2;
+        /// Variance-based REJECTION is unreliable. Different type arguments can
+        /// produce structurally equivalent instantiations through indexed access
+        /// types and intersection normalization. When set, a variance failure
+        /// should fall through to structural comparison instead of conclusively
+        /// rejecting. Example: `DT<{base: Base, new: New}>` vs
+        /// `DT<{base: Base, new: New & Base}>` where `S["base"] & S["new"]`
+        /// normalizes to the same type for both.
+        const REJECTION_UNRELIABLE = 1 << 3;
     }
 }
 
@@ -1468,6 +1476,14 @@ impl Variance {
     /// Check if variance requires structural fallback (unreliable due to mapped type modifiers).
     pub const fn needs_structural_fallback(&self) -> bool {
         self.contains(Self::NEEDS_STRUCTURAL_FALLBACK)
+    }
+
+    /// Check if variance-based rejection is unreliable. When true, a variance
+    /// failure should fall through to structural comparison because indexed
+    /// access types and intersections can normalize away differences between
+    /// type arguments, producing structurally equivalent instantiations.
+    pub const fn rejection_unreliable(&self) -> bool {
+        self.contains(Self::REJECTION_UNRELIABLE)
     }
 
     /// Compose two variances (for nested generics).

@@ -435,10 +435,13 @@ pub fn check_application_variance<R: TypeResolver>(
         return Some(true);
     }
 
-    // Variance failure is not definitive — return None to fall through to
-    // structural comparison. TypeScript always falls through when
-    // typeArgumentsRelatedTo fails.
-    None
+    // When variance check fails AND rejection is unreliable (indexed access
+    // types can normalize away differences between type arguments), don't
+    // conclusively reject. Fall through to structural comparison.
+    if variances.iter().any(|v| v.rejection_unreliable()) {
+        return None;
+    }
+    Some(false)
 }
 
 #[cfg(test)]
