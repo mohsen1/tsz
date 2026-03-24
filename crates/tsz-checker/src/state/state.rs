@@ -1424,6 +1424,24 @@ impl<'a> CheckerState<'a> {
             self.ctx.node_types.insert(idx.0, result);
         } else if let Some(key) = request_cache_key {
             self.cache_request_type(idx, key, result);
+        } else if !request.is_empty() {
+            // Contextual type was provided but no request cache key was generated
+            // (e.g., call expressions are not request-cache-audited). Populate
+            // node_types so a subsequent context-free lookup reuses the
+            // contextually-inferred result instead of recomputing without context.
+            // This prevents generic return type inference from being lost — e.g.,
+            // querySelector<E>() returning E=Element instead of E=HTMLElement.
+            if let Some(node) = self.ctx.arena.get(idx) {
+                use tsz_parser::parser::syntax_kind_ext;
+                if matches!(
+                    node.kind,
+                    syntax_kind_ext::CALL_EXPRESSION
+                        | syntax_kind_ext::NON_NULL_EXPRESSION
+                        | syntax_kind_ext::NEW_EXPRESSION
+                ) {
+                    self.ctx.node_types.insert(idx.0, result);
+                }
+            }
         }
 
         let should_narrow_computed =
