@@ -85,6 +85,18 @@ impl<'a> CheckerState<'a> {
         let mut number_index: Option<IndexSignature> = None;
         let mut member_order: u32 = 0;
 
+        // Track method overloads: group call signatures by method name.
+        // When an interface has multiple method signatures with the same name
+        // (overloads), we need to combine them into a single Callable type
+        // so that overload resolution works correctly.
+        struct MethodOverloadEntry {
+            signatures: Vec<SolverCallSignature>,
+            optional: bool,
+            readonly: bool,
+            declaration_order: u32,
+        }
+        let mut method_overloads: Vec<(Atom, MethodOverloadEntry)> = Vec::new();
+
         // Iterate over this interface's own members
         for &member_idx in &interface.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -175,37 +187,19 @@ impl<'a> CheckerState<'a> {
                     });
                     self.pop_type_parameters(type_param_updates);
                 }
-            } else if member_node.kind == PROPERTY_SIGNATURE || member_node.kind == METHOD_SIGNATURE
-            {
-                // Extract property
+            } else if member_node.kind == PROPERTY_SIGNATURE {
+                // Extract property signature
                 if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    // Try literal property name first, then fall back to
-                    // type-based resolution for computed property names
-                    // (e.g., [k] where k is a unique symbol variable).
                     let name_atom = self.get_member_name_atom(sig.name).or_else(|| {
                         self.get_property_name_resolved(sig.name)
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
-                        // For method signatures, push type parameters so they
-                        // are in scope when resolving the return type annotation
-                        // (e.g., `groupBy<T>(): { [key: string]: T[] }`)
-                        let type_param_updates = if member_node.kind == METHOD_SIGNATURE {
-                            let (_, updates) = self.push_type_parameters(&sig.type_parameters);
-                            Some(updates)
-                        } else {
-                            None
-                        };
-
                         let type_id = if sig.type_annotation.is_some() {
                             self.get_type_from_type_node_in_type_literal(sig.type_annotation)
                         } else {
                             TypeId::ANY
                         };
-
-                        if let Some(updates) = type_param_updates {
-                            self.pop_type_parameters(updates);
-                        }
 
                         member_order += 1;
                         properties.push(PropertyInfo {
@@ -214,12 +208,84 @@ impl<'a> CheckerState<'a> {
                             write_type: type_id,
                             optional: sig.question_token,
                             readonly: self.has_readonly_modifier(&sig.modifiers),
-                            is_method: member_node.kind == METHOD_SIGNATURE,
+                            is_method: false,
                             is_class_prototype: false,
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: member_order,
                         });
+                    }
+                }
+            } else if member_node.kind == METHOD_SIGNATURE {
+                // Extract method signature as a full call signature.
+                // Method overloads (multiple signatures with the same name) are
+                // collected and later combined into a single Callable type so
+                // that overload resolution works correctly (e.g., Object.freeze).
+                if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    let name_atom = self.get_member_name_atom(sig.name).or_else(|| {
+                        self.get_property_name_resolved(sig.name)
+                            .map(|name| self.ctx.types.intern_string(&name))
+                    });
+                    if let Some(name_atom) = name_atom {
+                        let (type_params, type_param_updates) =
+                            self.push_type_parameters(&sig.type_parameters);
+                        let (params, this_type) =
+                            self.extract_params_from_signature_in_type_literal(sig);
+                        self.push_typeof_param_scope(&params);
+                        let (return_type, type_predicate) = if sig.type_annotation.is_some() {
+                            let is_predicate =
+                                self.ctx.arena.get(sig.type_annotation).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::TYPE_PREDICATE
+                                });
+                            if is_predicate {
+                                self.return_type_and_predicate_in_type_literal(
+                                    sig.type_annotation,
+                                    &params,
+                                )
+                            } else {
+                                (
+                                    self.get_type_from_type_node_in_type_literal(
+                                        sig.type_annotation,
+                                    ),
+                                    None,
+                                )
+                            }
+                        } else {
+                            (TypeId::ANY, None)
+                        };
+                        self.pop_typeof_param_scope(&params);
+                        self.pop_type_parameters(type_param_updates);
+
+                        let call_sig = SolverCallSignature {
+                            type_params,
+                            params,
+                            this_type,
+                            return_type,
+                            type_predicate,
+                            is_method: true,
+                        };
+
+                        member_order += 1;
+                        let optional = sig.question_token;
+                        let readonly = self.has_readonly_modifier(&sig.modifiers);
+
+                        // Add to overload group or create new group
+                        if let Some(entry) = method_overloads
+                            .iter_mut()
+                            .find(|(name, _)| *name == name_atom)
+                        {
+                            entry.1.signatures.push(call_sig);
+                        } else {
+                            method_overloads.push((
+                                name_atom,
+                                MethodOverloadEntry {
+                                    signatures: vec![call_sig],
+                                    optional,
+                                    readonly,
+                                    declaration_order: member_order,
+                                },
+                            ));
+                        }
                     }
                 }
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -352,6 +418,51 @@ impl<'a> CheckerState<'a> {
                     Self::merge_index_signature(&mut string_index, info);
                 }
             }
+        }
+
+        // Convert method overloads to properly-typed properties.
+        // Single-method entries become Function types; multiple-signature entries
+        // become Callable types with explicit overloads so the solver can perform
+        // overload resolution (e.g., Object.freeze's specific literal-preserving
+        // overload is tried before the generic fallback).
+        for (name, entry) in method_overloads {
+            let type_id = if entry.signatures.len() == 1 {
+                // Single method: create a Function type
+                let sig = entry.signatures.into_iter().next().unwrap();
+                factory.function(tsz_solver::FunctionShape {
+                    type_params: sig.type_params,
+                    params: sig.params,
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate,
+                    is_constructor: false,
+                    is_method: true,
+                })
+            } else {
+                // Multiple overloads: create a Callable type with all signatures
+                let shape = CallableShape {
+                    call_signatures: entry.signatures,
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                };
+                factory.callable(shape)
+            };
+            properties.push(PropertyInfo {
+                name,
+                type_id,
+                write_type: type_id,
+                optional: entry.optional,
+                readonly: entry.readonly,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: entry.declaration_order,
+            });
         }
 
         // Convert accessors to properties
