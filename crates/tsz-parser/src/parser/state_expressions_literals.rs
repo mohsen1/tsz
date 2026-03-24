@@ -107,9 +107,9 @@ impl ParserState {
                     if !first_token_is_identifier_or_keyword || first_token_is_reserved {
                         // Reserved words (while, for, if, etc.) can be property names
                         // but cannot be used in shorthand form — require ':'
-                        self.parse_error_at(
-                            first_name_start,
-                            first_name_end.saturating_sub(first_name_start),
+                        // Report at current token position (where ':' should appear),
+                        // matching tsc's behavior.
+                        self.parse_error_at_current_token(
                             "':' expected.",
                             tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                         );
