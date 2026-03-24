@@ -118,9 +118,15 @@ impl<'a> CheckerState<'a> {
             // flow-narrowing pass. Without this, the declared type returned here
             // gets overridden with the narrowed type, hiding TS2322 mismatches.
             self.ctx.daa_error_nodes.insert(idx.0);
-            // Return the declared type — narrowing is not trustworthy when the
-            // variable might be uninitialized (e.g., typeof false branch where
-            // the variable could be undefined).
+            // For control-flow-typed `any` symbols (variables with no type
+            // annotation like `var a;`), tsc uses `undefined` as the expression
+            // type when TS2454 fires. This causes downstream type errors to
+            // cascade (e.g., TS2345 "Argument of type 'undefined'...").
+            // For explicitly-typed variables, the declared type is used.
+            if declared_type == TypeId::ANY && self.is_control_flow_typed_any_symbol(sym_id) {
+                trace!("Definite assignment error for implicit any, returning undefined");
+                return TypeId::UNDEFINED;
+            }
             trace!("Definite assignment error, returning declared type");
             return declared_type;
         }
