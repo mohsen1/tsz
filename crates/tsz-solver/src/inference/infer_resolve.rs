@@ -311,15 +311,35 @@ impl<'a> InferenceContext<'a> {
                 &upper_bounds,
                 declared_constraint,
             );
-            // Match tsc: if covariant result is uninformative (never or unknown) and
-            // there are contravariant candidates, prefer the contravariant result.
-            // This handles patterns like `mkList([], compareNumbers)` where `[]` gives
-            // T an uninformative candidate from the empty array, but `compareNumbers`
-            // gives T=number from the callback parameters.
-            if matches!(covariant_result, TypeId::NEVER | TypeId::UNKNOWN)
-                && !contra_candidates.is_empty()
-            {
-                self.resolve_from_contra_candidates(&contra_candidates)
+            if !contra_candidates.is_empty() {
+                // Match tsc's getInferredType: when both co- and contra-variant
+                // inferences exist, prefer the covariant result ONLY IF:
+                //   1. It is not never or any
+                //   2. It is assignable to some contra-candidate
+                // Otherwise, fall back to the contravariant result.
+                //
+                // This ensures that inference from function parameter positions
+                // (contravariant) takes precedence when the covariant candidate
+                // (from direct argument inference) conflicts with the structural
+                // constraints. For example:
+                //   declare function create<P>(factory: (props: P) => void, props: P): void;
+                //   create(f, { value: "C" });
+                // P should be inferred from the function parameter (contra: Props),
+                // not from the object literal (co: { value: "C" }), because the
+                // object literal type is not assignable to Props.
+                let covariant_is_uninformative = matches!(
+                    covariant_result,
+                    TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
+                );
+                let covariant_assignable_to_contra = !covariant_is_uninformative
+                    && contra_candidates
+                        .iter()
+                        .any(|c| self.is_subtype(covariant_result, c.type_id));
+                if covariant_assignable_to_contra {
+                    covariant_result
+                } else {
+                    self.resolve_from_contra_candidates(&contra_candidates)
+                }
             } else {
                 covariant_result
             }
@@ -1485,13 +1505,23 @@ impl<'a> InferenceContext<'a> {
             let result = if !candidates.is_empty() {
                 let covariant_result =
                     self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc);
-                // If covariant resolution yields never or unknown but we have contra-candidates,
-                // prefer the contra-candidates. This handles cases like f([], callback) where
-                // [] gives T=unknown/never covariant but the callback gives T=number contravariant.
-                if matches!(covariant_result, TypeId::NEVER | TypeId::UNKNOWN)
-                    && !info.contra_candidates.is_empty()
-                {
-                    self.resolve_from_contra_candidates(&info.contra_candidates)
+                if !info.contra_candidates.is_empty() {
+                    // Match tsc's getInferredType: prefer covariant ONLY IF it's
+                    // assignable to some contra-candidate. Otherwise use contra result.
+                    let covariant_is_uninformative = matches!(
+                        covariant_result,
+                        TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
+                    );
+                    let covariant_assignable_to_contra = !covariant_is_uninformative
+                        && info
+                            .contra_candidates
+                            .iter()
+                            .any(|c| self.is_subtype(covariant_result, c.type_id));
+                    if covariant_assignable_to_contra {
+                        covariant_result
+                    } else {
+                        self.resolve_from_contra_candidates(&info.contra_candidates)
+                    }
                 } else {
                     covariant_result
                 }
@@ -1567,12 +1597,30 @@ impl<'a> InferenceContext<'a> {
                     if !info.candidates.is_empty() {
                         let is_const = self.is_var_const(root);
                         let dc = self.declared_constraints.get(&root).copied();
-                        self.resolve_from_candidates(
+                        let covariant_result = self.resolve_from_candidates(
                             &info.candidates,
                             is_const,
                             &info.upper_bounds,
                             dc,
-                        )
+                        );
+                        if !info.contra_candidates.is_empty() {
+                            let covariant_is_uninformative = matches!(
+                                covariant_result,
+                                TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
+                            );
+                            let covariant_ok = !covariant_is_uninformative
+                                && info
+                                    .contra_candidates
+                                    .iter()
+                                    .any(|c| self.is_subtype(covariant_result, c.type_id));
+                            if covariant_ok {
+                                covariant_result
+                            } else {
+                                self.resolve_from_contra_candidates(&info.contra_candidates)
+                            }
+                        } else {
+                            covariant_result
+                        }
                     } else if !info.contra_candidates.is_empty() {
                         self.resolve_from_contra_candidates(&info.contra_candidates)
                     } else if !info.upper_bounds.is_empty() {
