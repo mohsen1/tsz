@@ -206,7 +206,7 @@ impl<'a> InferenceContext<'a> {
 
             // TypeApplication: recurse into instantiated type
             (Some(TypeData::Application(source_app)), Some(TypeData::Application(target_app))) => {
-                self.infer_applications(source_app, target_app, priority)?;
+                self.infer_applications(source, source_app, target_app, priority)?;
             }
 
             // Index access types: infer both object and index types
@@ -1151,6 +1151,7 @@ impl<'a> InferenceContext<'a> {
     /// Infer from `TypeApplication` (generic type instantiations)
     fn infer_applications(
         &mut self,
+        source: TypeId,
         source_app: TypeApplicationId,
         target_app: TypeApplicationId,
         priority: InferencePriority,
@@ -1158,14 +1159,22 @@ impl<'a> InferenceContext<'a> {
         let source_info = self.interner.type_application(source_app);
         let target_info = self.interner.type_application(target_app);
 
-        // The base types must match for inference to work
-        if source_info.base != target_info.base {
+        // When both applications share the same base type, infer directly from
+        // type arguments (e.g., MyPromise<boolean, any> vs MyPromise<T, U>).
+        if source_info.base == target_info.base {
+            for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
+                self.infer_from_types(*source_arg, *target_arg, priority)?;
+            }
             return Ok(());
         }
 
-        // Recurse into the type arguments
-        for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
-            self.infer_from_types(*source_arg, *target_arg, priority)?;
+        // When the bases differ (e.g., source is MyPromise<boolean, any> and target
+        // is DoNothingAlias<T, U> where DoNothingAlias extends MyPromise), expand
+        // the target application to its structural form and infer structurally.
+        // This mirrors tsc's behavior of walking the base type chain when reference
+        // type targets don't share the same origin as the source.
+        if let Some(expanded_target) = self.try_expand_application(target_app) {
+            return self.infer_from_types(source, expanded_target, priority);
         }
 
         Ok(())
