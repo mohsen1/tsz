@@ -714,14 +714,16 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // TypeScript narrows `any` via instanceof for specific constructors
-        // (e.g. Error, Date) but NOT for Function or Object. Let the solver
-        // handle the Function/Object check rather than short-circuiting here.
-
         // Extract instance type from constructor expression (AST -> TypeId)
         let instance_type = self
             .instance_type_from_constructor(bin.right)
             .unwrap_or(TypeId::OBJECT);
+
+        // TypeScript narrows `any` via instanceof for specific constructors
+        // (e.g. Error, Date) but NOT for Function or Object.
+        // Note: This check handles direct calls to narrow_by_instanceof.
+        // The flow-graph path (type_guards.rs) delegates to the solver's
+        // narrow_type which has its own Object/Function check.
 
         // Delegate to solver via unified narrow_type API
         let env_borrow;

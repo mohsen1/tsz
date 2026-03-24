@@ -310,6 +310,20 @@ impl<'a> FlowAnalyzer<'a> {
             let target = bin.left;
             // Get the constructor type from the right side
             if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                // For global Object/Function constructors, use the well-known TypeId
+                // so the solver's `any instanceof Object/Function` check works correctly.
+                // The lib.d.ts instance types may be Lazy references that the solver's
+                // is_object_interface/is_function_interface_structural checks don't match.
+                let ctor_expr = self.skip_parens_and_assertions(bin.right);
+                if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
+                    let name = &ident.escaped_text;
+                    if name == "Object" {
+                        return Some((TypeGuard::Instanceof(TypeId::OBJECT), target, false));
+                    }
+                    if name == "Function" {
+                        return Some((TypeGuard::Instanceof(TypeId::FUNCTION), target, false));
+                    }
+                }
                 return Some((TypeGuard::Instanceof(instance_type), target, false));
             }
             // If we can't get the instance type, still return a guard with OBJECT as fallback
