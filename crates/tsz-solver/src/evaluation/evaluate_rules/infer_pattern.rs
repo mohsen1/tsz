@@ -696,14 +696,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if let Some(rest_index) = rest_index {
-            if rest_index + 1 != pattern_len {
-                return false;
-            }
-            if source_len < rest_index {
+            // Pattern has a rest element at `rest_index`.
+            // Split pattern into: prefix (before rest), rest, suffix (after rest).
+            // Match prefix from start of source, suffix from end of source,
+            // collect remaining middle elements into the rest tuple.
+            let prefix_len = rest_index;
+            let suffix_len = pattern_len - rest_index - 1;
+            let fixed_count = prefix_len + suffix_len;
+
+            // Source must have at least enough elements for the fixed parts
+            if source_len < fixed_count {
                 return false;
             }
 
-            for i in 0..rest_index {
+            // Match prefix elements (before rest) from start of source
+            for i in 0..prefix_len {
                 let source_elem = &source_elems[i];
                 let pattern_elem = &pattern_elems[i];
                 if source_elem.rest || pattern_elem.rest {
@@ -726,8 +733,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
+            // Match suffix elements (after rest) from end of source
+            let rest_source_end = source_len - suffix_len;
+            for i in 0..suffix_len {
+                let source_elem = &source_elems[rest_source_end + i];
+                let pattern_elem = &pattern_elems[rest_index + 1 + i];
+                if source_elem.rest || pattern_elem.rest {
+                    return false;
+                }
+                let source_type = if source_elem.optional {
+                    self.interner()
+                        .union2(source_elem.type_id, TypeId::UNDEFINED)
+                } else {
+                    source_elem.type_id
+                };
+                if !self.match_infer_pattern(
+                    source_type,
+                    pattern_elem.type_id,
+                    bindings,
+                    visited,
+                    checker,
+                ) {
+                    return false;
+                }
+            }
+
+            // Collect middle elements (between prefix and suffix) into the rest tuple
             let mut rest_elems = Vec::new();
-            for source_elem in &source_elems[rest_index..] {
+            for source_elem in &source_elems[prefix_len..rest_source_end] {
                 if source_elem.rest {
                     return false;
                 }
