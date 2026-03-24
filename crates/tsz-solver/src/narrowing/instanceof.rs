@@ -15,7 +15,7 @@ use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
-use crate::visitor::{lazy_def_id, union_list_id};
+use crate::visitor::{application_id, lazy_def_id, union_list_id};
 use tracing::{Level, span, trace};
 
 impl<'a> NarrowingContext<'a> {
@@ -180,6 +180,17 @@ impl<'a> NarrowingContext<'a> {
                             instance_type.0, member.0
                         );
                         filtered_members.push(instance_type);
+                        continue;
+                    }
+
+                    // Check if member is a generic instantiation of the instance type.
+                    // e.g., Set<string> is Application(base=Set) and instance_type is Set.
+                    if self.is_instantiation_of(member, instance_type) {
+                        trace!(
+                            "Union member {} is instantiation of instance type {}, keeping",
+                            member.0, instance_type.0
+                        );
+                        filtered_members.push(member);
                         continue;
                     }
 
@@ -369,6 +380,19 @@ impl<'a> NarrowingContext<'a> {
                                 None => None,                       // unrelated classes → exclude
                             };
                         }
+                        // Check if member is a generic instantiation of the instance type.
+                        // For example, Set<string> is Application(base=Lazy(DefId_Set), args=[string])
+                        // and the instance type from `instanceof Set` is Lazy(DefId_Set).
+                        // In this case, keep the member — it's already a specific instantiation
+                        // of the constructor's type. Without this, Set<string> vs Set<T> fails
+                        // bidirectional assignability and falls through to intersection.
+                        if self.is_instantiation_of(member, instance_type) {
+                            trace!(
+                                "Union member {} is a generic instantiation of instance type {}, keeping",
+                                member.0, instance_type.0
+                            );
+                            return Some(member);
+                        }
                         // Non-class types: fall back to structural checks
                         // Member assignable to instance type → keep member
                         if self.is_assignable_to(member, instance_type) {
@@ -394,6 +418,13 @@ impl<'a> NarrowingContext<'a> {
             } else if matching.len() == 1 {
                 return matching[0];
             }
+            // If all members survived unchanged, return the original source to
+            // preserve type identity (important for property resolution caching).
+            if matching.len() == members.len()
+                && matching.iter().zip(members.iter()).all(|(a, b)| *a == *b)
+            {
+                return source_type;
+            }
             return self.db.union(matching);
         }
 
@@ -415,6 +446,12 @@ impl<'a> NarrowingContext<'a> {
         // - Array<T> is NOT a subtype of readonly number[] (unbound T)
         // - But at runtime, a readonly array IS an Array instance
         if !self.is_js_primitive(resolved_source) {
+            // Check if source is a generic instantiation of the instance type.
+            // Use source_type (not resolved_source) because resolve_type() expands
+            // Application types, losing the base+args structure we need to match.
+            if self.is_instantiation_of(source_type, instance_type) {
+                return source_type;
+            }
             // For class-to-class comparisons, use nominal identity
             let source_is_class = self.get_class_def_id(resolved_source).is_some();
             let target_is_class = self.get_class_def_id(instance_type).is_some();
@@ -490,6 +527,12 @@ impl<'a> NarrowingContext<'a> {
                             Some(false) | None => true,
                         };
                     }
+                    // Instantiations of the instance type always pass instanceof
+                    // at runtime (e.g., Set<string> always passes `instanceof Set`),
+                    // so they must be excluded from the false branch.
+                    if self.is_instantiation_of(member, instance_type) {
+                        return false;
+                    }
                     // Non-class or resolver unavailable: fall back to structural checks.
                     // A member only fails to reach the false branch if it is GUARANTEED
                     // to pass the true branch. In TypeScript, this means the member
@@ -524,6 +567,10 @@ impl<'a> NarrowingContext<'a> {
                 // instance extends source or unrelated → keeps in false branch
                 Some(false) | None => source_type,
             };
+        }
+        // Instantiations of the instance type always pass instanceof
+        if self.is_instantiation_of(source_type, instance_type) {
+            return TypeId::NEVER;
         }
         if self.is_assignable_to(resolved_source, instance_type) {
             return TypeId::NEVER;
@@ -606,5 +653,47 @@ impl<'a> NarrowingContext<'a> {
         }
         // Unrelated classes
         None
+    }
+
+    /// Check if `member` is a generic instantiation of the same type as `instance_type`.
+    ///
+    /// For example, `Set<string>` is `Application(base=Lazy(DefId_Set), args=[string])`,
+    /// and if `instance_type` is `Lazy(DefId_Set)`, then `Set<string>` is an instantiation
+    /// of the instance type. This is used in instanceof narrowing to preserve union members
+    /// that are specific instantiations of the constructor's interface/class type.
+    fn is_instantiation_of(&self, member: TypeId, instance_type: TypeId) -> bool {
+        let member_app_id = match application_id(self.db, member) {
+            Some(id) => id,
+            None => return false,
+        };
+        let member_app = self.db.type_application(member_app_id);
+        let member_base_def = match lazy_def_id(self.db, member_app.base) {
+            Some(d) => d,
+            None => return false,
+        };
+
+        // The instance type may itself be an Application (e.g., Set<T> with unresolved T)
+        // or a plain Lazy(DefId). Handle both cases.
+        let instance_def = if let Some(inst_app_id) = application_id(self.db, instance_type) {
+            let inst_app = self.db.type_application(inst_app_id);
+            lazy_def_id(self.db, inst_app.base)
+        } else {
+            lazy_def_id(self.db, instance_type)
+        };
+
+        let instance_def = match instance_def {
+            Some(d) => d,
+            None => return false,
+        };
+
+        // Use DefId equality first, fall back to resolver equivalence
+        // (cross-context DefIds for the same symbol may differ)
+        if member_base_def == instance_def {
+            return true;
+        }
+        if let Some(resolver) = self.resolver {
+            return resolver.defs_are_equivalent(member_base_def, instance_def);
+        }
+        false
     }
 }
