@@ -3430,6 +3430,55 @@ fn test_checker_file_size_ceiling() {
     );
 }
 
+/// CLAUDE.md §4: Lowering must not import Checker or Emitter.
+/// tsz-lowering is a bridge from AST to solver types; it should only depend on
+/// parser, binder, solver, and common. Importing the checker or emitter would
+/// create a backwards dependency in the pipeline.
+#[test]
+fn test_lowering_must_not_import_checker_or_emitter() {
+    let lowering_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-lowering/src");
+    if !lowering_src.exists() {
+        return;
+    }
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&lowering_src, &mut files);
+
+    let forbidden_crates = ["tsz_checker", "tsz_emitter"];
+
+    let mut violations = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for crate_name in &forbidden_crates {
+                if line.contains(&format!("use {crate_name}"))
+                    || line.contains(&format!("{crate_name}::"))
+                {
+                    violations.push(format!(
+                        "{}:{}: imports {}",
+                        path.display(),
+                        line_num + 1,
+                        crate_name
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Lowering must not import Checker or Emitter (CLAUDE.md §4). \
+         Lowering bridges AST to solver types; it should not depend on \
+         downstream pipeline stages. Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
 /// Guard that CLI and ancillary crates consume checker only through public API paths.
 ///
 /// Per CLAUDE.md section 4: "CLI and ancillary crates must consume checker diagnostics

@@ -641,7 +641,7 @@ impl UnsoundnessAudit {
 
     /// Get all rules
     pub fn all_rules(&self) -> impl Iterator<Item = &RuleImplementation> {
-        self.rules.values().collect::<Vec<_>>().into_iter()
+        self.rules.values()
     }
 
     /// Get rules by phase
