@@ -1139,6 +1139,71 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
+                // For conditional types like Extract<X, Y> (i.e., X extends Y ? X : never),
+                // check if the property exists on the check_type or extends_type.
+                // When false_type is `never`, the result is always a subtype of check_type
+                // (which extends extends_type), so if either has the property it's valid.
+                // This handles patterns like Extract<TDef[I], FieldDefinition>["type"]
+                // where FieldDefinition has a "type" property.
+                if let Some(cond_id) = tsz_solver::type_queries::get_conditional_type_id(
+                    self.ctx.types,
+                    object_type_for_check,
+                ) {
+                    let cond = self.ctx.types.conditional_type(cond_id);
+                    if cond.false_type == TypeId::NEVER {
+                        // Check extends_type first (common for Extract/Filter patterns)
+                        let extends_eval = self.evaluate_type_with_env(cond.extends_type);
+                        if !tsz_solver::is_conditional_type(self.ctx.types, extends_eval)
+                            && !tsz_solver::is_generic_application(self.ctx.types, extends_eval)
+                            && matches!(
+                                self.resolve_property_access_with_env(extends_eval, &property_name),
+                                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                            )
+                        {
+                            return;
+                        }
+                        // Check check_type (handles cases where check_type's constraint
+                        // has the property but extends_type doesn't)
+                        let check_eval = self.evaluate_type_with_env(cond.check_type);
+                        if !tsz_solver::is_conditional_type(self.ctx.types, check_eval)
+                            && !tsz_solver::is_generic_application(self.ctx.types, check_eval)
+                            && !tsz_solver::is_index_access_type(self.ctx.types, check_eval)
+                            && matches!(
+                                self.resolve_property_access_with_env(check_eval, &property_name),
+                                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                            )
+                        {
+                            return;
+                        }
+                        // Also check the constraint of the check_type (for generic
+                        // patterns like TDef[number] where TDef: readonly FieldDefinition[])
+                        let check_constraint =
+                            tsz_solver::type_queries::get_type_parameter_constraint(
+                                self.ctx.types,
+                                check_eval,
+                            );
+                        if let Some(constraint) = check_constraint {
+                            let constraint_eval = self.evaluate_type_with_env(constraint);
+                            if !tsz_solver::is_conditional_type(self.ctx.types, constraint_eval)
+                                && !tsz_solver::is_generic_application(
+                                    self.ctx.types,
+                                    constraint_eval,
+                                )
+                                && matches!(
+                                    self.resolve_property_access_with_env(
+                                        constraint_eval,
+                                        &property_name
+                                    ),
+                                    tsz_solver::operations::property::PropertyAccessResult::Success {
+                                        ..
+                                    }
+                                )
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
             }
 
             if self.try_emit_concrete_index_access_error(
