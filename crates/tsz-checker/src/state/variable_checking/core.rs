@@ -1706,9 +1706,27 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
+                    // Skip TS2403 when the declarations are in different namespace body
+                    // blocks (ModuleBlock nodes) of the same merged namespace. TSC treats
+                    // each namespace body as a separate declaration context, so
+                    // `namespace A { export var x: number; }` and
+                    // `namespace A { export var x: string; }` don't conflict via TS2403.
+                    let is_cross_namespace_body = if let Some(symbol) =
+                        self.ctx.binder.get_symbol(sym_id)
+                    {
+                        symbol.declarations.iter().any(|&other_decl| {
+                            other_decl != decl_idx
+                                && other_decl.is_some()
+                                && self
+                                    .are_decls_in_different_namespace_bodies(decl_idx, other_decl)
+                        })
+                    } else {
+                        false
+                    };
                     if !is_mergeable_declaration
                         && !is_non_exported_ns_var
                         && !has_ns_export_visibility_mismatch
+                        && !is_cross_namespace_body
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
                     {
                         if let Some(ref name) = var_name {
