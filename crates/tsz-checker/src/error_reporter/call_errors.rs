@@ -876,6 +876,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Don't elaborate into object literal properties when the target is a
+        // primitive type (string, number, boolean, etc.).  Primitives can expose
+        // properties via index signatures or prototypes, which causes misleading
+        // per-property TS2322 errors instead of the correct top-level mismatch
+        // (e.g., "Type '{ 0: number }' is not assignable to type 'string'").
+        if tsz_solver::is_primitive_type(self.ctx.types, effective_param_type) {
+            return false;
+        }
+
         let arg_node = match self.ctx.arena.get(arg_idx) {
             Some(node) => node,
             None => return false,
