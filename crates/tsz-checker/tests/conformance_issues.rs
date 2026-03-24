@@ -17420,3 +17420,47 @@ const b: M<{}> = a;
         "M<{{x: number}}> should be assignable to M<{{}}>.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_infer_property_with_context_sensitive_return_statement() {
+    // Repro from #50687 / conformance: inferPropertyWithContextSensitiveReturnStatement
+    // T is inferred as `number` from `params: 1`, so the inner arrow `a => a + 1`
+    // should have `a: number` (not `a: T`). No errors expected.
+
+    // Test 1: Direct callback (works)
+    let source_direct = r#"
+declare function repro2<T>(config: {
+  params: T;
+  callback: (params: T) => number;
+}): void;
+
+repro2({
+  params: 1,
+  callback: a => a + 1,
+});
+"#;
+    let diags_direct = compile_and_get_diagnostics(source_direct);
+    assert!(
+        diags_direct.is_empty(),
+        "Direct callback variant should have no errors. Got: {diags_direct:#?}"
+    );
+
+    // Test 2: Callback is a zero-param function returning a context-sensitive arrow
+    // This is the actual failing case from the conformance test.
+    let source = r#"
+declare function repro<T>(config: {
+  params: T;
+  callback: () => (params: T) => number;
+}): void;
+
+repro({
+  params: 1,
+  callback: () => { return a => a + 1 },
+});
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for inferPropertyWithContextSensitiveReturnStatement. Got: {diagnostics:#?}"
+    );
+}
