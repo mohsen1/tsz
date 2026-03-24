@@ -46,11 +46,14 @@ impl<'a> CheckerState<'a> {
         element_data: &tsz_parser::parser::node::BindingElementData,
         request: &TypingRequest,
     ) -> bool {
-        // When the binding element itself has an initializer (e.g., `{ cause = "default" } = {}`),
-        // we check if the parent has an object literal default.
-        // When the binding element has NO initializer (e.g., `{ cause } = {}`), we also check
-        // the parent — tsc treats properties as implicitly optional when destructuring from
-        // an object literal default parameter/variable.
+        // Suppress TS2339 for missing properties in destructuring when:
+        // - For parameters: the parameter has an object literal default and no type
+        //   annotation. tsc treats all properties as implicitly optional in this case
+        //   (e.g., `function f({ a } = {}) {}`).
+        // - For variable declarations and binding elements: the binding element has
+        //   its own default initializer AND the source is an object literal
+        //   (e.g., `const { a = 5 } = {}`). Without a default, tsc still reports
+        //   TS2339 (e.g., `const { a } = {}` is an error).
         let element_has_initializer = element_data.initializer.is_some();
 
         let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
@@ -69,12 +72,16 @@ impl<'a> CheckerState<'a> {
                 if decl.name != pattern_idx || decl.type_annotation.is_some() {
                     return false;
                 }
+                // Variable declarations require the element to have its own default.
+                // `const { a } = {}` is TS2339, but `const { a = 5 } = {}` is OK.
+                if !element_has_initializer {
+                    return false;
+                }
                 // If the variable declaration has no initializer, it may be
                 // in a for-of statement where the type comes from the iterable.
                 // Check if the for-of expression contains object literals.
                 if decl.initializer.is_none() {
-                    return element_has_initializer
-                        && self.is_for_of_with_object_literal_elements(parent_idx);
+                    return self.is_for_of_with_object_literal_elements(parent_idx);
                 }
                 decl.initializer
             }
@@ -93,12 +100,15 @@ impl<'a> CheckerState<'a> {
             // Nested destructuring: `{ event: { params = {} } = {} }` — the inner
             // ObjectBindingPattern's parent is the outer BindingElement.  When that
             // BindingElement has an object-literal default, suppress TS2339 for the
-            // inner pattern's properties (same as tsc).
+            // inner pattern's properties only when they have their own defaults.
             syntax_kind_ext::BINDING_ELEMENT => {
                 let Some(be) = self.ctx.arena.get_binding_element(parent_node) else {
                     return false;
                 };
                 if be.name != pattern_idx {
+                    return false;
+                }
+                if !element_has_initializer {
                     return false;
                 }
                 be.initializer
