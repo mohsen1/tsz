@@ -116,6 +116,8 @@ impl ParserState {
         let mut params = Vec::new();
         let mut seen_rest_parameter = false;
         let mut emitted_rest_error = false;
+        let mut rest_param_start: u32 = 0;
+        let mut rest_param_length: u32 = 0;
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
             // If we see `=>` before any parameters were parsed, this is likely a
@@ -157,10 +159,12 @@ impl ParserState {
             }
 
             // TS1014: A rest parameter must be last in a parameter list
-            // Check BEFORE parsing the next parameter (but only emit once)
+            // Emit at the rest parameter's location (matching tsc), not the next param.
             if seen_rest_parameter && !emitted_rest_error {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
+                self.parse_error_at(
+                    rest_param_start,
+                    rest_param_length,
                     "A rest parameter must be last in a parameter list.",
                     diagnostic_codes::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
                 );
@@ -180,6 +184,13 @@ impl ParserState {
                 false
             };
 
+            if is_rest_param
+                && !seen_rest_parameter
+                && let Some(node) = self.arena.get(param)
+            {
+                rest_param_start = node.pos;
+                rest_param_length = node.end.saturating_sub(node.pos);
+            }
             seen_rest_parameter = seen_rest_parameter || is_rest_param;
             params.push(param);
 
