@@ -951,7 +951,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Sort symbols so type-defining symbols (functions, classes, interfaces, type aliases)
-        // are processed BEFORE variable/parameter symbols.
+        // are processed BEFORE variable/parameter/property symbols.
+        // EXPORT_VALUE is included because `export default class` creates a symbol with
+        // EXPORT_VALUE | ALIAS flags (not CLASS). Processing it before class member
+        // PROPERTY symbols ensures the class instance type is built first, so member
+        // initializers that reference `this` can resolve correctly via the prescan type.
         symbols_with_flags.sort_by_key(|&(sym_id, flags)| {
             let is_type_defining = flags
                 & (symbol_flags::FUNCTION
@@ -960,7 +964,8 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::TYPE_ALIAS
                     | symbol_flags::ENUM
                     | symbol_flags::NAMESPACE_MODULE
-                    | symbol_flags::VALUE_MODULE)
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::EXPORT_VALUE)
                 != 0;
             (u8::from(!is_type_defining), sym_id.0)
         });
@@ -987,12 +992,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Get the type for this symbol
             // IMPORTANT: get_type_of_symbol internally calls compute_type_of_symbol which
             // returns both the type AND the correct type_params, then inserts them into
             // ctx.type_env. We MUST NOT separately call get_type_params_for_symbol because
             // that creates fresh type parameter IDs that won't match those used in the type body.
-            // This was causing generic type instantiation to fail (e.g., Promise<string>.then()).
             let _type_id = self.get_type_of_symbol(sym_id);
         }
 
