@@ -318,13 +318,17 @@ impl<'a> FlowAnalyzer<'a> {
                 if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
                     let name = &ident.escaped_text;
                     if name == "Object" {
-                        return Some((TypeGuard::Instanceof(TypeId::OBJECT), target, false));
+                        return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
                     }
                     if name == "Function" {
-                        return Some((TypeGuard::Instanceof(TypeId::FUNCTION), target, false));
+                        return Some((
+                            TypeGuard::Instanceof(TypeId::FUNCTION, true),
+                            target,
+                            false,
+                        ));
                     }
                 }
-                return Some((TypeGuard::Instanceof(instance_type), target, false));
+                return Some((TypeGuard::Instanceof(instance_type, false), target, false));
             }
             // If we can't resolve the constructor to a specific instance type,
             // don't emit a type guard. Without knowing the constructor, we can't
