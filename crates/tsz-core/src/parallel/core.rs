@@ -1613,7 +1613,11 @@ pub(super) const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags:
 /// Small declaration lists are common, so use linear scans there to avoid
 /// hash set allocation overhead. Switch to a set only for larger collections.
 fn append_unique_declarations(existing: &mut Vec<NodeIndex>, incoming: &[NodeIndex]) {
-    existing.extend_from_slice(incoming);
+    for &decl in incoming {
+        if !existing.contains(&decl) {
+            existing.push(decl);
+        }
+    }
 }
 
 /// Remap `__unique_{SymbolId}` keys in `expando_properties` to use global `SymbolIds`.
@@ -2389,8 +2393,15 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             }
         }
 
-        // Copy declaration_arenas entries from user file, remapping symbol IDs
+        // Copy declaration_arenas entries from user file, remapping symbol IDs.
+        // Skip lib-originated symbols: their declaration_arenas were already set up
+        // in Phase 1 from the original lib binder. The per-file binder has duplicate
+        // arenas for the same declarations (from merge_lib_contexts_into_binder),
+        // which would cause interface members to be lowered multiple times.
         for (&(old_sym_id, decl_idx), arenas) in &result.declaration_arenas {
+            if result.lib_symbol_ids.contains(&old_sym_id) {
+                continue;
+            }
             if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
                 let target = declaration_arenas
                     .entry((new_sym_id, decl_idx))
