@@ -29,6 +29,9 @@ path = "src/bin/audit_unsoundness.rs"
 
 [dependencies]
 tsz = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }

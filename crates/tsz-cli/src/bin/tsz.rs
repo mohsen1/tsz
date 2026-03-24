@@ -1,3 +1,7 @@
+#[cfg(not(target_arch = "wasm32"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashMap;
