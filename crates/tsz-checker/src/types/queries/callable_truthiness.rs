@@ -1,4 +1,4 @@
-//! Truthiness and callable-truthiness checks (TS2774, TS2872, TS2873).
+//! Truthiness and callable/awaitable-truthiness checks (TS2774, TS2801, TS2872, TS2873).
 //!
 //! This module implements:
 //! - Syntactic truthiness analysis (`getSyntacticTruthySemantics` in tsc)
@@ -6,6 +6,8 @@
 //! - TS2873: "This kind of expression is always falsy"
 //! - TS2774: "This condition will always return true since this function is
 //!   always defined. Did you mean to call it instead?"
+//! - TS2801: "This condition will always return true since this '{type}' is
+//!   always defined." (for Promise/awaitable types in conditions)
 
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
@@ -371,7 +373,7 @@ impl<'a> CheckerState<'a> {
         self.check_callable_truthiness_leaf(cond_expr, top_cond, body);
     }
 
-    /// Check a single leaf expression for TS2774.
+    /// Check a single leaf expression for TS2774 (callable) and TS2801 (awaitable/Promise).
     fn check_callable_truthiness_leaf(
         &mut self,
         location: NodeIndex,
@@ -390,26 +392,39 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Must be a callable type (Function or Callable with call signatures)
-        if !tsz_solver::type_queries::is_callable_type(self.ctx.types.as_type_database(), ty) {
+        let is_callable =
+            tsz_solver::type_queries::is_callable_type(self.ctx.types.as_type_database(), ty);
+        let is_awaitable = !is_callable && self.is_awaitable_type(ty);
+
+        if !is_callable && !is_awaitable {
             return;
         }
 
         // Determine what to match: for identifiers, use symbol resolution;
-        // for property accesses, use source text span matching.
+        // for property accesses, use source text span matching;
+        // for call expressions, never suppress (each call produces a new value).
         let Some(node) = self.ctx.arena.get(location) else {
             return;
         };
         let is_property_access = node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+        let is_call_expression = node.kind == syntax_kind_ext::CALL_EXPRESSION;
 
         // Skip TS2774 when the property access base involves a type assertion.
         // e.g., `(result as I).method` — the developer is using a cast to check
         // if a property exists at runtime, which is a valid truthiness check pattern.
         // tsc suppresses TS2774 in this case.
-        if is_property_access
+        if is_callable
+            && is_property_access
             && let Some(access) = self.ctx.arena.get_access_expr(node)
             && self.expression_has_type_assertion(access.expression)
         {
+            return;
+        }
+
+        // For call expressions producing Promises, always emit TS2801
+        // (each call returns a new Promise, so body usage doesn't suppress).
+        if is_awaitable && is_call_expression {
+            self.emit_awaitable_truthiness_error(location, ty);
             return;
         }
 
@@ -417,6 +432,9 @@ impl<'a> CheckerState<'a> {
         let tested_sym = if !is_property_access {
             if node.kind == SyntaxKind::Identifier as u16 {
                 self.ctx.binder.resolve_identifier(self.ctx.arena, location)
+            } else if is_call_expression {
+                // For callable types in call expressions, skip (not applicable)
+                return;
             } else {
                 return; // Only identifiers and property accesses are checked
             }
@@ -439,13 +457,47 @@ impl<'a> CheckerState<'a> {
         };
 
         if !is_used {
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node(
-                location,
-                "This condition will always return true since this function is always defined. Did you mean to call it instead?",
-                diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN_TRUE_SINCE_THIS_FUNCTION_IS_ALWAYS_DEFINED_DID,
-            );
+            if is_awaitable {
+                self.emit_awaitable_truthiness_error(location, ty);
+            } else {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    location,
+                    "This condition will always return true since this function is always defined. Did you mean to call it instead?",
+                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN_TRUE_SINCE_THIS_FUNCTION_IS_ALWAYS_DEFINED_DID,
+                );
+            }
         }
+    }
+
+    /// Check if a type is awaitable (Promise-like) for TS2801 detection.
+    /// Uses solver query boundaries to check for Promise application types.
+    fn is_awaitable_type(&self, ty: TypeId) -> bool {
+        // Check for Application with PROMISE_BASE via solver query
+        if let Some(base) =
+            tsz_solver::type_queries::get_application_base(self.ctx.types.as_type_database(), ty)
+        {
+            if base == TypeId::PROMISE_BASE {
+                return true;
+            }
+        }
+        // Also check via the global Promise type classification
+        self.is_global_promise_type(ty)
+    }
+
+    /// Emit TS2801 for awaitable/Promise types used in truthiness checks.
+    fn emit_awaitable_truthiness_error(&mut self, location: NodeIndex, ty: TypeId) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let type_str = self.format_type(ty);
+        let message = format_message(
+            diagnostic_messages::THIS_CONDITION_WILL_ALWAYS_RETURN_TRUE_SINCE_THIS_IS_ALWAYS_DEFINED,
+            &[&type_str],
+        );
+        self.error_at_node(
+            location,
+            &message,
+            diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN_TRUE_SINCE_THIS_IS_ALWAYS_DEFINED,
+        );
     }
 
     /// Check if a symbol is used in the body or binary expression chain.

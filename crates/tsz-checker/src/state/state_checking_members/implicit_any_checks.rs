@@ -227,7 +227,8 @@ impl<'a> CheckerState<'a> {
                     || param_name
                         .chars()
                         .next()
-                        .is_some_and(|c| c.is_ascii_uppercase()))
+                        .is_some_and(|c| c.is_ascii_uppercase())
+                    || Self::is_non_modifier_reserved_name(&param_name))
             {
                 let suggested_name = format!("arg{param_index}");
                 self.error_at_node_msg(
@@ -262,6 +263,18 @@ impl<'a> CheckerState<'a> {
                 | "never"
                 | "any"
                 | "unknown"
+        )
+    }
+
+    /// Check if a parameter name is a strict-mode reserved word that tsc treats
+    /// as a potential type annotation (TS7051) rather than a regular parameter name (TS7006).
+    /// tsc emits TS7051 for reserved words like `package` that could plausibly be
+    /// type names, but NOT for modifier keywords (`public`, `private`, `protected`)
+    /// or flow control keywords (`yield`) which are clearly parameter names.
+    fn is_non_modifier_reserved_name(name: &str) -> bool {
+        matches!(
+            name,
+            "implements" | "interface" | "let" | "package" | "static"
         )
     }
 
