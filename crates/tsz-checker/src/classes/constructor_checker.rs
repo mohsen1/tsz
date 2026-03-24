@@ -758,16 +758,41 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check if constructor is private or protected
-        let is_private = self.is_private_ctor(constructor_type);
-        let is_protected = self.is_protected_ctor(constructor_type);
+        // Check if constructor is private or protected.
+        // Also check inherited constructors: when a class doesn't declare
+        // its own constructor, it inherits the base class's constructor
+        // accessibility. E.g., `class C extends B {}` where B has a
+        // protected constructor — C's constructor is also protected.
+        let mut is_private = self.is_private_ctor(constructor_type);
+        let mut is_protected = self.is_protected_ctor(constructor_type);
+        // When constructor accessibility is inherited, this tracks the class
+        // that declares the protected/private constructor (for error messages).
+        let mut declaring_class_sym = None;
 
         if !is_private && !is_protected {
-            return false; // Public constructor - no restrictions
+            // Check if the class inherits a protected/private constructor
+            // from its base class hierarchy. Only applies when the target class
+            // does NOT declare its own constructor (implicit inheritance).
+            if let Some(class_sym) = self.class_symbol_from_new_expr(new_expr_idx) {
+                if !self.class_has_own_constructor(class_sym) {
+                    let (inherited_private, inherited_protected, declaring_sym) =
+                        self.inherited_constructor_accessibility(class_sym);
+                    is_private = inherited_private;
+                    is_protected = inherited_protected;
+                    declaring_class_sym = declaring_sym;
+                }
+            }
+            if !is_private && !is_protected {
+                return false; // Public constructor - no restrictions
+            }
         }
 
-        // Find the class symbol being instantiated
-        let class_sym = match self.class_symbol_from_new_expr(new_expr_idx) {
+        // Find the class symbol being instantiated.
+        // For inherited accessibility, use the declaring class for error messages
+        // (e.g., "Constructor of class 'Abstract'" not "Constructor of class 'Concrete'").
+        let class_sym =
+            declaring_class_sym.or_else(|| self.class_symbol_from_new_expr(new_expr_idx));
+        let class_sym = match class_sym {
             Some(sym) => sym,
             None => return false, // Can't determine class - skip check
         };
@@ -875,6 +900,149 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    /// Check if a class symbol declares its own constructor.
+    fn class_has_own_constructor(&self, class_sym: SymbolId) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let symbol = match self.ctx.binder.get_symbol(class_sym) {
+            Some(s) => s,
+            None => return false,
+        };
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            match symbol.declarations.first() {
+                Some(&d) => d,
+                None => return false,
+            }
+        };
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION
+            && node.kind != syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(class_data) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        class_data.members.nodes.iter().any(|&m| {
+            self.ctx
+                .arena
+                .get(m)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CONSTRUCTOR)
+        })
+    }
+
+    /// Walk the base class hierarchy to check if any ancestor has a
+    /// protected or private constructor. Returns (is_private, is_protected).
+    ///
+    /// This handles cases where a derived class doesn't declare its own
+    /// constructor and inherits it from the base class. E.g.:
+    ///   class Abstract { protected constructor() {} }
+    ///   class Concrete extends Abstract {} // inherits protected ctor
+    fn inherited_constructor_accessibility(
+        &self,
+        class_sym: SymbolId,
+    ) -> (bool, bool, Option<SymbolId>) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        // Walk up the inheritance chain (bounded to prevent infinite loops)
+        let mut current_sym = class_sym;
+        for _ in 0..16 {
+            let symbol = match self.ctx.binder.get_symbol(current_sym) {
+                Some(s) => s,
+                None => break,
+            };
+
+            let decl_idx = if symbol.value_declaration.is_some() {
+                symbol.value_declaration
+            } else {
+                match symbol.declarations.first() {
+                    Some(&d) => d,
+                    None => break,
+                }
+            };
+
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                break;
+            };
+            if node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+            let Some(class_data) = self.ctx.arena.get_class(node) else {
+                break;
+            };
+
+            // Check if this class declares its own constructor with
+            // private/protected accessibility (skip the initial class itself)
+            if current_sym != class_sym {
+                for &m in &class_data.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(m) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                        continue;
+                    }
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+                    // Check modifier flags directly from the AST
+                    if self.has_private_modifier(&ctor.modifiers) {
+                        return (true, false, Some(current_sym));
+                    }
+                    if self.has_protected_modifier(&ctor.modifiers) {
+                        return (false, true, Some(current_sym));
+                    }
+                    // Has a public (or unmodified) constructor — stop walking
+                    return (false, false, None);
+                }
+            }
+
+            // Walk to the base class
+            let Some(heritage_clauses) = &class_data.heritage_clauses else {
+                break;
+            };
+
+            let mut found_base = false;
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                for &type_idx in &heritage.types.nodes {
+                    let expr_idx = self
+                        .ctx
+                        .arena
+                        .get_expr_type_args_at(type_idx)
+                        .map_or(type_idx, |e| e.expression);
+
+                    if let Some(base_sym) =
+                        self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx)
+                    {
+                        current_sym = base_sym;
+                        found_base = true;
+                        break;
+                    }
+                }
+                if found_base {
+                    break;
+                }
+            }
+            if !found_base {
+                break;
+            }
+        }
+
+        (false, false, None)
     }
 
     /// Check if `child_sym` extends `ancestor_sym` by walking heritage clauses.
