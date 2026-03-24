@@ -458,7 +458,7 @@ impl<'a> FlowAnalyzer<'a> {
                     });
                 // Only skip if the predicate type matches the argument type
                 // (indicating T was set to the full argument type, not a proper subset)
-                let pred_matches_arg = orig_is_type_param
+                orig_is_type_param
                     && call
                         .arguments
                         .as_ref()
@@ -466,8 +466,7 @@ impl<'a> FlowAnalyzer<'a> {
                         .and_then(|&arg_idx| {
                             self.node_types.and_then(|nt| nt.get(&arg_idx.0).copied())
                         })
-                        .is_some_and(|arg_type| arg_type == pred_ty);
-                pred_matches_arg
+                        .is_some_and(|arg_type| arg_type == pred_ty)
             } else {
                 false
             };
