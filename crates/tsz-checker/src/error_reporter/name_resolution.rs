@@ -234,28 +234,33 @@ impl<'a> CheckerState<'a> {
                     if n.kind == syntax_kind_ext::HERITAGE_CLAUSE {
                         break;
                     }
-                    if n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
-                        // Only suppress for `export default`, not `export =`.
-                        // `export = A` should still emit TS2304 when A is unresolved.
-                        // TS1319 ("A default export must be at the top level...") is
-                        // the correct diagnostic for `export default` in a namespace.
-                        let is_export_equals = self
+                    // Check for both ExportAssignment and ExportDeclaration
+                    // with default export. The parser may produce either.
+                    let is_export_default = if n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                        !self
                             .ctx
                             .arena
                             .get_export_assignment(n)
-                            .is_some_and(|data| data.is_export_equals);
-                        if !is_export_equals {
-                            let mut ns = cur;
-                            for _ in 0..8 {
-                                if let Some(nn) = self.ctx.arena.get(ns)
-                                    && nn.kind == syntax_kind_ext::MODULE_DECLARATION
-                                {
-                                    return;
-                                }
-                                match self.ctx.arena.get_extended(ns) {
-                                    Some(e) if e.parent.is_some() => ns = e.parent,
-                                    _ => break,
-                                }
+                            .is_some_and(|data| data.is_export_equals)
+                    } else if n.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                        self.ctx
+                            .arena
+                            .get_export_decl_at(cur)
+                            .is_some_and(|data| data.is_default_export)
+                    } else {
+                        false
+                    };
+                    if is_export_default {
+                        let mut ns = cur;
+                        for _ in 0..8 {
+                            if let Some(nn) = self.ctx.arena.get(ns)
+                                && nn.kind == syntax_kind_ext::MODULE_DECLARATION
+                            {
+                                return;
+                            }
+                            match self.ctx.arena.get_extended(ns) {
+                                Some(e) if e.parent.is_some() => ns = e.parent,
+                                _ => break,
                             }
                         }
                         break;

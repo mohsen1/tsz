@@ -122,21 +122,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
         if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
             if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
-                // tsc points TS1319 at the `default` keyword, not `export`
-                if let Some(default_pos) = export_decl.default_keyword_pos {
-                    self.error_at_position(
-                        default_pos,
-                        7, // length of "default"
-                        crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                        crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                    );
-                } else {
-                    self.error_at_node(
-                        export_idx,
-                        crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                        crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                    );
-                }
+                // tsc points TS1319 at the `export` keyword, spanning the
+                // entire `export default` statement.
+                self.error_at_node(
+                    export_idx,
+                    crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                    crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                );
                 // tsc does not further resolve the exported expression when
                 // the export default is invalid in a namespace context.
                 return;
