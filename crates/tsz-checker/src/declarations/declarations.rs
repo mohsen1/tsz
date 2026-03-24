@@ -1757,10 +1757,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
             if let Some(param) = self.ctx.arena.get_parameter(node) {
                 // If parameter has parameter property modifiers (public/private/protected/readonly)
-                // and we're not in a constructor, report error.
+                // and we're not in a constructor, report error at the modifier keyword (matching tsc).
                 // Decorators on parameters are NOT parameter properties.
-                let has_prop_modifier = if let Some(ref mods) = param.modifiers {
-                    mods.nodes.iter().any(|&mod_idx| {
+                let modifier_idx = if let Some(ref mods) = param.modifiers {
+                    mods.nodes.iter().copied().find(|&mod_idx| {
                         self.ctx.arena.get(mod_idx).is_some_and(|m| {
                             use tsz_scanner::SyntaxKind;
                             m.kind == SyntaxKind::PublicKeyword as u16
@@ -1770,9 +1770,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         })
                     })
                 } else {
-                    false
+                    None
                 };
-                if has_prop_modifier && let Some((pos, end)) = self.ctx.get_node_span(param_idx) {
+                if let Some(mod_idx) = modifier_idx
+                    && let Some((pos, end)) = self.ctx.get_node_span(mod_idx)
+                {
                     self.ctx.error(
                         pos,
                         end - pos,

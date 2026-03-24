@@ -57,10 +57,12 @@ impl<'a> CheckerState<'a> {
             has_grammar_error = true;
         }
 
-        if self.has_parameter_property_modifier(&param_data.modifiers) {
+        if let Some(modifier_idx) =
+            self.find_first_parameter_property_modifier(&param_data.modifiers)
+        {
             has_grammar_error = true;
             self.error_at_node(
-                param_idx,
+                modifier_idx,
                 "A parameter property is only allowed in a constructor implementation.",
                 diagnostic_codes::A_PARAMETER_PROPERTY_IS_ONLY_ALLOWED_IN_A_CONSTRUCTOR_IMPLEMENTATION,
             );
