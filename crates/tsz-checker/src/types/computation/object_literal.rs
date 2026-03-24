@@ -177,7 +177,24 @@ impl<'a> CheckerState<'a> {
                     self.check_computed_property_name(prop.name);
                 }
 
-                let name_opt = self.get_property_name_resolved(prop.name);
+                // When the computed key expression has error type (e.g., [Symbol.nonsense]),
+                // treat the property as unnamed to avoid cascading errors. tsc drops
+                // error-typed computed property keys from the object literal type.
+                let computed_key_is_error = self.ctx.arena.get(prop.name).is_some_and(|n| {
+                    n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                }) && self
+                    .ctx
+                    .arena
+                    .get(prop.name)
+                    .and_then(|n| self.ctx.arena.get_computed_property(n))
+                    .is_some_and(|computed| {
+                        self.get_type_of_node(computed.expression) == TypeId::ERROR
+                    });
+                let name_opt = if computed_key_is_error {
+                    None
+                } else {
+                    self.get_property_name_resolved(prop.name)
+                };
                 if let Some(name) = name_opt.clone() {
                     let initializer_is_function_like = self
                         .ctx
