@@ -654,12 +654,22 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::CLASS_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
                 || k == syntax_kind_ext::YIELD_EXPRESSION
                 || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
             {
                 true
+            }
+            // Parenthesized expressions: recurse into inner expression.
+            // A parenthesized identifier like `(identity)` should NOT get contextual
+            // typing — identifiers have fixed declared types. Only parenthesized
+            // context-sensitive expressions (arrows, object literals, etc.) need it.
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.argument_needs_contextual_type(paren.expression)
+                } else {
+                    false
+                }
             }
             _ => false,
         }
