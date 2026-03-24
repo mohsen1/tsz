@@ -521,6 +521,26 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // TS1212: When `yield` is used as a type reference name inside a generator
+        // function, emit TS1212 in addition to the normal TS2304. tsc emits both
+        // diagnostics: TS1212 (reserved word) and TS2304 (cannot find name).
+        if request.name == "yield"
+            && matches!(failure.kind, ResolutionFailureKind::NotFound)
+            && self.is_yield_in_generator_type_context(request.idx)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                &[request.name],
+            );
+            self.error_at_node(
+                request.idx,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+            );
+            // Fall through to also emit the normal TS2304 diagnostic
+        }
+
         // Suppress spelling suggestions (TS2552 → TS2304) in files with parse
         // errors. tsc keeps only primary diagnostics in these files and doesn't
         // offer "did you mean" suggestions.
@@ -676,6 +696,45 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
         gp.kind == syntax_kind_ext::ENUM_MEMBER
+    }
+
+    /// Check if a node is a `yield` identifier used as a type reference name
+    /// inside a generator function. In generators, `yield` is a keyword and
+    /// cannot be used as a type name.
+    fn is_yield_in_generator_type_context(&self, idx: NodeIndex) -> bool {
+        // Check if the identifier is inside a TYPE_REFERENCE
+        let ext = match self.ctx.arena.get_extended(idx) {
+            Some(ext) => ext,
+            None => return false,
+        };
+        let parent = match self.ctx.arena.get(ext.parent) {
+            Some(p) => p,
+            None => return false,
+        };
+        if parent.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        // Walk up to find an enclosing generator function
+        self.find_enclosing_function(idx).is_some_and(|fn_idx| {
+            let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
+                return false;
+            };
+            if fn_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || fn_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                self.ctx
+                    .arena
+                    .get_function(fn_node)
+                    .is_some_and(|f| f.asterisk_token)
+            } else if fn_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_method_decl(fn_node)
+                    .is_some_and(|m| m.asterisk_token)
+            } else {
+                false
+            }
+        })
     }
 
     /// Convenience: resolve a name and report any failure in one call.
