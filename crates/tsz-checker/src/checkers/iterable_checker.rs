@@ -746,6 +746,8 @@ impl<'a> CheckerState<'a> {
             if !self.check_iterator_next_returns_value(expr_type, expr_idx) {
                 return false;
             }
+            // Check that 'return' property (if present) is a method, not a non-callable value (TS2767).
+            self.check_iterator_return_is_method(expr_type, expr_idx);
             return true;
         }
 
@@ -1052,6 +1054,132 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
+        }
+    }
+
+    /// Check that the iterator's `return` property (if present) is a callable method.
+    ///
+    /// This checks whether the iterator type (obtained via the iterable protocol) has
+    /// a `return` property, and if so, whether that property is a method. If `return`
+    /// exists but is not callable, emits TS2767.
+    ///
+    /// Uses a two-phase approach:
+    /// 1. Try to find the `return` property in the object shape (direct structural check).
+    /// 2. Fall back to the property access chain for types without a direct shape.
+    fn check_iterator_return_is_method(&mut self, iterable_type: TypeId, error_node: NodeIndex) {
+        // Skip for primitive/built-in types that are always valid iterables
+        if iterable_type == TypeId::ANY
+            || iterable_type == TypeId::UNKNOWN
+            || iterable_type == TypeId::ERROR
+            || iterable_type == TypeId::STRING
+        {
+            return;
+        }
+
+        // Get the iterator type via the iterable protocol chain.
+        // First, determine what type the [Symbol.iterator]() method returns.
+        // If it returns `this`, the iterator IS the iterable itself.
+        let iterator_type = self.resolve_iterator_type_for_return_check(iterable_type);
+        if iterator_type == TypeId::ANY
+            || iterator_type == TypeId::UNKNOWN
+            || iterator_type == TypeId::ERROR
+        {
+            return;
+        }
+
+        // Check iterator members for a non-method `return` property.
+        // We check both the resolved iterator type AND the original iterable type,
+        // since for classes that `return this`, the iterator type may be either.
+        let types_to_check = if iterator_type != iterable_type {
+            vec![iterator_type, iterable_type]
+        } else {
+            vec![iterator_type]
+        };
+
+        for check_type in types_to_check {
+            if self.check_return_property_on_type(check_type, error_node) {
+                return; // Found and checked the return property
+            }
+        }
+    }
+
+    /// Resolve the iterator type from an iterable for the TS2767 return-method check.
+    fn resolve_iterator_type_for_return_check(&mut self, iterable_type: TypeId) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let iterator_fn = self.resolve_property_access_with_env(iterable_type, "[Symbol.iterator]");
+        let iterator_fn_type = match &iterator_fn {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            _ => return TypeId::ANY,
+        };
+
+        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        if is_this_type(self.ctx.types, iterator_type) {
+            iterable_type
+        } else {
+            iterator_type
+        }
+    }
+
+    /// Check if a type has a `return` property that is NOT a method.
+    /// Returns true if the property was found and checked (either valid or error emitted).
+    /// Returns false if the property wasn't found (should try next candidate type).
+    fn check_return_property_on_type(&mut self, type_id: TypeId, error_node: NodeIndex) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        // Use property access to find the `return` property
+        let return_result = self.resolve_property_access_with_env(type_id, "return");
+        let return_type = match &return_result {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(t),
+                ..
+            } => *t,
+            _ => return false, // No `return` property found
+        };
+
+        // If property access returns any/unknown/error, we can't determine callability
+        if return_type == TypeId::ANY
+            || return_type == TypeId::UNKNOWN
+            || return_type == TypeId::ERROR
+        {
+            return false;
+        }
+
+        // Check if the return property is callable (has function shape or call signatures)
+        if function_shape_for_type(self.ctx.types, return_type).is_some() {
+            return true; // Callable - valid
+        }
+        if let Some(sigs) = call_signatures_for_type(self.ctx.types, return_type)
+            && !sigs.is_empty()
+        {
+            return true; // Callable - valid
+        }
+
+        // Check if the type is a number/string/boolean literal — definitely not callable
+        let resolved = self.resolve_lazy_type(return_type);
+        if function_shape_for_type(self.ctx.types, resolved).is_some() {
+            return true;
+        }
+
+        // `return` exists but is not callable - emit TS2767
+        self.emit_ts2767_return_not_method(error_node);
+        true
+    }
+
+    /// Emit TS2767: "The 'return' property of an iterator must be a method."
+    fn emit_ts2767_return_not_method(&mut self, error_node: NodeIndex) {
+        if let Some((start, end)) = self.get_node_span(error_node) {
+            let message = format_message(
+                diagnostic_messages::THE_PROPERTY_OF_AN_ITERATOR_MUST_BE_A_METHOD,
+                &["return"],
+            );
+            self.error(
+                start,
+                end.saturating_sub(start),
+                message,
+                diagnostic_codes::THE_PROPERTY_OF_AN_ITERATOR_MUST_BE_A_METHOD,
+            );
         }
     }
 

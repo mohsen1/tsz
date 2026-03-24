@@ -447,38 +447,35 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 if let Some(param_members) =
                     tsz_solver::type_queries::get_union_members(self.interner, evaluated_param)
+                    && param_members.contains(&pred_type)
+                    && let Some(&arg_idx) = args.get(i)
+                    && let Some(&arg_type) = node_types.get(&arg_idx.0)
                 {
-                    if param_members.contains(&pred_type) {
-                        if let Some(&arg_idx) = args.get(i)
-                            && let Some(&arg_type) = node_types.get(&arg_idx.0)
-                        {
-                            let concrete_members: Vec<TypeId> = param_members
-                                .iter()
-                                .filter(|&&m| m != pred_type)
-                                .copied()
-                                .collect();
-                            let inferred_t = if let Some(arg_members) =
-                                tsz_solver::type_queries::get_union_members(self.interner, arg_type)
-                            {
-                                let remaining: Vec<TypeId> = arg_members
-                                    .iter()
-                                    .filter(|&&m| !concrete_members.contains(&m))
-                                    .copied()
-                                    .collect();
-                                match remaining.len() {
-                                    0 => arg_type,
-                                    1 => remaining[0],
-                                    _ => self.interner.factory().union(remaining),
-                                }
-                            } else {
-                                arg_type
-                            };
-                            return TypePredicate {
-                                type_id: Some(inferred_t),
-                                ..predicate.clone()
-                            };
+                    let concrete_members: Vec<TypeId> = param_members
+                        .iter()
+                        .filter(|&&m| m != pred_type)
+                        .copied()
+                        .collect();
+                    let inferred_t = if let Some(arg_members) =
+                        tsz_solver::type_queries::get_union_members(self.interner, arg_type)
+                    {
+                        let remaining: Vec<TypeId> = arg_members
+                            .iter()
+                            .filter(|&&m| !concrete_members.contains(&m))
+                            .copied()
+                            .collect();
+                        match remaining.len() {
+                            0 => arg_type,
+                            1 => remaining[0],
+                            _ => self.interner.factory().union(remaining),
                         }
-                    }
+                    } else {
+                        arg_type
+                    };
+                    return TypePredicate {
+                        type_id: Some(inferred_t),
+                        ..predicate.clone()
+                    };
                 }
             }
         }

@@ -450,10 +450,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .copied()
                         .filter(|member| !matched_fixed.contains(member))
                         .collect();
-                    if remaining_targets.is_empty() {
-                        target // No reduction possible, use full target
-                    } else if remaining_targets.len() == t_members_list.len() {
-                        target // Nothing was removed, use full target
+                    if remaining_targets.is_empty()
+                        || remaining_targets.len() == t_members_list.len()
+                    {
+                        target // No reduction possible or nothing removed
                     } else {
                         crate::utils::union_or_single(self.interner, remaining_targets)
                     }
