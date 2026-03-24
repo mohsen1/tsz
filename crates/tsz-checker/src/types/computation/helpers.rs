@@ -438,6 +438,20 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
+                // TS18050: unary +/- on literal null/undefined keywords.
+                // tsc emits this regardless of strictNullChecks.
+                if self.is_literal_null_or_undefined_node(unary.operand) {
+                    let cause = if let Some(node) = self.ctx.arena.get(unary.operand)
+                        && node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
+                    {
+                        TypeId::NULL
+                    } else {
+                        TypeId::UNDEFINED
+                    };
+                    self.emit_nullish_operand_error(unary.operand, cause);
+                    return TypeId::NUMBER;
+                }
+
                 // TS2469: unary +/- on symbol types
                 {
                     let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
