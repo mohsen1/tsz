@@ -300,8 +300,12 @@ impl<'a> CheckerState<'a> {
 
         // TSZ-4 Priority 3: Check constructor accessibility (TS2673/TS2674)
         // Private constructors can only be called within the class
-        // Protected constructors can only be called within the class hierarchy
-        self.check_constructor_accessibility_for_new(idx, constructor_type);
+        // Protected constructors can only be called within the class hierarchy.
+        // When the constructor is inaccessible, tsc only emits the accessibility
+        // error and suppresses subsequent arg-count/type-mismatch diagnostics.
+        if self.check_constructor_accessibility_for_new(idx, constructor_type) {
+            return TypeId::ANY;
+        }
 
         if constructor_type == TypeId::ANY {
             // Before emitting TS2347, check if the new-expression target is a
