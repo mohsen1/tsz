@@ -14,6 +14,7 @@ FAIL TypeScript/tests/cases/compiler/checkSuperCallBeforeThisAccess.ts | expecte
 FAIL TypeScript/tests/cases/compiler/checkerInitializationCrash.ts | expected:[TS2300] actual:[]
 FAIL TypeScript/tests/cases/compiler/circularInlineMappedGenericTupleTypeNoCrash.ts | expected:[TS2589] actual:[TS2345,TS2488]
 FAIL TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping3.ts | expected:[TS2301] actual:[TS2663]
+FAIL TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected:[TS2344,TS2430] actual:[TS2344,TS7031]
@@ -200,8 +201,8 @@ FAIL TypeScript/tests/cases/compiler/importTypeResolutionJSDocEOF.ts | expected:
 FAIL TypeScript/tests/cases/compiler/importUsedAsTypeWithErrors.ts | expected:[TS1340] actual:[]
 FAIL TypeScript/tests/cases/compiler/importedEnumMemberMergedWithExportedAliasIsError.ts | expected:[TS2395,TS2440] actual:[]
 FAIL TypeScript/tests/cases/compiler/inDoesNotOperateOnPrimitiveTypes.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/inKeywordAndUnknown.ts | expected:[TS2638] actual:[]
-FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts | expected:[TS2322,TS2339,TS2564,TS2638,TS5024,TS18046] actual:[TS2322,TS2339,TS2564,TS5024]
+FAIL TypeScript/tests/cases/compiler/inKeywordAndUnknown.ts | expected:[TS2638] actual:[TS2638]
+FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts | expected:[TS2322,TS2339,TS2564,TS2638,TS5024,TS18046] actual:[TS2322,TS2339,TS2564,TS2638,TS5024]
 FAIL TypeScript/tests/cases/compiler/incompatibleAssignmentOfIdenticallyNamedTypes.ts | expected:[TS2564,TS2719] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/incompleteDottedExpressionAtEOF.ts | expected:[TS1003] actual:[TS1003]
 FAIL TypeScript/tests/cases/compiler/incorrectRecursiveMappedTypeConstraint.ts | expected:[TS2313,TS2365] actual:[]
@@ -353,7 +354,6 @@ FAIL TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6Features
 FAIL TypeScript/tests/cases/compiler/moduleAndInterfaceWithSameName.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts | expected:[TS2564] actual:[TS2339,TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1202,TS2307]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext2.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258] actual:[TS1184]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext3.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258] actual:[TS1147,TS1184,TS1194,TS1319]
@@ -660,7 +660,7 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameDuplicateField.ts | expected:[TS2300,TS2393,TS2717,TS2804] actual:[TS2300,TS2393,TS2717,TS2804]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameEmitHelpers.ts | expected:[TS2807] actual:[]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameHashCharName.ts | expected:[TS1127] actual:[TS5107]
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpression.ts | expected:[TS1451,TS2339,TS2406,TS2407,TS2571,TS18016,TS18047] actual:[TS2322,TS2339,TS2405,TS2407]
+FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpression.ts | expected:[TS1451,TS2339,TS2406,TS2407,TS2571,TS18016,TS18047] actual:[TS2322,TS2339,TS2405,TS2407,TS2638]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpressionTransform.ts | expected:[TS1005] actual:[TS2322,TS2364]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameJsBadAssignment.ts | expected:[TS2304,TS2339,TS18016] actual:[TS2304,TS2339]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodClassExpression.ts | expected:[TS18013] actual:[TS2339,TS18016]
@@ -2054,7 +2054,6 @@ PASS TypeScript/tests/cases/compiler/classOverloadForFunction.ts
 PASS TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
 PASS TypeScript/tests/cases/compiler/classPropInitializationInferenceWithElementAccess.ts
 PASS TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
-PASS TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance1.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance2.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance3.ts
@@ -5108,6 +5107,7 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendFileModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendFileModule2.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal3.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal4.ts
