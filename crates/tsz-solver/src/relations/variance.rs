@@ -34,7 +34,7 @@ use crate::def::resolver::TypeResolver;
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectShapeId, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleListId,
-    TypeApplicationId, TypeId, TypeListId, TypeParamInfo, Variance,
+    TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
 };
 use crate::visitor::lazy_def_id;
 use crate::visitors::visitor::TypeVisitor;
@@ -196,6 +196,9 @@ struct VarianceVisitor<'a, 'b> {
     /// double-count S's variance contribution (adding a spurious contravariant
     /// occurrence through the keyof reversal).
     bound_type_params: smallvec::SmallVec<[Atom; 2]>,
+    /// Whether the target parameter was seen as the object of an indexed access.
+    /// Used to detect when indexed access can normalize away type argument differences.
+    seen_target_in_index_access: bool,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -210,12 +213,22 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             ),
             polarity_stack: vec![true], // Start with positive (covariant) polarity
             bound_type_params: smallvec::SmallVec::new(),
+            seen_target_in_index_access: false,
         }
     }
 
     /// Entry point: computes the variance of `target_param` within `type_id`.
     fn compute(mut self, type_id: TypeId) -> Variance {
         self.visit_with_polarity(type_id, true);
+        // When the type parameter is used as the object of an indexed access
+        // AND a mapped type with modifiers is present (NEEDS_STRUCTURAL_FALLBACK),
+        // the variance-based rejection becomes unreliable. Indexed access types
+        // combined with intersections can normalize away differences between type
+        // arguments, producing structurally equivalent instantiations even when
+        // the type arguments themselves are not assignable.
+        if self.seen_target_in_index_access && self.result.needs_structural_fallback() {
+            self.result |= Variance::REJECTION_UNRELIABLE;
+        }
         self.result
     }
 
@@ -551,11 +564,14 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                     .copied()
                     .unwrap_or(Variance::COVARIANT | Variance::CONTRAVARIANT);
 
-                // Propagate NEEDS_STRUCTURAL_FALLBACK from nested applications.
-                // If Required<T> needs structural fallback due to modifiers,
-                // then Foo<T> = { a: Required<T> } also needs it.
+                // Propagate NEEDS_STRUCTURAL_FALLBACK and REJECTION_UNRELIABLE
+                // from nested applications. If Required<T> needs structural fallback
+                // due to modifiers, then Foo<T> = { a: Required<T> } also needs it.
                 if base_param_variance.needs_structural_fallback() {
                     self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                }
+                if base_param_variance.rejection_unreliable() {
+                    self.result |= Variance::REJECTION_UNRELIABLE;
                 }
 
                 // Composition Rules:
@@ -709,6 +725,14 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     /// results despite the type arguments not being subtypes of each other.
     fn visit_index_access(&mut self, object_type: TypeId, key_type: TypeId) {
         let current_polarity = self.get_current_polarity();
+        // Track when the target parameter appears as the object of an indexed
+        // access. This indicates that the type mapping S → S["key"] may
+        // normalize away differences between type arguments.
+        if let Some(TypeData::TypeParameter(tp)) = self.computer.db.lookup(object_type) {
+            if tp.name == self.target_param {
+                self.seen_target_in_index_access = true;
+            }
+        }
         let before = self.result;
         self.visit_with_polarity(object_type, current_polarity);
         self.visit_with_polarity(key_type, current_polarity);

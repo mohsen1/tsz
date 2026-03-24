@@ -402,7 +402,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 return SubtypeResult::True;
                             }
                         }
-                        if any_checked && !all_ok && !needs_structural_fallback {
+                        let rejection_unreliable =
+                            variances.iter().any(|v| v.rejection_unreliable());
+                        if any_checked
+                            && !all_ok
+                            && !needs_structural_fallback
+                            && !rejection_unreliable
+                        {
                             // For two applications of the same generic definition with
                             // concrete type arguments, a variance failure is conclusive.
                             // However, when any source arg is a type parameter, we must
@@ -642,7 +648,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //
         // For non-mapped types with all-concrete args, variance failures are
         // definitive: incompatible type args means incompatible generic types.
-        if any_checked && !all_ok && !needs_structural_fallback {
+        let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
+        if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
             let source_has_type_param = s_app
                 .args
                 .iter()
