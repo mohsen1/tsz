@@ -435,12 +435,15 @@ pub fn check_application_variance<R: TypeResolver>(
         return Some(true);
     }
 
-    // Variance failures are definitive even with structural fallback.
-    // The structural fallback flag means "don't trust True because mapped
-    // modifiers could change the structure". But a False result (type args
-    // are incompatible) is trustworthy: if the type arguments fail the
-    // invariant/covariant/contravariant check, the generic types cannot be
-    // compatible regardless of how modifiers transform the structure.
+    // When structural fallback is needed (mapped type modifiers like +?/-?),
+    // variance failures are NOT definitive. Mapped type modifiers can make
+    // structurally incompatible type args produce compatible results.
+    // Example: Partial<{a, foo}> and Partial<Foo> are mutually assignable
+    // even though {a, foo} and Foo are not, because Partial adds `?` to
+    // all properties. Fall through to structural comparison.
+    if needs_structural_fallback {
+        return None;
+    }
     Some(false)
 }
 
