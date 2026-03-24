@@ -298,7 +298,7 @@ fn test_parser_file_size_ceiling() {
 ///
 /// Per CLAUDE.md section 19: "Avoid growth of monolith modules; split before crossing
 /// maintainability threshold."
-/// The scanner currently has a single large file (scanner_impl.rs at 3485 lines)
+/// The scanner currently has a single large file (`scanner_impl.rs` at 3485 lines)
 /// which should be split over time.
 #[test]
 fn test_scanner_file_size_ceiling() {

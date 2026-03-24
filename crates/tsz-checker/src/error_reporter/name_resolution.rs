@@ -270,10 +270,9 @@ impl<'a> CheckerState<'a> {
 
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
         // before any TS2304 suppression logic. This fires independently of TS2304.
-        // Suppressed when file has parse errors (tsc's grammarErrorOnNode pattern).
+        // tsc always emits these regardless of other parse errors in the file.
         if crate::state_checking::is_strict_mode_reserved_name(name)
             && self.ctx.checking_computed_property_name.is_none()
-            && !self.has_syntax_parse_errors()
         {
             // Detect class context by walking up the AST (enclosing_class may not
             // be set during type resolution or other non-statement-walk phases).
