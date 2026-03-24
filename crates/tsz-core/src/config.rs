@@ -1084,6 +1084,31 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // Check for command-line-only options (TS6266)
+        // These options are only valid when passed via the CLI, not in tsconfig.json.
+        let cli_only_options: &[&str] = &["listFilesOnly"];
+        let mut cli_only_keys: Vec<String> = Vec::new();
+        for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
+            if cli_only_options.contains(&key.as_str()) {
+                let start = find_key_offset_in_source(&stripped, &key);
+                let msg = format_message(
+                    diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
+                    &[&key],
+                );
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key.len() as u32 + 2,
+                    msg,
+                    diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
+                ));
+                cli_only_keys.push(key);
+            }
+        }
+        for key in &cli_only_keys {
+            compiler_opts.remove(key);
+        }
+
         // Check for removed compiler options (TS5102)
         // These options were deprecated in TS 5.0 and removed in TS 5.5.
         // In tsc 6.0, `mustBeRemoved` is always true (removedIn 5.5 <= tsc 6.0),
