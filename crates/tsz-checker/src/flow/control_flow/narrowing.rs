@@ -744,7 +744,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         narrowing.narrow_type(
             type_id,
-            &TypeGuard::Instanceof(instance_type),
+            &TypeGuard::Instanceof(instance_type, false),
             GuardSense::from(is_true_branch),
         )
     }

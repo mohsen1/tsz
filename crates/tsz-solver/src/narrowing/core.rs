@@ -108,7 +108,11 @@ pub enum TypeGuard {
     /// `x instanceof Class`
     ///
     /// Narrows to the class type or its subtypes.
-    Instanceof(TypeId),
+    /// The boolean flag indicates whether the constructor was an explicit global
+    /// name like `Object` or `Function` (true) vs. a resolved/fallback type (false).
+    /// This distinction matters for the false branch: only explicit global constructors
+    /// trigger aggressive narrowing (e.g., excluding all non-primitives for `instanceof Object`).
+    Instanceof(TypeId, bool),
 
     /// `x === literal` or `x !== literal`
     ///
@@ -1481,7 +1485,7 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
-            TypeGuard::Instanceof(instance_type) => {
+            TypeGuard::Instanceof(instance_type, is_explicit_global) => {
                 // TypeScript narrows `any` via instanceof for specific constructors
                 // (e.g. Error, Date) but NOT for Function or Object. Handle this
                 // in the sense-specific branches below.
@@ -1538,11 +1542,14 @@ impl<'a> NarrowingContext<'a> {
                     self.narrow_to_objectish(source_type)
                 } else {
                     // Negative: !(x instanceof Class)
-                    // Keep primitives (they can never pass instanceof) and exclude
-                    // non-primitive types assignable to the instance type.
-                    // Note: `instanceof Object` false branch narrows to primitives
-                    // only — `narrow_by_instanceof_false` handles this via its
-                    // `is_object_target` check which excludes all non-primitives.
+                    // Only do aggressive false-branch narrowing (excluding all non-primitives
+                    // for Object, or all array-likes for Array) when the constructor was
+                    // explicitly named `Object`/`Function` in the source code. When the
+                    // instance type merely resolves to Object (e.g., from a fallback or
+                    // a constructor whose type extends Function), be conservative.
+                    if !is_explicit_global && self.is_object_interface(*instance_type) {
+                        return source_type;
+                    }
                     self.narrow_by_instanceof_false(source_type, *instance_type)
                 }
             }
