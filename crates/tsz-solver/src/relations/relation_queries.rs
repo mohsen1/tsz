@@ -435,13 +435,12 @@ pub fn check_application_variance<R: TypeResolver>(
         return Some(true);
     }
 
-    // Variance failures are definitive even with structural fallback.
-    // The structural fallback flag means "don't trust True because mapped
-    // modifiers could change the structure". But a False result (type args
-    // are incompatible) is trustworthy: if the type arguments fail the
-    // invariant/covariant/contravariant check, the generic types cannot be
-    // compatible regardless of how modifiers transform the structure.
-    Some(false)
+    // Variance failure is not definitive — return None to fall through to
+    // structural comparison. TypeScript always falls through when
+    // typeArgumentsRelatedTo fails (Ternary.False = 0 is falsy in JS).
+    // Different type arguments can produce structurally equivalent results
+    // through indexed access, intersections, or other type-level operations.
+    None
 }
 
 #[cfg(test)]

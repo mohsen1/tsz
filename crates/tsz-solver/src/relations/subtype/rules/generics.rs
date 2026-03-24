@@ -402,14 +402,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 return SubtypeResult::True;
                             }
                         }
-                        if any_checked && !all_ok && !needs_structural_fallback {
-                            // For two applications of the same generic definition, a
-                            // conclusive variance failure is the relation result. Falling
-                            // back to structural expansion here incorrectly accepts cases
-                            // like `T<A> <: T<B>` even though TypeScript keeps the generic
-                            // application identity and reports an incompatibility.
-                            return SubtypeResult::False;
-                        }
+                        // When variance fails, fall through to structural expansion.
+                        // TypeScript's typeArgumentsRelatedTo returns Ternary.False (0),
+                        // which is falsy in JS, so the caller always falls through to
+                        // structural comparison. The structural check is more precise:
+                        // it compares the instantiated/expanded members directly, which
+                        // handles cases where different type arguments produce structurally
+                        // equivalent results (e.g., indexed access types, intersections
+                        // that normalize away differences).
                     }
                 }
             }
@@ -617,15 +617,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if any_checked && all_ok && !needs_structural_fallback {
             return Some(SubtypeResult::True);
         }
-        // When structural fallback is needed (e.g., mapped type modifiers like
-        // Readonly, Partial, Required), variance failures are NOT definitive.
-        // The expanded structural types may normalize away differences between
-        // type arguments. For example, Partial<{a, foo}> and Partial<{a, b, bar}>
-        // can have compatible structures despite incompatible type arguments.
-        // This matches the check at line 405 in check_application_expansion_target.
-        if any_checked && !all_ok && !needs_structural_fallback {
-            return Some(SubtypeResult::False);
-        }
+        // When variance fails, return None to fall through to structural
+        // comparison. TypeScript always falls through (Ternary.False = 0 is
+        // falsy in JS). The structural check is more precise: it compares
+        // instantiated/expanded members directly, handling cases where different
+        // type arguments produce structurally equivalent results.
 
         None
     }
