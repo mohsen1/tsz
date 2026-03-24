@@ -563,7 +563,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // `T | undefined | null` — constrain source against it.
                     // Defaults don't prevent inference; they're used as fallback
                     // during resolution when no candidates are found.
-                    self.constrain_types(ctx, var_map, source, member, priority);
+                    //
+                    // However, if the source matches a fixed (non-placeholder) member
+                    // of the target union, skip the constraint. This prevents incorrect
+                    // inference when a type alias like `Result<T> = T | "FAILURE"` is
+                    // used: source "FAILURE" should match fixed target "FAILURE", not
+                    // be inferred as T. This mirrors the filtering done in the
+                    // Union-Union handler above.
+                    let source_matches_fixed = t_members.iter().any(|&t_member| {
+                        if t_member == member {
+                            return false; // Skip the placeholder member itself
+                        }
+                        if t_member == source {
+                            return true;
+                        }
+                        // Also check evaluated forms for type alias transparency
+                        let evaluated = self.checker.evaluate_type(t_member);
+                        if evaluated != t_member {
+                            if evaluated == source {
+                                return true;
+                            }
+                            // Check if the evaluated form is a union containing the source
+                            if let Some(TypeData::Union(inner_members)) =
+                                self.interner.lookup(evaluated)
+                            {
+                                let inner = self.interner.type_list(inner_members);
+                                if inner.iter().any(|&m| m == source) {
+                                    return true;
+                                }
+                            }
+                        }
+                        false
+                    });
+                    if !source_matches_fixed {
+                        self.constrain_types(ctx, var_map, source, member, priority);
+                    }
                 } else if placeholder_count > 1 {
                     // Multiple placeholder-containing members: prefer structural matches.
                     // For example, when source is `Foo<U>` and target is `V | Foo<V>`,
