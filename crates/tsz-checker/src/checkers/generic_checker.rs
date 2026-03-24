@@ -848,11 +848,35 @@ impl<'a> CheckerState<'a> {
                                         // Non-Extract cases (defer to instantiation):
                                         // - `S extends object ? { [K in keyof S]: S[K] } : never`
                                         //   (true branch structurally derived from check type)
+                                        // - `T[K] extends Function ? K : never` where K is the
+                                        //   index of the check type (key-filtering pattern like
+                                        //   FunctionPropertyNames<T>). The result K is always a
+                                        //   subtype of keyof T, but the extends type (Function)
+                                        //   is not a proxy for this relationship. Defer.
+                                        let cond_true_is_bare_param = query::is_bare_type_parameter(
+                                            self.ctx.types.as_type_database(),
+                                            cond_true,
+                                        );
+                                        // When the true branch is a bare type param AND the check
+                                        // type is an indexed access containing that param as its
+                                        // index, this is a key-filtering pattern, not Extract-like.
+                                        // Example: `{ [K in keyof T]: T[K] extends Fn ? K : never }[keyof T]`
+                                        // Here cond_check = T[K], cond_true = K. K is always a
+                                        // key of T, so the result satisfies `keyof T` by construction.
+                                        // Deferring avoids false TS2344 for Pick<T, FilteredKeys<T>>.
+                                        let is_key_filtering_pattern = cond_true_is_bare_param && {
+                                            let db = self.ctx.types.as_type_database();
+                                            if let Some((_obj, idx)) =
+                                                query::index_access_components(db, cond_check)
+                                            {
+                                                idx == cond_true
+                                            } else {
+                                                false
+                                            }
+                                        };
                                         let is_extract_like = cond_true == cond_check
-                                            || query::is_bare_type_parameter(
-                                                self.ctx.types.as_type_database(),
-                                                cond_true,
-                                            );
+                                            || (cond_true_is_bare_param
+                                                && !is_key_filtering_pattern);
                                         if !is_extract_like {
                                             // True branch is a structural type derived from the
                                             // check type (e.g., mapped type). Constraint satisfaction
