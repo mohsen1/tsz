@@ -1658,15 +1658,13 @@ impl<'a> CheckerState<'a> {
                                 // `type Bar = {}; export default Bar`).
                                 let ed = self.ctx.arena.get_export_decl_at(idx);
                                 let clause_idx = ed.map(|ed| ed.export_clause).unwrap_or(idx);
-                                if let Some(name) = self.node_text(clause_idx) {
-                                    if let Some(sym_id) =
+                                if let Some(name) = self.node_text(clause_idx)
+                                    && let Some(sym_id) =
                                         self.resolve_name_at_node(&name, clause_idx)
-                                    {
-                                        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
-                                            // Only treat as TS2323 if the symbol has value flags
-                                            return sym.has_any_flags(symbol_flags::VALUE);
-                                        }
-                                    }
+                                    && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                                {
+                                    // Only treat as TS2323 if the symbol has value flags
+                                    return sym.has_any_flags(symbol_flags::VALUE);
                                 }
                                 // If we can't resolve, treat as value (conservative)
                                 true
