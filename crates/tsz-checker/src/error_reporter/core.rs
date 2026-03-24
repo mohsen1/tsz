@@ -277,6 +277,23 @@ impl<'a> CheckerState<'a> {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
+
+        // For union types, normalize each member individually rather than
+        // evaluating the union as a whole. evaluate_type can collapse unions
+        // of Application types (e.g., I1<number> | I2<number>) into a single
+        // evaluated object, losing the nominal type names that tsc preserves
+        // in error messages.
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            let normalized: Vec<_> = members
+                .iter()
+                .map(|&member| self.normalize_assignability_display_type(member))
+                .collect();
+            if normalized == members {
+                return ty;
+            }
+            return self.ctx.types.factory().union_preserve_members(normalized);
+        }
+
         let ty = if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
             && tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
         {
