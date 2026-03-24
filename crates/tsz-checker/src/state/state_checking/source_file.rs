@@ -211,6 +211,9 @@ impl<'a> CheckerState<'a> {
                 // TS8033: Check for @typedef comments with multiple @type tags
                 self.check_typedef_duplicate_type_tags();
 
+                // TS2300: Check for duplicate @import names across JSDoc comments
+                self.check_jsdoc_duplicate_imports();
+
                 // TS8021: Check for @typedef without type or @property tags
                 self.check_typedef_missing_type();
 
