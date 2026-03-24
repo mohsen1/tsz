@@ -1540,11 +1540,10 @@ impl<'a> NarrowingContext<'a> {
                     // Negative: !(x instanceof Class)
                     // Keep primitives (they can never pass instanceof) and exclude
                     // non-primitive types assignable to the instance type.
-                    if *instance_type == TypeId::OBJECT {
-                        source_type
-                    } else {
-                        self.narrow_by_instanceof_false(source_type, *instance_type)
-                    }
+                    // Note: narrow_by_instanceof_false handles Object specially
+                    // via is_object_interface — it excludes ALL non-primitives
+                    // because every non-primitive is an Object instance at runtime.
+                    self.narrow_by_instanceof_false(source_type, *instance_type)
                 }
             }
 
