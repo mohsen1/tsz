@@ -892,6 +892,20 @@ impl<'a> CheckerState<'a> {
                 .merge_with_intersection(derived_resolved, derived_kind, base_resolved, base_kind),
             // When the derived interface has no own members (TypeId::ANY), just use the base.
             (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
+            // When the base is an Array or Tuple type (e.g., `interface MyTuple extends [] { ... }`),
+            // create an intersection of derived & base. This preserves the array/tuple nature
+            // of the base in the resulting type, which is critical for:
+            // - Weak type detection (TS2559): the intersection prevents false weak-type violations
+            //   because the target is not a standalone object.
+            // - Assignability: array/tuple sources can be checked against the tuple base.
+            (_, InterfaceMergeKind::Other)
+                if tsz_solver::type_queries::is_array_or_tuple_type(
+                    self.ctx.types,
+                    base_resolved,
+                ) && derived != TypeId::ANY =>
+            {
+                factory.intersection(vec![derived, base])
+            }
             _ => derived,
         }
     }
