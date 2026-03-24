@@ -773,14 +773,14 @@ impl<'a> CheckerState<'a> {
             // Check if the class inherits a protected/private constructor
             // from its base class hierarchy. Only applies when the target class
             // does NOT declare its own constructor (implicit inheritance).
-            if let Some(class_sym) = self.class_symbol_from_new_expr(new_expr_idx) {
-                if !self.class_has_own_constructor(class_sym) {
-                    let (inherited_private, inherited_protected, declaring_sym) =
-                        self.inherited_constructor_accessibility(class_sym);
-                    is_private = inherited_private;
-                    is_protected = inherited_protected;
-                    declaring_class_sym = declaring_sym;
-                }
+            if let Some(class_sym) = self.class_symbol_from_new_expr(new_expr_idx)
+                && !self.class_has_own_constructor(class_sym)
+            {
+                let (inherited_private, inherited_protected, declaring_sym) =
+                    self.inherited_constructor_accessibility(class_sym);
+                is_private = inherited_private;
+                is_protected = inherited_protected;
+                declaring_class_sym = declaring_sym;
             }
             if !is_private && !is_protected {
                 return false; // Public constructor - no restrictions
@@ -938,12 +938,12 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Walk the base class hierarchy to check if any ancestor has a
-    /// protected or private constructor. Returns (is_private, is_protected).
+    /// protected or private constructor. Returns `(is_private, is_protected)`.
     ///
     /// This handles cases where a derived class doesn't declare its own
     /// constructor and inherits it from the base class. E.g.:
-    ///   class Abstract { protected constructor() {} }
-    ///   class Concrete extends Abstract {} // inherits protected ctor
+    ///   `class Abstract { protected constructor() {} }`
+    ///   `class Concrete extends Abstract {}` // inherits protected ctor
     fn inherited_constructor_accessibility(
         &self,
         class_sym: SymbolId,
