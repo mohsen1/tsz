@@ -40,21 +40,31 @@ impl<'a> CheckerState<'a> {
             });
         let file_name = self.ctx.file_name.clone();
 
-        // TS2696: When the source is the `Object` wrapper type, tsc emits a
-        // special diagnostic regardless of the specific failure reason.
-        // This check runs first, before drilling into PropertyMismatch,
-        // MissingProperty, etc.
-        {
-            let src_str = self.format_type_diagnostic(source);
-            if src_str == "Object" {
-                return Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
-                        .to_string(),
-                    diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
-                );
+        // TS2696: When the source is the `Object` wrapper type and the failure is
+        // about property-level issues (not call/construct signatures), tsc emits
+        // "The 'Object' type is assignable to very few other types" instead of TS2322.
+        // When the target is a callable/constructable type, tsc uses TS2322 instead.
+        if depth == 0 {
+            let is_property_failure = matches!(
+                reason,
+                SubtypeFailureReason::MissingProperty { .. }
+                    | SubtypeFailureReason::MissingProperties { .. }
+                    | SubtypeFailureReason::PropertyTypeMismatch { .. }
+                    | SubtypeFailureReason::OptionalPropertyRequired { .. }
+                    | SubtypeFailureReason::NoCommonProperties { .. }
+            );
+            if is_property_failure {
+                let src_str = self.format_type_diagnostic(source);
+                if src_str == "Object" {
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
+                            .to_string(),
+                        diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
+                    );
+                }
             }
         }
 
@@ -798,20 +808,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS2696: When the source is the `Object` wrapper type.
-        {
-            let src_str = self.format_type_diagnostic(source_type);
-            if src_str == "Object" {
-                return Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
-                        .to_string(),
-                    diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
-                );
-            }
-        }
+        // Note: TS2696 for `Object` source is handled at the top of render_failure_reason.
 
         // Emit TS2322 instead of TS2739/TS2740 when the SOURCE is a wrapper-like built-in.
         let src_str_check = self.format_type_diagnostic(source_type);
