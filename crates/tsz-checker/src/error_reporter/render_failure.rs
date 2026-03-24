@@ -40,6 +40,24 @@ impl<'a> CheckerState<'a> {
             });
         let file_name = self.ctx.file_name.clone();
 
+        // TS2696: When the source is the `Object` wrapper type, tsc emits a
+        // special diagnostic regardless of the specific failure reason.
+        // This check runs first, before drilling into PropertyMismatch,
+        // MissingProperty, etc.
+        {
+            let src_str = self.format_type_diagnostic(source);
+            if src_str == "Object" {
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
+                        .to_string(),
+                    diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
+                );
+            }
+        }
+
         match reason {
             SubtypeFailureReason::MissingProperty {
                 property_name,
