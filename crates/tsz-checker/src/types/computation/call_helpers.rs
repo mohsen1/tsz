@@ -1569,18 +1569,18 @@ impl<'a> CheckerState<'a> {
         // Check if the property resolves to `any` — if so, the call target is genuinely
         // untyped and TS2347 should fire.
         let this_type = self.get_type_of_node(access.expression);
-        if this_type != TypeId::ANY && this_type != TypeId::ERROR {
-            if let Some(property_name) = self.get_property_name(access.name_or_argument) {
-                let result = self.resolve_property_access_with_env(this_type, &property_name);
-                if let crate::query_boundaries::common::PropertyAccessResult::Success {
-                    type_id,
-                    ..
-                } = result
-                {
-                    if type_id == TypeId::ANY {
-                        return false; // genuinely `any` — don't suppress TS2347
-                    }
-                }
+        if this_type != TypeId::ANY
+            && this_type != TypeId::ERROR
+            && let Some(property_name) = self.get_property_name(access.name_or_argument)
+        {
+            let result = self.resolve_property_access_with_env(this_type, &property_name);
+            if let crate::query_boundaries::common::PropertyAccessResult::Success {
+                type_id,
+                ..
+            } = result
+                && type_id == TypeId::ANY
+            {
+                return false; // genuinely `any` — don't suppress TS2347
             }
         }
 

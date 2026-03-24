@@ -715,26 +715,26 @@ impl<'a> CheckerState<'a> {
         }
 
         // For non-union types with number literal indices and no index sigs, emit TS2339.
-        if !is_union_or_intersection && !has_any_index_signature {
-            if let Some(num) =
+        if !is_union_or_intersection
+            && !has_any_index_signature
+            && let Some(num) =
                 tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
-            {
-                let prop_name = if num.fract() == 0.0 && num.is_finite() {
-                    format!("{}", num as i64)
-                } else {
-                    num.to_string()
-                };
-                let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
-                let message =
-                    format!("Property '{prop_name}' does not exist on type '{object_str}'.");
-                self.error_at_anchor(
-                    expr_idx,
-                    DiagnosticAnchorKind::ElementAccessExpr,
-                    &message,
-                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                );
-                return;
-            }
+        {
+            let prop_name = if num.fract() == 0.0 && num.is_finite() {
+                format!("{}", num as i64)
+            } else {
+                num.to_string()
+            };
+            let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
+            let message =
+                format!("Property '{prop_name}' does not exist on type '{object_str}'.");
+            self.error_at_anchor(
+                expr_idx,
+                DiagnosticAnchorKind::ElementAccessExpr,
+                &message,
+                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            );
+            return;
         }
 
         // TS7015: indexed with a non-numeric type when the object has a number index signature.

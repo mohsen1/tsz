@@ -994,21 +994,21 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             check_key,
                         );
-                    if !resolved_is_symbol_like {
-                        if let Some(invalid_member) =
-                            crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key) {
-                            let key_type_str = self.format_type(invalid_member);
-                            let message = crate::diagnostics::format_message(
-                                crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                                &[&key_type_str],
-                            );
-                            let error_node = computed_expr.unwrap_or(element_data.property_name);
-                            self.error_at_node(
-                                error_node,
-                                &message,
-                                crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                            );
-                        }
+                    if !resolved_is_symbol_like
+                        && let Some(invalid_member) =
+                            crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
+                    {
+                        let key_type_str = self.format_type(invalid_member);
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                            &[&key_type_str],
+                        );
+                        let error_node = computed_expr.unwrap_or(element_data.property_name);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        );
                     }
                 }
 
