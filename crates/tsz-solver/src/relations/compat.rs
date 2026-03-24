@@ -1471,7 +1471,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
             );
             if target_is_standalone_object {
-                return !self.target_has_array_like_property(target_props);
+                if self.target_has_array_like_property(target_props) {
+                    return false; // Target accepts arrays
+                }
+                // Skip for empty arrays/tuples — they have no own properties
+                // to check, but tsc allows assigning empty arrays to types
+                // extending empty tuples (e.g., `interface X extends [] { p?: any }`)
+                let source_is_empty = match self.interner.lookup(source) {
+                    Some(TypeData::Tuple(tid)) => self.interner.tuple_list(tid).is_empty(),
+                    Some(TypeData::Array(elem)) => elem == TypeId::NEVER,
+                    _ => false,
+                };
+                if source_is_empty {
+                    return false;
+                }
+                return true; // Non-empty array, target lacks array-like props → violation
             }
             // For intersection/other compound targets, skip the array check
             // and fall through to the standard weak type check.
