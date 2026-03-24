@@ -1446,6 +1446,31 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
+        // Target is a weak type (all optional properties). Check source.
+        // Array/Tuple types are objects (not primitives) but the ShapeExtractor
+        // can't extract their shape. In tsc, arrays have properties like `length`,
+        // `push`, etc. that are checked against the weak type's properties.
+        // When the source is an array/tuple type, check if the weak target has
+        // any property that arrays also have. If not, it's a weak type violation.
+        //
+        // IMPORTANT: Only apply this when the target is a standalone weak type
+        // (Object/ObjectWithIndex), NOT when it's part of an intersection.
+        // Intersections like `{ a?: string } & number[]` should not trigger
+        // weak type violations because the intersection includes array properties.
+        if self.is_array_or_tuple_type(source) {
+            // Only trigger the array weak-type check when the target is a
+            // standalone object shape, not an intersection or other compound type.
+            let target_is_standalone_object = matches!(
+                self.interner.lookup(target),
+                Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
+            );
+            if target_is_standalone_object {
+                return !self.target_has_array_like_property(target_props);
+            }
+            // For intersection/other compound targets, skip the array check
+            // and fall through to the standard weak type check.
+        }
+
         self.violates_weak_type_with_target_props(source, target_props)
     }
 
@@ -1579,7 +1604,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let source_shape_id = match extractor.extract(source) {
             Some(id) => id,
-            None => return false,
+            None => {
+                // Array/Tuple types are objects but not extractable. They rarely
+                // share property names with arbitrary union members, so treat as
+                // lacking common properties (matching tsc's getPropertiesOfType
+                // behavior for arrays in weak type detection).
+                if self.is_array_or_tuple_type(source) {
+                    return true;
+                }
+                return false;
+            }
         };
 
         let source_shape = self
@@ -1622,6 +1656,63 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         target_props: &[PropertyInfo],
     ) -> bool {
         crate::utils::has_common_property_name(source_props, target_props)
+    }
+
+    /// Check if a type is an Array or Tuple type.
+    /// These are object types but the ShapeExtractor can't extract their shape.
+    fn is_array_or_tuple_type(&self, type_id: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::Array(_)) | Some(TypeData::Tuple(_))
+        )
+    }
+
+    /// Check if any property in the target weak type has a name commonly found
+    /// on Array types (e.g. `length`). This prevents false weak-type violations
+    /// for cases like `{ length?: number } | number[]`.
+    fn target_has_array_like_property(&self, target_props: &[PropertyInfo]) -> bool {
+        // Known property names that exist on Array.prototype / Array instances.
+        // We only need to check the most commonly used ones that could appear
+        // as optional properties on weak types intended to accept arrays.
+        target_props.iter().any(|prop| {
+            let name = self.interner.resolve_atom(prop.name);
+            matches!(
+                name.as_str(),
+                "length"
+                    | "push"
+                    | "pop"
+                    | "shift"
+                    | "unshift"
+                    | "concat"
+                    | "join"
+                    | "reverse"
+                    | "slice"
+                    | "sort"
+                    | "splice"
+                    | "indexOf"
+                    | "lastIndexOf"
+                    | "every"
+                    | "some"
+                    | "forEach"
+                    | "map"
+                    | "filter"
+                    | "reduce"
+                    | "reduceRight"
+                    | "find"
+                    | "findIndex"
+                    | "fill"
+                    | "copyWithin"
+                    | "entries"
+                    | "keys"
+                    | "values"
+                    | "includes"
+                    | "flatMap"
+                    | "flat"
+                    | "at"
+                    | "toString"
+                    | "toLocaleString"
+            )
+        })
     }
 
     fn resolve_weak_type_ref(&self, type_id: TypeId) -> TypeId {
