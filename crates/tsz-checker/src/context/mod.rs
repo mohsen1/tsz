@@ -584,6 +584,11 @@ pub struct CheckerContext<'a> {
     pub callback_return_type_errors: Vec<Diagnostic>,
     /// Set of modules that have already had TS2307 emitted (prevents duplicate emissions).
     pub modules_with_ts2307_emitted: FxHashSet<String>,
+    /// Deferred truthiness diagnostics (TS2872/TS2873) that survive speculative
+    /// rollbacks. These are purely syntactic facts emitted during binary
+    /// expression evaluation but lost when call-resolution speculation rolls
+    /// back the main diagnostics vector. Flushed once per top-level statement.
+    pub deferred_truthiness_diagnostics: Vec<Diagnostic>,
 
     // --- Recursion Guards ---
     /// Stack of symbols being resolved.
