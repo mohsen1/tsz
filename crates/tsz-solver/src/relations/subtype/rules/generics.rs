@@ -403,12 +403,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             }
                         }
                         if any_checked && !all_ok && !needs_structural_fallback {
-                            // For two applications of the same generic definition, a
-                            // conclusive variance failure is the relation result. Falling
-                            // back to structural expansion here incorrectly accepts cases
-                            // like `T<A> <: T<B>` even though TypeScript keeps the generic
-                            // application identity and reports an incompatibility.
-                            return SubtypeResult::False;
+                            // For two applications of the same generic definition with
+                            // concrete type arguments, a variance failure is conclusive.
+                            // However, when any source arg is a type parameter, we must
+                            // fall through to structural comparison — the expanded form
+                            // may introduce implicit index signatures (e.g., homomorphic
+                            // mapped types like `{ [K in keyof T]: T[K] }`) that make
+                            // the structural check succeed even though the variance
+                            // check on the raw type parameter fails.
+                            let source_has_type_param = s_app.args.iter().any(|arg| {
+                                matches!(
+                                    self.interner.lookup(*arg),
+                                    Some(TypeData::TypeParameter(_))
+                                )
+                            });
+                            if !source_has_type_param {
+                                return SubtypeResult::False;
+                            }
                         }
                     }
                 }
@@ -624,10 +635,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // ({a: any} is not bidirectionally assignable to {}) but the expanded
         // types `{a: Type<any>}` and `{}` ARE structurally compatible.
         //
-        // For non-mapped types (no structural fallback), variance failures are
+        // Similarly, when any source arg is a type parameter, variance failures
+        // are not definitive — the expanded form may introduce implicit index
+        // signatures (e.g., homomorphic mapped types `{ [K in keyof T]: T[K] }`)
+        // that make structural comparison succeed.
+        //
+        // For non-mapped types with all-concrete args, variance failures are
         // definitive: incompatible type args means incompatible generic types.
         if any_checked && !all_ok && !needs_structural_fallback {
-            return Some(SubtypeResult::False);
+            let source_has_type_param = s_app
+                .args
+                .iter()
+                .any(|arg| matches!(self.interner.lookup(*arg), Some(TypeData::TypeParameter(_))));
+            if !source_has_type_param {
+                return Some(SubtypeResult::False);
+            }
         }
 
         None
