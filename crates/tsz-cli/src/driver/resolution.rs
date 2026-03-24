@@ -591,7 +591,13 @@ fn collect_commonjs_requires(
     arena: &NodeArena,
     specifiers: &mut Vec<(String, NodeIndex, tsz::module_resolver::ImportKind)>,
 ) {
+    use tsz::parser::syntax_kind_ext;
     for i in 0..arena.nodes.len() {
+        // Only check call expressions — skip all other node kinds to avoid
+        // incorrectly treating numeric/string literals as module specifiers.
+        if arena.nodes[i].kind != syntax_kind_ext::CALL_EXPRESSION {
+            continue;
+        }
         let idx = NodeIndex(i as u32);
         if let Some(specifier) = extract_require_specifier(arena, idx) {
             specifiers.push((specifier, idx, tsz::module_resolver::ImportKind::CjsRequire));
@@ -610,11 +616,6 @@ fn extract_require_specifier(arena: &NodeArena, idx: NodeIndex) -> Option<String
     // Helper to strip surrounding quotes from a string
     let strip_quotes =
         |s: &str| -> String { s.trim_matches(|c| c == '"' || c == '\'').to_string() };
-
-    // If it's directly a string literal, return it (without quotes)
-    if let Some(text) = arena.get_literal_text(idx) {
-        return Some(strip_quotes(text));
-    }
 
     // Check if it's a require() call expression
     if node.kind != syntax_kind_ext::CALL_EXPRESSION {
