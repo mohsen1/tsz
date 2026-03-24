@@ -451,10 +451,31 @@ impl<'a> TypeFormatter<'a> {
                     formatted
                 };
 
-                // TSC shorthand: ReadonlyArray<T> -> readonly T[]
+                // TSC shorthand: Array<T> -> T[], ReadonlyArray<T> -> readonly T[]
                 // and Readonly<T[]> -> readonly T[]
                 if app.args.len() == 1 {
                     let single_arg = app.args[0];
+                    if base_str == "Array" {
+                        // Array<T> -> T[]
+                        let elem_formatted = self.format(single_arg);
+                        let needs_parens = matches!(
+                            self.interner.lookup(single_arg),
+                            Some(
+                                TypeData::Union(_)
+                                    | TypeData::Intersection(_)
+                                    | TypeData::Function(_)
+                                    | TypeData::Callable(_)
+                                    | TypeData::Conditional(_)
+                            )
+                        );
+                        let result = if needs_parens {
+                            format!("({elem_formatted})[]")
+                        } else {
+                            format!("{elem_formatted}[]")
+                        };
+                        trace!(result = %result, "Application formatted as array shorthand");
+                        return result.into();
+                    }
                     if base_str == "ReadonlyArray" {
                         // ReadonlyArray<T> -> readonly T[]
                         let elem_formatted = self.format(single_arg);
