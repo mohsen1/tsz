@@ -555,8 +555,13 @@ pub(crate) fn collect_module_specifiers(
     // Also collect dynamic imports and plain CommonJS require() calls from
     // expression/call sites so dependency discovery follows the same module
     // graph that checker-side call typing uses.
-    collect_dynamic_imports(arena, source_file, &strip_quotes, &mut specifiers);
-    collect_commonjs_requires(arena, &mut specifiers);
+    // Skip for declaration files (.d.ts) — they cannot contain runtime
+    // expressions like import() or require(), and scanning all nodes in
+    // large lib files (e.g. dom.d.ts with ~40K nodes) is wasted work.
+    if !source.is_declaration_file {
+        collect_dynamic_imports(arena, source_file, &strip_quotes, &mut specifiers);
+        collect_commonjs_requires(arena, &mut specifiers);
+    }
 
     specifiers
 }
