@@ -302,7 +302,12 @@ impl<'a> CheckerState<'a> {
 
             let is_strict = self.ctx.is_strict_mode_for_node(idx);
 
-            if is_strict {
+            // Suppress TS1212/TS1213/TS1214 when there are parse errors.
+            // In error recovery, reserved words may appear as identifiers
+            // in positions where they were not intended (e.g., `public` inside
+            // a function call argument). tsc doesn't emit these diagnostics
+            // for parser error recovery artifacts.
+            if is_strict && !self.ctx.has_parse_errors {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 if in_class {
                     if name == "arguments" {
