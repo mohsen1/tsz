@@ -596,6 +596,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut all_from_index = true; // ALL members used index signature (for TS2540 vs TS2542)
         let mut has_unknown_members = false;
         let mut saw_deferred_any_fallback = false;
+        let mut has_not_found_member = false;
+        // Pre-check: does the union contain nullable members? If so, we must
+        // not early-return PropertyNotFound when a non-nullable member is missing
+        // the property — tsc prioritizes "possibly null/undefined" (TS18049)
+        // over "property does not exist" (TS2339).
+        let union_has_nullable = non_unknown_members.iter().any(|m| m.is_nullable());
 
         for &member in &non_unknown_members {
             // Check for null/undefined directly
@@ -651,6 +657,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // For ordinary unions like `T | {}`, read access must still report that
                 // the property does not exist until the expression is widened by a write
                 // or other widening position.
+                //
+                // If the union also contains nullable members (null/undefined), tsc
+                // prioritizes reporting "possibly null/undefined" (TS18049) over
+                // "property does not exist" (TS2339). So we defer the PropertyNotFound
+                // decision until after all members have been processed.
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     if fresh_object_union && crate::is_empty_object_type(self.interner(), member) {
                         // Empty object: treat as partial, property yields undefined
@@ -659,10 +670,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         all_from_index = false;
                         continue;
                     }
-                    return Some(PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type_for_error(),
-                        property_name: prop_atom,
-                    });
+                    // When the union has nullable members, defer the not-found
+                    // decision. tsc prioritizes "possibly null/undefined" (TS18049)
+                    // over "property doesn't exist" (TS2339) when at least one
+                    // non-nullable member HAS the property. The post-loop logic
+                    // handles the final decision.
+                    if !union_has_nullable {
+                        return Some(PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type_for_error(),
+                            property_name: prop_atom,
+                        });
+                    }
+                    has_not_found_member = true;
                 }
                 // IsUnknown: skip unknown members in unions — they shouldn't prevent
                 // property access on other union members that DO have the property.
@@ -680,8 +699,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return Some(PropertyAccessResult::IsUnknown);
         }
 
-        // If no non-nullable members had the property, it's a PropertyNotFound error
-        if valid_results.is_empty() && nullable_causes.is_empty() {
+        // If no non-nullable members had the property, it's a PropertyNotFound error.
+        // This also applies when nullable members exist but ALL non-nullable members
+        // failed — tsc reports TS2339 (property doesn't exist) not TS18049 (possibly null).
+        if valid_results.is_empty() && (nullable_causes.is_empty() || has_not_found_member) {
             if saw_deferred_any_fallback {
                 return Some(PropertyAccessResult::simple(TypeId::ANY));
             }
