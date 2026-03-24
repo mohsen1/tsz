@@ -4,7 +4,8 @@
 
 use crate::batch_pool::{BatchOutcome, ProcessPool};
 use crate::cache::{self, load_cache};
-use crate::cli::Args;
+use crate::cli::{Args, RunMode};
+use crate::server_pool::{ServerOutcome, ServerPool};
 use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
     should_skip_test,
@@ -205,6 +206,33 @@ impl Runner {
             }
         };
 
+        // Create server pool if mode is Server
+        let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
+            let server_bin = self.args.resolved_server_binary();
+            match ServerPool::new(
+                &server_bin,
+                concurrency_limit,
+                self.args.max_compilations_per_worker,
+                self.args.max_worker_rss_mb * 1024 * 1024,
+            )
+            .await
+            {
+                Ok(sp) => {
+                    info!(
+                        "Server pool ready: {} workers using {}",
+                        concurrency_limit, server_bin
+                    );
+                    Some(Arc::new(sp))
+                }
+                Err(e) => {
+                    warn!("Failed to create server pool: {e}. Falling back to CLI batch mode.");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Process tests in parallel
         let start = Instant::now();
 
@@ -227,6 +255,7 @@ impl Runner {
                 let problems = std::sync::Arc::clone(&self.problems);
                 let tsz_binary = self.tsz_binary.clone();
                 let pool = pool.clone();
+                let server_pool = server_pool.clone();
                 let verbose = self.args.is_verbose();
                 let print_test = self.args.print_test;
                 let print_test_files = self.args.print_test_files;
@@ -244,6 +273,7 @@ impl Runner {
                         cache,
                         tsz_binary,
                         pool,
+                        server_pool,
                         print_test_files,
                         timeout_secs,
                     )
@@ -600,6 +630,7 @@ impl Runner {
         cache: Arc<crate::cache::TscCache>,
         tsz_binary: String,
         pool: Option<Arc<ProcessPool>>,
+        server_pool: Option<Arc<ServerPool>>,
         print_test_files: bool,
         timeout_secs: u64,
     ) -> anyhow::Result<(TestResult, Option<String>)> {
@@ -651,114 +682,164 @@ impl Runner {
                         .and_then(|e| e.to_str())
                         .map(std::string::ToString::to_string);
 
-                    // Run each option variant (e.g. module=commonjs, module=system).
-                    // Only the FIRST variant's diagnostics are used for comparison
-                    // because the tsc cache was generated with first-value-only
-                    // semantics for multi-value options. Non-first variants still
-                    // run for crash/timeout detection but are skipped when time is
-                    // tight (>5s for the first variant) to avoid cumulative timeouts.
-                    let mut first_variant_slow = false;
-                    for (variant_idx, variant) in option_variants.into_iter().enumerate() {
-                        // Skip non-first variants when the first variant was slow —
-                        // the cumulative time of N slow variants would exceed the
-                        // timeout even though each individual variant is within bounds.
-                        if variant_idx > 0 && first_variant_slow {
-                            continue;
-                        }
-                        let content_clone = content.clone();
-                        let filenames = parsed.directives.filenames.clone();
-                        let variant_clone = variant.clone();
-                        let ext_clone = original_ext.clone();
-                        let key_order = parsed.directives.option_order.clone();
-                        let expected_error_codes = tsc_result.error_codes.clone();
+                    // Determine if we should use server mode for this test
+                    let use_server = server_pool.is_some()
+                        && !crate::options_convert::has_unsupported_server_options(&options);
 
-                        let prepared = tokio::task::spawn_blocking(move || {
-                            tsz_wrapper::prepare_test_dir(
-                                &content_clone,
-                                &filenames,
-                                &variant_clone,
-                                ext_clone.as_deref(),
-                                &key_order,
-                                Some(&expected_error_codes),
-                            )
-                        })
-                        .await??;
-
-                        let variant_start = Instant::now();
-                        let compile_result = if let Some(ref pool) = pool {
-                            // Use batch pool — send project dir, read output
-                            let timeout_dur = if timeout_secs > 0 {
-                                Duration::from_secs(timeout_secs)
-                            } else {
-                                Duration::ZERO
-                            };
-                            match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
-                                BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
-                                    &output,
-                                    prepared.temp_dir.path(),
-                                    variant,
-                                ),
-                                BatchOutcome::Crashed => {
-                                    return Ok((TestResult::Crashed, file_preview.take()));
-                                }
-                                BatchOutcome::Timeout => {
-                                    return Ok((TestResult::Timeout, file_preview.take()));
-                                }
-                            }
+                    if use_server {
+                        // SERVER MODE: send files + options as JSON, no temp dir.
+                        // This skips temp directory creation and filesystem I/O entirely.
+                        let server = server_pool.as_ref().unwrap();
+                        let mut files = HashMap::new();
+                        if parsed.directives.filenames.is_empty() {
+                            // Single-file test
+                            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
+                            let name = format!("test.{ext}");
+                            let clean = tsz_wrapper::strip_directive_comments(&content);
+                            files.insert(name, clean);
                         } else {
-                            // Subprocess fallback — spawn fresh tsz per compilation
-                            // Set cwd to project dir so diagnostic file paths are
-                            // relative to project root (matching cache generator behavior)
-                            let child = tokio::process::Command::new(&tsz_binary)
-                                .arg("--project")
-                                .arg(prepared.temp_dir.path())
-                                .arg("--noEmit")
-                                .arg("--pretty")
-                                .arg("false")
-                                .current_dir(prepared.temp_dir.path())
-                                .stdout(std::process::Stdio::piped())
-                                .stderr(std::process::Stdio::piped())
-                                .kill_on_drop(true)
-                                .spawn()?;
+                            // Multi-file test
+                            for (filename, file_content) in &parsed.directives.filenames {
+                                files.insert(filename.clone(), file_content.clone());
+                            }
+                        }
 
-                            let output = if timeout_secs > 0 {
-                                match tokio::time::timeout(
-                                    Duration::from_secs(timeout_secs),
-                                    child.wait_with_output(),
+                        let timeout = if timeout_secs > 0 {
+                            Duration::from_secs(timeout_secs)
+                        } else {
+                            Duration::ZERO
+                        };
+
+                        // Run first variant only (matching CLI behavior for comparison)
+                        let first_variant = option_variants.first().unwrap_or(&options);
+                        let outcome = server.check(files, first_variant, timeout).await?;
+
+                        match outcome {
+                            ServerOutcome::Done(codes) => {
+                                all_codes.extend(codes);
+                            }
+                            ServerOutcome::Crashed => {
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
+                            ServerOutcome::Timeout => {
+                                return Ok((TestResult::Timeout, file_preview.take()));
+                            }
+                            ServerOutcome::Error(e) => {
+                                warn!("Server error for {}: {e}", path.display());
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
+                        }
+                    } else {
+                        // CLI MODE: existing variant loop with temp dirs.
+                        // Run each option variant (e.g. module=commonjs, module=system).
+                        // Only the FIRST variant's diagnostics are used for comparison
+                        // because the tsc cache was generated with first-value-only
+                        // semantics for multi-value options. Non-first variants still
+                        // run for crash/timeout detection but are skipped when time is
+                        // tight (>5s for the first variant) to avoid cumulative timeouts.
+                        let mut first_variant_slow = false;
+                        for (variant_idx, variant) in option_variants.into_iter().enumerate() {
+                            // Skip non-first variants when the first variant was slow —
+                            // the cumulative time of N slow variants would exceed the
+                            // timeout even though each individual variant is within bounds.
+                            if variant_idx > 0 && first_variant_slow {
+                                continue;
+                            }
+                            let content_clone = content.clone();
+                            let filenames = parsed.directives.filenames.clone();
+                            let variant_clone = variant.clone();
+                            let ext_clone = original_ext.clone();
+                            let key_order = parsed.directives.option_order.clone();
+                            let expected_error_codes = tsc_result.error_codes.clone();
+
+                            let prepared = tokio::task::spawn_blocking(move || {
+                                tsz_wrapper::prepare_test_dir(
+                                    &content_clone,
+                                    &filenames,
+                                    &variant_clone,
+                                    ext_clone.as_deref(),
+                                    &key_order,
+                                    Some(&expected_error_codes),
                                 )
-                                .await
-                                {
-                                    Ok(result) => result?,
-                                    Err(_) => {
+                            })
+                            .await??;
+
+                            let variant_start = Instant::now();
+                            let compile_result = if let Some(ref pool) = pool {
+                                // Use batch pool — send project dir, read output
+                                let timeout_dur = if timeout_secs > 0 {
+                                    Duration::from_secs(timeout_secs)
+                                } else {
+                                    Duration::ZERO
+                                };
+                                match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
+                                    BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
+                                        &output,
+                                        prepared.temp_dir.path(),
+                                        variant,
+                                    ),
+                                    BatchOutcome::Crashed => {
+                                        return Ok((TestResult::Crashed, file_preview.take()));
+                                    }
+                                    BatchOutcome::Timeout => {
                                         return Ok((TestResult::Timeout, file_preview.take()));
                                     }
                                 }
                             } else {
-                                child.wait_with_output().await?
+                                // Subprocess fallback — spawn fresh tsz per compilation
+                                // Set cwd to project dir so diagnostic file paths are
+                                // relative to project root (matching cache generator behavior)
+                                let child = tokio::process::Command::new(&tsz_binary)
+                                    .arg("--project")
+                                    .arg(prepared.temp_dir.path())
+                                    .arg("--noEmit")
+                                    .arg("--pretty")
+                                    .arg("false")
+                                    .current_dir(prepared.temp_dir.path())
+                                    .stdout(std::process::Stdio::piped())
+                                    .stderr(std::process::Stdio::piped())
+                                    .kill_on_drop(true)
+                                    .spawn()?;
+
+                                let output = if timeout_secs > 0 {
+                                    match tokio::time::timeout(
+                                        Duration::from_secs(timeout_secs),
+                                        child.wait_with_output(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(result) => result?,
+                                        Err(_) => {
+                                            return Ok((TestResult::Timeout, file_preview.take()));
+                                        }
+                                    }
+                                } else {
+                                    child.wait_with_output().await?
+                                };
+
+                                tsz_wrapper::parse_tsz_output(
+                                    &output,
+                                    prepared.temp_dir.path(),
+                                    variant,
+                                )
                             };
+                            if compile_result.crashed {
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
 
-                            tsz_wrapper::parse_tsz_output(
-                                &output,
-                                prepared.temp_dir.path(),
-                                variant,
-                            )
-                        };
-                        if compile_result.crashed {
-                            return Ok((TestResult::Crashed, file_preview.take()));
-                        }
-
-                        // Only accumulate diagnostics from the first variant.
-                        // The tsc cache uses first-value-only for multi-value
-                        // options (module, jsx, etc.), so comparing the union
-                        // of all variants against the cache produces false
-                        // "extra" diagnostics from non-first variants.
-                        if variant_idx == 0 {
-                            all_codes.extend(compile_result.error_codes);
-                            all_fingerprints.extend(compile_result.diagnostic_fingerprints);
-                            // Mark first variant as slow if it took >3s — skip
-                            // remaining variants to avoid cumulative timeout.
-                            if variant_start.elapsed() > Duration::from_secs(3) {
-                                first_variant_slow = true;
+                            // Only accumulate diagnostics from the first variant.
+                            // The tsc cache uses first-value-only for multi-value
+                            // options (module, jsx, etc.), so comparing the union
+                            // of all variants against the cache produces false
+                            // "extra" diagnostics from non-first variants.
+                            if variant_idx == 0 {
+                                all_codes.extend(compile_result.error_codes);
+                                all_fingerprints.extend(compile_result.diagnostic_fingerprints);
+                                // Mark first variant as slow if it took >3s — skip
+                                // remaining variants to avoid cumulative timeout.
+                                if variant_start.elapsed() > Duration::from_secs(3) {
+                                    first_variant_slow = true;
+                                }
                             }
                         }
                     }

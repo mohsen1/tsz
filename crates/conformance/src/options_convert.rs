@@ -4,7 +4,9 @@
 //! field names. Test directives are `HashMap<String, String>` with lowercase
 //! keys and string values. This module converts between the two.
 
-use serde_json::{json, Map, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 
 /// Convert test directive options to a JSON object matching the server's

@@ -137,7 +137,6 @@ impl Args {
     }
 
     /// Resolve the tsz-server binary path.
-    #[allow(dead_code)] // Used once server mode is wired up
     pub fn resolved_server_binary(&self) -> String {
         if let Some(ref bin) = self.server_binary {
             return bin.clone();
