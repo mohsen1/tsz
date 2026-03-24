@@ -7,7 +7,6 @@ FAIL TypeScript/tests/cases/compiler/awaitedTypeStrictNull.ts | expected:[TS2589
 FAIL TypeScript/tests/cases/compiler/bindingPatternCannotBeOnlyInferenceSource.ts | expected:[TS2339,TS2488,TS2571] actual:[TS2339,TS2488,TS2571]
 FAIL TypeScript/tests/cases/compiler/bluebirdStaticThis.ts | expected:[TS2420,TS2694] actual:[TS2420,TS2694,TS2769]
 FAIL TypeScript/tests/cases/compiler/builtinIterator.ts | expected:[TS2322,TS2345,TS2416,TS2511,TS2515] actual:[TS2345,TS2416,TS2511,TS2515,TS18046]
-FAIL TypeScript/tests/cases/compiler/callbacksDontShareTypes.ts | expected:[TS2454] actual:[TS2454,TS2769]
 FAIL TypeScript/tests/cases/compiler/callsOnComplexSignatures.tsx | expected:[] actual:[TS2604]
 FAIL TypeScript/tests/cases/compiler/checkJsTypeDefNoUnusedLocalMarked.ts | expected:[TS2352,TS2564] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/checkMergedGlobalUMDSymbol.ts | expected:[TS2451] actual:[TS2708]
@@ -157,14 +156,13 @@ FAIL TypeScript/tests/cases/compiler/fuzzy.ts | expected:[TS2322,TS2352,TS2420] 
 FAIL TypeScript/tests/cases/compiler/genericArgumentCallSigAssignmentCompat.ts | expected:[TS2345] actual:[]
 FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts | expected:[TS2345,TS2488] actual:[TS2488]
-FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts | expected:[TS2345,TS2558] actual:[TS2345,TS2558]
 FAIL TypeScript/tests/cases/compiler/genericCloneReturnTypes.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
 FAIL TypeScript/tests/cases/compiler/genericCloneReturnTypes2.ts | expected:[TS2322,TS2454] actual:[TS2322,TS2454]
 FAIL TypeScript/tests/cases/compiler/genericConstructorFunction1.ts | expected:[TS2348] actual:[TS2348]
 FAIL TypeScript/tests/cases/compiler/genericDefaults.ts | expected:[TS2744] actual:[TS2339,TS2345,TS2428,TS2716,TS2744]
 FAIL TypeScript/tests/cases/compiler/genericDefaultsErrors.ts | expected:[TS2304,TS2344,TS2345,TS2428,TS2558,TS2706,TS2707,TS2716] actual:[TS2304,TS2344,TS2428,TS2558,TS2706,TS2707,TS2716]
-FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts | expected:[TS2345] actual:[TS2322,TS2345,TS2362]
+FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts | expected:[TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/compiler/genericFunctionsWithOptionalParameters1.ts | expected:[TS2345,TS2454] actual:[TS2345,TS2454]
 FAIL TypeScript/tests/cases/compiler/genericGetter3.ts | expected:[TS2322,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/genericInferenceDefaultTypeParameterJsxReact.tsx | expected:[] actual:[TS2344]
@@ -315,7 +313,6 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx | expected:[TS
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx | expected:[TS1003,TS1005,TS1109] actual:[TS1003,TS1005,TS1109]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx | expected:[TS7026] actual:[]
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/jsxViaImport.2.tsx | expected:[TS7008] actual:[TS2607,TS7008]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
@@ -539,7 +536,6 @@ FAIL TypeScript/tests/cases/compiler/strictOptionalProperties3.ts | expected:[TS
 FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts | expected:[TS2353] actual:[TS2322,TS2344,TS2345,TS2353,TS2536]
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts | expected:[TS1002,TS1125] actual:[TS1002,TS1125]
-FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts | expected:[TS2344] actual:[]
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2344,TS2416,TS2744]
 FAIL TypeScript/tests/cases/compiler/subtypeReductionWithAnyFunctionType.ts | expected:[TS7006] actual:[]
 FAIL TypeScript/tests/cases/compiler/superWithTypeArgument3.ts | expected:[TS2754] actual:[TS2345,TS2564,TS2754]
@@ -556,7 +552,6 @@ FAIL TypeScript/tests/cases/compiler/thisPredicateInObjectLiteral.ts | expected:
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts | expected:[TS2345,TS2820] actual:[TS2322,TS2345,TS18046]
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive2.ts | expected:[TS2683,TS7041] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts | expected:[TS2353,TS2783] actual:[TS2353,TS2716]
-FAIL TypeScript/tests/cases/compiler/tooFewArgumentsInGenericFunctionTypedArgument.ts | expected:[TS2454] actual:[TS2454,TS2769]
 FAIL TypeScript/tests/cases/compiler/topFunctionTypeNotCallable.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/truthinessCallExpressionCoercion2.ts | expected:[TS2774] actual:[TS2339,TS2774]
 FAIL TypeScript/tests/cases/compiler/truthinessPromiseCoercion.ts | expected:[TS2801] actual:[]
@@ -1252,7 +1247,7 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuper
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers.ts | expected:[TS2416,TS2564] actual:[TS2416,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/contextualSignatureInstantiation.ts | expected:[TS2345,TS2403] actual:[]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts | expected:[TS2345,TS2769] actual:[TS2345,TS2769]
-FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithFunctionTypedArguments.ts | expected:[TS2345] actual:[TS2345]
+FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithFunctionTypedArguments.ts | expected:[TS2345] actual:[TS2345,TS2403]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithFunctionTypedArguments2.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithObjectLiteralArgs.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithObjectTypeArgsAndConstraints4.ts | expected:[TS2345,TS2564] actual:[TS2345,TS2564]
@@ -1260,7 +1255,7 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/ge
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithObjectTypeArgsAndIndexersErrors.ts | expected:[TS2413,TS2454] actual:[TS2454]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithOverloadedConstructorTypedArguments2.ts | expected:[TS2345] actual:[]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithTupleType.ts | expected:[TS2322,TS2454,TS2493] actual:[TS2322,TS2454,TS2493]
-FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericClassWithFunctionTypedMemberArguments.ts | expected:[TS2345] actual:[TS2345]
+FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericClassWithFunctionTypedMemberArguments.ts | expected:[TS2345] actual:[TS2345,TS2403]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericContextualTypes1.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/indexSignatureTypeInference.ts | expected:[TS2345,TS2403] actual:[]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/intraExpressionInferences.ts | expected:[TS2322,TS2339] actual:[TS2339]
@@ -1847,6 +1842,7 @@ PASS TypeScript/tests/cases/compiler/callSignatureFunctionOverload.ts
 PASS TypeScript/tests/cases/compiler/callSignaturesShouldBeResolvedBeforeSpecialization.ts
 PASS TypeScript/tests/cases/compiler/callWithWrongNumberOfTypeArguments.ts
 PASS TypeScript/tests/cases/compiler/callbackArgsDifferByOptionality.ts
+PASS TypeScript/tests/cases/compiler/callbacksDontShareTypes.ts
 PASS TypeScript/tests/cases/compiler/cannotIndexGenericWritingError.ts
 PASS TypeScript/tests/cases/compiler/cannotInvokeNewOnErrorExpression.ts
 PASS TypeScript/tests/cases/compiler/cannotInvokeNewOnIndexExpression.ts
@@ -4005,6 +4001,7 @@ PASS TypeScript/tests/cases/compiler/genericAssignmentCompatOfFunctionSignatures
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
+PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
@@ -4399,7 +4396,6 @@ PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion1.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion2.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion4.ts
 PASS TypeScript/tests/cases/compiler/inferenceDoesntCompareAgainstUninstantiatedTypeParameter.ts
-PASS TypeScript/tests/cases/compiler/inferenceErasedSignatures.ts
 PASS TypeScript/tests/cases/compiler/inferenceExactOptionalProperties1.ts
 PASS TypeScript/tests/cases/compiler/inferenceFromGenericClassNoCrash1.ts
 PASS TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
@@ -6655,6 +6651,7 @@ PASS TypeScript/tests/cases/compiler/this_inside-object-literal-getters-and-sett
 PASS TypeScript/tests/cases/compiler/throwWithoutNewLine1.ts
 PASS TypeScript/tests/cases/compiler/throwWithoutNewLine2.ts
 PASS TypeScript/tests/cases/compiler/toStringOnPrimitives.ts
+PASS TypeScript/tests/cases/compiler/tooFewArgumentsInGenericFunctionTypedArgument.ts
 PASS TypeScript/tests/cases/compiler/tooManyTypeParameters1.ts
 PASS TypeScript/tests/cases/compiler/topLevel.ts
 PASS TypeScript/tests/cases/compiler/topLevelBlockExpando.ts
@@ -11213,7 +11210,6 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource12.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource13.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource3.ts
-PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource4.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource5.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource9.ts
