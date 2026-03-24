@@ -672,6 +672,38 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2590: Pre-check element count before BCT. tsc's removeSubtypes counts
+        // pairwise iterations on the original (un-widened) types and bails at 1,000,000.
+        // BCT widens literals before creating the union, which collapses types and
+        // prevents the solver's complexity check from firing. We must check the
+        // original element type count here to match tsc's behavior.
+        //
+        // However, tsc skips removeSubtypes for unions where all members are
+        // identity-comparable (primitives, literals). Only non-identity-comparable
+        // types (objects, arrays, etc.) contribute to the complexity count.
+        {
+            let mut deduped = element_types.clone();
+            deduped.sort_unstable_by_key(|t| t.0);
+            deduped.dedup();
+            // Only count types that would actually need pairwise reduction
+            let has_non_identity = deduped
+                .iter()
+                .any(|&ty| !self.ctx.types.is_identity_comparable_type(ty));
+            if has_non_identity {
+                let distinct_count = deduped.len() as u64;
+                let pairwise = distinct_count * distinct_count.saturating_sub(1);
+                if pairwise >= 1_000_000 {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                        diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                    );
+                    return factory.array(TypeId::ERROR);
+                }
+            }
+        }
+
         // Use Solver API for Best Common Type computation (Solver-First architecture)
         // When preserve_literal_types is set (e.g., inside generic call argument collection),
         // skip BCT's literal widening by computing the union directly. This preserves
@@ -687,11 +719,8 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        // TS2590: Expression produces a union type that is too complex to represent.
-        // The solver sets a flag when union normalization detects that pairwise subtype
-        // reduction would exceed tsc's complexity threshold (~1M comparisons).
-        // Check the flag regardless of element_type — the solver preserves the union
-        // (doesn't collapse to ERROR) so the element_type may be a valid large union.
+        // TS2590: Also check the solver's flag in case the union was constructed
+        // through a different path (e.g., preserve_literal_types or internal union ops).
         if self.ctx.types.take_union_too_complex() {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(

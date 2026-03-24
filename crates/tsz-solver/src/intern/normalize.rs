@@ -1200,18 +1200,6 @@ impl TypeInterner {
             return;
         }
 
-        // TS2590: Expression produces a union type that is too complex to represent.
-        // tsc's removeSubtypes counts pairwise iterations and bails at 1,000,000.
-        // For n types the worst-case count is n*(n-1), so n >= 1001 hits the limit.
-        // Set the flag for the checker to detect, but don't collapse to ERROR here —
-        // internal type construction (template literals, etc.) may legitimately create
-        // large unions. The checker decides whether to treat it as a diagnostic.
-        let pairwise = (len as u64) * (len as u64 - 1);
-        if pairwise >= 1_000_000 {
-            self.set_union_too_complex();
-            return; // skip reduction, preserve the union members as-is
-        }
-
         // Skip reduction if all types are identity-comparable or non-reducible structures.
         // tsc's default union reduction (UnionReduction.Literal) does NOT remove structural
         // subtypes — it only absorbs literals into primitives. Structural subtype reduction
@@ -1258,6 +1246,18 @@ impl TypeInterner {
             if all_non_reducible && !has_primitive {
                 return;
             }
+        }
+
+        // TS2590: Expression produces a union type that is too complex to represent.
+        // tsc's removeSubtypes counts pairwise iterations and bails at 1,000,000.
+        // For n types the worst-case count is n*(n-1), so n >= 1001 hits the limit.
+        // Set the flag for the checker to detect, but don't collapse to ERROR here —
+        // internal type construction (template literals, etc.) may legitimately create
+        // large unions. The checker decides whether to treat it as a diagnostic.
+        let pairwise = (len as u64) * (len as u64 - 1);
+        if pairwise >= 1_000_000 {
+            self.set_union_too_complex();
+            return; // skip reduction, preserve the union members as-is
         }
 
         // OPTIMIZATION: Property-based partitioning for large object unions.
