@@ -255,6 +255,18 @@ impl<'a> CheckerState<'a> {
                     2454,
                 );
             }
+
+            // Flush deferred TS2872/TS2873 truthiness diagnostics.
+            // These are purely syntactic facts emitted during binary expression
+            // evaluation but lost when call-resolution speculation rolls back
+            // the main diagnostics vector. The deferred buffer survives rollback.
+            // error() has built-in dedup by (start, code): if the diagnostic
+            // survived speculation, this is a no-op.
+            let deferred_truthiness = std::mem::take(&mut self.ctx.deferred_truthiness_diagnostics);
+            for diag in deferred_truthiness {
+                self.ctx
+                    .error(diag.start, diag.length, diag.message_text, diag.code);
+            }
         }
     }
 

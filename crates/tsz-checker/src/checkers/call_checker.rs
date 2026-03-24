@@ -114,6 +114,11 @@ impl<'a> CheckerState<'a> {
             // inference result from the call. It must survive call-expression
             // diagnostic rollbacks (round 1 → round 2, return-context re-check).
             || diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+            // TS2872/TS2873 (always truthy/falsy) are purely syntactic facts
+            // about expression truthiness, not speculative inference results.
+            // They must survive call-expression diagnostic rollbacks.
+            || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY
+            || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY
     }
 
     fn normalized_spread_argument_type(&mut self, expr: NodeIndex) -> TypeId {

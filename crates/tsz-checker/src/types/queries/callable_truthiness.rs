@@ -120,18 +120,38 @@ impl<'a> CheckerState<'a> {
 
         match self.get_syntactic_truthy_semantics(node_idx) {
             SyntacticTruthiness::AlwaysTruthy => {
-                self.error_at_node(
-                    node_idx,
-                    "This kind of expression is always truthy.",
-                    diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY,
-                );
+                // Defer TS2872 to survive speculative call-resolution rollbacks.
+                // The diagnostic is purely syntactic and must not be lost when
+                // generic inference re-evaluates arguments.
+                if let Some((start, end)) = self.get_node_span(node_idx) {
+                    let raw_length = end.saturating_sub(start);
+                    let (start, length) = self.normalized_anchor_span(node_idx, start, raw_length);
+                    self.ctx.deferred_truthiness_diagnostics.push(
+                        crate::diagnostics::Diagnostic::error(
+                            self.ctx.file_name.clone(),
+                            start,
+                            length,
+                            "This kind of expression is always truthy.".to_string(),
+                            diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY,
+                        ),
+                    );
+                }
             }
             SyntacticTruthiness::AlwaysFalsy => {
-                self.error_at_node(
-                    node_idx,
-                    "This kind of expression is always falsy.",
-                    diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY,
-                );
+                // Defer TS2873 to survive speculative call-resolution rollbacks.
+                if let Some((start, end)) = self.get_node_span(node_idx) {
+                    let raw_length = end.saturating_sub(start);
+                    let (start, length) = self.normalized_anchor_span(node_idx, start, raw_length);
+                    self.ctx.deferred_truthiness_diagnostics.push(
+                        crate::diagnostics::Diagnostic::error(
+                            self.ctx.file_name.clone(),
+                            start,
+                            length,
+                            "This kind of expression is always falsy.".to_string(),
+                            diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY,
+                        ),
+                    );
+                }
             }
             SyntacticTruthiness::Sometimes => {}
         }
