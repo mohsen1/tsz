@@ -516,6 +516,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip TS2300 when any class declaration is inside a non-exported
+                // namespace body. In TSC, a non-exported `namespace Z` doesn't merge
+                // with an exported Z from a dot-notation declaration like `namespace X.Y.Z`.
+                // The classes inside them are separate and should not trigger TS2300.
+                let any_in_non_exported_ns = local_class_decls
+                    .iter()
+                    .any(|&(decl_idx, _)| self.is_in_non_exported_namespace_body(decl_idx));
+                if any_in_non_exported_ns {
+                    continue;
+                }
+
                 let message = format_message(
                     diagnostic_messages::DUPLICATE_IDENTIFIER,
                     &[&symbol.escaped_name],
