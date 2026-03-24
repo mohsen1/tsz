@@ -454,10 +454,12 @@ impl<'a> CheckerState<'a> {
             // bare identifiers, so `static X = X` resolves the RHS `X` to the
             // outer scope.  We replicate this by re-resolving while skipping
             // the static member symbol; if an outer binding exists, use it.
-            if (flags & tsz_binder::symbol_flags::STATIC) != 0
-                && let Some(ref class_info) = self.ctx.enclosing_class.clone()
-                && self.is_static_member(&class_info.member_nodes, name)
-            {
+            //
+            // The STATIC flag on the symbol is sufficient proof — we don't need
+            // to verify membership in the immediately enclosing class. This
+            // handles nested class expressions inside static initializers where
+            // the static member belongs to an outer class.
+            if (flags & tsz_binder::symbol_flags::STATIC) != 0 {
                 let lib_binders = self.get_lib_binders();
                 let static_sym_id = sym_id;
                 let outer_sym = self.ctx.binder.resolve_identifier_with_filter(
@@ -471,7 +473,20 @@ impl<'a> CheckerState<'a> {
                     // emitting TS2662.
                     return self.get_type_of_symbol(outer_sym_id);
                 }
-                self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
+                // Get the class name from the symbol's parent for the error message
+                let class_name = if let Some(parent_sym) = self.ctx.binder.get_symbol(
+                    self.ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map_or(tsz_binder::symbols::SymbolId::NONE, |s| s.parent),
+                ) {
+                    parent_sym.escaped_name.clone()
+                } else if let Some(ref class_info) = self.ctx.enclosing_class {
+                    class_info.name.clone()
+                } else {
+                    String::new()
+                };
+                self.error_cannot_find_name_static_member_at(name, &class_name, idx);
                 return TypeId::ERROR;
             }
 
