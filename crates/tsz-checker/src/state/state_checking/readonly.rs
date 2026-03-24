@@ -516,10 +516,8 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if prop_from_index_sig {
-                self.error_readonly_index_signature_at(
-                    readonly_check_type,
-                    access.name_or_argument,
-                );
+                // tsc anchors TS2542 at the full property access expression, not the name
+                self.error_readonly_index_signature_at(readonly_check_type, target_idx);
             } else {
                 self.error_readonly_property_at(&prop_name, access.name_or_argument);
             }
@@ -536,10 +534,8 @@ impl<'a> CheckerState<'a> {
 
             // TS2542: use specific diagnostic for readonly index signatures
             if prop_from_index_sig {
-                self.error_readonly_index_signature_at(
-                    readonly_check_type,
-                    access.name_or_argument,
-                );
+                // tsc anchors TS2542 at the full property access expression, not the name
+                self.error_readonly_index_signature_at(readonly_check_type, target_idx);
             } else {
                 self.error_readonly_property_at(&prop_name, access.name_or_argument);
             }
