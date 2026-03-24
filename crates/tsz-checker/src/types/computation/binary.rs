@@ -340,27 +340,43 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type "may represent a primitive value" for TS2638.
     ///
-    /// In tsc, this check ONLY fires for instantiable/type-parameter types whose
-    /// constraint is missing or could represent a primitive. Concrete object types
-    /// like `{}` do NOT trigger TS2638 even though they structurally accept
-    /// primitive values — only type parameters that COULD be instantiated with a
-    /// primitive at runtime trigger the diagnostic.
+    /// In tsc, this fires for "instantiable" types (type parameters, conditional types)
+    /// whose constraint is missing or could accept primitive values. Concrete object
+    /// types like `{}` do NOT trigger TS2638 on their own — only when they appear as
+    /// the constraint of a type parameter that could be instantiated with a primitive.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
-        // Type parameters: check if constraint is missing or could be primitive
+        // The intrinsic `object` type excludes primitives by definition
+        if ty == TypeId::OBJECT {
+            return false;
+        }
+
+        // `unknown` can represent any value including primitives
+        if ty == TypeId::UNKNOWN {
+            return true;
+        }
+
+        // Type parameters: check if constraint is missing or could be primitive.
+        // A type param with no constraint or constraint `{}` may represent a primitive
+        // because it could be instantiated with string, number, etc.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
                 self.ctx.types,
                 ty,
             ) {
-                None => true, // Unconstrained type param may be primitive
-                Some(c) => self.type_may_represent_primitive(c),
+                None => true,                            // Unconstrained type param may be primitive
+                Some(c) if c == TypeId::OBJECT => false, // `extends object` excludes primitives
+                Some(c) => {
+                    // Check if the constraint itself could accept primitives.
+                    // This handles `T extends {}` (may represent primitive) vs
+                    // `T extends object` (may not) vs `T extends { a: number }` (may not).
+                    if self.type_may_represent_primitive(c) {
+                        return true;
+                    }
+                    // For concrete constraints, check if a primitive is assignable
+                    self.ctx.types.is_assignable_to(TypeId::STRING, c)
+                }
             };
         }
-
-        // Concrete types (including empty object `{}`) are never "may represent
-        // primitive" — only type parameters can be instantiated with primitives.
-        // tsc does not emit TS2638 for `'a' in {}` or `'a' in x` where x is a
-        // concrete object type.
 
         // Union: any member may represent primitive
         if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
@@ -378,6 +394,8 @@ impl<'a> CheckerState<'a> {
                 .all(|&m| self.type_may_represent_primitive(m));
         }
 
+        // Concrete object types are NOT considered "may represent primitive" —
+        // only type parameters can be instantiated with primitives at runtime.
         false
     }
 
