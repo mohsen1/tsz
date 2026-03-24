@@ -1703,8 +1703,15 @@ impl<'a> CheckerState<'a> {
                             })
                     })
                 } {
-                    // tsc emits TS2323 for value default exports (not type-only)
-                    // that conflict, PLUS TS2528 for ALL default exports.
+                    // Classify each default export as value or type-only.
+                    // tsc emits TS2323 for value exports (identifiers resolving to
+                    // values, or class/interface declarations). When there are also
+                    // type-only exports (e.g., type aliases), tsc additionally emits
+                    // TS2528 for ALL default exports. When ALL exports are
+                    // values/classes/interfaces, only TS2323 is emitted (no TS2528).
+                    let mut has_type_only_export = false;
+                    let mut per_export: Vec<(NodeIndex, NodeIndex, bool, bool, bool)> = Vec::new();
+
                     for &export_idx in &export_default_indices {
                         let default_anchor = self.get_default_export_anchor(export_idx);
                         let clause_idx = self
@@ -1716,9 +1723,9 @@ impl<'a> CheckerState<'a> {
                         let clause_kind = self.ctx.arena.get(clause_idx).map(|c| c.kind);
                         let is_ident = clause_kind == Some(SyntaxKind::Identifier as u16);
                         let is_class_decl = clause_kind == Some(syntax_kind_ext::CLASS_DECLARATION);
+                        let is_interface_decl =
+                            clause_kind == Some(syntax_kind_ext::INTERFACE_DECLARATION);
 
-                        // Check if an identifier refers to a type-only symbol
-                        // (e.g., type alias). tsc doesn't emit TS2323 for those.
                         let is_type_only_ident = is_ident
                             && self
                                 .resolve_identifier_symbol(clause_idx)
@@ -1734,9 +1741,27 @@ impl<'a> CheckerState<'a> {
                                         && (sym.flags & symbol_flags::TYPE) != 0
                                 });
 
-                        // TS2323 only for value exports (identifiers that resolve
-                        // to values, or class declarations).
-                        if (is_ident && !is_type_only_ident) || is_class_decl {
+                        if is_type_only_ident {
+                            has_type_only_export = true;
+                        }
+
+                        let is_value =
+                            (is_ident && !is_type_only_ident) || is_class_decl || is_interface_decl;
+                        per_export.push((
+                            export_idx,
+                            default_anchor,
+                            is_ident,
+                            is_value,
+                            is_class_decl,
+                        ));
+                    }
+
+                    for &(export_idx, default_anchor, is_ident, is_value, _is_class_decl) in
+                        &per_export
+                    {
+                        // TS2323 for value exports (identifiers resolving to values,
+                        // class declarations, interface declarations).
+                        if is_value {
                             let anchor = if is_ident { export_idx } else { default_anchor };
                             self.error_at_node(
                                 anchor,
@@ -1744,12 +1769,14 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                             );
                         }
-                        // TS2528 for all default exports
-                        self.error_at_node(
-                            default_anchor,
-                            diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                        );
+                        // TS2528 only when type-only exports are present in the mix.
+                        if has_type_only_export {
+                            self.error_at_node(
+                                default_anchor,
+                                diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                                diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                            );
+                        }
                     }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
