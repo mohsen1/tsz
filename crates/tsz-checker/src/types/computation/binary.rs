@@ -1618,9 +1618,17 @@ impl<'a> CheckerState<'a> {
             // operands are symbol-typed. tsc rejects symbol in comparisons.
             // This must be checked before the evaluator because the comparability
             // fallback would incorrectly accept `symbol < symbol`.
+            // Also check constraint-resolved types for `S extends symbol`.
             if matches!(op_str, "<" | ">" | "<=" | ">=") {
-                let left_is_symbol = evaluator.is_symbol_like(left_type);
-                let right_is_symbol = evaluator.is_symbol_like(right_type);
+                let resolve_tp = |t: TypeId| -> TypeId {
+                    tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, t)
+                        .filter(|&c| c != TypeId::UNKNOWN && c != t)
+                        .unwrap_or(t)
+                };
+                let left_is_symbol = evaluator.is_symbol_like(left_type)
+                    || evaluator.is_symbol_like(resolve_tp(left_type));
+                let right_is_symbol = evaluator.is_symbol_like(right_type)
+                    || evaluator.is_symbol_like(resolve_tp(right_type));
                 if left_is_symbol || right_is_symbol {
                     use crate::diagnostics::diagnostic_codes;
                     let target_idx = if left_is_symbol { left_idx } else { right_idx };
