@@ -96,6 +96,11 @@ fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
             .is_some_and(|constraint| is_object_like_type_impl(types, constraint)),
+        // Lazy types represent unresolved type references (interfaces, classes, type aliases).
+        // These are object-like unless they resolve to the global `Function` interface.
+        Some(TypeData::Lazy(def_id)) => {
+            !types.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Function)
+        }
         _ => false,
     }
 }
