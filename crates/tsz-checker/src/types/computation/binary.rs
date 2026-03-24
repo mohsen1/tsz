@@ -339,10 +339,12 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type "may represent a primitive value" for TS2638.
-    /// In tsc, this check fires for type parameters (`InstantiableNonPrimitive`) whose
-    /// constraint is missing or could also represent a primitive. Empty object types
-    /// like `{}` are NOT flagged — they structurally accept primitives, but an empty
-    /// object value at runtime is always an object, not a primitive.
+    /// In tsc, this check fires for:
+    /// - Type parameters whose constraint is missing or could represent a primitive
+    /// - Empty object types like `{}` (they accept any non-nullish value including
+    ///   primitives like strings, numbers, booleans)
+    /// - Unions where any member may represent a primitive
+    /// - Intersections where all members may represent a primitive
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
         // Type parameters: check if constraint is missing or could be primitive
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
@@ -359,6 +361,13 @@ impl<'a> CheckerState<'a> {
                     self.type_may_represent_primitive(c)
                 }
             };
+        }
+
+        // Empty object type `{}` may represent a primitive value — `{}` matches
+        // any non-null, non-undefined value including strings, numbers, booleans.
+        // tsc emits TS2638 for `"prop" in x` when x has type `{}`.
+        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
+            return true;
         }
 
         // Union: any member may represent primitive
