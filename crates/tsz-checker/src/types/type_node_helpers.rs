@@ -138,6 +138,107 @@ fn collect_names_in_type(
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    /// Check if a type node is enclosed in parentheses by examining the source text.
+    ///
+    /// Our parser strips ParenthesizedType wrappers and returns the inner type
+    /// directly, so we need to check the source text. We look backwards from the
+    /// node's position for `(` as the first non-whitespace character. For abstract
+    /// constructor types like `(abstract new () => T)`, the node starts at `new`
+    /// with `abstract` before it, so we also check past `abstract`.
+    fn is_type_node_parenthesized(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let pos = node.pos as usize;
+        if pos == 0 {
+            return false;
+        }
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let before = &sf.text[..pos];
+        // Find last non-whitespace character
+        let trimmed = before.trim_end();
+        if trimmed.ends_with('(') {
+            return true;
+        }
+        // Handle `abstract` modifier: `(abstract new () => T)` - the ConstructorType
+        // node starts at `new`, so we need to look past `abstract` to find `(`.
+        if trimmed.ends_with("abstract") {
+            let before_abstract = trimmed[..trimmed.len() - "abstract".len()].trim_end();
+            if before_abstract.ends_with('(') {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// TS1386/TS1388: Constructor type notation must be parenthesized when used
+    /// in a union or intersection type.
+    ///
+    /// tsc emits these when a `new () => T` constructor type appears as a direct
+    /// member of a union or intersection without enclosing parentheses.
+    pub(super) fn check_grammar_constructor_type_in_union_or_intersection(
+        &mut self,
+        idx: NodeIndex,
+    ) {
+        if self.is_type_node_parenthesized(idx) {
+            return;
+        }
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return;
+        };
+        let parent = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return;
+        };
+        if parent_node.kind == syntax_kind_ext::UNION_TYPE {
+            self.ctx.error(
+                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
+                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                "Constructor type notation must be parenthesized when used in a union type.".to_string(),
+                crate::diagnostics::diagnostic_codes::CONSTRUCTOR_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_A_UNION_TYPE,
+            );
+        } else if parent_node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+            self.ctx.error(
+                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
+                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                "Constructor type notation must be parenthesized when used in an intersection type.".to_string(),
+                crate::diagnostics::diagnostic_codes::CONSTRUCTOR_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_AN_INTERSECTION_TYP,
+            );
+        }
+    }
+
+    /// TS1385/TS1387: Function type notation must be parenthesized when used
+    /// in a union or intersection type.
+    pub(super) fn check_grammar_function_type_in_union_or_intersection(&mut self, idx: NodeIndex) {
+        if self.is_type_node_parenthesized(idx) {
+            return;
+        }
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return;
+        };
+        let parent = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return;
+        };
+        if parent_node.kind == syntax_kind_ext::UNION_TYPE {
+            self.ctx.error(
+                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
+                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                "Function type notation must be parenthesized when used in a union type.".to_string(),
+                crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_A_UNION_TYPE,
+            );
+        } else if parent_node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+            self.ctx.error(
+                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
+                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                "Function type notation must be parenthesized when used in an intersection type.".to_string(),
+                crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_AN_INTERSECTION_TYPE,
+            );
+        }
+    }
+
     pub(super) fn push_type_parameters_for_type_literal_signature(
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,
