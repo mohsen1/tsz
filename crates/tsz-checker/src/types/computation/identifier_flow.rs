@@ -147,10 +147,17 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // tsc only emits TS7005/TS7034 for evolving arrays when the variable
-        // is captured across function boundaries (closure capture). Same-scope
-        // references (reads, truthiness checks, mutations) don't trigger it.
-        if self.is_same_function_scope_as_declaration(idx, sym_id) {
+        if self.is_same_function_scope_as_declaration(idx, sym_id)
+            && self.reference_has_reachable_array_mutation(idx)
+        {
+            return;
+        }
+        // Skip TS7005/TS7034 for truthiness checks (if/while/do-while conditions)
+        // of evolving arrays in same scope. tsc doesn't flag `if (arr)` as
+        // implicit any usage — only actual value reads trigger the diagnostic.
+        if self.is_same_function_scope_as_declaration(idx, sym_id)
+            && self.is_condition_expression_only(idx)
+        {
             return;
         }
 
@@ -190,6 +197,25 @@ impl<'a> CheckerState<'a> {
             && !self.is_simple_assignment_target(idx)
             && !self.is_identifier_array_mutation_receiver(idx)
             && !self.is_identifier_array_length_receiver(idx)
+    }
+
+    /// Check if the identifier is used only as a condition expression
+    /// (in if/while/do-while/ternary), not as a value read.
+    fn is_condition_expression_only(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let Some(info) = self.ctx.arena.node_info(idx) else {
+            return false;
+        };
+        let parent = info.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        matches!(
+            parent_node.kind,
+            IF_STATEMENT | WHILE_STATEMENT | DO_STATEMENT
+        ) || (parent_node.kind == CONDITIONAL_EXPRESSION
+            && self.ctx.arena.get_conditional_expr(parent_node)
+                .is_some_and(|cond| cond.condition == idx))
     }
 
     fn is_simple_assignment_target(&self, idx: NodeIndex) -> bool {
