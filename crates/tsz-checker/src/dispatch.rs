@@ -784,7 +784,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 // recovery artifact (e.g. `@g<number> class C {}`
                                 // parsed as `<number>class C {}` when decorators are
                                 // disabled).
-                                && !self.checker.node_has_nearby_parse_error(idx);
+                                && !self.checker.node_has_nearby_parse_error(idx)
+                                // Suppress TS2352 when the type assertion is the
+                                // left-hand side of `**`. The checker will emit
+                                // TS17007 for this grammar error; emitting TS2352
+                                // as well is a cascading false positive.
+                                && !self.checker.is_lhs_of_exponentiation(idx);
 
                             // For asserted types containing type parameters, resolve
                             // the constraint and check overlap against it. E.g., for

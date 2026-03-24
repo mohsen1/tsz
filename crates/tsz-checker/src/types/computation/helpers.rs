@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
     /// the unary expression is in a grammar-error position. When `(delete X) ** Y` or
     /// `(!X) ** Y` is processed, binary.rs will emit TS17006 for this node as the LHS of `**`.
     /// Emitting TS2703/TS2872 on top would be a false positive, so we skip them here.
-    fn is_lhs_of_exponentiation(&self, node_idx: NodeIndex) -> bool {
+    pub(crate) fn is_lhs_of_exponentiation(&self, node_idx: NodeIndex) -> bool {
         use tsz_scanner::SyntaxKind;
         if let Some(parent_idx) = self.ctx.arena.get_extended(node_idx).map(|e| e.parent)
             && let Some(parent_node) = self.ctx.arena.get(parent_idx)

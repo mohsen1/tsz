@@ -232,7 +232,8 @@ impl<'a> CheckerState<'a> {
         // (function name, parameter, variable binding), not when it's used as a
         // value reference in expression position. For example, `foo(public ...)` in
         // a class body should not emit TS1213 — `public` is a valid expression
-        // identifier even in strict mode.
+        // identifier even in strict mode. Parse error recovery can also produce
+        // identifier nodes from keywords that shouldn't trigger strict-mode diagnostics.
         let is_declaration_site = self.ctx.arena.get_extended(idx).is_some_and(|ext| {
             let parent = ext.parent;
             self.ctx.arena.get(parent).is_some_and(|pn| {
