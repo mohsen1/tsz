@@ -501,19 +501,19 @@ impl<'a> CheckerState<'a> {
             // Check if the callee has overloads with different type param counts (TS2743)
             if let Some(counts) =
                 query::overload_type_param_counts(self.ctx.types.as_type_database(), callee_type)
+                && counts.len() == 2
+                && !counts.contains(&got)
             {
-                if counts.len() == 2 && !counts.contains(&got) {
-                    self.error_at_node_msg(
-                        type_arg_error_anchor,
-                        crate::diagnostics::diagnostic_codes::NO_OVERLOAD_EXPECTS_TYPE_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR,
-                        &[
-                            &got.to_string(),
-                            &counts[0].to_string(),
-                            &counts[1].to_string(),
-                        ],
-                    );
-                    return true;
-                }
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::NO_OVERLOAD_EXPECTS_TYPE_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR,
+                    &[
+                        &got.to_string(),
+                        &counts[0].to_string(),
+                        &counts[1].to_string(),
+                    ],
+                );
+                return true;
             }
             // TS2558: Expected N type arguments, but got M.
             // When there are type params with defaults, show the range

@@ -231,7 +231,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 .arena
                                 .get_extended(parent)
                                 .and_then(|gp_ext| self.ctx.arena.get(gp_ext.parent))
-                                .map_or(true, |gp_node| {
+                                .is_none_or(|gp_node| {
                                     gp_node.kind == syntax_kind_ext::SOURCE_FILE
                                         || gp_node.kind == syntax_kind_ext::MODULE_BLOCK
                                 })
