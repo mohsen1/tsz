@@ -461,8 +461,29 @@ impl<'a> CheckerState<'a> {
         let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
 
         if type_params.is_empty() {
-            // TS2558: Expected 0 type arguments, but got N.
+            // Type params are empty but we have type args. Check if the callee has
+            // overloads with different type param counts (TS2743).
             if got > 0 {
+                if let Some(counts) = query::overload_type_param_counts(
+                    self.ctx.types.as_type_database(),
+                    callee_type,
+                ) {
+                    // TS2743: No overload expects N type arguments, but overloads
+                    // do exist that expect either A or B type arguments.
+                    if counts.len() == 2 {
+                        self.error_at_node_msg(
+                            type_arg_error_anchor,
+                            crate::diagnostics::diagnostic_codes::NO_OVERLOAD_EXPECTS_TYPE_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR,
+                            &[
+                                &got.to_string(),
+                                &counts[0].to_string(),
+                                &counts[1].to_string(),
+                            ],
+                        );
+                        return false;
+                    }
+                }
+                // TS2558: Expected 0 type arguments, but got N.
                 self.error_at_node_msg(
                     type_arg_error_anchor,
                     crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
@@ -477,6 +498,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if got < min_required || got > max_expected {
+            // Check if the callee has overloads with different type param counts (TS2743)
+            if let Some(counts) =
+                query::overload_type_param_counts(self.ctx.types.as_type_database(), callee_type)
+            {
+                if counts.len() == 2 && !counts.contains(&got) {
+                    self.error_at_node_msg(
+                        type_arg_error_anchor,
+                        crate::diagnostics::diagnostic_codes::NO_OVERLOAD_EXPECTS_TYPE_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR,
+                        &[
+                            &got.to_string(),
+                            &counts[0].to_string(),
+                            &counts[1].to_string(),
+                        ],
+                    );
+                    return true;
+                }
+            }
             // TS2558: Expected N type arguments, but got M.
             // When there are type params with defaults, show the range
             let expected_str = if min_required == max_expected {
@@ -675,14 +713,39 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        // Collect distinct type param counts from construct signatures for TS2743
+        let construct_param_counts = {
+            let mut counts: Vec<usize> = shape
+                .construct_signatures
+                .iter()
+                .map(|sig| sig.type_params.len())
+                .collect();
+            counts.sort_unstable();
+            counts.dedup();
+            counts
+        };
+
         if type_params.is_empty() {
-            // TS2558: Expected 0 type arguments, but got N.
             if got > 0 {
-                self.error_at_node_msg(
-                    type_arg_error_anchor,
-                    crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-                    &["0", &got.to_string()],
-                );
+                // Check for TS2743: overloads exist with different type param counts
+                if construct_param_counts.len() >= 2 && !construct_param_counts.contains(&got) {
+                    self.error_at_node_msg(
+                        type_arg_error_anchor,
+                        crate::diagnostics::diagnostic_codes::NO_OVERLOAD_EXPECTS_TYPE_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR,
+                        &[
+                            &got.to_string(),
+                            &construct_param_counts[0].to_string(),
+                            &construct_param_counts[1].to_string(),
+                        ],
+                    );
+                } else {
+                    // TS2558: Expected 0 type arguments, but got N.
+                    self.error_at_node_msg(
+                        type_arg_error_anchor,
+                        crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                        &["0", &got.to_string()],
+                    );
+                }
             }
             return;
         }
@@ -690,17 +753,30 @@ impl<'a> CheckerState<'a> {
         let max_expected = type_params.len();
         let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
         if got < min_required || got > max_expected {
-            // TS2558: Expected N type arguments, but got M.
-            let expected_str = if min_required == max_expected {
-                max_expected.to_string()
+            // Check for TS2743: overloads exist with different type param counts
+            if construct_param_counts.len() >= 2 && !construct_param_counts.contains(&got) {
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::NO_OVERLOAD_EXPECTS_TYPE_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR,
+                    &[
+                        &got.to_string(),
+                        &construct_param_counts[0].to_string(),
+                        &construct_param_counts[1].to_string(),
+                    ],
+                );
             } else {
-                format!("{min_required}-{max_expected}")
-            };
-            self.error_at_node_msg(
-                type_arg_error_anchor,
-                crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-                &[&expected_str, &got.to_string()],
-            );
+                // TS2558: Expected N type arguments, but got M.
+                let expected_str = if min_required == max_expected {
+                    max_expected.to_string()
+                } else {
+                    format!("{min_required}-{max_expected}")
+                };
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                    &[&expected_str, &got.to_string()],
+                );
+            }
             return;
         }
 
