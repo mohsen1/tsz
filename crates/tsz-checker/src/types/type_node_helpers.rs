@@ -421,8 +421,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 | syntax_kind_ext::INDEX_SIGNATURE
                 | syntax_kind_ext::PROPERTY_SIGNATURE
                 | syntax_kind_ext::METHOD_SIGNATURE => {
-                    // If it's static, 'this' type is not allowed
-                    let is_static = (node.flags & tsz_parser::modifier_flags::STATIC as u16) != 0;
+                    // If it's static, 'this' type is not allowed.
+                    // We must check the modifier list (not node.flags, which holds
+                    // node_flags — a different namespace where bit 8 is CONTAINS_THIS,
+                    // not STATIC).
+                    let is_static = self.node_has_static_modifier(parent_idx, node);
                     if is_static {
                         return false;
                     }
@@ -466,6 +469,50 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         false
+    }
+
+    /// Check whether a class/interface member node has the `static` modifier
+    /// by inspecting its declaration data's modifier list.
+    fn node_has_static_modifier(
+        &self,
+        _node_idx: tsz_parser::parser::NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let modifiers = match node.kind {
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .map(|m| m.modifiers.clone()),
+            syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(node)
+                .map(|p| p.modifiers.clone()),
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .map(|a| a.modifiers.clone()),
+            syntax_kind_ext::INDEX_SIGNATURE => self
+                .ctx
+                .arena
+                .get_index_signature(node)
+                .map(|i| i.modifiers.clone()),
+            // PROPERTY_SIGNATURE and METHOD_SIGNATURE cannot be static
+            // (they are interface members), so return false.
+            _ => None,
+        };
+
+        if let Some(mods) = modifiers {
+            self.ctx
+                .arena
+                .has_modifier(&mods, SyntaxKind::StaticKeyword)
+        } else {
+            false
+        }
     }
 }
 
