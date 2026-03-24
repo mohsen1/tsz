@@ -147,9 +147,10 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        if self.is_same_function_scope_as_declaration(idx, sym_id)
-            && self.reference_has_reachable_array_mutation(idx)
-        {
+        // tsc only emits TS7005/TS7034 for evolving arrays when the variable
+        // is captured across function boundaries (closure capture). Same-scope
+        // references (reads, truthiness checks, mutations) don't trigger it.
+        if self.is_same_function_scope_as_declaration(idx, sym_id) {
             return;
         }
 
