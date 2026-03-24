@@ -473,6 +473,50 @@ impl<'a> CheckerState<'a> {
                             );
                     }
                 }
+
+                // TS2699/TS2300: Static method/accessor named 'prototype' conflicts
+                // with Function.prototype and is a duplicate identifier.
+                if matches!(
+                    member_node.kind,
+                    syntax_kind_ext::METHOD_DECLARATION
+                        | syntax_kind_ext::GET_ACCESSOR
+                        | syntax_kind_ext::SET_ACCESSOR
+                ) {
+                    let (name_idx, modifiers) = match member_node.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_method_decl(member_node)
+                            .map(|m| (m.name, &m.modifiers)),
+                        _ => self
+                            .ctx
+                            .arena
+                            .get_accessor(member_node)
+                            .map(|a| (a.name, &a.modifiers)),
+                    }
+                    .unzip();
+                    if let (Some(name_idx), Some(modifiers)) = (name_idx, modifiers) {
+                        let name = self.get_member_name_text(name_idx).unwrap_or_default();
+                        if name == "prototype"
+                            && self.has_static_modifier(modifiers)
+                            && !is_declared
+                        {
+                            let class_name = self.get_class_name_from_decl(stmt_idx);
+                            // TS2300: Duplicate identifier 'prototype'
+                            self.error_at_node_msg(
+                                name_idx,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                &["prototype"],
+                            );
+                            // TS2699: Static property conflicts with Function.prototype
+                            self.error_at_node_msg(
+                                name_idx,
+                                diagnostic_codes::STATIC_PROPERTY_CONFLICTS_WITH_BUILT_IN_PROPERTY_FUNCTION_OF_CONSTRUCTOR_FUNCTIO,
+                                &["prototype", &class_name],
+                            );
+                        }
+                    }
+                }
             }
         }
 
