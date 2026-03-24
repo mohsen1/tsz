@@ -875,10 +875,46 @@ impl<'a> CheckerState<'a> {
             result.failure_reason
         };
 
+        // Suppress false TS2559 (NoCommonProperties) for interfaces that extend
+        // arrays/tuples. These types inherit non-optional members from Array.prototype
+        // (length, push, pop, etc.) that aren't in the ObjectShape's property list,
+        // making them appear as weak types when they aren't.
+        let failure_reason = if matches!(
+            &failure_reason,
+            Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+        ) && self.target_extends_array_or_tuple(target)
+        {
+            None
+        } else {
+            failure_reason
+        };
+
         crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
             weak_union_violation: result.weak_union_violation,
             failure_reason,
         }
+    }
+
+    /// Check if a target type extends an array or tuple by looking through lazy
+    /// and evaluated forms. The `types_extending_array` set stores the interface
+    /// merge result TypeId, but the target at assignability-check time may be
+    /// a Lazy or evaluated form of the same type.
+    fn target_extends_array_or_tuple(&mut self, target: TypeId) -> bool {
+        if self.ctx.types_extending_array.contains(&target) {
+            return true;
+        }
+        // The target may be a Lazy(DefId) that evaluates to a tracked type.
+        // Resolve it and check again.
+        let resolved = self.resolve_lazy_type(target);
+        if resolved != target && self.ctx.types_extending_array.contains(&resolved) {
+            return true;
+        }
+        // Also check the evaluated form.
+        let evaluated = self.evaluate_type_for_assignability(target);
+        if evaluated != target && self.ctx.types_extending_array.contains(&evaluated) {
+            return true;
+        }
+        false
     }
 
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
