@@ -6388,23 +6388,21 @@ class DerivedInterface implements Base {
         .cloned()
         .collect();
 
-    // When implementing a CLASS (not interface), tsc emits TS2720 ("Did you mean
-    // to extend?") as a single error instead of individual TS2416 errors.
-    let ts2720_messages: Vec<_> = relevant_diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2720)
-        .map(|(_, message)| message.clone())
-        .collect();
-
-    assert_eq!(
-        ts2720_messages.len(),
-        1,
-        "Expected single TS2720 for implementing a class with incompatible members.\nActual errors: {relevant_diagnostics:#?}"
-    );
+    // tsc emits TS2416 for each incompatible member even when implementing a
+    // class (not interface). TS2720 is only for missing members or private members.
     assert!(
-        ts2720_messages[0].contains("incorrectly implements class"),
-        "Expected TS2720 message about incorrectly implementing class. Got: {}",
-        ts2720_messages[0]
+        !has_error(&relevant_diagnostics, 2720),
+        "Should NOT emit TS2720 for incompatible public members.\nActual errors: {relevant_diagnostics:#?}"
+    );
+
+    let ts2416_count = relevant_diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .count();
+
+    assert!(
+        ts2416_count >= 2,
+        "Expected TS2416 for each incompatible member (n and fn).\nActual errors: {relevant_diagnostics:#?}"
     );
 }
 

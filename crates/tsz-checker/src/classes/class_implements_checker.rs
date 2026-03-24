@@ -1257,33 +1257,29 @@ impl<'a> CheckerState<'a> {
 
                     // tsc suppresses TS2420 when TS2416 is present, but always
                     // emits TS2416 for incompatible member types — even when
-                    // implementing a CLASS (not just an interface). TS2720 ("Did you
-                    // mean to extend?") is only for MISSING members, not incompatible ones.
-                    {
-                        for (class_member_idx, member_name, expected, actual) in
-                            incompatible_members
-                        {
-                            let error_node_idx =
-                                if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
-                                    self.get_member_name_node(member_node)
-                                        .unwrap_or(class_member_idx)
-                                } else {
-                                    class_member_idx
-                                };
-                            self.error_at_node(
-                                error_node_idx,
-                                &format!(
-                                    "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_display_name}'."
-                                ),
-                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                            );
-                            self.report_type_not_assignable_detail(
-                                error_node_idx,
-                                &actual,
-                                &expected,
-                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                            );
-                        }
+                    // implementing a class (not interface). TS2720 is only used
+                    // for missing members, not for type-incompatible members.
+                    for (class_member_idx, member_name, expected, actual) in incompatible_members {
+                        let error_node_idx =
+                            if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
+                                self.get_member_name_node(member_node)
+                                    .unwrap_or(class_member_idx)
+                            } else {
+                                class_member_idx
+                            };
+                        self.error_at_node(
+                            error_node_idx,
+                            &format!(
+                                "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_display_name}'."
+                            ),
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                        );
+                        self.report_type_not_assignable_detail(
+                            error_node_idx,
+                            &actual,
+                            &expected,
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                        );
                     }
 
                     // Pop interface type parameters from scope
