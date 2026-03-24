@@ -134,6 +134,84 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Like `emit_strict_mode_reserved_word_error`, but detects class context via AST walk
+    /// instead of `enclosing_class`. This is needed during type resolution, where the
+    /// checker's `enclosing_class` field may not reflect the actual AST context.
+    pub(crate) fn emit_strict_mode_reserved_word_error_with_ast_walk(
+        &mut self,
+        name_idx: tsz_parser::parser::NodeIndex,
+        escaped_text: &str,
+    ) {
+        // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
+        if self.has_syntax_parse_errors() {
+            return;
+        }
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Detect class context by walking up the AST
+        let in_class = {
+            let mut cur = name_idx;
+            let mut found = false;
+            for _ in 0..256 {
+                if !cur.is_some() {
+                    break;
+                }
+                if let Some(n) = self.ctx.arena.get(cur) {
+                    if n.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || n.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    {
+                        found = true;
+                        break;
+                    }
+                    if n.kind == syntax_kind_ext::SOURCE_FILE {
+                        break;
+                    }
+                }
+                let Some(ext) = self.ctx.arena.get_extended(cur) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                cur = ext.parent;
+            }
+            found
+        };
+
+        if in_class {
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                &[escaped_text],
+            );
+            self.error_at_node(
+                name_idx,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+            );
+        } else if self.ctx.is_external_module_file() {
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                &[escaped_text],
+            );
+            self.error_at_node(
+                name_idx,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+            );
+        } else {
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                &[escaped_text],
+            );
+            self.error_at_node(
+                name_idx,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+            );
+        }
+    }
+
     /// Emit TS1214 (module context) for a strict-mode reserved word.
     /// Used by import declarations where the file is always a module.
     pub(crate) fn emit_module_strict_mode_reserved_word_error(
