@@ -434,6 +434,11 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
 }
 
 pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Vec<String> {
+    // Fast path: skip the full parse if the text cannot contain any module specifiers.
+    // This avoids a redundant parse for files that will be parsed again in build_program.
+    if !text_may_contain_module_specifiers(text) {
+        return Vec::new();
+    }
     let file_name = path.to_string_lossy().into_owned();
     let mut parser = ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();
@@ -442,6 +447,21 @@ pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Ve
         .into_iter()
         .map(|(specifier, _, _)| specifier)
         .collect()
+}
+
+/// Quick text scan to determine if a source file might contain module specifiers.
+/// Returns false only when we can guarantee there are no imports/exports/requires.
+fn text_may_contain_module_specifiers(text: &str) -> bool {
+    // All module specifier patterns require at least one of these keywords:
+    // - `import` for ES imports and dynamic import()
+    // - `require(` for CommonJS require calls
+    // - `from '` or `from "` for re-exports like `export { x } from 'y'`
+    // - `declare module` for ambient module declarations
+    text.contains("import")
+        || text.contains("require(")
+        || text.contains("from '")
+        || text.contains("from \"")
+        || text.contains("declare module")
 }
 
 pub(crate) fn collect_module_specifiers(
