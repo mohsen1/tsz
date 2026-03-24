@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-24T12:55:22Z",
-  "git_sha": "6564301e7f3ba922286ce127ed5eb131a83bce61",
+  "timestamp": "2026-03-24T13:47:58Z",
+  "git_sha": "96e1556041026d4948c31145a21ad6ab1b9db63d",
   "summary": {
     "total_tests": 12581,
-    "passed": 11267,
-    "failed": 1314,
+    "passed": 11269,
+    "failed": 1312,
     "pass_rate": 89.6
   },
   "areas_by_pass_rate": [
@@ -311,10 +311,10 @@
     },
     {
       "area": "compiler",
-      "total": 6515,
-      "passed": 5869,
-      "failed": 646,
-      "pass_rate": 90.08
+      "total": 6514,
+      "passed": 5871,
+      "failed": 643,
+      "pass_rate": 90.13
     },
     {
       "area": "interfaces/interfaceDeclarations",
@@ -746,11 +746,11 @@
       "count": 3
     },
     {
-      "code": "TS2344",
+      "code": "TS2305",
       "count": 3
     },
     {
-      "code": "TS2305",
+      "code": "TS2344",
       "count": 3
     },
     {
@@ -916,7 +916,7 @@
       "count": 2
     },
     {
-      "code": "TS2637",
+      "code": "TS2636",
       "count": 2
     }
   ],
@@ -1247,11 +1247,11 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2322",
-      "count": 28
+      "count": 27
     },
     {
       "code": "TS2339",
-      "count": 22
+      "count": 21
     },
     {
       "code": "TS2345",
@@ -1346,11 +1346,11 @@
       "count": 1
     },
     {
-      "code": "TS1005",
+      "code": "TS7053",
       "count": 1
     },
     {
-      "code": "TS7053",
+      "code": "TS1005",
       "count": 1
     },
     {
@@ -1377,11 +1377,11 @@
   "false_positive_codes": [
     {
       "code": "TS2322",
-      "count": 26
+      "count": 25
     },
     {
       "code": "TS2339",
-      "count": 20
+      "count": 19
     },
     {
       "code": "TS2345",
@@ -1661,11 +1661,11 @@
   "top_extra_codes": [
     {
       "code": "TS2322",
-      "count": 66
+      "count": 65
     },
     {
       "code": "TS2339",
-      "count": 54
+      "count": 53
     },
     {
       "code": "TS2345",
@@ -1821,10 +1821,10 @@
     }
   ],
   "categories": {
-    "false_positive": 91,
+    "false_positive": 89,
     "all_missing": 171,
     "wrong_code": 420,
-    "fingerprint_only": 621,
+    "fingerprint_only": 620,
     "close_to_passing": 282
   }
 }

@@ -1385,6 +1385,30 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // Check command-line-only options in tsconfig (TS6266)
+        // Some options like `listFilesOnly` can only be specified on the command line,
+        // not in tsconfig.json. tsc emits TS6266 for these.
+        let command_line_only_options = ["listFilesOnly"];
+        for key in &command_line_only_options {
+            if compiler_opts.contains_key(*key) {
+                let start = find_key_offset_in_source(&stripped, key);
+                let key_len = key.len() as u32 + 2; // include quotes
+                let msg = format_message(
+                    diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
+                    &[key],
+                );
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key_len,
+                    msg,
+                    diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
+                ));
+                // Remove the option so it doesn't affect compilation
+                compiler_opts.remove(*key);
+            }
+        }
+
         // Check moduleResolution/module compatibility (TS5095)
         // `moduleResolution: "bundler"` requires `module` to be "preserve" or ES2015+.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
