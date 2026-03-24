@@ -840,6 +840,66 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if let Some(&var) = var_map.get(&return_type_with_placeholders) {
                     return_type_bare_var = Some((var, ctx_type));
                 }
+                // Also handle union return types like `T | null` or `T | undefined`.
+                // When the return type is a union containing a bare placeholder and
+                // fixed members (null/undefined), extract the placeholder and match
+                // it against the contextual type minus the corresponding fixed members.
+                // This enables correct inference for patterns like:
+                //   declare function f<T extends E = E>(): T | null;
+                //   let x: HTMLElement | null = f(); // T should be HTMLElement
+                //   let y: HTMLElement = f()!;       // T should be HTMLElement
+                else if let Some(TypeData::Union(ret_members_id)) =
+                    self.interner.lookup(return_type_with_placeholders)
+                {
+                    let ret_members = self.interner.type_list(ret_members_id);
+                    // Find the single placeholder member in the return type union
+                    let mut placeholder_var = None;
+                    let mut fixed_ret_members = Vec::new();
+                    for &member in ret_members.iter() {
+                        if let Some(&var) = var_map.get(&member) {
+                            if placeholder_var.is_none() {
+                                placeholder_var = Some(var);
+                            }
+                        } else {
+                            fixed_ret_members.push(member);
+                        }
+                    }
+                    if let Some(var) = placeholder_var
+                        && !fixed_ret_members.is_empty()
+                    {
+                        // Compute the effective contextual target for the placeholder
+                        // by stripping fixed return type members from the contextual type
+                        let effective_ctx = if let Some(TypeData::Union(ctx_members_id)) =
+                            self.interner.lookup(ctx_type)
+                        {
+                            // Both are unions: strip matching fixed members
+                            let ctx_members = self.interner.type_list(ctx_members_id);
+                            let fixed_set: FxHashSet<TypeId> =
+                                fixed_ret_members.iter().copied().collect();
+                            let filtered_ctx: Vec<TypeId> = ctx_members
+                                .iter()
+                                .copied()
+                                .filter(|t| !fixed_set.contains(t))
+                                .collect();
+                            if filtered_ctx.is_empty() {
+                                None
+                            } else if filtered_ctx.len() == 1 {
+                                Some(filtered_ctx[0])
+                            } else {
+                                Some(self.interner.union(filtered_ctx))
+                            }
+                        } else {
+                            // Contextual type is not a union (e.g., `HTMLElement`
+                            // from `let x: HTMLElement = f()!`). The fixed return
+                            // members (null/undefined) don't appear in the contextual
+                            // type, so use the contextual type directly as the target.
+                            Some(ctx_type)
+                        };
+                        if let Some(ctx) = effective_ctx {
+                            return_type_bare_var = Some((var, ctx));
+                        }
+                    }
+                }
 
                 self.constrain_return_context_structure(
                     &mut infer_ctx,
