@@ -936,9 +936,14 @@ impl<'a> CheckerState<'a> {
         // TS2464: type must be string, number, symbol, or any (including literals).
         // This check ignores strictNullChecks: undefined/null always fail.
         // Suppress this diagnostic in files with parse errors to avoid noise (e.g., [await] without operand).
+        // Resolve lazy types before validation: Lazy(DefId) types (e.g., Symbol interface
+        // from lib.d.ts) can't be evaluated by the solver's interner alone and would be
+        // conservatively accepted. Resolving them here ensures boxed wrapper types like
+        // Symbol/Number/String are correctly rejected as computed property name types.
+        let resolved_type = self.resolve_lazy_type(expr_type);
         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
         if !self.has_parse_errors()
-            && (enum_object_ref || !evaluator.is_valid_computed_property_name_type(expr_type))
+            && (enum_object_ref || !evaluator.is_valid_computed_property_name_type(resolved_type))
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
