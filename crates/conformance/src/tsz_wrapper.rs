@@ -1190,7 +1190,7 @@ fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
 
 /// Strip @ directive comments from test file content
 /// Removes lines like `// @strict: true` from the code
-fn strip_directive_comments(content: &str) -> String {
+pub fn strip_directive_comments(content: &str) -> String {
     content
         .lines()
         .filter(|line| {
