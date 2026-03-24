@@ -979,9 +979,27 @@ impl<'a> CheckerState<'a> {
                     };
                     let is_invalid = crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key);
                     // Symbol types pass the general validity check but can't
-                    // index into objects through string/number index signatures.
+                    // index into objects through string/number index signatures,
+                    // UNLESS the parent type (or its constraint for generics)
+                    // has the specific unique symbol as a declared property.
                     let is_symbol = key_type != TypeId::ERROR
-                        && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type);
+                        && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
+                        && !common_query::contains_type_parameters(
+                            self.ctx.types.as_type_database(),
+                            parent_type,
+                        )
+                        && !crate::query_boundaries::type_computation::access::literal_property_name(
+                            self.ctx.types,
+                            key_type,
+                        )
+                        .map(|atom| self.ctx.types.resolve_atom(atom))
+                        .is_some_and(|name| {
+                            crate::query_boundaries::property_access::type_has_property(
+                                self.ctx.types,
+                                parent_type,
+                                &name,
+                            )
+                        });
                     let ts2538_type = is_invalid.or(if is_symbol { Some(key_type) } else { None });
                     if let Some(err_type) = ts2538_type {
                         let key_type_str = self.format_type(err_type);
@@ -998,12 +1016,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // TS2538: symbol and unique symbol types cannot index into objects
-                // through string/number index signatures in destructuring.
-                // If the object had a property matching the specific symbol,
-                // it would have been resolved earlier via get_computed_binding_element_type_from_parent.
-                // When the parent type contains type parameters, defer to
-                // instantiation to avoid false positives on generic destructuring.
+                // TS2538 (secondary): symbol/unique symbol types that reach here
+                // can't index via string/number index signatures. Suppress when
+                // parent type contains type parameters (deferred to instantiation)
+                // or when the parent type has a matching unique symbol property.
                 let parent_has_type_params = common_query::contains_type_parameters(
                     self.ctx.types.as_type_database(),
                     parent_type,
@@ -1016,17 +1032,32 @@ impl<'a> CheckerState<'a> {
                     && key_type != TypeId::ERROR
                     && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
                 {
-                    let key_type_str = self.format_type(key_type);
-                    let message = crate::diagnostics::format_message(
-                        crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                        &[&key_type_str],
-                    );
-                    let error_node = computed_expr.unwrap_or(element_data.property_name);
-                    self.error_at_node(
-                        error_node,
-                        &message,
-                        crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                    );
+                    let parent_has_symbol_prop =
+                        crate::query_boundaries::type_computation::access::literal_property_name(
+                            self.ctx.types,
+                            key_type,
+                        )
+                        .map(|atom| self.ctx.types.resolve_atom(atom))
+                        .is_some_and(|name| {
+                            crate::query_boundaries::property_access::type_has_property(
+                                self.ctx.types,
+                                parent_type,
+                                &name,
+                            )
+                        });
+                    if !parent_has_symbol_prop {
+                        let key_type_str = self.format_type(key_type);
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                            &[&key_type_str],
+                        );
+                        let error_node = computed_expr.unwrap_or(element_data.property_name);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        );
+                    }
                 }
 
                 if key_is_string || key_is_number {
