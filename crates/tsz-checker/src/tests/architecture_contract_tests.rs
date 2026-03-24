@@ -1928,10 +1928,10 @@ fn test_solver_imports_go_through_query_boundaries() {
 // - [x] Centralized assignability gateways                -> multiple existing tests
 //
 // RATCHET GUARDS (debt tracking):
-// - [x] TEMPORARILY_ALLOWED bypass list capped at 41      -> test_temporarily_allowed_bypass_list_does_not_grow
+// - [x] TEMPORARILY_ALLOWED bypass list capped at 38      -> test_temporarily_allowed_bypass_list_does_not_grow
 // - [x] Direct interner type construction capped at 13    -> test_direct_interner_type_construction_ceiling
 // - [x] Checker file size ceiling (4 files > 2000 LOC)    -> test_checker_file_size_ceiling
-// - [x] Max single file LOC ceiling (2650 lines)          -> test_checker_file_size_ceiling
+// - [x] Max single file LOC ceiling (2390 lines)          -> test_checker_file_size_ceiling
 // - [x] CLI must not import checker internals             -> test_cli_must_not_import_checker_internals
 //
 
@@ -3365,7 +3365,7 @@ fn test_error_reporter_does_not_perform_type_construction() {
 /// Guard that the number of checker source files exceeding ~2000 LOC does not increase.
 ///
 /// Per CLAUDE.md section 12: "Checker files should stay under ~2000 LOC."
-/// This ratchet captures the current state (14 files over 2000 lines) and prevents
+/// This ratchet captures the current state (4 files over 2000 lines) and prevents
 /// regression. As files are split, this ceiling must be lowered.
 ///
 /// Current ceiling: 4 files over 2000 lines. This number must only decrease over time.
@@ -3406,9 +3406,9 @@ fn test_checker_file_size_ceiling() {
 
     // Ceiling: number of checker source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
-    // Current oversized files (as of 2026-03-23):
+    // Current oversized files (as of 2026-03-24):
     //   types/function_type.rs, types/computation/call.rs,
-    //   symbols/symbol_resolver.rs, flow/flow_analysis/usage.rs
+    //   types/class_type/constructor.rs, state/variable_checking/destructuring.rs
     const FILE_COUNT_CEILING: usize = 4;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
@@ -3421,7 +3421,7 @@ fn test_checker_file_size_ceiling() {
 
     // Ceiling: maximum line count of any single checker source file.
     // This prevents existing large files from growing further.
-    const MAX_LOC_CEILING: usize = 2400;
+    const MAX_LOC_CEILING: usize = 2390;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \

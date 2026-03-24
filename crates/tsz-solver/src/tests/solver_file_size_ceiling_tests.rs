@@ -65,10 +65,11 @@ fn test_solver_file_size_ceiling() {
 
     // Ceiling: number of solver source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
-    // Current oversized files (as of 2026-03-22):
-    //   type_queries/data.rs, operations/generic_call.rs, diagnostics/format.rs,
-    //   operations/constraints.rs, operations/core.rs, intern/core.rs,
-    //   relations/subtype/rules/functions.rs, relations/subtype/core.rs
+    // Current oversized files (as of 2026-03-24):
+    //   operations/generic_call.rs (3488), diagnostics/format.rs (3447),
+    //   type_queries/data.rs (3246), operations/constraints.rs (3148),
+    //   operations/core.rs (2313), relations/subtype/rules/functions.rs (2192),
+    //   relations/subtype/core.rs (2152), intern/core.rs (2120)
     const FILE_COUNT_CEILING: usize = 8;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
@@ -81,8 +82,8 @@ fn test_solver_file_size_ceiling() {
 
     // Ceiling: maximum line count of any single solver source file.
     // This prevents existing large files from growing further.
-    // Current largest: operations/generic_call.rs and diagnostics/format.rs at ~3451
-    const MAX_LOC_CEILING: usize = 3500;
+    // Current largest: operations/generic_call.rs at 3488 lines
+    const MAX_LOC_CEILING: usize = 3488;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest solver source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
@@ -146,9 +147,8 @@ fn test_binder_file_size_ceiling() {
         oversized.join("\n")
     );
 
-    // binding/declaration.rs is currently the largest at ~2710 lines
-    // (grew from ~2603 after adding is_declare capture + record_semantic_def_with_declare).
-    const MAX_LOC_CEILING: usize = 2750;
+    // binding/declaration.rs is currently the largest at 2711 lines
+    const MAX_LOC_CEILING: usize = 2711;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest binder source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
@@ -199,12 +199,13 @@ fn test_emitter_file_size_ceiling() {
         }
     }
 
-    // Current oversized files (12 as of 2026-03-22):
-    //   declaration_emitter/helpers.rs (8938), declaration_emitter/core.rs (4270),
+    // Current oversized files (12 as of 2026-03-24):
+    //   declaration_emitter/helpers.rs (8938), declaration_emitter/core.rs (4301),
     //   emitter/declarations/class.rs (3796), transforms/class_es5_ir.rs (2667),
-    //   emitter/statements.rs (2574), emitter/types/printer.rs (2443),
-    //   emitter/jsx.rs (2231), emitter/expressions/core.rs (2206),
-    //   declaration_emitter/exports.rs (2185), and others.
+    //   emitter/statements.rs (2574), emitter/types/printer.rs (2520),
+    //   emitter/jsx.rs (2263), declaration_emitter/exports.rs (2253),
+    //   emitter/expressions/core.rs (2216), emitter/module_emission/core.rs (2160),
+    //   emitter/source_file.rs (2081), transforms/ir_printer.rs (2016).
     const FILE_COUNT_CEILING: usize = 12;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
@@ -214,8 +215,8 @@ fn test_emitter_file_size_ceiling() {
         oversized.join("\n")
     );
 
-    // declaration_emitter/helpers.rs is currently the largest at ~8938 lines.
-    const MAX_LOC_CEILING: usize = 9000;
+    // declaration_emitter/helpers.rs is currently the largest at 8938 lines.
+    const MAX_LOC_CEILING: usize = 8938;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest emitter source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
