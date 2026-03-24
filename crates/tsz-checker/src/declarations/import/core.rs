@@ -1767,14 +1767,26 @@ impl<'a> CheckerState<'a> {
                                         && (sym.flags & symbol_flags::TYPE) != 0
                                 });
 
-                        // TS2323 only for value exports (identifiers that resolve
-                        // to values, or class declarations).
-                        if (is_ident && !is_type_only_ident) || is_class_decl {
+                        // TS2323 for value exports (identifiers that resolve
+                        // to values), class declarations, and interface declarations.
+                        let is_interface_decl =
+                            clause_kind == Some(syntax_kind_ext::INTERFACE_DECLARATION);
+                        if (is_ident && !is_type_only_ident) || is_class_decl || is_interface_decl {
                             let anchor = if is_ident { export_idx } else { default_anchor };
                             self.error_at_node(
                                 anchor,
                                 "Cannot redeclare exported variable 'default'.",
                                 diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                            );
+                        } else {
+                            // TS2528 only for non-value default exports (type-only
+                            // identifiers, anonymous expressions, etc.) where TS2323
+                            // does not apply. tsc doesn't emit both TS2323 and TS2528
+                            // for the same export.
+                            self.error_at_node(
+                                default_anchor,
+                                diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                                diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                             );
                         }
                         // TS2528 only when there's at least one type-only default export
