@@ -2174,14 +2174,18 @@ impl<'a> CheckerState<'a> {
                 // TYield is implicit any, while TS7057 fires per-expression.
                 if is_generator && !has_type_annotation {
                     let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
-                    // Compute inferred yield type from collected operand types
+                    // Compute inferred yield type; skip widening when contextual
+                    // yield type preserved literals (`yield 0` stays `0` not `number`).
                     let inferred_yield = if yield_types.is_empty() {
-                        TypeId::NEVER // No yields → never
+                        TypeId::NEVER
                     } else {
                         self.ctx.types.factory().union(yield_types)
                     };
-                    // Widen and check for implicit any (mirrors infer_return_type_from_body)
-                    let widened = self.widen_literal_type(inferred_yield);
+                    let widened = if early_yield_type.is_some() {
+                        inferred_yield
+                    } else {
+                        self.widen_literal_type(inferred_yield)
+                    };
                     let final_yield = if !self.ctx.strict_null_checks()
                         && tsz_solver::type_queries::is_only_null_or_undefined(
                             self.ctx.types,
