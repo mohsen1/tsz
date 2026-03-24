@@ -436,14 +436,21 @@ pub fn check_application_variance<R: TypeResolver>(
     }
 
     // When structural fallback is needed, variance failures are NOT definitive.
-    // Homomorphic mapped types with non-identity templates can produce
-    // structurally compatible results even when type arguments aren't related
-    // by variance. For example, `ToA<{x:n}>` is assignable to `ToA<{}>`
-    // because `ToA<{}>` evaluates to `{}` (empty object), even though `{}`
-    // is not assignable to `{x:n}` (invariant check fails).
+    // The type parameter may appear through complex type operations (indexed access,
+    // mapped types with modifiers) where different type arguments can produce
+    // structurally equivalent results despite not being subtypes of each other.
+    // Examples:
+    // - `S["base"] & S["new"]` produces the same structure for `{base: B, new: N}`
+    //   and `{base: B, new: N & B}` despite type arguments not being subtypes.
+    // - Homomorphic mapped types with non-identity templates: `ToA<{x:n}>` is
+    //   assignable to `ToA<{}>` because `ToA<{}>` evaluates to `{}`.
     if needs_structural_fallback {
         return None;
     }
+
+    // Without structural fallback concerns, variance failures are definitive:
+    // if the type arguments fail the variance check, the generic types
+    // cannot be compatible.
     Some(false)
 }
 

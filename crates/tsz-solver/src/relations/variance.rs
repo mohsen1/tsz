@@ -696,10 +696,27 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     }
 
     /// Index access: both object and key are at current polarity.
+    ///
+    /// When the target type parameter appears inside an indexed access (either as
+    /// the object or the key), we mark the variance as needing structural fallback.
+    /// This matches tsc's behavior where indexed access through a type parameter
+    /// produces "unmeasurable" variance — the relationship between the type argument
+    /// and the indexed access result is too complex for static variance analysis.
+    ///
+    /// Example: `S["base"] & S["new"]` in `DerivedTable<S>` — even though S is used
+    /// covariantly, different instantiations like `{base: B, new: N}` and
+    /// `{base: B, new: N & B}` can produce structurally equivalent indexed access
+    /// results despite the type arguments not being subtypes of each other.
     fn visit_index_access(&mut self, object_type: TypeId, key_type: TypeId) {
         let current_polarity = self.get_current_polarity();
+        let before = self.result;
         self.visit_with_polarity(object_type, current_polarity);
         self.visit_with_polarity(key_type, current_polarity);
+        // If the target parameter was found inside this indexed access,
+        // the variance shortcut is unreliable — require structural fallback.
+        if self.result != before {
+            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+        }
     }
 
     /// Template literals: types in spans are at current polarity.
