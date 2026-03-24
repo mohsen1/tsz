@@ -1795,6 +1795,38 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns `true` when the identifier is inside a `typeof` type query
+    /// (e.g., `type T = typeof X`).  In type positions, `typeof` is a type
+    /// query, not a runtime value usage, so TS1361/TS1362 should be suppressed.
+    pub(crate) fn is_in_type_query_context(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..10 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY {
+                return true;
+            }
+            // Stop walking if we leave a type context into a statement or expression
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::RETURN_STATEMENT
+                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE
+            {
+                return false;
+            }
+            current = parent_idx;
+        }
+        false
+    }
+
     /// Returns `true` when the identifier is being evaluated inside a computed
     /// property name (`[expr]`) that belongs to a type-only or ambient context
     /// (interface member, type literal member, abstract member, `declare`
