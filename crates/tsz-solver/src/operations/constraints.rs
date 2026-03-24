@@ -77,9 +77,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        // If source is an inference placeholder, add upper bound: var <: target
+        // If source is an inference placeholder, add upper bound: var <: target.
+        // In contra_mode (function parameter inference), add as contra-candidate instead
+        // of upper bound. This matches tsc where inference from contravariant positions
+        // produces contra-candidates resolved via intersection/most-specific, not hard
+        // upper bounds that must each be individually satisfied.
         if let Some(&var) = var_map.get(&source) {
-            ctx.add_upper_bound(var, target);
+            if ctx.in_contra_mode {
+                ctx.add_contra_candidate(var, target, priority);
+            } else {
+                ctx.add_upper_bound(var, target);
+            }
             return;
         }
 
@@ -3072,17 +3080,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // (e.g., `{ kind: T }`, not just `T` directly). In tsc, callback
             // parameter inference in this case goes to `contraCandidates` because
             // function parameters are contravariant. We set `in_contra_mode` for
-            // the FORWARD direction so that any candidates found during structural
-            // decomposition are routed to `contra_candidates`. The reverse direction
-            // (target→source) adds upper bounds which aren't affected by contra mode.
+            // BOTH directions so that:
+            // - Forward (source→target): candidates are routed to contra_candidates
+            // - Reverse (target→source): type parameters in source position add
+            //   contra-candidates instead of hard upper bounds
+            // Without contra mode on the reverse direction, decomposing a union
+            // target (e.g., {kind:T} vs {kind:'a'}|{kind:'b'}) creates separate
+            // upper bounds 'a' and 'b', causing false TS2345 when the covariant
+            // result ('a') fails to satisfy upper bound 'b'.
             let mut placeholder_visited = FxHashSet::default();
             if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
                 let was_contra = ctx.in_contra_mode;
                 ctx.in_contra_mode = true;
                 self.constrain_types(ctx, var_map, source_param, target_param, priority);
+                self.constrain_types(ctx, var_map, target_param, source_param, priority);
                 ctx.in_contra_mode = was_contra;
+            } else {
+                self.constrain_types(ctx, var_map, target_param, source_param, priority);
             }
-            self.constrain_types(ctx, var_map, target_param, source_param, priority);
         }
     }
 

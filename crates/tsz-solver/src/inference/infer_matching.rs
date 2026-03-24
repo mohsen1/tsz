@@ -92,8 +92,19 @@ impl<'a> InferenceContext<'a> {
         if let Some(TypeData::TypeParameter(ref param_info)) = source_key
             && let Some(var) = self.find_type_param(param_info.name)
         {
-            // T <: target, so target is an UPPER bound
-            self.add_upper_bound(var, target);
+            // When in contra_mode (function parameter inference), add as a contra-candidate
+            // instead of an upper bound. This matches tsc's behavior where inference from
+            // function parameter types (contravariant position) produces contra-candidates
+            // that are resolved via intersection/most-specific, NOT hard upper bounds that
+            // must each individually be satisfied. Without this, decomposing a union target
+            // (e.g., matching {kind: T} against {kind:'a'} | {kind:'b'}) produces separate
+            // upper bounds 'a' and 'b', causing false TS2345 errors.
+            if self.in_contra_mode {
+                self.add_contra_candidate(var, target, priority);
+            } else {
+                // T <: target, so target is an UPPER bound
+                self.add_upper_bound(var, target);
+            }
             return Ok(());
         }
 
@@ -654,7 +665,12 @@ impl<'a> InferenceContext<'a> {
             "infer_functions called"
         );
 
-        // Parameters are contravariant: swap source and target
+        // Parameters are contravariant: swap source and target.
+        // Set in_contra_mode so that type parameters found in the source position
+        // (after direction swap) are recorded as contra-candidates rather than hard
+        // upper bounds. This matches tsc's handling of function parameter inference.
+        let was_contra = self.in_contra_mode;
+        self.in_contra_mode = true;
         let mut source_params = source_sig.params.iter().peekable();
         let mut target_params = target_sig.params.iter().peekable();
 
@@ -767,13 +783,19 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
+        // Restore contra mode before covariant inference (return type, type predicates).
+        self.in_contra_mode = was_contra;
+
         // Return type is covariant: normal order
         self.infer_from_types(source_sig.return_type, target_sig.return_type, priority)?;
 
         // This type is contravariant
         if let (Some(source_this), Some(target_this)) = (source_sig.this_type, target_sig.this_type)
         {
+            let was_contra2 = self.in_contra_mode;
+            self.in_contra_mode = true;
             self.infer_from_types(target_this, source_this, priority)?;
+            self.in_contra_mode = was_contra2;
         }
 
         // Type predicates are covariant
