@@ -965,6 +965,23 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // When the return type contains unresolved type parameters AND the
+                // function body has context-sensitive return expressions (e.g., nested
+                // arrow functions with unannotated params in block-body returns),
+                // skip speculative evaluation. The speculative pass would assign the
+                // unresolved type parameter to inner function params, and while
+                // diagnostics are rolled back, the resulting cached type pollutes the
+                // inference. The full contextual type (with substituted type params)
+                // will be applied in Round 2.
+                if self.type_contains_any_type_param(target_fn.return_type, type_param_names)
+                    && super::contextual::expression_needs_contextual_return_type(
+                        self,
+                        prop.initializer,
+                    )
+                {
+                    continue;
+                }
+
                 // The contextual param types are concrete, so we can safely type this
                 // lambda with those contextual types and extract its return type.
                 // Use the target function type as contextual type for the lambda.
