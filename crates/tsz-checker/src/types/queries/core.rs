@@ -905,13 +905,11 @@ impl<'a> CheckerState<'a> {
             // where `nonsense` doesn't exist on SymbolConstructor), discard the
             // name. This prevents creating a phantom named property in the object
             // type, which would cause false TS2322 errors on assignment.
-            if name.starts_with("[Symbol.") {
-                if let Some(computed) = self.ctx.arena.get_computed_property(name_node) {
-                    let expr_type = self.get_type_of_node(computed.expression);
-                    if expr_type == TypeId::ERROR {
-                        return None;
-                    }
-                }
+            if name.starts_with("[Symbol.")
+                && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+                && self.get_type_of_node(computed.expression) == TypeId::ERROR
+            {
+                return None;
             }
             return Some(name);
         }
