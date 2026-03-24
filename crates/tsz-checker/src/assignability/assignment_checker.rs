@@ -1178,14 +1178,21 @@ impl<'a> CheckerState<'a> {
             self.check_rest_element_initializer(left_idx);
         }
 
-        // Check readonly first — when the target is readonly (TS2540/TS2542),
-        // tsc suppresses the assignability check (TS2322) for the same target.
-        // The "cannot assign to readonly" error is more specific and sufficient.
+        // Check readonly — emit TS2540/TS2542 if the target is readonly.
+        // tsc suppresses TS2322 for readonly named properties (TS2540) but
+        // still emits TS2322 alongside readonly index signatures (TS2542).
         let is_readonly_target = if !is_const {
             self.check_readonly_assignment(left_idx, expr_idx)
         } else {
             false
         };
+        // Only suppress assignability for named property readonly (TS2540).
+        // For element access (index signatures, TS2542), tsc still checks type compatibility.
+        let left_node = self.ctx.arena.get(left_idx);
+        let is_element_access = left_node.map_or(false, |n| {
+            n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        });
+        let suppress_for_readonly = is_readonly_target && !is_element_access;
 
         if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
             return right_type;
@@ -1202,8 +1209,7 @@ impl<'a> CheckerState<'a> {
             // skip the whole-object assignability check. tsc processes each
             // property/element individually, which correctly handles private
             // members and other access-controlled properties.
-            // Also skip when the target was readonly (TS2540/TS2542 already emitted).
-            let mut check_assignability = !is_destructuring && !is_readonly_target;
+            let mut check_assignability = !is_destructuring && !suppress_for_readonly;
 
             if is_destructuring && !is_not_iterable {
                 self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
