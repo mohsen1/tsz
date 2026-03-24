@@ -608,16 +608,26 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
                 return false;
             }
-            if node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+            // Check for both ExportAssignment (`export default expr`) and
+            // ExportDeclaration with default export (`export default expr`).
+            // The parser may produce either node type depending on the context.
+            let is_export_default = if node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
                 // Only suppress for `export default`, not `export =`.
-                let is_export_equals = self
+                !self
                     .ctx
                     .arena
                     .get_export_assignment(node)
-                    .is_some_and(|data| data.is_export_equals);
-                if is_export_equals {
-                    return false;
-                }
+                    .is_some_and(|data| data.is_export_equals)
+            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                // ExportDeclaration with is_default_export flag
+                self.ctx
+                    .arena
+                    .get_export_decl_at(cur)
+                    .is_some_and(|data| data.is_default_export)
+            } else {
+                false
+            };
+            if is_export_default {
                 // Check if this export is inside a namespace/module declaration.
                 let mut ns = cur;
                 for _ in 0..8 {
