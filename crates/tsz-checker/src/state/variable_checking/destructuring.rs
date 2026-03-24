@@ -930,16 +930,12 @@ impl<'a> CheckerState<'a> {
         let property_name = self.extract_binding_property_name(element_data);
 
         // Unique symbol keys (e.g. `const s = Symbol(); { [s]: v }`) resolve to
-        // `__unique_N` via `get_property_name_resolved`, but they should be treated
-        // as dynamic keys for index signature resolution.
-        let is_unique_symbol_key = property_name
-            .as_ref()
-            .is_some_and(|n| n.starts_with("__unique_"));
-        let property_name = if is_unique_symbol_key {
-            None
-        } else {
-            property_name
-        };
+        // `__unique_N` via `get_property_name_resolved`.  Keep them as named
+        // properties so normal property resolution can find matching symbol-keyed
+        // properties on the parent type (or its type-parameter constraint).
+        // Previously these were zeroed out and treated as dynamic keys, which
+        // caused false TS2538 errors when the parent type actually had a matching
+        // symbol property (e.g. `T extends { [sa]: string }`).
 
         // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
         // check index signatures when the key resolves to a dynamic type
