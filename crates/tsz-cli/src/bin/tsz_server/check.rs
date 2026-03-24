@@ -16,7 +16,6 @@ use tsz::emitter::ScriptTarget;
 use tsz::lib_loader::LibFile;
 use tsz::parallel;
 use tsz::parser::ParserState;
-use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
 use tsz_cli::config::{
     checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
@@ -24,7 +23,6 @@ use tsz_cli::config::{
 };
 use tsz_solver::QueryCache;
 use tsz_solver::RelationCacheStats;
-use tsz_solver::TypeInterner;
 
 pub(crate) struct RunCheckResult {
     pub(crate) codes: Vec<i32>,
@@ -360,18 +358,47 @@ impl Server {
         files: FxHashMap<String, String>,
         options: CheckOptions,
     ) -> Result<RunCheckResult> {
-        // Use unified lib loading for proper cross-lib symbol resolution.
-        // The unified binder has declaration_arenas tracking each declaration's source arena.
-        let lib_files = if options.no_lib {
+        // Two-phase lib loading (matches get_semantic_diagnostics_full):
+        // 1. Individual lib files for binding (proper symbol resolution per-lib)
+        // 2. Unified merged lib for checker (cross-lib type resolution)
+        let binding_lib_files = if options.no_lib {
+            vec![]
+        } else {
+            self.load_libs_for_binding(&options)?
+        };
+        let checker_lib_files = if options.no_lib {
             vec![]
         } else {
             self.load_libs_unified(&options)?
         };
 
         let checker_options = self.build_checker_options(&options);
-        let type_interner = TypeInterner::new();
 
-        let lib_contexts: Vec<LibContext> = lib_files
+        // Filter checkable files and detect binary content
+        let mut checkable_files: Vec<(String, String)> = Vec::with_capacity(files.len());
+        let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
+
+        for (file_name, content) in files {
+            if !Self::is_checkable_file(&file_name) {
+                continue;
+            }
+            if super::content_appears_binary(&content) {
+                binary_file_errors
+                    .push((file_name.clone(), super::TS1490_FILE_APPEARS_TO_BE_BINARY));
+                continue;
+            }
+            checkable_files.push((file_name, content));
+        }
+
+        // Use the same parse+bind pipeline as get_semantic_diagnostics_full:
+        // parallel::parse_and_bind_parallel_with_libs properly integrates lib
+        // symbols during binding, resolving cross-lib references.
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            checkable_files,
+            &binding_lib_files,
+        ));
+
+        let lib_contexts: Vec<LibContext> = checker_lib_files
             .iter()
             .map(|lib| LibContext {
                 arena: std::sync::Arc::clone(&lib.arena),
@@ -379,156 +406,87 @@ impl Server {
             })
             .collect();
 
-        // PHASE 1 & 2: Parse and bind files in a single loop to reduce peak memory
-        // This avoids holding all ASTs and source strings simultaneously
-        struct BoundFile {
-            name: String,
-            arena: Arc<NodeArena>,
-            binder: Arc<BinderState>,
-            root: NodeIndex,
-            parse_errors: Vec<i32>,
-        }
-
-        // CRITICAL: Fix SymbolId collisions by reserving lib SymbolIds in user binders
-        //
-        // Problem: Lib has symbols 0..N (Array, String, etc.) in its arena.
-        // We copy these SymbolIds into user's file_locals via HashMap clone.
-        // But user binder allocates new symbols from 0, eventually colliding with lib SymbolIds.
-        //
-        // Solution: Reserve SymbolIds 0..N in user's arena BEFORE binding.
-        // This forces new allocations to start at N, preventing collisions.
-        // Lib symbols are accessed via lib_binders fallback OR via reserved slots.
-        let unified_lib_binder =
-            (!lib_files.is_empty()).then(|| std::sync::Arc::clone(&lib_files[0].binder));
-
-        // Count lib symbols to set base offset in user binders
-        let lib_symbol_count = unified_lib_binder.as_ref().map_or(0, |b| b.symbols.len());
-
-        let mut bound_files: Vec<BoundFile> = Vec::with_capacity(files.len());
-        let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
-
-        // Use into_iter() to consume source strings immediately
-        for (file_name, content) in files {
-            // Skip non-TypeScript/JavaScript files (e.g. .json, .txt).
-            // They may be present in multi-file tests for module resolution
-            // fixtures but must not be parsed as TypeScript source.
-            if !Self::is_checkable_file(&file_name) {
-                continue;
-            }
-
-            // Check if content appears to be garbled binary (e.g., UTF-16 read as UTF-8)
-            // If so, emit TS1490 "File appears to be binary." instead of parsing
-            if super::content_appears_binary(&content) {
-                binary_file_errors
-                    .push((file_name.clone(), super::TS1490_FILE_APPEARS_TO_BE_BINARY));
-                continue;
-            }
-
-            // Parse: content is moved into parser
-            let mut parser = ParserState::new(file_name.clone(), content);
-            let root_idx = parser.parse_source_file();
-            let parse_errors: Vec<i32> = parser
-                .get_diagnostics()
-                .iter()
-                .map(|d| d.code as i32)
-                .collect();
-            let arena = Arc::new(parser.into_arena());
-
-            // Bind with SymbolId collision prevention:
-            // 1. Set base offset for user arena to prevent allocation collisions
-            // 2. Set lib_binders for lib symbol resolution (fallback)
-            // 3. Do NOT copy file_locals - let lib symbols be resolved via lib_binders
-            let mut binder = BinderState::new();
-            if let Some(lib_binder) = unified_lib_binder.as_ref() {
-                // Step 1: Set base offset so user symbols start AFTER lib symbols.
-                // This ensures lookups for lib IDs (0..N) return None in the user arena,
-                // triggering the fallback to lib_binders.
-                binder.symbols = tsz::binder::SymbolArena::new_with_base(lib_symbol_count as u32);
-
-                // Step 2: Set lib_binder for fallback resolution
-                // Lib symbols will be resolved via get_global_type() which checks lib_binders
-                binder.lib_binders.push(Arc::clone(lib_binder));
-            }
-            binder.bind_source_file(&arena, root_idx);
-
-            bound_files.push(BoundFile {
-                name: file_name,
-                arena,
-                binder: Arc::new(binder),
-                root: root_idx,
-                parse_errors,
-            });
-        }
-
-        // PHASE 3: Build cross-file resolution context
-        // Wrap in Arc to avoid expensive cloning in the loop below
         let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(
-            bound_files
+            program
+                .files
                 .iter()
-                .map(|f| std::sync::Arc::clone(&f.arena))
+                .map(|file| Arc::clone(&file.arena))
                 .collect(),
         );
         let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(
-            bound_files
+            program
+                .files
                 .iter()
-                .map(|f| std::sync::Arc::clone(&f.binder))
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    Arc::new(parallel::create_binder_from_bound_file(
+                        file, &program, file_idx,
+                    ))
+                })
                 .collect(),
         );
-        let user_file_contexts: Vec<LibContext> = bound_files
+
+        let file_names: Vec<String> = program
+            .files
             .iter()
-            .map(|f| LibContext {
-                arena: std::sync::Arc::clone(&f.arena),
-                binder: std::sync::Arc::clone(&f.binder),
-            })
+            .map(|file| file.file_name.clone())
             .collect();
-
-        let actual_lib_file_count = lib_contexts.len();
-        let mut all_contexts = lib_contexts;
-        all_contexts.extend(user_file_contexts);
-
-        let file_names: Vec<String> = bound_files.iter().map(|f| f.name.clone()).collect();
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_modules_arc = Arc::new(resolved_modules);
 
-        // Build project-level shared environment for all checkers.
-        // NOTE: lib_contexts here includes both lib AND user file contexts,
-        // so we override actual_lib_file_count after apply_to.
+        // Build skeleton indices if available
+        let (skeleton_declared_modules, skeleton_expando_index) = if let Some(ref skel) =
+            program.skeleton_index
+        {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            (
+                Some(Arc::new(
+                    tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                )),
+                Some(Arc::new(skel.expando_properties.clone())),
+            )
+        } else {
+            (None, None)
+        };
+
         let mut project_env = ProjectEnv {
-            lib_contexts: all_contexts,
+            lib_contexts,
             all_arenas,
             all_binders,
+            skeleton_declared_modules,
+            skeleton_expando_index,
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
         project_env.build_global_indices();
 
-        // PHASE 4: Type check all files
-        let query_cache = QueryCache::new(&type_interner);
+        // Type check all files
+        let query_cache = QueryCache::new(&program.type_interner);
         let mut all_codes: Vec<i32> = Vec::new();
 
         // Add TS1490 for binary files detected earlier
         for (_file_name, code) in binary_file_errors {
             all_codes.push(code);
         }
-        for (file_idx, bound) in bound_files.iter().enumerate() {
-            all_codes.extend(&bound.parse_errors);
+
+        for (file_idx, file) in program.files.iter().enumerate() {
+            // Include parse errors
+            all_codes.extend(file.parse_diagnostics.iter().map(|d| d.code as i32));
 
             let mut checker = CheckerState::new(
-                &bound.arena,
-                &bound.binder,
+                &file.arena,
+                &project_env.all_binders[file_idx],
                 &query_cache,
-                bound.name.clone(),
+                file.file_name.clone(),
                 checker_options.clone(),
             );
 
             project_env.apply_to(&mut checker.ctx);
-            // Override: actual lib file count excludes user file contexts
-            checker.ctx.set_actual_lib_file_count(actual_lib_file_count);
             checker
                 .ctx
                 .set_resolved_modules((*resolved_modules_arc).clone());
             checker.ctx.set_current_file_idx(file_idx);
-            checker.check_source_file(bound.root);
+            checker.check_source_file(file.source_file);
 
             for diag in &checker.ctx.diagnostics {
                 if diag.category == DiagnosticCategory::Error {
