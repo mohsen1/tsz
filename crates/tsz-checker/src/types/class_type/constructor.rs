@@ -116,21 +116,8 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| "(Anonymous class)".to_string())
     }
 
-    /// Get the constructor type of a class declaration.
-    ///
-    /// This is the type that the class constructor has. It includes:
-    /// - Static properties and methods
-    /// - Construct signatures (for `new` expressions)
-    /// - Inherited static members from base classes
-    /// - Constructor accessibility (private/protected)
-    /// - Abstract class tracking
-    ///
-    /// # Arguments
-    /// * `class_idx` - The `NodeIndex` of the class declaration
-    /// * `class` - The parsed class data
-    ///
-    /// # Returns
-    /// The `TypeId` representing the constructor type of the class
+    /// Get the constructor type of a class declaration (static members,
+    /// construct signatures, inherited statics, accessibility, abstractness).
     pub(crate) fn get_class_constructor_type(
         &mut self,
         class_idx: NodeIndex,
@@ -1988,24 +1975,17 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve a parameter symbol's type annotation directly, bypassing
-    /// `node_types/symbol_types` caches.
-    ///
-    /// Used for mixin pattern detection where the parameter's type may
-    /// have been cached as `any` before type parameters were in scope.
+    /// `node_types/symbol_types` caches.  Used for mixin pattern detection
+    /// where the parameter's type may have been cached as `any` before
+    /// type parameters were in scope.
     fn resolve_param_type_annotation(&mut self, sym_id: tsz_binder::SymbolId) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let value_decl = symbol.value_declaration;
-        if !value_decl.is_some() {
-            return None;
-        }
-        let node = self.ctx.arena.get(value_decl)?;
-        // Check if the declaration is a parameter with a type annotation
+        let node = self.ctx.arena.get(symbol.value_declaration)?;
         if let Some(param) = self.ctx.arena.get_parameter(node)
             && param.type_annotation.is_some()
         {
             return Some(self.get_type_from_type_node(param.type_annotation));
         }
-        // Also check variable declarations (e.g., const-declared parameter aliases)
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
             && var_decl.type_annotation.is_some()
         {

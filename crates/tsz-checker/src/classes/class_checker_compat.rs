@@ -357,7 +357,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(decl_idx)
                     && self.ctx.arena.get_class(node).is_some()
                 {
-                    let class_data = self.ctx.arena.get_class(node).unwrap();
+                    let class_data = self
+                        .ctx
+                        .arena
+                        .get_class(node)
+                        .expect("get_class guard above ensures Some");
                     if let Some(ref heritage_clauses) = class_data.heritage_clauses {
                         for &clause_idx in &heritage_clauses.nodes {
                             if let Some(clause_node) = self.ctx.arena.get(clause_idx)
