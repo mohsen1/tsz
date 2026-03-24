@@ -485,6 +485,15 @@ impl<'a> NarrowingContext<'a> {
     /// branch gives `string | number` (Date is excluded as it's an Object instance).
     pub fn narrow_by_instanceof_false(&self, source_type: TypeId, instance_type: TypeId) -> TypeId {
         let resolved_source = self.resolve_type(source_type);
+        let resolved_instance = self.resolve_type(instance_type);
+
+        // When the instance type is a union (e.g., `A | B` from `typeof A | typeof B`),
+        // we cannot narrow in the false branch. At runtime, the constructor is ONE specific
+        // type from the union, so `!(x instanceof b)` where `b: typeof A | typeof B` doesn't
+        // tell us which constructor was checked. We can't exclude any member of the source.
+        if union_list_id(self.db, resolved_instance).is_some() {
+            return source_type;
+        }
 
         // Check if the instance type is the global Object interface.
         // All non-primitive values are instances of Object at runtime,
