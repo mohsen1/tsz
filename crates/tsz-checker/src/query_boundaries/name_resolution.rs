@@ -356,7 +356,12 @@ impl<'a> CheckerState<'a> {
             .get_symbol_with_libs(parent_sym, &lib_binders);
 
         let parent_name = parent_symbol
-            .map(|s| s.escaped_name.clone())
+            .map(|s| {
+                // Build the fully qualified name by walking the parent chain.
+                // This matches tsc behavior: when the parent is nested (e.g., foo.bar.baz),
+                // display the full path rather than just the last segment.
+                self.build_qualified_symbol_name(parent_sym, s)
+            })
             .unwrap_or_default();
 
         // Look up the member in the parent's exports
@@ -399,6 +404,51 @@ impl<'a> CheckerState<'a> {
             flags,
             is_type_only,
         })
+    }
+
+    /// Build the fully qualified name for a symbol by walking its parent chain.
+    ///
+    /// For nested namespaces like `foo.bar.baz`, the symbol for `baz` has
+    /// parent `bar`, which has parent `foo`. This method walks that chain to
+    /// produce the full dotted name `foo.bar.baz`, matching tsc's display in
+    /// TS2694 error messages.
+    fn build_qualified_symbol_name(&self, sym_id: SymbolId, symbol: &tsz_binder::Symbol) -> String {
+        let lib_binders = self.get_lib_binders();
+        let mut parts = vec![symbol.escaped_name.clone()];
+        let mut current = symbol.parent;
+
+        // Walk up the parent chain, collecting names.
+        // Stop at the source file / global scope (parent == NONE or parent is source file).
+        let mut fuel = 20; // Prevent infinite loops
+        while current != SymbolId::NONE && fuel > 0 {
+            fuel -= 1;
+            let parent = self.ctx.binder.get_symbol_with_libs(current, &lib_binders);
+            match parent {
+                Some(p) => {
+                    // Stop if we reach a source-file-level symbol (no meaningful name)
+                    if p.escaped_name.is_empty() || p.escaped_name == "__global" {
+                        break;
+                    }
+                    parts.push(p.escaped_name.clone());
+                    // Stop after adding this symbol if its parent is the root
+                    if p.parent == SymbolId::NONE {
+                        break;
+                    }
+                    current = p.parent;
+                }
+                None => break,
+            }
+        }
+
+        // Only use the qualified name if there are multiple parts
+        if parts.len() > 1 {
+            parts.reverse();
+            parts.join(".")
+        } else {
+            // Just the simple name - use the original symbol's escaped_name
+            let _ = sym_id; // suppress unused warning
+            symbol.escaped_name.clone()
+        }
     }
 
     /// Report a wrong-meaning diagnostic for a symbol that was found but has
