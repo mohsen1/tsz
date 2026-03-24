@@ -435,12 +435,15 @@ pub fn check_application_variance<R: TypeResolver>(
         return Some(true);
     }
 
-    // Variance failures are definitive even with structural fallback.
-    // The structural fallback flag means "don't trust True because mapped
-    // modifiers could change the structure". But a False result (type args
-    // are incompatible) is trustworthy: if the type arguments fail the
-    // invariant/covariant/contravariant check, the generic types cannot be
-    // compatible regardless of how modifiers transform the structure.
+    // When structural fallback is needed, variance failures are NOT definitive.
+    // Homomorphic mapped types with non-identity templates can produce
+    // structurally compatible results even when type arguments aren't related
+    // by variance. For example, `ToA<{x:n}>` is assignable to `ToA<{}>`
+    // because `ToA<{}>` evaluates to `{}` (empty object), even though `{}`
+    // is not assignable to `{x:n}` (invariant check fails).
+    if needs_structural_fallback {
+        return None;
+    }
     Some(false)
 }
 

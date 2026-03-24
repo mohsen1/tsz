@@ -17399,3 +17399,28 @@ function test<T>(val: T): MyResult<T> {
          TS2322 diagnostics: {ts2322:#?}"
     );
 }
+
+#[test]
+fn test_no_false_ts2322_for_homomorphic_mapped_type_empty_target() {
+    // Regression: M<{x: number}> should be assignable to M<{}>
+    // because M<{x:n}> evaluates to {x:number} and M<{}> evaluates to {}.
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type M<S> = { [K in keyof S]: S[K] };
+declare const a: M<{ x: number }>;
+const b: M<{}> = a;
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "M<{{x: number}}> should be assignable to M<{{}}>.\nGot: {diagnostics:?}"
+    );
+}
