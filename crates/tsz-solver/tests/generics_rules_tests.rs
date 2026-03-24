@@ -431,7 +431,9 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
     assert!(variance.is_covariant());
-    assert_eq!(variance, Variance::COVARIANT);
+    // Mapped types always set NEEDS_STRUCTURAL_FALLBACK because the key set
+    // depends on the type parameter, making variance-only checks insufficient.
+    assert!(variance.needs_structural_fallback());
     assert!(
         checker
             .check_application_to_application_subtype(source_app, target_app)

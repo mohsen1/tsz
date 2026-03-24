@@ -245,6 +245,29 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             self.result |= Variance::CONTRAVARIANT;
         }
     }
+
+    /// Check if a constraint type uses `keyof` of the target type parameter.
+    /// For mapped types like `{ [K in keyof S]: Template }`, the key set depends
+    /// on S via keyof, so the variance shortcut is unreliable even without modifiers.
+    fn constraint_uses_keyof_of_target(&self, constraint: TypeId) -> bool {
+        if let Some(crate::types::TypeData::KeyOf(inner)) = self.computer.db.lookup(constraint) {
+            self.type_references_target_param(inner)
+        } else {
+            false
+        }
+    }
+
+    /// Check if a type references the target type parameter (directly or nested).
+    fn type_references_target_param(&self, type_id: TypeId) -> bool {
+        match self.computer.db.lookup(type_id) {
+            Some(crate::types::TypeData::TypeParameter(info)) => info.name == self.target_param,
+            Some(crate::types::TypeData::KeyOf(inner)) => self.type_references_target_param(inner),
+            Some(crate::types::TypeData::IndexAccess(obj, idx)) => {
+                self.type_references_target_param(obj) || self.type_references_target_param(idx)
+            }
+            _ => false,
+        }
+    }
 }
 
 impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
@@ -571,12 +594,24 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         let mapped = self.computer.db.get_mapped(MappedTypeId(mapped_id));
         let current_polarity = self.get_current_polarity();
 
-        // If the mapped type has modifiers that change optional/readonly status,
-        // the variance shortcut is unreliable because mutually-assignable type
-        // arguments can produce structurally incompatible results after modifier
-        // application (e.g., Required<{a?; x}> vs Required<{b?; x}> — the args
-        // are assignable but the results have different required properties).
+        // Mapped types with modifiers (-?/+?/-readonly/+readonly) require structural
+        // fallback because mutually-assignable type arguments can produce structurally
+        // incompatible results after modifier application (e.g., Required<{a?; x}> vs
+        // Required<{b?; x}> — the args are assignable but the results differ).
+        //
+        // Additionally, mapped types whose constraint uses `keyof` of the target
+        // type parameter (e.g., `{ [K in keyof S]: Type<S[K]> }`) need structural
+        // fallback because the key set depends on S via `keyof S`, making the
+        // variance check insufficient: a variance failure (e.g., invariant check
+        // fails because `{a: 1} <: {}` but not `{} <: {a: 1}`) doesn't mean the
+        // expanded mapped types are incompatible (`{ a: Type<1> }` IS assignable to `{}`).
+        //
+        // Plain mapped types like `Record<P, T> = { [K in P]: T }` do NOT need
+        // fallback because the key set P is a direct type argument, not derived
+        // through `keyof`, so variance correctly captures the relationship.
         if mapped.optional_modifier.is_some() || mapped.readonly_modifier.is_some() {
+            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+        } else if self.constraint_uses_keyof_of_target(mapped.constraint) {
             self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
         }
 
