@@ -921,7 +921,7 @@ impl<'a> CheckerState<'a> {
                                 sym_id,
                                 type_alias.type_node,
                             )));
-                if is_circular {
+                if is_circular && !self.has_parse_errors() {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
