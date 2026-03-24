@@ -238,7 +238,7 @@ impl TypeResolver for MockVarianceResolver<'_> {
 }
 
 #[test]
-fn test_non_interface_invariant_application_fastpath_rejects_without_structural_fallback() {
+fn test_non_interface_invariant_application_structural_fallback_accepts_equivalent_types() {
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
@@ -249,6 +249,7 @@ fn test_non_interface_invariant_application_fastpath_rejects_without_structural_
         default: None,
         is_const: false,
     };
+    // Body doesn't use T, so all instantiations are structurally equivalent
     let body = interner.object(vec![PropertyInfo::new(
         interner.intern_string("x"),
         TypeId::NUMBER,
@@ -269,10 +270,12 @@ fn test_non_interface_invariant_application_fastpath_rejects_without_structural_
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
 
+    // With structural fallback on variance failure: both expand to {x: number}
+    // since T is unused in the body. Structural comparison correctly returns True.
     assert!(
         checker
             .check_application_to_application_subtype(source_app, target_app)
-            .is_false()
+            .is_true()
     );
 }
 
@@ -362,10 +365,14 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
 
+    // With structural fallback on variance failure, this correctly returns True:
+    // T<{x: string, y: number}> = Pick<{x: string, y: number}, "x"> = {x: string}
+    // T<{x: string, z: boolean}> = Pick<{x: string, z: boolean}, "x"> = {x: string}
+    // The type arguments differ but the expanded types are structurally equivalent.
     assert!(
         checker
             .check_application_to_application_subtype(source_app, target_app)
-            .is_false()
+            .is_true()
     );
 }
 

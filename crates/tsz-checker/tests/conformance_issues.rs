@@ -371,16 +371,14 @@ c = d;
         .filter(|(code, _)| *code == 2322)
         .collect();
 
+    // With structural fallback on variance failure, both T<A> and T<B> expand to
+    // Pick<A/B, 'x'> = {x: string}, which are structurally equivalent. This matches
+    // tsc behavior where typeArgumentsRelatedTo failure falls through to structural
+    // comparison. 0 errors is correct.
     assert_eq!(
         ts2322.len(),
-        1,
-        "Expected only the generic-application assignment to fail. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2322[0]
-            .1
-            .contains("Type 'T<A>' is not assignable to type 'T<B>'"),
-        "Expected TS2322 to preserve the generic application identity. Actual diagnostics: {diagnostics:#?}"
+        0,
+        "Expected zero TS2322 errors (matching tsc structural fallback). Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -414,16 +412,14 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 "#;
 
     let diagnostics = compile_and_get_diagnostics_with_lib(source);
-    // NOTE: tsc produces 0 errors for this code. We currently emit false positives.
-    // Previous: 1 TS2322 + 1 TS2344, then 1 TS2345 false positive.
-    // After fixing recursive type variance (independent variance for self-referencing
-    // generics instead of invariance + structural fallback):
-    // 2 TS2322 false positives for "Num not assignable to Runtype<any>".
-    // Ideal target: 0 errors.
+    // tsc produces 0 errors for this code. With structural fallback on variance
+    // failure, we now correctly produce 0 errors (matching tsc).
+    // Previous: 2 TS2322 false positives caused by definitive variance rejection
+    // preventing structural comparison of recursive generic types.
     let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
     assert_eq!(
-        ts2322_count, 2,
-        "Expected two TS2322 false positives. Actual diagnostics: {diagnostics:#?}"
+        ts2322_count, 0,
+        "Expected zero TS2322 errors (matching tsc). Actual diagnostics: {diagnostics:#?}"
     );
 }
 
