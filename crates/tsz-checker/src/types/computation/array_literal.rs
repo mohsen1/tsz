@@ -674,28 +674,22 @@ impl<'a> CheckerState<'a> {
 
         // TS2590: Pre-check element count before BCT. tsc's removeSubtypes counts
         // pairwise iterations on the original (un-widened) types and bails at 1,000,000.
-        // However, tsc skips removeSubtypes for unions where all members are
-        // identity-comparable (primitives, literals). Only non-identity-comparable
-        // types (objects, arrays, etc.) contribute to the complexity count.
+        // tsc counts ALL pairwise comparisons regardless of type kind (including
+        // identity-comparable primitives/literals).
         {
             let mut deduped = element_types.clone();
             deduped.sort_unstable_by_key(|t| t.0);
             deduped.dedup();
-            let has_non_identity = deduped
-                .iter()
-                .any(|&ty| !self.ctx.types.is_identity_comparable_type(ty));
-            if has_non_identity {
-                let distinct_count = deduped.len() as u64;
-                let pairwise = distinct_count * distinct_count.saturating_sub(1);
-                if pairwise >= 1_000_000 {
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.error_at_node(
-                        idx,
-                        diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
-                        diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
-                    );
-                    return factory.array(TypeId::ERROR);
-                }
+            let distinct_count = deduped.len() as u64;
+            let pairwise = distinct_count * distinct_count.saturating_sub(1);
+            if pairwise >= 1_000_000 {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                    diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                );
+                return factory.array(TypeId::ERROR);
             }
         }
 
