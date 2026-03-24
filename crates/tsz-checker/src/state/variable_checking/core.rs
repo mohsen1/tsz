@@ -1723,10 +1723,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         false
                     };
+                    // tsc suppresses TS2403 in JS/checkJs files — var redeclaration
+                    // is idiomatic JavaScript and doesn't warrant a type error.
+                    let is_js_file = self.ctx.is_js_file();
                     if !is_mergeable_declaration
                         && !is_non_exported_ns_var
                         && !has_ns_export_visibility_mismatch
                         && !is_cross_namespace_body
+                        && !is_js_file
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
                     {
                         if let Some(ref name) = var_name {
