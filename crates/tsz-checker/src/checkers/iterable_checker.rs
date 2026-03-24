@@ -960,7 +960,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check that the iterator protocol's `next()` method returns a type with a `value` property.
     ///
-    /// This follows the chain: `type[Symbol.iterator]()` → iterator → `.next()` → check `.value`
+    /// This follows the chain: `type[Symbol.iterator]()` -> iterator -> `.next()` -> check `.value`
     /// If `next()` returns a type without `value`, emits TS2490 and returns `false`.
     /// Returns `true` if the protocol is valid or if we can't resolve the chain
     /// (in which case we don't want to emit a false positive).
