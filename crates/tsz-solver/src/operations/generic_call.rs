@@ -778,6 +778,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     crate::types::InferencePriority::ReturnType,
                 );
 
+                // When the return type is a union containing a single placeholder
+                // (e.g., `E | null`), the structural constrain_types adds the
+                // contextual type as an upper bound for E. But for contextual return
+                // type inference, E should get the contextual type (minus nullish
+                // members) as a candidate (lower bound), matching tsc's behavior.
+                // Without this, `querySelector<E>(): E | null` with contextual type
+                // `MyElement` would resolve E to the default instead of MyElement.
+                if let Some(TypeData::Union(members_id)) =
+                    self.interner.lookup(return_type_with_placeholders)
+                {
+                    let members = self.interner.type_list(members_id);
+                    // Collect non-placeholder, non-nullish target members for filtering
+                    let ctx_stripped = if let Some(TypeData::Union(ctx_members_id)) =
+                        self.interner.lookup(ctx_type)
+                    {
+                        let ctx_members = self.interner.type_list(ctx_members_id);
+                        let non_nullish: Vec<TypeId> = ctx_members
+                            .iter()
+                            .copied()
+                            .filter(|m| !m.is_nullable())
+                            .collect();
+                        if non_nullish.len() == 1 {
+                            Some(non_nullish[0])
+                        } else if non_nullish.is_empty() {
+                            None
+                        } else {
+                            Some(self.interner.union(non_nullish))
+                        }
+                    } else if !ctx_type.is_nullable() {
+                        Some(ctx_type)
+                    } else {
+                        None
+                    };
+
+                    if let Some(ctx_stripped) = ctx_stripped {
+                        for &member in members.iter() {
+                            if let Some(&var) = var_map.get(&member) {
+                                infer_ctx.add_candidate(
+                                    var,
+                                    ctx_stripped,
+                                    crate::types::InferencePriority::ReturnType,
+                                );
+                            }
+                        }
+                    }
+                }
+
                 // Track whether the return type is a bare type parameter placeholder.
                 // If so, we may need to add a ReturnType candidate AFTER Round 1
                 // (see below, before fix_current_variables).
