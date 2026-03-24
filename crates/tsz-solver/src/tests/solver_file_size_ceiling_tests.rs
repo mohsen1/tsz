@@ -224,3 +224,140 @@ fn test_emitter_file_size_ceiling() {
         oversized.join("\n")
     );
 }
+
+/// Ratchet guard: prevent the parser crate from growing oversized files.
+///
+/// Per CLAUDE.md section 19: "Avoid growth of monolith modules; split before crossing
+/// maintainability threshold."
+#[test]
+fn test_parser_file_size_ceiling() {
+    let parser_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tsz-parser/src");
+    if !parser_src.exists() {
+        return;
+    }
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&parser_src, &mut files);
+
+    let mut oversized = Vec::new();
+    let mut max_lines = 0usize;
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&parser_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("tests/") || rel.contains("/test") {
+            continue;
+        }
+
+        let line_count = match fs::read_to_string(path) {
+            Ok(s) => s.lines().count(),
+            Err(_) => continue,
+        };
+
+        if line_count > max_lines {
+            max_lines = line_count;
+        }
+
+        if line_count > 2000 {
+            oversized.push(format!("  {rel} ({line_count} lines)"));
+        }
+    }
+
+    // Current oversized files (8 as of 2026-03-24):
+    //   parser/state_expressions_literals.rs (2926), parser/state.rs (2626),
+    //   parser/state_declarations.rs (2564), parser/state_expressions.rs (2503),
+    //   parser/state_statements.rs (2392), parser/node_arena.rs (2294),
+    //   parser/state_statements_class_members.rs (2151), parser/state_types.rs (2013)
+    const FILE_COUNT_CEILING: usize = 8;
+    assert!(
+        oversized.len() <= FILE_COUNT_CEILING,
+        "Number of parser source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
+         Split oversized files into smaller modules. Current oversized files:\n{}",
+        oversized.len(),
+        oversized.join("\n")
+    );
+
+    // parser/state_expressions_literals.rs is currently the largest at 2926 lines.
+    const MAX_LOC_CEILING: usize = 2926;
+    assert!(
+        max_lines <= MAX_LOC_CEILING,
+        "Largest parser source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
+         Split the file into smaller modules. Current oversized files:\n{}",
+        oversized.join("\n")
+    );
+}
+
+/// Ratchet guard: prevent the scanner crate from growing oversized files.
+///
+/// Per CLAUDE.md section 19: "Avoid growth of monolith modules; split before crossing
+/// maintainability threshold."
+/// The scanner currently has a single large file (scanner_impl.rs at 3485 lines)
+/// which should be split over time.
+#[test]
+fn test_scanner_file_size_ceiling() {
+    let scanner_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tsz-scanner/src");
+    if !scanner_src.exists() {
+        return;
+    }
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&scanner_src, &mut files);
+
+    let mut oversized = Vec::new();
+    let mut max_lines = 0usize;
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&scanner_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("tests/") || rel.contains("/test") {
+            continue;
+        }
+
+        let line_count = match fs::read_to_string(path) {
+            Ok(s) => s.lines().count(),
+            Err(_) => continue,
+        };
+
+        if line_count > max_lines {
+            max_lines = line_count;
+        }
+
+        if line_count > 2000 {
+            oversized.push(format!("  {rel} ({line_count} lines)"));
+        }
+    }
+
+    // Current oversized files (1 as of 2026-03-24):
+    //   scanner_impl.rs (3485)
+    const FILE_COUNT_CEILING: usize = 1;
+    assert!(
+        oversized.len() <= FILE_COUNT_CEILING,
+        "Number of scanner source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
+         Split oversized files into smaller modules. Current oversized files:\n{}",
+        oversized.len(),
+        oversized.join("\n")
+    );
+
+    // scanner_impl.rs is currently the largest at 3485 lines.
+    const MAX_LOC_CEILING: usize = 3485;
+    assert!(
+        max_lines <= MAX_LOC_CEILING,
+        "Largest scanner source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
+         Split the file into smaller modules. Current oversized files:\n{}",
+        oversized.join("\n")
+    );
+}
