@@ -432,16 +432,42 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(predicates) = self.call_type_predicates
             && let Some((predicate, params)) = predicates.get(&condition.0)
         {
-            let target_node = self.predicate_target_expression(call, predicate, params)?;
-            let guard = if let Some(type_id) = predicate.type_id {
-                TypeGuard::Predicate {
-                    type_id: Some(type_id),
-                    asserts: predicate.asserts,
+            // When the instantiated predicate type equals the full argument type,
+            // it means inference failed to subtract fixed members (e.g.,
+            // `isSuccess<T>(result: Result<T>): result is T` maps T to the full
+            // arg type instead of the inferred portion). Skip this path and fall
+            // through to the callee-type-based resolution (step 3+) which can
+            // use resolve_generic_predicate with the uninstantiated signature.
+            let should_skip = if let Some(pred_type) = predicate.type_id
+                && matches!(
+                    self.interner.lookup(pred_type),
+                    Some(tsz_solver::TypeData::Union(_))
+                ) {
+                if let Some(node_types) = self.node_types
+                    && let Some(&arg_idx) = call.arguments.as_ref().and_then(|a| a.nodes.first())
+                    && let Some(&arg_type) = node_types.get(&arg_idx.0)
+                {
+                    pred_type == arg_type
+                } else {
+                    false
                 }
             } else {
-                TypeGuard::Truthy
+                false
             };
-            return Some((guard, target_node, is_optional));
+
+            if !should_skip {
+                let target_node = self.predicate_target_expression(call, predicate, params)?;
+                let guard = if let Some(type_id) = predicate.type_id {
+                    TypeGuard::Predicate {
+                        type_id: Some(type_id),
+                        asserts: predicate.asserts,
+                    }
+                } else {
+                    TypeGuard::Truthy
+                };
+                return Some((guard, target_node, is_optional));
+            }
+            // Fall through to step 3 for callee-type-based resolution
         }
 
         // 3. Resolve callee type (skip parens/assertions to handle (isString as any)(x))
