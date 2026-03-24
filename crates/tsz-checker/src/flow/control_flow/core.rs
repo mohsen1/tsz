@@ -19,7 +19,14 @@ type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>;
 
 // Guard against pathological requeue loops in flow traversal.
-const FLOW_STEP_BUDGET_MIN: usize = 1_024;
+// The BFS worklist re-queues CONDITION/NARROWING nodes after scheduling their
+// antecedents. For a linear flow graph with N nodes and branch conditions, the
+// worklist can visit O(N²) total nodes because each condition node defers to
+// antecedents and re-enqueues itself. Measured: 149 flow nodes → ~8500 steps
+// (≈57×N). The minimum floor of 10_000 ensures small-to-medium files (up to
+// ~170 flow nodes) complete their flow analysis correctly. The scale of 12
+// and max of 40_000 keep large files bounded.
+const FLOW_STEP_BUDGET_MIN: usize = 10_000;
 const FLOW_STEP_BUDGET_SCALE: usize = 12;
 const FLOW_STEP_BUDGET_MAX: usize = 40_000;
 
