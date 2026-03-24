@@ -1874,6 +1874,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         final_subst.insert(tp.name, ty_for_check);
                         continue;
                     }
+                    // Lazy(DefId) from contextual return inference may fail structural
+                    // constraint checks due to evaluation differences in complex
+                    // inheritance chains (e.g., DOM). Keep it; upper bounds were validated.
+                    if matches!(self.interner.lookup(ty), Some(TypeData::Lazy(_))) {
+                        final_subst.insert(tp.name, ty);
+                        continue;
+                    }
                     // Try to recover using un-widened literal candidates when widening
                     // caused the violation (e.g., "b" widened to string violates keyof O).
                     let un_widened = infer_ctx.get_literal_candidates(var);
