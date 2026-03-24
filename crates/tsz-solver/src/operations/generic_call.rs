@@ -770,22 +770,44 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .iter()
                     .all(|var| round1_direct_seed_vars.contains(var));
             if !all_return_vars_covered {
-                // Match tsc's inferTypes direction: infer FROM the contextual
-                // type (source) TO the return type with placeholders (target).
-                // This adds CANDIDATES (lower bounds) to inference variables,
-                // matching tsc's behavior where return-context inference produces
-                // lower bound candidates that the resolver can use directly.
-                // The previous direction (placeholder as source → upper bound)
-                // caused the constraint check to compare evaluated Object types
-                // against unevaluated Lazy constraint types, which fails for
-                // complex DOM inheritance chains (e.g., HTMLElement vs Element).
-                self.constrain_types(
-                    &mut infer_ctx,
-                    &var_map,
-                    ctx_type,                      // source (contextual type)
-                    return_type_with_placeholders, // target (return type with placeholders)
-                    crate::types::InferencePriority::ReturnType,
-                );
+                // When the return type is a union containing a placeholder
+                // (like `E | null`), use tsc-compatible reversed direction so
+                // that the union target handler can extract the placeholder
+                // member and add the contextual type as a candidate. This
+                // matches tsc's inferTypes(contextualType, returnType).
+                // For non-union return types (bare `T` or structural types),
+                // keep the original direction to preserve upper-bound
+                // semantics and avoid interfering with argument inference
+                // (e.g., foo<T>(x: T, y: T): T where arguments already
+                // provide NakedTypeVariable candidates for T).
+                let return_is_union_with_placeholder = matches!(
+                    self.interner.lookup(return_type_with_placeholders),
+                    Some(TypeData::Union(_))
+                ) && {
+                    let mut visited = FxHashSet::default();
+                    self.type_contains_placeholder(
+                        return_type_with_placeholders,
+                        &var_map,
+                        &mut visited,
+                    )
+                };
+                if return_is_union_with_placeholder {
+                    self.constrain_types(
+                        &mut infer_ctx,
+                        &var_map,
+                        ctx_type,                      // source (contextual type)
+                        return_type_with_placeholders, // target (union with vars)
+                        crate::types::InferencePriority::ReturnType,
+                    );
+                } else {
+                    self.constrain_types(
+                        &mut infer_ctx,
+                        &var_map,
+                        return_type_with_placeholders, // source
+                        ctx_type,                      // target
+                        crate::types::InferencePriority::ReturnType,
+                    );
+                }
 
                 // When the return type is a union containing a single placeholder
                 // (e.g., `E | null`), the structural constrain_types adds the
