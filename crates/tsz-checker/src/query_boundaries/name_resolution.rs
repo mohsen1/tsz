@@ -558,16 +558,13 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
                 return false;
             }
-            if node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                || node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-            {
+            if node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
                 // Only suppress for `export default`, not `export =`.
-                let is_export_equals = node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    && self
-                        .ctx
-                        .arena
-                        .get_export_assignment(node)
-                        .is_some_and(|data| data.is_export_equals);
+                let is_export_equals = self
+                    .ctx
+                    .arena
+                    .get_export_assignment(node)
+                    .is_some_and(|data| data.is_export_equals);
                 if is_export_equals {
                     return false;
                 }
