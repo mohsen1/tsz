@@ -44,6 +44,20 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::A_RETURN_STATEMENT_CAN_ONLY_BE_USED_WITHIN_A_FUNCTION_BODY,
                 );
             }
+            // Still type-check the return expression even when outside a function body.
+            // In tsc, TS1108 is added to parseDiagnostics (via grammarErrorOnFirstToken),
+            // making hasParseDiagnostics() true. This suppresses TS2304/TS7006 but NOT
+            // TS1212 strict-mode reserved word checks. Simulate by temporarily setting
+            // has_real_syntax_errors during expression checking.
+            if return_data.expression.is_some() {
+                let prev_real = self.ctx.has_real_syntax_errors;
+                let prev_syntax = self.ctx.has_syntax_parse_errors;
+                self.ctx.has_real_syntax_errors = true;
+                self.ctx.has_syntax_parse_errors = true;
+                self.get_type_of_node(return_data.expression);
+                self.ctx.has_real_syntax_errors = prev_real;
+                self.ctx.has_syntax_parse_errors = prev_syntax;
+            }
             return;
         }
 
