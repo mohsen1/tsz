@@ -160,16 +160,6 @@ impl<'a> CheckerState<'a> {
 
         // Rest parameters use TS7019, regular parameters use TS7006
         let report_node = self.param_node_for_implicit_any_diagnostic(param);
-        let rest_report_node = if param.dot_dot_dot_token {
-            // TS7019 points at the `...` token span, not the parameter name.
-            self.ctx
-                .arena
-                .get_extended(param.name)
-                .map(|ext| ext.parent)
-                .unwrap_or(report_node)
-        } else {
-            report_node
-        };
 
         // TS7051 only applies to parameters WITHOUT modifiers (public/private/protected/readonly).
         // When a parameter has a modifier, the name is clearly a parameter name, not a type.
@@ -179,20 +169,51 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|m| !m.nodes.is_empty());
 
         if param.dot_dot_dot_token {
-            // TS7051: Check if rest parameter name looks like a type keyword
-            // e.g., `m(...string)` where `string` is likely meant as `...args: string[]`
+            // TS7019/TS7051 for rest parameters: tsc anchors the span at the `...`
+            // token, covering `...name`.  `normalized_anchor_span` would collapse the
+            // Parameter node to just the name identifier, so we bypass it and emit with
+            // the raw Parameter-node span (which starts at `...`).
+            let rest_report_node = self
+                .ctx
+                .arena
+                .get_extended(param.name)
+                .map(|ext| ext.parent)
+                .unwrap_or(report_node);
+            // Get the span from the Parameter node directly (starts at `...`).
+            // Use name end as the span end so modifiers/type annotations are excluded.
+            let (rest_start, rest_len) = self
+                .get_node_span(rest_report_node)
+                .and_then(|(param_start, _)| {
+                    let name_end = self.ctx.arena.get(param.name)?.end;
+                    Some((param_start, name_end.saturating_sub(param_start)))
+                })
+                .unwrap_or_else(|| self.get_node_span(report_node).unwrap_or((0, 0)));
+
             if !has_parameter_modifiers && Self::is_type_keyword_name(&param_name) {
                 let suggested_name = format!("arg{param_index}");
-                self.error_at_node_msg(
-                    rest_report_node,
+                let template = tsz_common::diagnostics::get_message_template(
                     diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
-                    &[&suggested_name, &param_name],
+                )
+                .unwrap_or("");
+                let message =
+                    crate::diagnostics::format_message(template, &[&suggested_name, &param_name]);
+                self.error_at_position(
+                    rest_start,
+                    rest_len,
+                    &message,
+                    diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
                 );
             } else {
-                self.error_at_node_msg(
-                    rest_report_node,
+                let template = tsz_common::diagnostics::get_message_template(
                     diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE,
-                    &[&param_name],
+                )
+                .unwrap_or("");
+                let message = crate::diagnostics::format_message(template, &[&param_name]);
+                self.error_at_position(
+                    rest_start,
+                    rest_len,
+                    &message,
+                    diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE,
                 );
             }
         } else {
