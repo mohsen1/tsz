@@ -1262,7 +1262,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // === Fixing: Resolve variables with enough information ===
         // This "fixes" type variables that have candidates from Round 1,
         // preventing Round 2 from overriding them with lower-priority constraints.
-        if infer_ctx.fix_current_variables().is_err() {
+        // Pass the full checker for co/contra resolution so Lazy types can be
+        // compared through their extends chains.
+        if infer_ctx
+            .fix_current_variables_with(Some(|source, target| {
+                self.checker.is_assignable_to(source, target)
+            }))
+            .is_err()
+        {
             // Fixing failed - this might indicate a constraint conflict
             // Continue with partial fixing, final resolution will detect errors
         }
@@ -3427,7 +3434,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // 4. Fix variables with enough information from Round 1
-        let _ = infer_ctx.fix_current_variables();
+        let _ = infer_ctx.fix_current_variables_with(Some(|source, target| {
+            self.checker.is_assignable_to(source, target)
+        }));
 
         // Restore state to prevent pollution if evaluator is reused
         self.defaulted_placeholders = previous_defaulted;

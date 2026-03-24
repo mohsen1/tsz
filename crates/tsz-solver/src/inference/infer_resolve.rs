@@ -85,7 +85,8 @@ impl<'a> InferenceContext<'a> {
             return Ok(ty);
         }
 
-        let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
+        let (root, result, upper_bounds, upper_bounds_only) =
+            self.compute_constraint_result(var, None::<fn(TypeId, TypeId) -> bool>);
 
         // Validate against upper bounds.
         // Skip validation when result is `any` — tsc treats `any` as satisfying
@@ -129,7 +130,7 @@ impl<'a> InferenceContext<'a> {
     pub fn resolve_with_constraints_by<F>(
         &mut self,
         var: InferenceVar,
-        is_subtype: F,
+        mut is_subtype: F,
     ) -> Result<TypeId, InferenceError>
     where
         F: FnMut(TypeId, TypeId) -> bool,
@@ -139,7 +140,8 @@ impl<'a> InferenceContext<'a> {
             return Ok(ty);
         }
 
-        let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
+        let (root, result, upper_bounds, upper_bounds_only) =
+            self.compute_constraint_result(var, Some(&mut is_subtype));
 
         // Skip upper bound validation for `any` — it satisfies all constraints in tsc.
         if !upper_bounds_only && result != TypeId::ANY {
@@ -244,10 +246,14 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
-    fn compute_constraint_result(
+    fn compute_constraint_result<F>(
         &mut self,
         var: InferenceVar,
-    ) -> (InferenceVar, TypeId, Vec<TypeId>, bool) {
+        mut external_is_subtype: Option<F>,
+    ) -> (InferenceVar, TypeId, Vec<TypeId>, bool)
+    where
+        F: FnMut(TypeId, TypeId) -> bool,
+    {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
         let target_names = self.type_param_names_for_root(root);
@@ -332,9 +338,19 @@ impl<'a> InferenceContext<'a> {
                     TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
                 );
                 let covariant_assignable_to_contra = !covariant_is_uninformative
-                    && contra_candidates
-                        .iter()
-                        .any(|c| self.is_subtype(covariant_result, c.type_id));
+                    && contra_candidates.iter().any(|c| {
+                        // Use the external (full checker) assignability test when
+                        // available, falling back to the simplified BCT is_subtype.
+                        // The BCT checker cannot resolve Lazy (interface/class) types
+                        // through their extends chains in all cases, so the full
+                        // checker is needed to correctly determine e.g. B <: A when
+                        // B extends A.
+                        if let Some(ref mut ext) = external_is_subtype {
+                            ext(covariant_result, c.type_id)
+                        } else {
+                            self.is_subtype(covariant_result, c.type_id)
+                        }
+                    });
                 if covariant_assignable_to_contra {
                     covariant_result
                 } else {
@@ -1463,7 +1479,17 @@ impl<'a> InferenceContext<'a> {
     /// 3. Sets the `resolved` field to prevent Round 2 from overriding
     ///
     /// Variables without candidates are NOT fixed (they might get info from Round 2).
-    pub fn fix_current_variables(&mut self) -> Result<(), InferenceError> {
+    ///
+    /// The optional `external_is_subtype` closure provides access to the full
+    /// checker-level assignability check, which is needed for Lazy (interface/class)
+    /// types that the simplified BCT checker cannot resolve through extends chains.
+    pub fn fix_current_variables_with<F>(
+        &mut self,
+        mut external_is_subtype: Option<F>,
+    ) -> Result<(), InferenceError>
+    where
+        F: FnMut(TypeId, TypeId) -> bool,
+    {
         let type_params: Vec<_> = self.type_params.clone();
 
         for (_name, var, _is_const) in &type_params {
@@ -1513,10 +1539,13 @@ impl<'a> InferenceContext<'a> {
                         TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
                     );
                     let covariant_assignable_to_contra = !covariant_is_uninformative
-                        && info
-                            .contra_candidates
-                            .iter()
-                            .any(|c| self.is_subtype(covariant_result, c.type_id));
+                        && info.contra_candidates.iter().any(|c| {
+                            if let Some(ref mut ext) = external_is_subtype {
+                                ext(covariant_result, c.type_id)
+                            } else {
+                                self.is_subtype(covariant_result, c.type_id)
+                            }
+                        });
                     if covariant_assignable_to_contra {
                         covariant_result
                     } else {
@@ -1559,6 +1588,12 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Fix (resolve) inference variables without an external checker.
+    /// Convenience wrapper for `fix_current_variables_with(None)`.
+    pub fn fix_current_variables(&mut self) -> Result<(), InferenceError> {
+        self.fix_current_variables_with(None::<fn(TypeId, TypeId) -> bool>)
     }
 
     /// Get the current best substitution for all type parameters.
