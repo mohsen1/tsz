@@ -1577,13 +1577,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2309: Check for export assignment with other exports
-        // When TS1203 already flagged the export assignment as invalid in ES modules,
-        // tsc suppresses TS2309. Skip in `preserve` mode too.
+        // Skip in `preserve` mode — it allows mixing CJS (`export =`) and ESM syntax.
+        // When TS1203 already flags `export =` as invalid, tsc suppresses TS2309 for
+        // ESNext/Node module modes. For ES2015 targets, tsc emits both TS1203 and TS2309.
+        let suppress_ts2309 = emitted_ts1203
+            && !matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::ES2015
+            );
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
             && !is_preserve
-            && !emitted_ts1203
+            && !suppress_ts2309
         {
             self.error_at_node(
                 export_idx,
