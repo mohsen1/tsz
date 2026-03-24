@@ -371,16 +371,15 @@ c = d;
         .filter(|(code, _)| *code == 2322)
         .collect();
 
+    // tsc produces 0 errors here: Pick<A, 'x'> and Pick<B, 'x'> are both {x: string},
+    // so the assignments are structurally valid. The indexed access through the type
+    // parameter produces structurally equivalent results despite different type arguments.
+    // With NEEDS_STRUCTURAL_FALLBACK set for indexed access variance, the variance
+    // fast path correctly falls through to structural comparison which passes.
     assert_eq!(
         ts2322.len(),
-        1,
-        "Expected only the generic-application assignment to fail. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2322[0]
-            .1
-            .contains("Type 'T<A>' is not assignable to type 'T<B>'"),
-        "Expected TS2322 to preserve the generic application identity. Actual diagnostics: {diagnostics:#?}"
+        0,
+        "Expected no TS2322 errors (matching tsc). Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -414,16 +413,13 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 "#;
 
     let diagnostics = compile_and_get_diagnostics_with_lib(source);
-    // NOTE: tsc produces 0 errors for this code. We currently emit false positives.
-    // Previous: 1 TS2322 + 1 TS2344, then 1 TS2345 false positive.
-    // After fixing recursive type variance (independent variance for self-referencing
-    // generics instead of invariance + structural fallback):
-    // 2 TS2322 false positives for "Num not assignable to Runtype<any>".
-    // Ideal target: 0 errors.
+    // tsc produces 0 errors for this code. With NEEDS_STRUCTURAL_FALLBACK set
+    // for indexed access variance, the false positives from variance-based rejection
+    // are eliminated — the structural fallback correctly determines compatibility.
     let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
     assert_eq!(
-        ts2322_count, 2,
-        "Expected two TS2322 false positives. Actual diagnostics: {diagnostics:#?}"
+        ts2322_count, 0,
+        "Expected no TS2322 errors (matching tsc). Actual diagnostics: {diagnostics:#?}"
     );
 }
 
