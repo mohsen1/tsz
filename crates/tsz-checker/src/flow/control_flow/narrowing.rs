@@ -422,6 +422,67 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
+        // Case 1b: Predicate type is a type parameter T, but the parameter type is a
+        // union containing T (e.g., `isSuccess<T>(result: Result<T>): result is T`
+        // where `type Result<T> = T | "FAILURE"`).
+        // Infer T by subtracting the non-T union members from the argument type.
+        // The parameter type may be a type alias (Lazy/Application) that needs
+        // evaluation to expose the underlying union.
+        let pred_is_type_param = type_params.iter().any(|tp| {
+            flow_query::type_param_info(self.interner, pred_type)
+                .is_some_and(|info| info.name == tp.name)
+        });
+        if pred_is_type_param {
+            for (i, param) in params.iter().enumerate() {
+                // Evaluate the parameter type in case it's a type alias like Result<T>.
+                // Use ApplicationEvaluator with TypeEnvironment when available to expand
+                // type applications (e.g., Result<T> -> T | "FAILURE").
+                let evaluated_param = if let Some(env) = &self.type_environment {
+                    let env_borrow = env.borrow();
+                    let evaluator =
+                        tsz_solver::ApplicationEvaluator::new(self.interner, &*env_borrow);
+                    evaluator.evaluate_or_original(param.type_id)
+                } else {
+                    tsz_solver::evaluate_type(self.interner, param.type_id)
+                };
+                if let Some(param_members) =
+                    tsz_solver::type_queries::get_union_members(self.interner, evaluated_param)
+                {
+                    if param_members.contains(&pred_type) {
+                        if let Some(&arg_idx) = args.get(i)
+                            && let Some(&arg_type) = node_types.get(&arg_idx.0)
+                        {
+                            let concrete_members: Vec<TypeId> = param_members
+                                .iter()
+                                .filter(|&&m| m != pred_type)
+                                .copied()
+                                .collect();
+                            let inferred_t = if let Some(arg_members) =
+                                tsz_solver::type_queries::get_union_members(self.interner, arg_type)
+                            {
+                                let remaining: Vec<TypeId> = arg_members
+                                    .iter()
+                                    .filter(|&&m| !concrete_members.contains(&m))
+                                    .copied()
+                                    .collect();
+                                match remaining.len() {
+                                    0 => arg_type,
+                                    1 => remaining[0],
+                                    _ => self.interner.factory().union(remaining),
+                                }
+                            } else {
+                                arg_type
+                            };
+                            return TypePredicate {
+                                type_id: Some(inferred_t),
+                                ..predicate.clone()
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
         // Case 2: Complex predicate type CONTAINS type parameters (e.g., mapped types
         // like `target is { readonly [K in P]: unknown }`). Build a substitution from
         // function type params to call argument types and instantiate the predicate type.
