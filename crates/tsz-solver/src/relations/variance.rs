@@ -188,6 +188,14 @@ struct VarianceVisitor<'a, 'b> {
     /// Stack of polarities to track current position in the type graph.
     /// true = Positive (Covariant), false = Negative (Contravariant)
     polarity_stack: Vec<bool>,
+    /// Names of bound type parameters (mapped type iteration variables) whose
+    /// constraints should be skipped during variance computation. In a mapped
+    /// type `{ [K in keyof S]: S[K] }`, K is a bound variable. Its constraint
+    /// `keyof S` is already accounted for by visiting `mapped.constraint`.
+    /// Without this, visiting K's constraint again through the template would
+    /// double-count S's variance contribution (adding a spurious contravariant
+    /// occurrence through the keyof reversal).
+    bound_type_params: smallvec::SmallVec<[Atom; 2]>,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -201,6 +209,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
                 crate::recursion::RecursionProfile::Variance,
             ),
             polarity_stack: vec![true], // Start with positive (covariant) polarity
+            bound_type_params: smallvec::SmallVec::new(),
         }
     }
 
@@ -448,16 +457,22 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             self.add_occurrence(current_polarity);
         }
 
-        // Also check constraint (at current polarity)
-        if let Some(constraint) = info.constraint {
-            let current_polarity = self.get_current_polarity();
-            self.visit_with_polarity(constraint, current_polarity);
-        }
+        // Skip constraint/default for bound type parameters (mapped type iteration
+        // variables like K in `{ [K in keyof S]: S[K] }`). Their constraints are
+        // already accounted for by visit_mapped visiting mapped.constraint directly.
+        let is_bound = self.bound_type_params.contains(&info.name);
+        if !is_bound {
+            // Also check constraint (at current polarity)
+            if let Some(constraint) = info.constraint {
+                let current_polarity = self.get_current_polarity();
+                self.visit_with_polarity(constraint, current_polarity);
+            }
 
-        // Default type (at current polarity)
-        if let Some(default) = info.default {
-            let current_polarity = self.get_current_polarity();
-            self.visit_with_polarity(default, current_polarity);
+            // Default type (at current polarity)
+            if let Some(default) = info.default {
+                let current_polarity = self.get_current_polarity();
+                self.visit_with_polarity(default, current_polarity);
+            }
         }
     }
 
@@ -615,6 +630,40 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
         }
 
+        // Homomorphic mapped types with non-identity templates need structural
+        // fallback. For identity mapped types (`{ [K in keyof S]: S[K] }`), the
+        // variance is purely covariant and reliable. But for non-identity templates
+        // like `{ [K in keyof S]: Type<S[K]> }`, the template may introduce
+        // contravariant positions (e.g., Type<A> with A in function parameter
+        // position), making the variance invariant. However, the STRUCTURAL result
+        // can still be compatible: `ToA<{x:n}>` is assignable to `ToA<{}>`
+        // because `ToA<{}>` evaluates to `{}` (no keys, so structurally empty).
+        //
+        // This matches tsc's variance probing behavior: when probing gives
+        // unreliable results for complex mapped types, tsc falls through to
+        // structural comparison rather than definitively rejecting.
+        {
+            use crate::types::TypeData;
+            if let Some(TypeData::KeyOf(source)) = self.computer.db.lookup(mapped.constraint) {
+                // Check if the template is identity: T[K] where T is the keyof source
+                // and K is the iteration variable.
+                let is_identity = if let Some(TypeData::IndexAccess(obj, idx)) =
+                    self.computer.db.lookup(mapped.template)
+                {
+                    obj == source
+                        && matches!(
+                            self.computer.db.lookup(idx),
+                            Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name
+                        )
+                } else {
+                    false
+                };
+                if !is_identity {
+                    self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                }
+            }
+        }
+
         // Type parameter constraint: check if it's our target
         if mapped.type_param.name == self.target_param {
             // The iteration variable K itself doesn't contribute to variance
@@ -624,6 +673,15 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Constraint (K in keyof T) is CONTRAVARIANT with respect to T
         self.visit_with_polarity(mapped.constraint, !current_polarity);
 
+        // Mark the iteration variable K as bound. When visiting the template,
+        // encountering K should NOT trigger visiting K's constraint again —
+        // the constraint is already accounted for above. Without this,
+        // `{ [K in keyof S]: S[K] }` would give S an invariant variance
+        // because K's constraint `keyof S` would add a spurious contravariant
+        // contribution through the keyof reversal.
+        let iter_var_name = mapped.type_param.name;
+        self.bound_type_params.push(iter_var_name);
+
         // Template type is COVARIANT with respect to T.
         self.visit_with_polarity(mapped.template, current_polarity);
 
@@ -631,6 +689,9 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         if let Some(name_type) = mapped.name_type {
             self.visit_with_polarity(name_type, current_polarity);
         }
+
+        // Remove the bound variable
+        self.bound_type_params.pop();
     }
 
     /// Index access: both object and key are at current polarity.
