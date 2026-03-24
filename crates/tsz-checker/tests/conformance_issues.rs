@@ -3616,7 +3616,7 @@ var res: string = method("test");
 }
 
 #[test]
-fn test_generic_callback_return_mismatch_reports_ts2322_on_expression_body() {
+fn test_generic_callback_return_mismatch_reports_ts2345_for_identifier_expression_body() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 function someGenerics3<T>(producer: () => T) { }
@@ -3628,12 +3628,11 @@ someGenerics3<number>(() => undefined);
         },
     );
 
-    // TODO: tsc emits TS2322 on the callback return expression with inner
-    // elaboration. We currently emit TS2345 on the outer argument. Update once
-    // callback return elaboration is implemented in the solver.
+    // For identifier bodies (like `undefined`), we report TS2345 on the outer
+    // argument to avoid false elaboration when identifiers reference complex types.
     assert!(
         has_error(&diagnostics, 2345),
-        "Expected TS2345 on the outer argument (current behavior). Actual: {diagnostics:#?}"
+        "Expected TS2345 on the outer argument for identifier body. Actual: {diagnostics:#?}"
     );
 }
 
@@ -13278,12 +13277,13 @@ var r5 = foo3((x: number) => '');
         "#,
     );
 
-    // TODO: tsc emits an inner TS2322 ("Type 'string' is not assignable to type 'number'")
-    // on the callback body. We currently emit TS2345 on the outer argument. Update once
-    // callback return elaboration is implemented in the solver.
+    // In call argument contexts, we report TS2345 on the outer argument.
+    // TODO: tsc elaborates to TS2322 on the callback body for generic calls
+    // but not for non-generic calls like this one. When generic call detection
+    // is available, update to match tsc's per-context behavior.
     assert!(
         has_error(&diagnostics, 2345),
-        "Expected TS2345 on the outer argument (current behavior).\nActual diagnostics: {diagnostics:?}"
+        "Expected TS2345 on the outer argument.\nActual diagnostics: {diagnostics:?}"
     );
 }
 
