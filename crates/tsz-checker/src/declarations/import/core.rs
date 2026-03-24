@@ -1703,22 +1703,74 @@ impl<'a> CheckerState<'a> {
                             })
                     })
                 } {
+                    // Check if there are any type-only default exports (like
+                    // `type Bar = {}; export default Bar`). When present, tsc
+                    // emits both TS2528 (for ALL) and TS2323 (for value-level only).
+                    // Without type-only exports, tsc emits only TS2323.
+                    let has_type_only_default = export_default_indices.iter().any(|&idx| {
+                        self.ctx
+                            .arena
+                            .get_export_decl_at(idx)
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                            .is_some_and(|c| {
+                                if c.kind != SyntaxKind::Identifier as u16 {
+                                    return false;
+                                }
+                                let ed = self.ctx.arena.get_export_decl_at(idx);
+                                let clause_idx = ed.map(|ed| ed.export_clause).unwrap_or(idx);
+                                if let Some(name) = self.node_text(clause_idx)
+                                    && let Some(sym_id) =
+                                        self.resolve_name_at_node(&name, clause_idx)
+                                    && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                                {
+                                    return !sym.has_any_flags(symbol_flags::VALUE);
+                                }
+                                false
+                            })
+                    });
+                    if has_type_only_default {
+                        // TS2528 for ALL default exports when type-only exports present.
+                        for &export_idx in &export_default_indices {
+                            let anchor = self.get_default_export_anchor(export_idx);
+                            self.error_at_node(
+                                anchor,
+                                diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                                diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                            );
+                        }
+                    }
+                    // TS2323 for value-level exports only (skip type-only identifiers).
                     for &export_idx in &export_default_indices {
-                        // For expression-style exports, anchor at the export
-                        // statement (col 1), not the expression (col 16).
                         let default_anchor = self.get_default_export_anchor(export_idx);
-                        let is_expr = self
+                        let clause_node = self
                             .ctx
                             .arena
                             .get_export_decl_at(export_idx)
-                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
-                            .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16);
-                        let anchor = if is_expr { export_idx } else { default_anchor };
-                        self.error_at_node(
-                            anchor,
-                            "Cannot redeclare exported variable 'default'.",
-                            diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-                        );
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause));
+                        let is_type_only_identifier = clause_node.is_some_and(|c| {
+                            if c.kind != SyntaxKind::Identifier as u16 {
+                                return false;
+                            }
+                            let ed = self.ctx.arena.get_export_decl_at(export_idx);
+                            let clause_idx = ed.map(|ed| ed.export_clause).unwrap_or(export_idx);
+                            if let Some(name) = self.node_text(clause_idx)
+                                && let Some(sym_id) = self.resolve_name_at_node(&name, clause_idx)
+                                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                            {
+                                return !sym.has_any_flags(symbol_flags::VALUE);
+                            }
+                            false
+                        });
+                        if !is_type_only_identifier {
+                            let is_expr = clause_node
+                                .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16);
+                            let anchor = if is_expr { export_idx } else { default_anchor };
+                            self.error_at_node(
+                                anchor,
+                                "Cannot redeclare exported variable 'default'.",
+                                diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                            );
+                        }
                     }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
