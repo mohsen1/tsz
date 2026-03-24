@@ -1336,6 +1336,12 @@ impl<'a> CheckerState<'a> {
                                         // re-typing so it isn't silently dropped.
                                         || diag.code
                                             == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+                                        // TS2872/TS2873 (always truthy/falsy) are purely
+                                        // syntactic facts, not speculative results.
+                                        || diag.code
+                                            == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY
+                                        || diag.code
+                                            == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY
                                 });
                                 self.ctx.rebuild_emitted_diagnostics_from_current();
                                 self.compute_single_call_argument_type(
