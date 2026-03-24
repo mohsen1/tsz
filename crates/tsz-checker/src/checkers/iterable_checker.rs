@@ -1136,8 +1136,8 @@ impl<'a> CheckerState<'a> {
             for prop in &shape.properties {
                 if prop.name == return_atom {
                     // Found `return` property in the shape
-                    if prop.is_method {
-                        return true; // It's a method - valid
+                    if prop.is_method || prop.optional {
+                        return true; // It's a method or optional (from Iterator interface) - valid
                     }
                     // Check if the property type is callable
                     if function_shape_for_type(self.ctx.types, prop.type_id).is_some() {
@@ -1150,10 +1150,15 @@ impl<'a> CheckerState<'a> {
                     }
                     // Also check resolved type
                     let resolved = self.resolve_lazy_type(prop.type_id);
-                    if resolved != prop.type_id
-                        && function_shape_for_type(self.ctx.types, resolved).is_some()
-                    {
-                        return true;
+                    if resolved != prop.type_id {
+                        if function_shape_for_type(self.ctx.types, resolved).is_some() {
+                            return true;
+                        }
+                        if let Some(sigs) = call_signatures_for_type(self.ctx.types, resolved)
+                            && !sigs.is_empty()
+                        {
+                            return true;
+                        }
                     }
                     // `return` exists in the shape but is not callable - emit TS2767
                     self.emit_ts2767_return_not_method(error_node);
