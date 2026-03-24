@@ -248,11 +248,14 @@ impl<'a> CheckerState<'a> {
         };
 
         decl_idx.is_some()
-            && self
-                .ctx
-                .arena
-                .get(decl_idx)
-                .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            && self.ctx.arena.get(decl_idx).is_some_and(|node| {
+                // `import X = require(...)` or `import X = A.B.C`
+                node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    // `import * as X from "..."` — namespace import creates a
+                    // namespace-like binding usable as a qualified type anchor
+                    // (e.g., `X.SomeType`)
+                    || node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+            })
     }
 
     /// Resolve an identifier node to its symbol ID.
