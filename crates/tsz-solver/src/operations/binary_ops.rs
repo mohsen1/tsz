@@ -1014,7 +1014,9 @@ impl<'a> BinaryOpEvaluator<'a> {
             // TypeQuery (typeof expr), deferred types (generic applications, lazy refs,
             // conditionals) — try to evaluate to the underlying type. If they resolve
             // to a concrete type, check it recursively. If they remain unresolved
-            // (generic context), accept conservatively to avoid false TS2464 positives.
+            // (generic context), only conservatively accept when deferring is allowed
+            // (e.g., mapped type constraints). For computed property names, unresolved
+            // types like interface references (e.g., Symbol) are not valid key types.
             Some(
                 TypeData::TypeQuery(_)
                 | TypeData::Application(_)
@@ -1024,9 +1026,14 @@ impl<'a> BinaryOpEvaluator<'a> {
                 let evaluated = self.interner.evaluate_type(type_id);
                 if evaluated != type_id {
                     self.is_valid_key_type_impl(evaluated, defer_unresolved)
-                } else {
+                } else if defer_unresolved {
                     // Unresolvable in generic context — conservatively accept
                     true
+                } else {
+                    // In concrete context (computed property names), unresolved types
+                    // are not valid key types. E.g., Symbol interface is Lazy(DefId)
+                    // that doesn't evaluate to a primitive key type.
+                    false
                 }
             }
             // For indexed access, try resolving first. If it remains unresolved in generic
