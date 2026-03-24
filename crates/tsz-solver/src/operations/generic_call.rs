@@ -770,11 +770,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .iter()
                     .all(|var| round1_direct_seed_vars.contains(var));
             if !all_return_vars_covered {
+                // Match tsc's inferTypes direction: infer FROM the contextual
+                // type (source) TO the return type with placeholders (target).
+                // This adds CANDIDATES (lower bounds) to inference variables,
+                // matching tsc's behavior where return-context inference produces
+                // lower bound candidates that the resolver can use directly.
+                // The previous direction (placeholder as source → upper bound)
+                // caused the constraint check to compare evaluated Object types
+                // against unevaluated Lazy constraint types, which fails for
+                // complex DOM inheritance chains (e.g., HTMLElement vs Element).
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,
-                    return_type_with_placeholders, // source
-                    ctx_type,                      // target
+                    ctx_type,                      // source (contextual type)
+                    return_type_with_placeholders, // target (return type with placeholders)
                     crate::types::InferencePriority::ReturnType,
                 );
 

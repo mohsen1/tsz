@@ -425,10 +425,46 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     computed
                 };
 
+                // Collect source members that matched fixed targets, so we can
+                // build a reduced target for the remaining (placeholder) members.
+                // This matches tsc's inferFromMatchingTypes: after pairing off
+                // identical members (e.g., `null` ↔ `null`), the remaining source
+                // placeholders are inferred against the remaining target members.
+                // Without this reduction, `T | null` against `HTMLElement | null`
+                // would infer T = HTMLElement | null (wrong) instead of T = HTMLElement.
+                let matched_fixed: FxHashSet<TypeId> = s_members
+                    .iter()
+                    .copied()
+                    .filter(|member| fixed_targets.contains(member))
+                    .collect();
+                let has_unmatched_source = s_members
+                    .iter()
+                    .any(|member| !fixed_targets.contains(member));
+
+                // Build a reduced target union: remove matched fixed members.
+                // Only do this when there are unmatched source members (placeholders)
+                // that need inference from the remaining target members.
+                let reduced_target = if !matched_fixed.is_empty() && has_unmatched_source {
+                    let remaining_targets: Vec<TypeId> = t_members_list
+                        .iter()
+                        .copied()
+                        .filter(|member| !matched_fixed.contains(member))
+                        .collect();
+                    if remaining_targets.is_empty() {
+                        target // No reduction possible, use full target
+                    } else if remaining_targets.len() == t_members_list.len() {
+                        target // Nothing was removed, use full target
+                    } else {
+                        crate::utils::union_or_single(self.interner, remaining_targets)
+                    }
+                } else {
+                    target
+                };
+
                 for &member in s_members.iter() {
                     // Skip source members that directly match a fixed target member
                     if !fixed_targets.contains(&member) {
-                        self.constrain_types(ctx, var_map, member, target, priority);
+                        self.constrain_types(ctx, var_map, member, reduced_target, priority);
                     }
                 }
             }
