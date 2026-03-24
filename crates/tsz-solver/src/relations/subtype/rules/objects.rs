@@ -437,9 +437,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // TypeId::NONE is a sentinel for "no distinct write type" (used by readonly
         // properties from the lowering pass). Treat NONE as "same as type_id" so
         // readonly properties don't falsely trigger the split-accessor write check.
-        let has_split_accessor =
-            (source.write_type != TypeId::NONE && source.write_type != source.type_id)
-                || (target.write_type != TypeId::NONE && target.write_type != target.type_id);
+        let has_split_accessor = (source.write_type != TypeId::NONE
+            && source.write_type != source.type_id)
+            || (target.write_type != TypeId::NONE && target.write_type != target.type_id);
 
         if !target.readonly && has_split_accessor {
             let source_write = self.bind_property_receiver_this(
@@ -1153,7 +1153,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Get the effective write type of an optional property.
     /// Falls back to `type_id` when `write_type` is `NONE` (readonly sentinel).
     pub(crate) fn optional_property_write_type(&self, prop: &PropertyInfo) -> TypeId {
-        let write = if prop.write_type == TypeId::NONE { prop.type_id } else { prop.write_type };
+        let write = if prop.write_type == TypeId::NONE {
+            prop.type_id
+        } else {
+            prop.write_type
+        };
         if prop.optional && !self.exact_optional_property_types {
             self.interner.union2(write, TypeId::UNDEFINED)
         } else {
