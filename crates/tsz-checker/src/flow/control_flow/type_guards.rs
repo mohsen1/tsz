@@ -326,8 +326,12 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 return Some((TypeGuard::Instanceof(instance_type), target, false));
             }
-            // If we can't get the instance type, still return a guard with OBJECT as fallback
-            return Some((TypeGuard::Instanceof(TypeId::OBJECT), target, false));
+            // If we can't resolve the constructor to a specific instance type,
+            // don't emit a type guard. Without knowing the constructor, we can't
+            // narrow on the false branch (we don't know what to exclude), and on
+            // the true branch any non-primitive narrowing would be too aggressive
+            // when the constructor might not be Object.
+            return None;
         }
 
         // Check for in operator: "prop" in x

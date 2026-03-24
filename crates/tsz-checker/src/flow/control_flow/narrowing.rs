@@ -715,15 +715,23 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Extract instance type from constructor expression (AST -> TypeId)
-        let instance_type = self
-            .instance_type_from_constructor(bin.right)
-            .unwrap_or(TypeId::OBJECT);
+        let instance_type = self.instance_type_from_constructor(bin.right);
 
-        // TypeScript narrows `any` via instanceof for specific constructors
-        // (e.g. Error, Date) but NOT for Function or Object.
-        // Note: This check handles direct calls to narrow_by_instanceof.
-        // The flow-graph path (type_guards.rs) delegates to the solver's
-        // narrow_type which has its own Object/Function check.
+        // When the constructor can't be resolved to a specific instance type:
+        // - True branch: value passed instanceof, so it must be non-primitive.
+        //   Use TypeId::OBJECT as a conservative narrowing target.
+        // - False branch: we don't know which constructor was tested, so we
+        //   can't exclude any types. Return source unchanged.
+        let instance_type = match instance_type {
+            Some(t) => t,
+            None => {
+                if is_true_branch {
+                    TypeId::OBJECT
+                } else {
+                    return type_id;
+                }
+            }
+        };
 
         // Delegate to solver via unified narrow_type API
         let env_borrow;
@@ -734,10 +742,6 @@ impl<'a> FlowAnalyzer<'a> {
             self.make_narrowing_context()
         };
 
-        // Delegate all type algebra to solver - it handles all fallback cases:
-        // 1. Instance type narrowing
-        // 2. Intersection fallback for interface vs class
-        // 3. Object-like filtering for primitives
         narrowing.narrow_type(
             type_id,
             &TypeGuard::Instanceof(instance_type),

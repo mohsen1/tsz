@@ -487,48 +487,11 @@ impl<'a> NarrowingContext<'a> {
         let resolved_source = self.resolve_type(source_type);
         let resolved_instance = self.resolve_type(instance_type);
 
-        // When the instance type is a union (e.g., `A | B` from `typeof A | typeof B`),
-        // we cannot narrow in the false branch. At runtime, the constructor is ONE specific
-        // type from the union, so `!(x instanceof b)` where `b: typeof A | typeof B` doesn't
-        // tell us which constructor was checked. We can't exclude any member of the source.
-        if union_list_id(self.db, resolved_instance).is_some() {
-            return source_type;
-        }
-
-        // When the instance type is a union (e.g., `A | B` from `instanceof (A | B)`),
-        // don't narrow on the false branch. A union constructor can't provide definitive
-        // information about what types are excluded — the value might still be any of the
-        // source union's members. This matches tsc's behavior where `!(x instanceof b)`
-        // with `b: typeof A | typeof B` does not narrow `x`.
-        if union_list_id(self.db, instance_type).is_some() {
-            return source_type;
-        }
-
-        // When the instance type is itself a union (e.g., the RHS of instanceof was
-        // `typeof A | typeof B`), we can't narrow in the false branch. At runtime the
-        // RHS variable holds a single constructor, so `!(x instanceof b)` only tells
-        // us x is not an instance of whichever constructor b happens to be — we don't
-        // know which one. The correct behavior is to keep the source type unchanged.
-        if union_list_id(self.db, self.resolve_type(instance_type)).is_some() {
-            trace!("instanceof false: instance type is a union, no narrowing");
-            return source_type;
-        }
-
-        // When the instance type is itself a union (e.g., the RHS of instanceof was
-        // `typeof A | typeof B`), we can't narrow in the false branch. At runtime the
-        // RHS variable holds a single constructor, so `!(x instanceof b)` only tells
-        // us x is not an instance of whichever constructor b happens to be — we don't
-        // know which one. The correct behavior is to keep the source type unchanged.
-        if union_list_id(self.db, self.resolve_type(instance_type)).is_some() {
-            trace!("instanceof false: instance type is a union, no narrowing");
-            return source_type;
-        }
-
         // When the instance type is a union (e.g., from `a instanceof b` where b has
         // type `typeof A | typeof B`), the false branch cannot narrow because we
         // can't determine which specific constructor was tested at runtime.
         // Return the source unchanged, matching tsc's behavior.
-        if union_list_id(self.db, self.resolve_type(instance_type)).is_some() {
+        if union_list_id(self.db, resolved_instance).is_some() {
             return source_type;
         }
 
