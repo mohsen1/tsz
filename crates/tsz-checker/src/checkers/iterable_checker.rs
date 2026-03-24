@@ -1125,46 +1125,43 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the property was found and checked (either valid or error emitted).
     /// Returns false if the property wasn't found (should try next candidate type).
     fn check_return_property_on_type(&mut self, type_id: TypeId, error_node: NodeIndex) -> bool {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        // Use property access to find the `return` property
-        let return_result = self.resolve_property_access_with_env(type_id, "return");
-        let return_type = match &return_result {
-            PropertyAccessResult::Success { type_id, .. } => *type_id,
-            PropertyAccessResult::PossiblyNullOrUndefined {
-                property_type: Some(t),
-                ..
-            } => *t,
-            _ => return false, // No `return` property found
-        };
-
-        // If property access returns any/unknown/error, we can't determine callability
-        if return_type == TypeId::ANY
-            || return_type == TypeId::UNKNOWN
-            || return_type == TypeId::ERROR
-        {
-            return false;
+        // Only check via object shape — this is the reliable path for class instances
+        // where the return property is declared directly (e.g., `return = 0`).
+        // Property access can return confusing results for built-in iterator types
+        // where `return` is a valid method but not recognized as callable by our queries.
+        let kind = classify_full_iterable_type(self.ctx.types, type_id);
+        if let FullIterableTypeKind::Object(shape_id) = kind {
+            let return_atom = self.ctx.types.intern_string("return");
+            let shape = self.ctx.types.object_shape(shape_id);
+            for prop in &shape.properties {
+                if prop.name == return_atom {
+                    // Found `return` property in the shape
+                    if prop.is_method {
+                        return true; // It's a method - valid
+                    }
+                    // Check if the property type is callable
+                    if function_shape_for_type(self.ctx.types, prop.type_id).is_some() {
+                        return true; // Callable - valid
+                    }
+                    if let Some(sigs) = call_signatures_for_type(self.ctx.types, prop.type_id)
+                        && !sigs.is_empty()
+                    {
+                        return true; // Callable - valid
+                    }
+                    // Also check resolved type
+                    let resolved = self.resolve_lazy_type(prop.type_id);
+                    if resolved != prop.type_id
+                        && function_shape_for_type(self.ctx.types, resolved).is_some()
+                    {
+                        return true;
+                    }
+                    // `return` exists in the shape but is not callable - emit TS2767
+                    self.emit_ts2767_return_not_method(error_node);
+                    return true;
+                }
+            }
         }
-
-        // Check if the return property is callable (has function shape or call signatures)
-        if function_shape_for_type(self.ctx.types, return_type).is_some() {
-            return true; // Callable - valid
-        }
-        if let Some(sigs) = call_signatures_for_type(self.ctx.types, return_type)
-            && !sigs.is_empty()
-        {
-            return true; // Callable - valid
-        }
-
-        // Check if the type is a number/string/boolean literal — definitely not callable
-        let resolved = self.resolve_lazy_type(return_type);
-        if function_shape_for_type(self.ctx.types, resolved).is_some() {
-            return true;
-        }
-
-        // `return` exists but is not callable - emit TS2767
-        self.emit_ts2767_return_not_method(error_node);
-        true
+        false
     }
 
     /// Emit TS2767: "The 'return' property of an iterator must be a method."
