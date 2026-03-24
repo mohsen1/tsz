@@ -726,8 +726,7 @@ impl<'a> CheckerState<'a> {
                 num.to_string()
             };
             let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
-            let message =
-                format!("Property '{prop_name}' does not exist on type '{object_str}'.");
+            let message = format!("Property '{prop_name}' does not exist on type '{object_str}'.");
             self.error_at_anchor(
                 expr_idx,
                 DiagnosticAnchorKind::ElementAccessExpr,

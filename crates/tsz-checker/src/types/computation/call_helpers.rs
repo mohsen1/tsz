@@ -1575,8 +1575,7 @@ impl<'a> CheckerState<'a> {
         {
             let result = self.resolve_property_access_with_env(this_type, &property_name);
             if let crate::query_boundaries::common::PropertyAccessResult::Success {
-                type_id,
-                ..
+                type_id, ..
             } = result
                 && type_id == TypeId::ANY
             {

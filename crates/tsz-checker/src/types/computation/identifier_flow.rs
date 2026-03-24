@@ -214,7 +214,10 @@ impl<'a> CheckerState<'a> {
             parent_node.kind,
             IF_STATEMENT | WHILE_STATEMENT | DO_STATEMENT
         ) || (parent_node.kind == CONDITIONAL_EXPRESSION
-            && self.ctx.arena.get_conditional_expr(parent_node)
+            && self
+                .ctx
+                .arena
+                .get_conditional_expr(parent_node)
                 .is_some_and(|cond| cond.condition == idx))
     }
 
