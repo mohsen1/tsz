@@ -1482,6 +1482,14 @@ impl TypeInterner {
                 )
             });
             if has_object_types {
+                // TS2590: Signal to the checker that a union type is too complex.
+                // tsc's removeSubtypes bails at ~1M pairwise comparisons (n >= 1001).
+                // We skip subtype reduction for large object unions but still need
+                // to notify the checker so it can emit the diagnostic.
+                let pairwise = (flat.len() as u64) * (flat.len() as u64 - 1);
+                if pairwise >= 1_000_000 {
+                    self.set_union_too_complex();
+                }
                 return self.normalize_union_literal_only(flat);
             }
         }
