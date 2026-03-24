@@ -198,19 +198,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // constituents, unknown is assignable. This is also handled by the compat
         // layer (empty_object_with_nullish_target), but the subtype layer needs
         // it too for nested checks that bypass compat.
-        if source == TypeId::UNKNOWN {
-            if let Some(members) = union_list_id(self.interner, target) {
-                let member_list = self.interner.type_list(members);
-                let empty_obj = self.interner.object(vec![]);
-                let parts = [TypeId::NULL, TypeId::UNDEFINED, empty_obj];
-                let all_ok = parts.iter().all(|&part| {
-                    member_list
-                        .iter()
-                        .any(|&member| part == member || self.check_subtype(part, member).is_true())
-                });
-                if all_ok {
-                    return SubtypeResult::True;
-                }
+        if source == TypeId::UNKNOWN
+            && let Some(members) = union_list_id(self.interner, target)
+        {
+            let member_list = self.interner.type_list(members);
+            let empty_obj = self.interner.object(vec![]);
+            let parts = [TypeId::NULL, TypeId::UNDEFINED, empty_obj];
+            let all_ok = parts.iter().all(|&part| {
+                member_list
+                    .iter()
+                    .any(|&member| part == member || self.check_subtype(part, member).is_true())
+            });
+            if all_ok {
+                return SubtypeResult::True;
             }
         }
 
