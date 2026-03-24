@@ -1365,6 +1365,29 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
             return TypeId::ERROR;
         }
+        // TS2663: Check instance member suggestion — "Did you mean 'this.X'?"
+        // When an unresolved name matches an instance member of the enclosing class
+        // AND we're in a non-static context where `this` refers to the class instance,
+        // suggest 'this.X'. Don't suggest when:
+        // - We're in a static method (this refers to constructor)
+        // - We're inside a regular function expression (this is rebound)
+        if let Some(ref class_info) = self.ctx.enclosing_class.clone()
+            && !class_info.in_static_member
+            && self.is_instance_member(&class_info.member_nodes, name)
+            && !self.has_regular_function_boundary_to_class(idx)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
+                &[name],
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
+            );
+            return TypeId::ERROR;
+        }
         // TS2524: 'await' in default parameter
         if name == "await" && self.is_in_default_parameter(idx) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -1437,6 +1460,45 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
         }
+    }
+
+    /// Check if there's a regular function expression (non-arrow) between `idx`
+    /// and the enclosing class declaration. Regular functions rebind `this`, so
+    /// `this.member` wouldn't refer to the class instance. Arrow functions and
+    /// method declarations preserve the outer `this`.
+    fn has_regular_function_boundary_to_class(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = idx;
+        let mut guard = 0;
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Hit the class boundary — no regular function in between
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return false;
+                }
+                // Regular function expression rebinds `this`
+                if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                {
+                    return true;
+                }
+                // Arrow functions and method declarations are fine (preserve `this`)
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        false
     }
 
     /// Returns `true` if any cross-file binder provides a non-UMD VALUE binding for

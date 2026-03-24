@@ -279,6 +279,21 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check whether the enclosing class has a non-static (instance) member with
+    /// the given name. Used for TS2663 "Did you mean the instance member 'this.X'?"
+    pub(crate) fn is_instance_member(&self, member_nodes: &[NodeIndex], name: &str) -> bool {
+        for &member_idx in member_nodes {
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                if symbol.escaped_name == name && (symbol.flags & symbol_flags::STATIC == 0) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Find an abstract instance property/accessor in the current class chain and
     /// return the declaring class name for TS2715 reporting.
     pub(crate) fn find_abstract_property_declaring_class(
