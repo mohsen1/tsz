@@ -1839,16 +1839,18 @@ impl<'a> CheckerState<'a> {
                                     let Some(other_arena) = all_arenas.get(file_idx) else {
                                         continue;
                                     };
-                                    // Skip JS files — tsc doesn't type-check JS files without
-                                    // checkJs, so they don't participate in cross-file TS2403.
-                                    let other_is_js =
-                                        other_arena.source_files.first().is_some_and(|sf| {
+                                    // Skip non-checked JS files — tsc doesn't type-check
+                                    // JS files without checkJs, so they don't participate
+                                    // in cross-file TS2403. When checkJs is enabled, JS
+                                    // files are type-checked and DO participate.
+                                    let other_is_unchecked_js = !compiler_options.check_js
+                                        && other_arena.source_files.first().is_some_and(|sf| {
                                             sf.file_name.ends_with(".js")
                                                 || sf.file_name.ends_with(".jsx")
                                                 || sf.file_name.ends_with(".mjs")
                                                 || sf.file_name.ends_with(".cjs")
                                         });
-                                    if other_is_js {
+                                    if other_is_unchecked_js {
                                         continue;
                                     }
                                     let Some(other_sym) = other_binder.get_symbol(other_sym_id)
