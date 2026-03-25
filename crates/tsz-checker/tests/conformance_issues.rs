@@ -10212,6 +10212,35 @@ fn compile_named_files_get_diagnostics_with_lib_and_options(
 }
 
 #[test]
+fn test_array_buffer_view_uses_lib_default_type_argument_without_ts2314() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &[(
+            "/test.ts",
+            r#"
+var obj: Object;
+if (ArrayBuffer.isView(obj)) {
+    var ab: ArrayBufferView = obj;
+}
+"#,
+        )],
+        "/test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2314),
+        "Expected ArrayBufferView to use its lib default type argument without TS2314. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_namespace_import_from_umd_module_includes_global_and_module_augmentations() {
     let files = [
         (
