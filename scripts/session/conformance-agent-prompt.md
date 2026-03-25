@@ -109,7 +109,11 @@ Codes: TS2322=103, TS2345=69, TS7006=23, TS2339=19, TS2769=13
 Codes: TS2339=84, TS2304=28, TS2322=18, TS2345=7, TS7053=6
 **Why**: Property lookup diverges from tsc on merged shapes, symbols, and partial member presence.
 
-### 6. parser-recovery — Diagnostic selection (73 tests)
+### 6. module-resolution — Node/module-resolution/declaration-emit coordination
+Codes: TS2307, TS2835, TS2792, TS1479, TS2883, TS5107
+**Why**: The resolver already passes many Node/package-exports cases, so the remaining failures are clustered around error selection and mode semantics: package self-name and exports edges, import mode and import attributes, driver-provided ESM/CJS facts, and declaration-emit coordination. Treat this as its own lane, not as big3/core semantics work.
+
+### 7. parser-recovery — Diagnostic selection (73 tests)
 Codes: TS1005=40, TS1109=23, TS1003=22, TS1128=16, TS1434=8
 **Why**: Catch-all recovery emits the wrong TS1xxx code and cascades into secondary parser noise.
 
@@ -137,6 +141,7 @@ Top failure areas by opportunity:
 - Fixing **solver intersection handling** aids typeRelationships and compiler areas
 - Better **contextual typing transport** aids compiler, jsx, and jsdoc areas
 - More complete **module resolution** aids compiler, node, and salsa areas
+- Better **resolver/driver/declaration-emit coordination** aids compiler, node, declaration emit, and symlink/package tests without touching big3 relation logic
 
 ---
 
@@ -164,6 +169,7 @@ python3 scripts/conformance/query-conformance.py --extra-code TS2339
 # Root-cause campaigns (systemic issues)
 python3 scripts/conformance/query-conformance.py --campaigns
 python3 scripts/conformance/query-conformance.py --campaign big3
+python3 scripts/conformance/query-conformance.py --campaign module-resolution
 
 # False positives (we emit errors tsc doesn't)
 python3 scripts/conformance/query-conformance.py --false-positives

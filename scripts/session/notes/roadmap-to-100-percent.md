@@ -73,32 +73,38 @@ Two parallel inference engines (`infer_from_types` and `constrain_types`) with d
 - **7D**: TS2686 (UMD global access) entirely unimplemented
 - **7E**: Package identity deduplication absent
 
-#### Pillar 8: Control-Flow Narrowing (430 tests impacted)
-- **8A**: Evolving array type TS7005/TS7034 not emitted
-- **8B**: `in` operator TS2638 validation missing
-- **8C**: Assertion function validation (TS2775/TS2776) missing
-- **8D**: Correlated union narrowing fails for generic type params
-- **8E**: Narrowing to `never` from chained ||/ternary incomplete
+#### Pillar 8: Node/module-resolution/declaration-emit coordination (separate lane)
+- **8A**: Resolver diagnostic selection at the checker boundary still diverges on TS2307 vs TS2792 vs TS2834/TS2835
+- **8B**: Package self-name and `exports` edge cases need resolver+driver coordination, not big3 semantics work
+- **8C**: `resolution-mode` / import attributes and per-file ESM-vs-CJS facts are still partially checker-owned fallback heuristics
+- **8D**: Declaration emit regressions such as TS2883/TS5107-style cases depend on preserving resolution/mode facts through emit, not on subtype unification
 
-#### Pillar 9: TS2322 False Positives (60 tests)
-- **9A**: Module package deduplication (8 tests)
-- **9B**: Reverse-mapped/variance probing (8 tests)
-- **9C**: Generic call return-type inference (9 tests)
-- **9D**: Generator contextual return against union (4 tests)
+#### Pillar 9: Control-Flow Narrowing (430 tests impacted)
+- **9A**: Evolving array type TS7005/TS7034 not emitted
+- **9B**: `in` operator TS2638 validation missing
+- **9C**: Assertion function validation (TS2775/TS2776) missing
+- **9D**: Correlated union narrowing fails for generic type params
+- **9E**: Narrowing to `never` from chained ||/ternary incomplete
 
-#### Pillar 10: Declaration Emit (501 DTS tests)
-- **10A**: TypePrinter falls back to `any`/`{}` for complex inferred types (~50-100 tests)
-- **10B**: `strictNullChecks` not plumbed to DTS emitter (~30-50 tests)
-- **10C**: `import("path").Type` synthesis missing (~20-40 tests)
+#### Pillar 10: TS2322 False Positives (60 tests)
+- **10A**: Module package deduplication (8 tests)
+- **10B**: Reverse-mapped/variance probing (8 tests)
+- **10C**: Generic call return-type inference (9 tests)
+- **10D**: Generator contextual return against union (4 tests)
 
-#### Pillar 11: JS Emit (2,177 tests)
+#### Pillar 11: Declaration Emit (501 DTS tests)
+- **11A**: TypePrinter falls back to `any`/`{}` for complex inferred types (~50-100 tests)
+- **11B**: `strictNullChecks` not plumbed to DTS emitter (~30-50 tests)
+- **11C**: `import("path").Type` synthesis missing (~20-40 tests)
+
+#### Pillar 12: JS Emit (2,177 tests)
 - Comment preservation: 811 tests
 - Async/generator helpers: 167 tests
 - Decorator metadata: 164 tests
 - System module format: 113 tests
 - Import/export helpers: 62 tests
 
-#### Pillar 12: Missing Diagnostic Codes (~50 codes never emitted)
+#### Pillar 13: Missing Diagnostic Codes (~50 codes never emitted)
 TS2686, TS2883, TS8030, TS2498, TS2775, TS2776, TS7005, TS7034, etc.
 
 ## Strategy
@@ -113,10 +119,13 @@ Unify inference engines, add tuple rest, fix callable arity, expand Lazy types.
 LibraryManagedAttributes, generic JSX, parser recovery, typedef cross-module resolution,
 property/write semantics, and JS open-world module behavior.
 
-### Phase 4: Declaration Emit (target: +300 tests)
+### Phase 4: Node/module-resolution/declaration-emit coordination (target: +75 to +125 tests)
+Resolver diagnostic ownership, package exports/self-name semantics, import mode plumbing, per-file ESM/CJS facts, and declaration-emit cases that depend on those facts.
+
+### Phase 5: Declaration Emit (target: +300 tests)
 TypePrinter accuracy, strictNullChecks plumbing, import type synthesis.
 
-### Phase 5: Long Tail (target: remaining ~700 tests)
+### Phase 6: Long Tail (target: remaining ~700 tests)
 Individual diagnostic codes, narrowing edge cases, JS emit transforms.
 
 ## Key Architectural Insight

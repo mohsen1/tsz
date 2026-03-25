@@ -175,6 +175,32 @@ campaigns:
     estimated_impact: 252 tests
     difficulty: hard
 
+  module-resolution:
+    mission: >
+      Fix NodeNext/package-exports/import-mode/declaration-emit coordination.
+      This lane owns resolver diagnostics, driver-provided per-file mode facts,
+      package self-name and exports semantics, and declaration-emit behaviors
+      that depend on those facts. It is not the same as big3/core semantics work.
+    focus_codes: [TS2307, TS2835, TS2792, TS1479, TS2883, TS5107]
+    research_command: |
+      python3 scripts/conformance/query-conformance.py --campaign module-resolution
+      python3 scripts/conformance/query-conformance.py --code TS2307
+      python3 scripts/conformance/query-conformance.py --code TS2835
+      ./scripts/conformance/conformance.sh run --filter "node|packageJson|exports|imports|declarationEmit" --verbose --max 20
+    test_filter: "node|nodenext|packageJson|exports|imports|resolutionMode|declarationEmit|symlink"
+    entry_files:
+      - crates/tsz-core/src/module_resolver/
+      - crates/tsz-cli/src/driver/resolution.rs
+      - crates/tsz-cli/src/driver/check.rs
+      - crates/tsz-checker/src/declarations/import/
+      - crates/tsz-checker/src/state/type_resolution/module.rs
+    coordinate_on:
+      - crates/tsz-checker/src/context/mod.rs
+      - crates/tsz-checker/src/context/core.rs
+      - crates/tsz-emitter/src/declaration_emitter/
+    estimated_impact: 60 tests
+    difficulty: medium
+
   # ---------------------------------------------------------------------------
   # DIAGNOSTIC / PARSER CAMPAIGNS (2) — error accuracy
   # ---------------------------------------------------------------------------
