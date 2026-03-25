@@ -337,7 +337,16 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|c| !c.is_declared)
             || self.is_within_non_ambient_class_body(decl_idx);
 
+        // When an identifier is spelled with unicode escapes (e.g., \u0079ield for yield),
+        // TSC treats it as a regular identifier and does NOT emit TS1212/TS1213/TS1214.
+        let name_has_unicode_escape = self
+            .ctx
+            .arena
+            .get(var_decl.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .is_some_and(|ident| ident.original_text.is_some());
         if !is_ambient
+            && !name_has_unicode_escape
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && crate::state_checking::is_strict_mode_reserved_name(name)
