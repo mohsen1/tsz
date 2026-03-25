@@ -1096,6 +1096,24 @@ impl<'a> CheckerState<'a> {
                                 }
                                 continue;
                             }
+                            // When the type argument is an Application type
+                            // (e.g., `Merge2<X>`, `Same<U>`) containing type
+                            // parameters, the base constraint was obtained by
+                            // eagerly evaluating the application with type
+                            // parameter constraints substituted. This may
+                            // produce a concrete type that doesn't accurately
+                            // represent the actual type at instantiation time
+                            // (e.g., mapped types like `{ [P in keyof T]: T[P] }`
+                            // preserve index signatures from T, but the eagerly-
+                            // resolved base may lose this relationship). TSC
+                            // defers constraint checking for such Application
+                            // types to instantiation time.
+                            if query::is_application_type(
+                                self.ctx.types.as_type_database(),
+                                type_arg,
+                            ) {
+                                continue;
+                            }
                             let constraint_resolved = self.resolve_lazy_type(constraint);
                             let mut subst =
                                 crate::query_boundaries::common::TypeSubstitution::new();
