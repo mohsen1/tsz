@@ -947,6 +947,29 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
+    let declaration_arenas: tsz::binder::state::DeclarationArenaMap = program
+        .declaration_arenas
+        .iter()
+        .filter_map(|(&(sym_id, decl_idx), arenas)| {
+            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
+            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
+        })
+        .collect();
+
+    let symbols_with_non_local_declarations: rustc_hash::FxHashSet<tsz::binder::SymbolId> =
+        declaration_arenas.keys().map(|&(sym_id, _)| sym_id).collect();
+
+    let symbol_arenas: rustc_hash::FxHashMap<tsz::binder::SymbolId, Arc<tsz_parser::NodeArena>> =
+        program
+            .symbol_arenas
+            .iter()
+            .filter_map(|(&sym_id, arena)| {
+                let has_non_local_decl = symbols_with_non_local_declarations.contains(&sym_id);
+                (has_non_local_decl || !Arc::ptr_eq(arena, &file.arena))
+                    .then(|| (sym_id, Arc::clone(arena)))
+            })
+            .collect();
+
     let mut file_locals = SymbolTable::new();
 
     if file_idx < program.file_locals.len() {
@@ -977,8 +1000,8 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
-            symbol_arenas: program.symbol_arenas.clone(),
-            declaration_arenas: program.declaration_arenas.clone(),
+            symbol_arenas,
+            declaration_arenas,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
@@ -994,6 +1017,19 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     // Restore is_external_module from BoundFile to preserve per-file state
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
+    binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
+    // Compose semantic defs from the merged program, then overlay the file-local
+    // entries so reconstructed binders preserve the same stable semantic identity
+    // map as the core parallel binder path.
+    let mut composed_semantic_defs = program.semantic_defs.clone();
+    for (sym_id, entry) in &file.semantic_defs {
+        composed_semantic_defs.insert(*sym_id, entry.clone());
+    }
+    binder.semantic_defs = composed_semantic_defs;
+    if let Some(root_scope) = binder.scopes.first() {
+        binder.current_scope = root_scope.table.clone();
+        binder.current_scope_id = tsz::binder::ScopeId(0);
+    }
     // Reconstructed program binders already contain lib symbols remapped into the
     // unified symbol arena, so preserve that invariant instead of falling back to
     // legacy raw-lib lookup paths.

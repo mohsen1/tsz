@@ -151,6 +151,52 @@ fn compile_with_options(
     with_lib_contexts(source, file_name, options)
 }
 
+fn compile_with_libs_for_ts(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib_files = load_lib_files_for_test();
+
+    let mut binder = BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn diagnostics_for_source(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let file_name = "test.ts".to_string();
     let mut parser = ParserState::new(file_name.clone(), source.to_string());
@@ -453,6 +499,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         "test.ts",
         CheckerOptions {
             strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
             ..CheckerOptions::default()
         },
     );
@@ -460,6 +508,14 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2349),
         "generic indexed access into mapped type should be callable, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2344),
+        "generic indexed access into mapped type should preserve the `keyof TypesMap` constraint, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "mapped type object literal handlers should contextually type callback params, got: {diagnostics:?}"
     );
 }
 
@@ -499,6 +555,73 @@ class Test {
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2349),
         "push on mapped type with generic index should be callable, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn mapped_type_generic_indexed_access_full_file_has_no_ts2344_or_ts7006() {
+    let source = r#"
+type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+};
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar' };
+    [1]: { a: 'b' };
+};
+
+type P<T extends keyof TypesMap> = { t: T } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => p.foo,
+    [1]: (p) => p.a,
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2344),
+        "full mapped-type generic indexed-access repro should not emit TS2344, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "full mapped-type generic indexed-access repro should not emit TS7006, got: {diagnostics:?}"
     );
 }
 
