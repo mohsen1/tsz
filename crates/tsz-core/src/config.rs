@@ -1824,6 +1824,25 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS5052: emitDecoratorMetadata requires experimentalDecorators.
+        if option_is_truthy(compiler_opts.get("emitDecoratorMetadata"))
+            && !option_is_truthy(compiler_opts.get("experimentalDecorators"))
+        {
+            let start = find_key_offset_in_source(&stripped, "emitDecoratorMetadata");
+            let key_len = "emitDecoratorMetadata".len() as u32 + 2;
+            let msg = format_message(
+                diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+                &["emitDecoratorMetadata", "experimentalDecorators"],
+            );
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                key_len,
+                msg,
+                diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+            ));
+        }
+
         // TS5053: Option '{0}' cannot be specified with option '{1}'.
         // tsc emits for each conflicting key, pointing at the key's position.
         // The message always names the pair (A, B) regardless of which key is pointed at.
