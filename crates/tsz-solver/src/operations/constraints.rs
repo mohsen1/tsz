@@ -118,6 +118,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
+                // Walk index signatures — e.g., { [x: string]: T } needs T to get `any`
+                if let Some(ref idx) = shape.string_index {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        idx.value_type,
+                        priority,
+                    );
+                }
+                if let Some(ref idx) = shape.number_index {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        idx.value_type,
+                        priority,
+                    );
+                }
             }
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
@@ -137,6 +156,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     shape.return_type,
                     priority,
                 );
+                // Walk type predicate — e.g., `(a: any) => a is T` has T in predicate
+                if let Some(ref pred) = shape.type_predicate {
+                    if let Some(pred_type) = pred.type_id {
+                        self.propagate_type_to_placeholders(
+                            ctx,
+                            var_map,
+                            propagation_type,
+                            pred_type,
+                            priority,
+                        );
+                    }
+                }
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                // Walk both call and construct signatures
+                for sig in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    for param in &sig.params {
+                        self.propagate_type_to_placeholders(
+                            ctx,
+                            var_map,
+                            propagation_type,
+                            param.type_id,
+                            priority,
+                        );
+                    }
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        sig.return_type,
+                        priority,
+                    );
+                }
+                for prop in &shape.properties {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        prop.type_id,
+                        priority,
+                    );
+                }
             }
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
@@ -149,6 +215,54 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
+            }
+            Some(TypeData::Mapped(mapped_id)) => {
+                let mapped = self.interner.mapped_type(mapped_id);
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    mapped.constraint,
+                    priority,
+                );
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    mapped.template,
+                    priority,
+                );
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner.get_conditional(cond_id);
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    cond.check_type,
+                    priority,
+                );
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    cond.extends_type,
+                    priority,
+                );
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    cond.true_type,
+                    priority,
+                );
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    cond.false_type,
+                    priority,
+                );
             }
             Some(TypeData::ReadonlyType(inner)) | Some(TypeData::KeyOf(inner)) => {
                 self.propagate_type_to_placeholders(
