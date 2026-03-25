@@ -512,6 +512,31 @@ impl<'a> CheckerState<'a> {
         props
     }
 
+    fn prototype_define_property_binding(
+        &mut self,
+        arg_nodes: &[NodeIndex],
+        parent_sym: tsz_binder::SymbolId,
+        declaration_order: u32,
+    ) -> Option<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)> {
+        if arg_nodes.len() < 3 {
+            return None;
+        }
+
+        let current_file_idx = self.ctx.current_file_idx;
+        let name =
+            self.constant_define_property_name_in_file(current_file_idx, self.ctx.arena, arg_nodes[1])?;
+        let mut prop = self.define_property_info_from_descriptor(
+            current_file_idx,
+            self.ctx.arena,
+            &name,
+            arg_nodes[2],
+            declaration_order,
+        )?;
+        prop.parent_id = Some(parent_sym);
+        let name_atom = prop.name;
+        Some((name_atom, prop))
+    }
+
     fn collect_nested_arrow_this_properties(
         &mut self,
         body_idx: NodeIndex,
