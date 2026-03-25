@@ -1320,9 +1320,10 @@ foo({ x: false, y: 0, z: "" });
 
 #[test]
 fn test_generic_callback_return_mismatch_reports_ts2345_for_identifier_expression_body() {
-    // For expression-bodied arrow functions with identifier bodies (like `undefined`),
-    // we report TS2345 on the outer argument rather than TS2322 on the body.
-    // This avoids false elaboration when the identifier references a complex type.
+    // For contextually-typed expression-bodied arrow functions with identifier bodies
+    // (like `undefined`), tsc elaborates the return type mismatch and reports TS2322
+    // on the body expression rather than TS2345 on the whole callback argument.
+    // This matches tsc behavior for contextual callbacks (no explicit param annotations).
     let source = r#"
 function someGenerics3<T>(producer: () => T) { }
 someGenerics3<number>(() => undefined);
@@ -1332,17 +1333,10 @@ someGenerics3<number>(() => undefined);
     let has_ts2322 = diagnostics
         .iter()
         .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
-    let has_ts2345 = diagnostics.iter().any(|(code, _)| {
-        *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-    });
 
     assert!(
-        has_ts2345,
-        "Expected TS2345 on the outer argument for identifier body, got: {diagnostics:?}"
-    );
-    assert!(
-        !has_ts2322,
-        "Did not expect inner TS2322 for identifier expression body, got: {diagnostics:?}"
+        has_ts2322,
+        "Expected TS2322 on the body expression for contextual callback, got: {diagnostics:?}"
     );
 }
 

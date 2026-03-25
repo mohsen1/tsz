@@ -718,6 +718,7 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::NullKeyword as u16
                 || k == SyntaxKind::UndefinedKeyword as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::CALL_EXPRESSION
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
@@ -730,22 +731,23 @@ impl<'a> CheckerState<'a> {
                 //
                 // Skip void expected return types: void-returning callbacks accept any
                 // return value, so elaborating would produce false positives.
-                // Skip when the function is a direct call argument in a non-generic
-                // call: tsc only elaborates callback returns in generic call contexts
-                // or non-call contexts (property assignments, return statements).
                 if expected_return_type == TypeId::VOID {
                     return false;
                 }
-                // Check if the function expression is a direct call argument.
-                // tsc only elaborates callback return types in non-call contexts
-                // (property assignments, variable declarations, return statements).
-                // In call argument contexts, tsc reports TS2345 on the argument.
-                if let Some(ext) = self.ctx.arena.get_extended(arg_idx)
-                    && ext.parent != NodeIndex::NONE
-                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                    && (parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                        || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION)
-                {
+                // Skip elaboration when the callback has explicit parameter type
+                // annotations. tsc only elaborates return types for fully contextually-
+                // typed callbacks (no explicit param annotations). When a developer
+                // explicitly annotates parameter types, the error is reported at the
+                // argument level (TS2345) rather than drilling into the return expression.
+                let has_explicit_param_annotations =
+                    func.parameters.nodes.iter().any(|param_idx| {
+                        self.ctx
+                            .arena
+                            .get(*param_idx)
+                            .and_then(|n| self.ctx.arena.get_parameter(n))
+                            .is_some_and(|p| p.type_annotation.is_some())
+                    });
+                if has_explicit_param_annotations {
                     return false;
                 }
                 let body_type = self.get_type_of_node(func.body);
@@ -757,16 +759,24 @@ impl<'a> CheckerState<'a> {
                 {
                     return false;
                 }
+                // Skip elaboration when the body type is itself callable (a function type).
+                // When the return type is a function but the expected type is not (or vice
+                // versa), tsc reports TS2345 on the whole callback rather than TS2322 on
+                // the body expression.
+                if self.first_callable_return_type(body_type).is_some()
+                    && self
+                        .first_callable_return_type(expected_return_type)
+                        .is_none()
+                {
+                    return false;
+                }
                 // Widen literal types for display (e.g. "abc" → string) to match tsc behavior
                 let display_type = self.widen_type_for_display(body_type);
                 self.error_type_not_assignable_at(display_type, expected_return_type, func.body);
                 true
             }
-            k if k == SyntaxKind::Identifier as u16
-                || k == syntax_kind_ext::CONDITIONAL_EXPRESSION =>
-            {
-                // Identifiers may reference complex types (e.g., function references)
-                // and conditionals need branch-level elaboration. Let the caller
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                // Conditionals need branch-level elaboration. Let the caller
                 // handle these at the argument/assignment level.
                 false
             }
