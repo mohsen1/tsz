@@ -377,8 +377,8 @@ For every fix, answer these questions from CLAUDE.md §15:
 
 ```bash
 # Check compilation for the package(s) you changed
-cargo check --package tsz-checker
-cargo check --package tsz-solver
+cargo check --package tsz-checker   # if checker changed
+cargo check --package tsz-solver    # if solver changed
 
 # Build optimized binary for conformance
 cargo build --profile dist-fast --bin tsz
@@ -454,7 +454,7 @@ Update conformance baselines in the branch that is actually being integrated. Av
 
 ### Commit message format
 ```
-fix(checker): <what changed>
+fix(<area>): <what changed>
 
 <Why this fixes the conformance issue. Reference the test name.>
 
@@ -529,8 +529,8 @@ python3 scripts/conformance/query-conformance.py --campaign big3
 python3 scripts/conformance/query-conformance.py --false-positives
 
 # Build
-cargo check --package tsz-checker
-cargo check --package tsz-solver
+cargo check --package tsz-checker   # if checker changed
+cargo check --package tsz-solver    # if solver changed
 cargo build --profile dist-fast --bin tsz
 
 # Campaign coordination (campaign agents only)
