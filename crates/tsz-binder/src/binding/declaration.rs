@@ -65,7 +65,7 @@ impl BinderState {
                         .push(crate::state::GlobalAugmentation::new(idx));
                 }
 
-                let sym_id = self.declare_symbol(name, flags, idx, is_exported);
+                let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
                 self.node_symbols.insert(decl.name.0, sym_id);
                 self.record_semantic_def(
                     sym_id,
@@ -101,7 +101,8 @@ impl BinderState {
                 Self::collect_binding_identifiers(arena, decl.name, &mut names);
                 for ident_idx in names {
                     if let Some(name) = Self::get_identifier_name(arena, ident_idx) {
-                        let sym_id = self.declare_symbol(name, flags, ident_idx, is_exported);
+                        let sym_id =
+                            self.declare_symbol(arena, name, flags, ident_idx, is_exported);
                         self.record_semantic_def(
                             sym_id,
                             crate::state::SemanticDefKind::Variable,
@@ -159,7 +160,8 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
-                let sym_id = self.declare_symbol(name, symbol_flags::FUNCTION, idx, is_exported);
+                let sym_id =
+                    self.declare_symbol(arena, name, symbol_flags::FUNCTION, idx, is_exported);
                 let tp_count = func
                     .type_parameters
                     .as_ref()
@@ -178,7 +180,7 @@ impl BinderState {
 
             // Enter function scope and bind body
             self.enter_scope(ContainerKind::Function, idx);
-            self.declare_arguments_symbol();
+            self.declare_arguments_symbol(arena);
 
             // Bind type parameters
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
@@ -215,8 +217,13 @@ impl BinderState {
             self.bind_modifiers(arena, param.modifiers.as_ref());
             if let Some(name) = Self::get_identifier_name(arena, param.name) {
                 tracing::debug!(param_name = %name, param_name_idx = param.name.0, "Binding parameter");
-                let sym_id =
-                    self.declare_symbol(name, symbol_flags::FUNCTION_SCOPED_VARIABLE, idx, false);
+                let sym_id = self.declare_symbol(
+                    arena,
+                    name,
+                    symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                    idx,
+                    false,
+                );
                 self.node_symbols.insert(param.name.0, sym_id);
                 tracing::debug!(param_name = %name, sym_id = sym_id.0, "Parameter bound");
             } else {
@@ -225,6 +232,7 @@ impl BinderState {
                 for ident_idx in names {
                     if let Some(name) = Self::get_identifier_name(arena, ident_idx) {
                         self.declare_symbol(
+                            arena,
                             name,
                             symbol_flags::FUNCTION_SCOPED_VARIABLE,
                             ident_idx,
@@ -284,7 +292,7 @@ impl BinderState {
             }
             // Use the parameter node as the declaration so the checker can
             // distinguish parameter-property PROPERTY symbols from regular ones.
-            self.declare_symbol(name, flags, param_idx, false);
+            self.declare_symbol(arena, name, flags, param_idx, false);
         }
     }
 
@@ -335,8 +343,13 @@ impl BinderState {
                         type_param_name = %name,
                         "Binding type parameter"
                     );
-                    let sym_id =
-                        self.declare_symbol(name, symbol_flags::TYPE_PARAMETER, param_idx, false);
+                    let sym_id = self.declare_symbol(
+                        arena,
+                        name,
+                        symbol_flags::TYPE_PARAMETER,
+                        param_idx,
+                        false,
+                    );
                     self.node_symbols.insert(type_param.name.0, sym_id);
                 }
             }
@@ -445,12 +458,12 @@ impl BinderState {
             self.bind_modifiers(arena, func.modifiers.as_ref());
             // Enter function scope
             self.enter_scope(ContainerKind::Function, idx);
-            self.declare_arguments_symbol();
+            self.declare_arguments_symbol(arena);
 
             // Named function expressions bind their name in their own scope
             // (accessible only inside the function body, not in the parent scope)
             if let Some(name) = Self::get_identifier_name(arena, func.name) {
-                self.declare_symbol(name, symbol_flags::FUNCTION, idx, false);
+                self.declare_symbol(arena, name, symbol_flags::FUNCTION, idx, false);
             }
 
             // Bind type parameters
@@ -527,7 +540,7 @@ impl BinderState {
         type_parameters: Option<&NodeList>,
     ) {
         self.enter_scope(ContainerKind::Function, idx);
-        self.declare_arguments_symbol();
+        self.declare_arguments_symbol(arena);
 
         // Bind type parameters into the function scope so they're visible
         // in parameter types, return types, and body type references.
@@ -569,8 +582,9 @@ impl BinderState {
         }
     }
 
-    pub(crate) fn declare_arguments_symbol(&mut self) {
+    pub(crate) fn declare_arguments_symbol(&mut self, arena: &NodeArena) {
         self.declare_symbol(
+            arena,
             "arguments",
             symbol_flags::FUNCTION_SCOPED_VARIABLE,
             NodeIndex::NONE,
@@ -608,7 +622,7 @@ impl BinderState {
                 }
 
                 let is_abstract = Self::has_abstract_modifier(arena, class.modifiers.as_ref());
-                let sym_id = self.declare_symbol(name, flags, idx, is_exported);
+                let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
                 let tp_count = class
                     .type_parameters
                     .as_ref()
@@ -665,7 +679,7 @@ impl BinderState {
                 if Self::has_abstract_modifier(arena, class.modifiers.as_ref()) {
                     flags |= symbol_flags::ABSTRACT;
                 }
-                let sym_id = self.declare_symbol(name, flags, idx, false);
+                let sym_id = self.declare_symbol(arena, name, flags, idx, false);
                 self.node_symbols.insert(class.name.0, sym_id);
             } else {
                 // Anonymous class expression: create a CLASS symbol so that
@@ -677,8 +691,9 @@ impl BinderState {
                 }
                 let sym_id = self.symbols.alloc(flags, "(Anonymous class)".to_string());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    sym.declarations.push(idx);
-                    sym.value_declaration = idx;
+                    let span = arena.get(idx).map(|node| (node.pos, node.end));
+                    sym.add_declaration(idx, span);
+                    sym.set_value_declaration(idx, span);
                 }
                 self.node_symbols.insert(idx.0, sym_id);
             }
@@ -720,7 +735,7 @@ impl BinderState {
                             if Self::has_private_modifier(arena, method.modifiers.as_ref()) {
                                 flags |= symbol_flags::PRIVATE;
                             }
-                            let sym_id = self.declare_symbol(&name, flags, idx, false);
+                            let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
                             self.node_symbols.insert(method.name.0, sym_id);
                         }
                         self.bind_callable_body_with_type_params(
@@ -751,7 +766,7 @@ impl BinderState {
                             if Self::has_private_modifier(arena, prop.modifiers.as_ref()) {
                                 flags |= symbol_flags::PRIVATE;
                             }
-                            let sym_id = self.declare_symbol(&name, flags, idx, false);
+                            let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
                             self.node_symbols.insert(prop.name.0, sym_id);
                         }
 
@@ -783,14 +798,20 @@ impl BinderState {
                             if Self::has_private_modifier(arena, accessor.modifiers.as_ref()) {
                                 flags |= symbol_flags::PRIVATE;
                             }
-                            let sym_id = self.declare_symbol(&name, flags, idx, false);
+                            let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
                             self.node_symbols.insert(accessor.name.0, sym_id);
                         }
                         self.bind_callable_body(arena, &accessor.parameters, accessor.body, idx);
                     }
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    self.declare_symbol("constructor", symbol_flags::CONSTRUCTOR, idx, false);
+                    self.declare_symbol(
+                        arena,
+                        "constructor",
+                        symbol_flags::CONSTRUCTOR,
+                        idx,
+                        false,
+                    );
                     if let Some(ctor) = arena.get_constructor(node) {
                         self.bind_modifiers(arena, ctor.modifiers.as_ref());
                         // Declare PROPERTY symbols for parameter properties (public/private/
@@ -879,7 +900,8 @@ impl BinderState {
                 }
             }
 
-            let sym_id = self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
+            let sym_id =
+                self.declare_symbol(arena, name, symbol_flags::INTERFACE, idx, is_exported);
             let tp_count = iface
                 .type_parameters
                 .as_ref()
@@ -983,7 +1005,7 @@ impl BinderState {
                     .symbols
                     .alloc(symbol_flags::TYPE_ALIAS, name.to_string());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    sym.declarations.push(idx);
+                    sym.add_declaration(idx, arena.get(idx).map(|node| (node.pos, node.end)));
                     sym.is_exported = is_exported;
                 }
                 // TYPE_ALIAS takes current_scope so type references resolve to it
@@ -1019,7 +1041,8 @@ impl BinderState {
                     is_declare,
                 );
             } else {
-                let sym_id = self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+                let sym_id =
+                    self.declare_symbol(arena, name, symbol_flags::TYPE_ALIAS, idx, is_exported);
                 let tp_count = alias
                     .type_parameters
                     .as_ref()
@@ -1069,7 +1092,7 @@ impl BinderState {
                 symbol_flags::REGULAR_ENUM
             };
 
-            let enum_sym_id = self.declare_symbol(name, enum_flags, idx, is_exported);
+            let enum_sym_id = self.declare_symbol(arena, name, enum_flags, idx, is_exported);
 
             // Collect enum member names at bind time for stable identity.
             let enum_member_names: Vec<String> = enum_decl
@@ -1136,8 +1159,9 @@ impl BinderState {
                         .alloc(symbol_flags::ENUM_MEMBER, member_name.to_string());
                     // Set value_declaration for enum members so the checker can find the parent enum
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
-                        sym.value_declaration = member_idx;
-                        sym.declarations.push(member_idx);
+                        let span = arena.get(member_idx).map(|node| (node.pos, node.end));
+                        sym.set_value_declaration(member_idx, span);
+                        sym.add_declaration(member_idx, span);
                         sym.parent = enum_sym_id; // Set parent to the enum symbol
                     }
                     self.current_scope.set(member_name.to_string(), sym_id);

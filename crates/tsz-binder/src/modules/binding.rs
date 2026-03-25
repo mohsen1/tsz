@@ -190,7 +190,7 @@ impl BinderState {
                 }
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
-                module_symbol_id = self.declare_symbol(&name, flags, idx, is_exported);
+                module_symbol_id = self.declare_symbol(arena, &name, flags, idx, is_exported);
                 let is_declare = Self::has_declare_modifier(arena, module.modifiers.as_ref());
                 self.record_semantic_def_with_declare(
                     module_symbol_id,

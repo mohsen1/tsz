@@ -1387,9 +1387,18 @@ impl BinderState {
                 && let Some(sym) = self.symbols.get_mut(sym_id)
             {
                 sym.declarations.retain(|decl| *decl != node);
+                sym.first_declaration_span = sym
+                    .declarations
+                    .first()
+                    .and_then(|decl| arena.get(*decl).map(|n| (n.pos, n.end)));
                 if sym.value_declaration == node {
                     sym.value_declaration =
                         sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
+                    sym.value_declaration_span = if sym.value_declaration.is_some() {
+                        arena.get(sym.value_declaration).map(|n| (n.pos, n.end))
+                    } else {
+                        None
+                    };
                 }
             }
         }

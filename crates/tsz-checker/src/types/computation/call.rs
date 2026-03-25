@@ -621,7 +621,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             callee_type_for_context,
             args.len(),
-        );
+        )
+        .or_else(|| call_checker::get_call_signature(self.ctx.types, callee_type_for_context, args.len()));
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
@@ -1920,7 +1921,7 @@ impl<'a> CheckerState<'a> {
 
         // `super()` uses construct signatures, not call signatures.
         let (generic_inference_arg_types, sanitized_generic_inference) = if is_generic_call {
-            self.sanitize_generic_inference_arg_types(args, &arg_types)
+            self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types)
         } else {
             (arg_types.clone(), false)
         };
@@ -2078,7 +2079,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let (retry_generic_arg_types, retry_sanitized) =
-                self.sanitize_generic_inference_arg_types(args, &arg_types);
+                self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types);
             let retry = if is_super_call {
                 (
                     self.resolve_new_with_checker_adapter(
