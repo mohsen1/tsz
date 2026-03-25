@@ -1407,41 +1407,81 @@ impl<'a> CheckerState<'a> {
                                 &module_specifier,
                             );
                         }
-                        let export_equals_type = exports_table
+                        let exports_table_target =
+                            exports_table.iter().find_map(|(_, &export_sym_id)| {
+                                self.ctx.resolve_symbol_file_index(export_sym_id)
+                            });
+                        let mut export_equals_type = exports_table
                             .get("export=")
                             .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
-                        let mut props: Vec<PropertyInfo> = Vec::new();
-                        for (name, &sym_id) in exports_table.iter() {
-                            if name == "export=" {
-                                continue;
-                            }
-                            // Skip type-only, wildcard-type-only, value-less, and
-                            // transitively type-only exports (e.g., re-exported from
-                            // a module that uses `export type { X }`).
-                            if self.is_type_only_export_symbol(sym_id)
-                                || self.is_export_from_type_only_wildcard(&module_specifier, name)
-                                || self.export_symbol_has_no_value(sym_id)
-                                || self.is_export_type_only_from_file(&module_specifier, name, None)
-                            {
-                                continue;
-                            }
-                            let mut prop_type = self.get_type_of_symbol(sym_id);
-                            prop_type =
-                                self.apply_module_augmentations(&module_specifier, name, prop_type);
-                            let name_atom = self.ctx.types.intern_string(name);
-                            props.push(PropertyInfo {
-                                name: name_atom,
-                                type_id: prop_type,
-                                write_type: prop_type,
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: 0,
+                        let surface = exports_table_target
+                            .map(|target_idx| self.resolve_js_export_surface(target_idx))
+                            .or_else(|| {
+                                self.resolve_js_export_surface_for_module(
+                                    &module_specifier,
+                                    Some(self.ctx.current_file_idx),
+                                )
                             });
-                        }
+                        let mut props: Vec<PropertyInfo> = if surface
+                            .as_ref()
+                            .is_some_and(|s| s.has_commonjs_exports)
+                        {
+                            let mut named_exports = surface
+                                .as_ref()
+                                .map(|s| s.named_exports.clone())
+                                .unwrap_or_default();
+                            for (order, prop) in named_exports.iter_mut().enumerate() {
+                                prop.declaration_order = order as u32;
+                            }
+                            if let Some(surface_direct_type) =
+                                surface.as_ref().and_then(|s| s.direct_export_type)
+                            {
+                                export_equals_type = Some(surface_direct_type);
+                            }
+                            named_exports
+                        } else {
+                            let mut props: Vec<PropertyInfo> = Vec::new();
+                            for (name, &sym_id) in exports_table.iter() {
+                                if name == "export=" {
+                                    continue;
+                                }
+                                // Skip type-only, wildcard-type-only, value-less, and
+                                // transitively type-only exports (e.g., re-exported from
+                                // a module that uses `export type { X }`).
+                                if self.is_type_only_export_symbol(sym_id)
+                                    || self
+                                        .is_export_from_type_only_wildcard(&module_specifier, name)
+                                    || self.export_symbol_has_no_value(sym_id)
+                                    || self.is_export_type_only_from_file(
+                                        &module_specifier,
+                                        name,
+                                        None,
+                                    )
+                                {
+                                    continue;
+                                }
+                                let mut prop_type = self.get_type_of_symbol(sym_id);
+                                prop_type = self.apply_module_augmentations(
+                                    &module_specifier,
+                                    name,
+                                    prop_type,
+                                );
+                                let name_atom = self.ctx.types.intern_string(name);
+                                props.push(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: prop_type,
+                                    write_type: prop_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    is_class_prototype: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
+                                    declaration_order: 0,
+                                });
+                            }
+                            props
+                        };
 
                         if !module_is_non_module_entity
                             && let Some(augmentations) =
@@ -1586,7 +1626,11 @@ impl<'a> CheckerState<'a> {
             if let Some(ref module_name) = import_module {
                 let import_source_file_idx = self
                     .ctx
-                    .resolve_symbol_file_index(sym_id)
+                    .binder
+                    .get_symbol(sym_id)
+                    .and_then(|symbol| {
+                        (symbol.decl_file_idx != u32::MAX).then_some(symbol.decl_file_idx as usize)
+                    })
                     .or(Some(self.ctx.current_file_idx));
 
                 // Check if this is a shorthand ambient module (declare module "foo" without body)
@@ -1646,50 +1690,81 @@ impl<'a> CheckerState<'a> {
                         use tsz_solver::PropertyInfo;
                         let module_is_non_module_entity =
                             self.ctx.module_resolves_to_non_module_entity(module_name);
-                        let export_equals_type = exports_table
+                        let exports_table_target =
+                            exports_table.iter().find_map(|(_, &export_sym_id)| {
+                                self.ctx.resolve_symbol_file_index(export_sym_id)
+                            });
+                        let mut export_equals_type = exports_table
                             .get("export=")
                             .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
-                        let mut props: Vec<PropertyInfo> = Vec::new();
-                        for (name, &export_sym_id) in exports_table.iter() {
-                            if name == "export=" {
-                                continue;
-                            }
-                            // Skip type-only exports (`export type { A }`), exports
-                            // reached through `export type *` wildcards, exports
-                            // that are intrinsically type-only (type aliases, interfaces
-                            // without merged values), and transitively type-only
-                            // exports (re-exported from a `export type` chain).
-                            if self.is_type_only_export_symbol(export_sym_id)
-                                || self.is_export_from_type_only_wildcard(module_name, name)
-                                || self.export_symbol_has_no_value(export_sym_id)
-                                || self.is_export_type_only_from_file(
+                        let surface = exports_table_target
+                            .map(|target_idx| self.resolve_js_export_surface(target_idx))
+                            .or_else(|| {
+                                self.resolve_js_export_surface_for_module(
                                     module_name,
-                                    name,
                                     declaring_file_idx,
                                 )
-                            {
-                                continue;
-                            }
-                            let mut prop_type = self.get_type_of_symbol(export_sym_id);
-
-                            // Rule #44: Apply module augmentations to each exported type
-                            prop_type =
-                                self.apply_module_augmentations(module_name, name, prop_type);
-
-                            let name_atom = self.ctx.types.intern_string(name);
-                            props.push(PropertyInfo {
-                                name: name_atom,
-                                type_id: prop_type,
-                                write_type: prop_type,
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: 0,
                             });
-                        }
+                        let mut props: Vec<PropertyInfo> = if surface
+                            .as_ref()
+                            .is_some_and(|s| s.has_commonjs_exports)
+                        {
+                            let mut named_exports = surface
+                                .as_ref()
+                                .map(|s| s.named_exports.clone())
+                                .unwrap_or_default();
+                            for (order, prop) in named_exports.iter_mut().enumerate() {
+                                prop.declaration_order = order as u32;
+                            }
+                            if export_equals_type.is_none() {
+                                export_equals_type =
+                                    surface.as_ref().and_then(|s| s.direct_export_type);
+                            }
+                            named_exports
+                        } else {
+                            let mut props: Vec<PropertyInfo> = Vec::new();
+                            for (name, &export_sym_id) in exports_table.iter() {
+                                if name == "export=" {
+                                    continue;
+                                }
+                                // Skip type-only exports (`export type { A }`), exports
+                                // reached through `export type *` wildcards, exports
+                                // that are intrinsically type-only (type aliases, interfaces
+                                // without merged values), and transitively type-only
+                                // exports (re-exported from a `export type` chain).
+                                if self.is_type_only_export_symbol(export_sym_id)
+                                    || self.is_export_from_type_only_wildcard(module_name, name)
+                                    || self.export_symbol_has_no_value(export_sym_id)
+                                    || self.is_export_type_only_from_file(
+                                        module_name,
+                                        name,
+                                        declaring_file_idx,
+                                    )
+                                {
+                                    continue;
+                                }
+                                let mut prop_type = self.get_type_of_symbol(export_sym_id);
+
+                                // Rule #44: Apply module augmentations to each exported type
+                                prop_type =
+                                    self.apply_module_augmentations(module_name, name, prop_type);
+
+                                let name_atom = self.ctx.types.intern_string(name);
+                                props.push(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: prop_type,
+                                    write_type: prop_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    is_class_prototype: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
+                                    declaration_order: 0,
+                                });
+                            }
+                            props
+                        };
 
                         // Add augmentation declarations that introduce entirely new names.
                         // If the target resolves to a non-module export= value, these names
