@@ -1687,6 +1687,21 @@ impl ParserState {
                 self.recover_invalid_class_member_initializer_continuation();
             }
 
+            // TS1442: when a property has a type annotation but no initializer
+            // and the next token cannot end the declaration (not `;`, `}`, EOF,
+            // and no preceding line break), emit "Expected '=' for property
+            // initializer." — matching tsc's parseSemicolonAfterPropertyName.
+            if type_annotation != NodeIndex::NONE
+                && initializer == NodeIndex::NONE
+                && !self.can_parse_semicolon()
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Expected '=' for property initializer.",
+                    diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
+                );
+            }
+
             // Match tsc's parseSemicolonAfterPropertyName: when a property has
             // no type annotation and no initializer and no semicolon follows,
             // use keyword-aware semicolon error (TS1434/TS1435) instead of
