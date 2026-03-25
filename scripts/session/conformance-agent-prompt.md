@@ -4,12 +4,17 @@
 
 ## Mission
 
-You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in Rust. Your job is to find conformance test failures, diagnose their root cause, implement a **correct architectural fix**, verify zero regressions, and push to main.
+You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in Rust. Your job is to find conformance test failures, diagnose their root cause, implement a **correct architectural fix**, verify zero regressions, and deliver an integration-ready change.
 
 **Absolute rule**: match `tsc` behavior exactly. Every fix must reduce the gap between tsz and tsc without introducing new gaps.
 
-**Current baseline**: ~90.0% pass rate (11,317 / 12,581 tests). Goal: push past 90% and keep climbing.
+**Current baseline**: ~90.0% pass rate (11,322 / 12,581 tests). Goal: push past 90% and keep climbing.
 Failure categories are directional and can overlap; rerun conformance counts when you change strategy or ownership.
+
+**Delivery mode**:
+- If you are running as a standalone fixer or explicit integrator, validate locally and push to `main`.
+- If you are running under `scripts/session/AGENT_PROTOCOL.md` as a campaign worker, **do not push to `main`**. Push to `campaign/<name>` and let `scripts/session/integrate.sh` merge after validation.
+- When in doubt, prefer the protocol-specific rule over this generic prompt.
 
 ---
 
@@ -147,6 +152,16 @@ Top failure areas by opportunity:
 ---
 
 ## Finding Work
+
+### Step 0: Start from a healthy tree
+
+```bash
+# Confirm the repository is in a good state before you pick work
+scripts/session/healthcheck.sh
+
+# Read recent context so you do not duplicate or undo active work
+git log --oneline -20
+```
 
 ### Step 1: Identify targets from the snapshot (zero cost, instant)
 
@@ -389,7 +404,7 @@ cargo test --package tsz-solver --lib 2>&1 | grep "^test result"
 # Compare with pre-existing failures — your change must not add new ones
 ```
 
-### Step 4: Run full conformance and update snapshot (before pushing)
+### Step 4: Run full conformance and update snapshot (before pushing or handing off)
 
 ```bash
 # Full run
@@ -397,7 +412,7 @@ scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep "FINAL"
 
 # Must be ≥ previous snapshot count. If lower, investigate.
 
-# If improvement confirmed, update snapshot:
+# If improvement confirmed and you are the branch that will be integrated, update snapshot:
 scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 git add scripts/conformance/
 git commit -m "chore: update conformance snapshot (XX.X%, NNNNN/12581)"
@@ -415,7 +430,7 @@ On each iteration:
 5. **Update architecture** if needed — extract modules when files grow, ensure boundaries remain clean.
 6. **Update conformance snapshot only after the change is stable and regression checks pass.**
 
-Always update conformance baselines and push code to main when improvements are made. Check recent commits on the repository — new changes (JSDoc typedef prioritisation, dynamic import fixes, extended hoisting in binder, etc.) may influence how to implement further fixes.
+Update conformance baselines in the branch that is actually being integrated. Check recent commits on the repository — new changes (JSDoc typedef prioritisation, dynamic import fixes, extended hoisting in binder, etc.) may influence how to implement further fixes.
 
 ---
 
@@ -446,6 +461,15 @@ git push origin main
 
 # If rejected (other agents pushed):
 git pull --rebase origin main && git push origin main
+```
+
+### Campaign-worker push protocol
+```bash
+git add <changed files>
+git commit -m "..."
+git push origin campaign/<your-campaign>
+
+# The integrator validates and merges with scripts/session/integrate.sh
 ```
 
 ### After pushing, update snapshot if significant improvement:
