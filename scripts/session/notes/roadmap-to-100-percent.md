@@ -109,8 +109,9 @@ Fix flow-narrowed types in messages, instantiated type params, multiple-instance
 ### Phase 2: Inference & Contextual (target: +200 tests)
 Unify inference engines, add tuple rest, fix callable arity, expand Lazy types.
 
-### Phase 3: JSX + JSDoc + Modules (target: +250 tests)
-LibraryManagedAttributes, generic JSX, augmentation key matching.
+### Phase 3: JSDoc + JSX + Salsa semantic integration (target: +250 tests)
+LibraryManagedAttributes, generic JSX, parser recovery, typedef cross-module resolution,
+property/write semantics, and JS open-world module behavior.
 
 ### Phase 4: Declaration Emit (target: +300 tests)
 TypePrinter accuracy, strictNullChecks plumbing, import type synthesis.

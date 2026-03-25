@@ -141,6 +141,40 @@ campaigns:
     estimated_impact: 100 tests
     difficulty: medium
 
+  jsdoc-jsx-salsa:
+    mission: >
+      Treat JSDoc, JSX, and Salsa as one semantic integration campaign.
+      These are not isolated feature islands: they are broad consumers of
+      shared checker/solver mechanics around property writes, contextual
+      typing transport, parser recovery, cross-module typedef resolution,
+      JSX library-managed attributes, and JS open-world behavior.
+    focus_codes: [TS2322, TS2339, TS2345, TS7006, TS2540, TS2657, TS17014, TS2741]
+    research_command: |
+      python3 scripts/conformance/query-conformance.py --campaign jsdoc-jsx-salsa
+      ./scripts/conformance/conformance.sh run --filter "jsdoc|jsx|salsa" --verbose --max 40
+      rg -n "checkObjectDefineProperty|checkOtherObjectAssignProperty|typedefCrossModule3|typedefMultipleTypeParameters|tsxLibraryManagedAttributes|tsxReactComponentWithDefaultTypeParameter3|tsxErrorRecovery2|tsxFragmentErrors|moduleExportAssignment|thisPropertyAssignment|typeFromJSConstructor" scripts/conformance/conformance-baseline.txt scripts/conformance-last-run.txt crates/tsz-core/tests/conformance_snapshot.txt
+    test_filter: "jsdoc|jsx|tsx|salsa|checkJs|LibraryManagedAttributes|typedef|thisProperty|moduleExport"
+    entry_files:
+      - crates/tsz-checker/src/jsdoc/
+      - crates/tsz-checker/src/checkers/jsx/
+      - crates/tsz-checker/src/state/type_analysis/
+      - crates/tsz-checker/src/types/computation/
+      - crates/tsz-checker/src/state/type_resolution/
+      - crates/tsz-solver/src/contextual/
+      - crates/tsz-solver/src/relations/subtype/
+    coordinate_on:
+      - crates/tsz-checker/src/types/computation/object_literal_context.rs  # overlaps with contextual-typing
+      - crates/tsz-checker/src/checkers/property_checker.rs  # overlaps with property-resolution
+      - crates/tsz-checker/src/state/type_analysis/computed_commonjs.rs  # overlaps with false-positives
+    targets:
+      - "JSDoc property/write semantics: checkObjectDefineProperty.ts and checkOtherObjectAssignProperty.ts"
+      - "JSDoc cross-module typedefs: typedefCrossModule3.ts and typedefMultipleTypeParameters.ts"
+      - "JSX semantic checking: tsxLibraryManagedAttributes.tsx and tsxReactComponentWithDefaultTypeParameter3.tsx"
+      - "JSX parser recovery: tsxErrorRecovery2.tsx and tsxFragmentErrors.tsx"
+      - "Salsa JS-open-world mismatches: moduleExportAssignment.ts, thisPropertyAssignment.ts, and typeFromJSConstructor.ts"
+    estimated_impact: 252 tests
+    difficulty: hard
+
   # ---------------------------------------------------------------------------
   # DIAGNOSTIC / PARSER CAMPAIGNS (2) — error accuracy
   # ---------------------------------------------------------------------------
