@@ -3628,11 +3628,11 @@ someGenerics3<number>(() => undefined);
         },
     );
 
-    // For identifier bodies (like `undefined`), we report TS2345 on the outer
-    // argument to avoid false elaboration when identifiers reference complex types.
+    // For contextually-typed callbacks (no explicit param annotations), tsc
+    // elaborates the return type and reports TS2322 on the body expression.
     assert!(
-        has_error(&diagnostics, 2345),
-        "Expected TS2345 on the outer argument for identifier body. Actual: {diagnostics:#?}"
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 on the body expression for contextual callback. Actual: {diagnostics:#?}"
     );
 }
 
