@@ -9,12 +9,392 @@
 //! - `@satisfies` malformed/duplicate tag detection
 
 use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+
+#[derive(Clone)]
+struct JsdocNamedDecl {
+    name: String,
+    pos: u32,
+    len: u32,
+    file_idx: usize,
+}
 
 // =============================================================================
 // TS8033: Duplicate @type in @typedef
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// TS2300: Check for duplicate identifier collisions between JSDoc typedefs and
+    /// type-capable value/export declarations (classes and CommonJS exported constructors).
+    pub(crate) fn check_jsdoc_typedef_name_conflicts(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, format_message};
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let mut typedefs_by_name: FxHashMap<String, Vec<JsdocNamedDecl>> = FxHashMap::default();
+        let mut type_values_by_name: FxHashMap<String, Vec<JsdocNamedDecl>> = FxHashMap::default();
+
+        let all_arenas = self.ctx.all_arenas.clone().unwrap_or_else(|| {
+            std::sync::Arc::new(vec![std::sync::Arc::new(self.ctx.arena.clone())])
+        });
+
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+
+            for comment in &source_file.comments {
+                if !is_jsdoc_comment(comment, &source_file.text) {
+                    continue;
+                }
+                let content = get_jsdoc_content(comment, &source_file.text);
+                let comment_text = comment.get_text(&source_file.text);
+                for (name, _info) in Self::parse_jsdoc_typedefs(&content) {
+                    let Some(offset) = Self::find_jsdoc_typedef_name_offset(comment_text, &name)
+                    else {
+                        continue;
+                    };
+                    typedefs_by_name
+                        .entry(name.clone())
+                        .or_default()
+                        .push(JsdocNamedDecl {
+                            name,
+                            pos: comment.pos + offset as u32,
+                            len: 0,
+                            file_idx,
+                        });
+                }
+            }
+
+            for decl in self.collect_jsdoc_type_capable_value_declarations(file_idx, arena.as_ref())
+            {
+                type_values_by_name
+                    .entry(decl.name.clone())
+                    .or_default()
+                    .push(decl);
+            }
+        }
+
+        let current_file_idx = self.ctx.current_file_idx;
+        let mut emitted = FxHashSet::default();
+
+        for decls in typedefs_by_name.values() {
+            for decl in decls
+                .iter()
+                .filter(|decl| decl.file_idx == current_file_idx)
+            {
+                let has_conflict = type_values_by_name
+                    .get(&decl.name)
+                    .is_some_and(|others| !others.is_empty());
+                if !has_conflict {
+                    continue;
+                }
+
+                let key = (decl.pos, decl.len, diagnostic_codes::DUPLICATE_IDENTIFIER);
+                if emitted.insert(key) {
+                    let message = format_message("Duplicate identifier '{0}'.", &[&decl.name]);
+                    self.error_at_position(
+                        decl.pos,
+                        decl.len.max(decl.name.len() as u32),
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+            }
+        }
+
+        for decls in type_values_by_name.values() {
+            for decl in decls
+                .iter()
+                .filter(|decl| decl.file_idx == current_file_idx)
+            {
+                let has_conflict = typedefs_by_name
+                    .get(&decl.name)
+                    .is_some_and(|others| !others.is_empty());
+                if !has_conflict {
+                    continue;
+                }
+
+                let key = (decl.pos, decl.len, diagnostic_codes::DUPLICATE_IDENTIFIER);
+                if emitted.insert(key) {
+                    let message = format_message("Duplicate identifier '{0}'.", &[&decl.name]);
+                    self.error_at_position(
+                        decl.pos,
+                        decl.len.max(decl.name.len() as u32),
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+            }
+        }
+    }
+
+    fn collect_jsdoc_type_capable_value_declarations(
+        &mut self,
+        target_file_idx: usize,
+        arena: &tsz_parser::parser::NodeArena,
+    ) -> Vec<JsdocNamedDecl> {
+        let Some(source_file) = arena.source_files.first() else {
+            return Vec::new();
+        };
+
+        let export_object_roots = Self::collect_commonjs_export_object_roots(arena);
+        let mut decls = Vec::new();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_decl) = arena.get_class(stmt_node)
+                && let Some(name_node) = arena.get(class_decl.name)
+                && let Some(ident) = arena.get_identifier(name_node)
+            {
+                decls.push(JsdocNamedDecl {
+                    name: ident.escaped_text.clone(),
+                    pos: name_node.pos,
+                    len: name_node.end.saturating_sub(name_node.pos),
+                    file_idx: target_file_idx,
+                });
+            }
+
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            self.collect_commonjs_type_capable_exports_from_expression(
+                target_file_idx,
+                arena,
+                stmt.expression,
+                &export_object_roots,
+                &mut decls,
+            );
+        }
+
+        decls
+    }
+
+    fn collect_commonjs_export_object_roots(
+        arena: &tsz_parser::parser::NodeArena,
+    ) -> FxHashSet<String> {
+        let Some(source_file) = arena.source_files.first() else {
+            return FxHashSet::default();
+        };
+
+        let mut roots = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            Self::collect_commonjs_export_object_roots_from_expression(
+                arena,
+                stmt.expression,
+                &mut roots,
+            );
+        }
+        roots
+    }
+
+    fn collect_commonjs_export_object_roots_from_expression(
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+        roots: &mut FxHashSet<String>,
+    ) {
+        let Some(expr_node) = arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return;
+        }
+        let Some(binary) = arena.get_binary_expr(expr_node) else {
+            return;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return;
+        }
+
+        if Self::is_module_exports_target_in_arena(arena, binary.left)
+            && let Some(rhs_node) = arena.get(binary.right)
+            && rhs_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = arena.get_identifier(rhs_node)
+        {
+            roots.insert(ident.escaped_text.clone());
+        }
+
+        Self::collect_commonjs_export_object_roots_from_expression(arena, binary.right, roots);
+    }
+
+    fn collect_commonjs_type_capable_exports_from_expression(
+        &mut self,
+        target_file_idx: usize,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+        export_object_roots: &FxHashSet<String>,
+        decls: &mut Vec<JsdocNamedDecl>,
+    ) {
+        let Some(expr_node) = arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return;
+        }
+        let Some(binary) = arena.get_binary_expr(expr_node) else {
+            return;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return;
+        }
+
+        if let Some((name, pos, len)) =
+            Self::commonjs_named_export_target_in_arena(arena, binary.left, export_object_roots)
+            && self.expression_introduces_type_name(target_file_idx, binary.right)
+        {
+            decls.push(JsdocNamedDecl {
+                name,
+                pos,
+                len,
+                file_idx: target_file_idx,
+            });
+        }
+
+        if Self::is_module_exports_target_in_arena(arena, binary.left) {
+            self.collect_commonjs_object_literal_type_exports(
+                target_file_idx,
+                arena,
+                binary.right,
+                decls,
+            );
+        }
+
+        self.collect_commonjs_type_capable_exports_from_expression(
+            target_file_idx,
+            arena,
+            binary.right,
+            export_object_roots,
+            decls,
+        );
+    }
+
+    fn collect_commonjs_object_literal_type_exports(
+        &mut self,
+        target_file_idx: usize,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+        decls: &mut Vec<JsdocNamedDecl>,
+    ) {
+        let Some(expr_node) = arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(obj) = arena.get_literal_expr(expr_node) else {
+            return;
+        };
+
+        for &element_idx in &obj.elements.nodes {
+            let Some(element_node) = arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = arena.get_property_assignment(element_node) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(prop.name) else {
+                continue;
+            };
+            let Some(name) =
+                crate::types_domain::queries::core::get_literal_property_name(arena, prop.name)
+            else {
+                continue;
+            };
+            if !self.expression_introduces_type_name(target_file_idx, prop.initializer) {
+                continue;
+            }
+            decls.push(JsdocNamedDecl {
+                name,
+                pos: name_node.pos,
+                len: name_node.end.saturating_sub(name_node.pos),
+                file_idx: target_file_idx,
+            });
+        }
+    }
+
+    fn commonjs_named_export_target_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        left_idx: NodeIndex,
+        export_object_roots: &FxHashSet<String>,
+    ) -> Option<(String, u32, u32)> {
+        let left_node = arena.get(left_idx)?;
+        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = arena.get_access_expr(left_node)?;
+        let name_node = arena.get(access.name_or_argument)?;
+        let name_ident = arena.get_identifier_at(access.name_or_argument)?;
+        let base_is_export_root = arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| export_object_roots.contains(ident.escaped_text.as_str()));
+        base_is_export_root.then(|| {
+            (
+                name_ident.escaped_text.clone(),
+                name_node.pos,
+                name_node.end.saturating_sub(name_node.pos),
+            )
+        })
+    }
+
+    fn is_module_exports_target_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
+    fn expression_introduces_type_name(
+        &mut self,
+        target_file_idx: usize,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let ty = self.infer_commonjs_export_rhs_type(target_file_idx, expr_idx);
+        crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, ty)
+    }
+
+    fn find_jsdoc_typedef_name_offset(comment_text: &str, name: &str) -> Option<usize> {
+        let typedef_idx = comment_text.find("@typedef")?;
+        let after_typedef = typedef_idx + "@typedef".len();
+        let rest = &comment_text[after_typedef..];
+        let name_offset = rest.find(name)?;
+        Some(after_typedef + name_offset)
+    }
+
     /// TS8033: Check all JSDoc comments for `@typedef` with multiple `@type` tags.
     ///
     /// A `@typedef` JSDoc comment should have at most one `@type` tag.
@@ -765,8 +1145,6 @@ impl<'a> CheckerState<'a> {
 // =============================================================================
 // @satisfies tag validation
 // =============================================================================
-
-use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn report_malformed_jsdoc_satisfies_tags(&mut self, idx: NodeIndex) {
