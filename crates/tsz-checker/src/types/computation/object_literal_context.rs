@@ -322,6 +322,12 @@ impl<'a> CheckerState<'a> {
             return Some(property_context_type);
         }
 
+        if contextual_type
+            .is_some_and(|ctx_type| self.primitive_union_member_has_property(ctx_type, property_name))
+        {
+            return None;
+        }
+
         if !tsz_solver::type_contains_undefined(self.ctx.types, property_context_type) {
             return Some(property_context_type);
         }

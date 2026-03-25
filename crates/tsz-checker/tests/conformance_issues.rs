@@ -7185,10 +7185,6 @@ const obj: {field: Rule} = {
         },
     ));
 
-    if diagnostics.is_empty() {
-        return;
-    }
-
     assert!(
         has_error(&diagnostics, 7006),
         "Expected TS7006 when optional callback property comes from a primitive-containing union.\nActual diagnostics: {diagnostics:#?}"
