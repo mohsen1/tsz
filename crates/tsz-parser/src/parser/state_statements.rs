@@ -1134,6 +1134,21 @@ impl ParserState {
         })
     }
 
+    /// Look ahead for `using` in a for-statement initializer position.
+    /// In `for (using of ...)`, `of` is the for-of keyword, not a binding name,
+    /// so `using` should be parsed as an identifier expression.
+    /// Excludes `of` and `in` as the next token since they indicate for-of/for-in.
+    pub(crate) fn look_ahead_is_using_declaration_in_for(&mut self) -> bool {
+        look_ahead_is(&mut self.scanner, self.current_token, |token| {
+            // `of` and `in` after `using` mean this is `for (using of/in ...)`,
+            // not a using declaration.
+            if token == SyntaxKind::OfKeyword || token == SyntaxKind::InKeyword {
+                return false;
+            }
+            is_identifier_or_keyword(token) || token == SyntaxKind::OpenBraceToken
+        })
+    }
+
     pub(crate) fn look_ahead_is_await_using_declaration(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let t1 = self.scanner.scan();
