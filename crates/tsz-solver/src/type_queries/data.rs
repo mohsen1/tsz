@@ -1812,15 +1812,26 @@ pub fn instantiate_mapped_template_for_property(
 ) -> TypeId {
     use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
-    // Check if template is IndexAccess(obj, key) where obj is a TypeParameter
-    // sharing the same name as the mapped key parameter.
+    // Check if template is IndexAccess(obj, key) where:
+    // Case 1: The key is a TypeParameter matching the mapped key param.
+    //   Construct Source[key_literal] directly to avoid name-based substitution
+    //   corrupting the source when it contains a same-named outer type parameter
+    //   (e.g., `Readonly<Props<P> & P>` where mapped key is also "P").
+    // Case 2 (original): The object is a TypeParameter with the same name as the
+    //   mapped key parameter (e.g., `Readonly<P>` where T=P from outer scope).
     if let Some((idx_obj, idx_key)) = get_index_access_types(db, template)
         && idx_obj != idx_key
-        && let Some(info) = get_type_parameter_info(db, idx_obj)
-        && info.name == key_param_name
     {
-        // Name collision detected — construct IndexAccess directly
-        return db.index_access(idx_obj, key_literal);
+        if let Some(info) = get_type_parameter_info(db, idx_key) {
+            if info.name == key_param_name {
+                return db.index_access(idx_obj, key_literal);
+            }
+        }
+        if let Some(info) = get_type_parameter_info(db, idx_obj) {
+            if info.name == key_param_name {
+                return db.index_access(idx_obj, key_literal);
+            }
+        }
     }
 
     // Normal path: substitute the key parameter name with the key literal
