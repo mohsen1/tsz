@@ -190,19 +190,33 @@ impl<'a> CheckerState<'a> {
         // failure reason already emits the appropriate diagnostic (including TS2353
         // for excess properties on fresh object literals).  Running the explicit
         // excess-property check again would produce a duplicate.
+        //
+        // When the return expression is a conditional expression and the combined
+        // type fails assignability, check each branch separately and report
+        // per-branch errors instead of the combined error.  This matches tsc's
+        // behavior of drilling into conditional expression branches for return
+        // statements.
+        let unwrapped_expr = self.ctx.arena.skip_parenthesized(return_data.expression);
+        let is_conditional_expr = unwrapped_expr.is_some()
+            && self
+                .ctx
+                .arena
+                .get(unwrapped_expr)
+                .is_some_and(|e| e.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
+
         let assignability_ok = if !skip_assignability
             && expected_type != TypeId::ANY
             && !self.type_contains_error(expected_type)
         {
-            let ok = self.check_assignable_or_report_at_without_source_elaboration(
-                return_type,
-                expected_type,
-                source_error_node,
-                fallback_error_node,
-            );
-            if !ok {
-                // TS2409: In constructors, also emit the constructor-specific diagnostic
-                // alongside the TS2322 already emitted by check_assignable_or_report.
+            if is_conditional_expr && !self.is_assignable_to(return_type, expected_type) {
+                // Per-branch error elaboration for conditional expressions.
+                // Instead of "Type '1 | 2' is not assignable to type '3'" at `return`,
+                // emit "Type '1' is not assignable to type '3'" at each failing branch.
+                self.check_conditional_return_branches_against_type(
+                    unwrapped_expr,
+                    expected_type,
+                    self.ctx.in_async_context(),
+                );
                 if is_in_constructor {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
@@ -211,8 +225,28 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                     );
                 }
+                false
+            } else {
+                let ok = self.check_assignable_or_report_at_without_source_elaboration(
+                    return_type,
+                    expected_type,
+                    source_error_node,
+                    fallback_error_node,
+                );
+                if !ok {
+                    // TS2409: In constructors, also emit the constructor-specific diagnostic
+                    // alongside the TS2322 already emitted by check_assignable_or_report.
+                    if is_in_constructor {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            fallback_error_node,
+                            diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
+                            diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
+                        );
+                    }
+                }
+                ok
             }
-            ok
         } else {
             true
         };

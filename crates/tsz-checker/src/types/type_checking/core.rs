@@ -41,11 +41,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip parenthesized expressions for error anchor — tsc points at
+            // the inner expression (e.g. `1` in `(1)`), not the outer parens.
+            let anchor_idx = self.ctx.arena.skip_parenthesized(branch_idx);
+
             let _ = self.check_assignable_or_report_at(
                 branch_type,
                 expected_type,
-                branch_idx,
-                branch_idx,
+                anchor_idx,
+                anchor_idx,
             );
         }
     }
