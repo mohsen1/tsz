@@ -1796,112 +1796,107 @@ impl<'a> CheckerState<'a> {
                         && !is_in_function_scope
                         && !is_in_external_module
                         && !self.ctx.is_js_file()
+                        && let Some(ref name_str) = var_name
                     {
-                        if let Some(ref name_str) = var_name {
-                            // Clone entries to avoid holding borrow on self during mutation.
-                            let cross_file_entries: Vec<(usize, tsz_binder::SymbolId)> = self
-                                .ctx
-                                .global_file_locals_index
-                                .as_ref()
-                                .and_then(|idx| idx.get(name_str.as_str()))
-                                .cloned()
-                                .unwrap_or_default();
-                            let all_arenas_opt = self.ctx.all_arenas.clone();
-                            let all_binders_opt = self.ctx.all_binders.clone();
-                            if let Some(all_arenas) = all_arenas_opt
-                                && let Some(all_binders) = all_binders_opt
-                                && !cross_file_entries.is_empty()
-                            {
-                                let current_file_idx = self.ctx.current_file_idx;
-                                let types = self.ctx.types;
-                                let compiler_options = self.ctx.compiler_options.clone();
-                                let definition_store = self.ctx.definition_store.clone();
-                                let lib_contexts = self.ctx.lib_contexts.clone();
-                                let mut found_cross_file_type = false;
-                                for &(file_idx, other_sym_id) in &cross_file_entries {
-                                    if found_cross_file_type {
-                                        break;
-                                    }
-                                    // Only check against files with lower indices (earlier in
-                                    // the program). The first file to declare the variable
-                                    // establishes its type; subsequent files are checked against
-                                    // that established type. This matches tsc behavior.
-                                    if file_idx >= current_file_idx {
+                        // Clone entries to avoid holding borrow on self during mutation.
+                        let cross_file_entries: Vec<(usize, tsz_binder::SymbolId)> = self
+                            .ctx
+                            .global_file_locals_index
+                            .as_ref()
+                            .and_then(|idx| idx.get(name_str.as_str()))
+                            .cloned()
+                            .unwrap_or_default();
+                        let all_arenas_opt = self.ctx.all_arenas.clone();
+                        let all_binders_opt = self.ctx.all_binders.clone();
+                        if let Some(all_arenas) = all_arenas_opt
+                            && let Some(all_binders) = all_binders_opt
+                            && !cross_file_entries.is_empty()
+                        {
+                            let current_file_idx = self.ctx.current_file_idx;
+                            let types = self.ctx.types;
+                            let compiler_options = self.ctx.compiler_options.clone();
+                            let definition_store = self.ctx.definition_store.clone();
+                            let lib_contexts = self.ctx.lib_contexts.clone();
+                            let mut found_cross_file_type = false;
+                            for &(file_idx, other_sym_id) in &cross_file_entries {
+                                if found_cross_file_type {
+                                    break;
+                                }
+                                // Only check against files with lower indices (earlier in
+                                // the program). The first file to declare the variable
+                                // establishes its type; subsequent files are checked against
+                                // that established type. This matches tsc behavior.
+                                if file_idx >= current_file_idx {
+                                    continue;
+                                }
+                                let Some(other_binder) = all_binders.get(file_idx) else {
+                                    continue;
+                                };
+                                // Only merge with other script files (non-module).
+                                if other_binder.is_external_module {
+                                    continue;
+                                }
+                                let Some(other_arena) = all_arenas.get(file_idx) else {
+                                    continue;
+                                };
+                                // Skip non-checked JS files — tsc doesn't type-check
+                                // JS files without checkJs, so they don't participate
+                                // in cross-file TS2403. When checkJs is enabled, JS
+                                // files are type-checked and DO participate.
+                                let other_is_unchecked_js = !compiler_options.check_js
+                                    && other_arena.source_files.first().is_some_and(|sf| {
+                                        sf.file_name.ends_with(".js")
+                                            || sf.file_name.ends_with(".jsx")
+                                            || sf.file_name.ends_with(".mjs")
+                                            || sf.file_name.ends_with(".cjs")
+                                    });
+                                if other_is_unchecked_js {
+                                    continue;
+                                }
+                                let Some(other_sym) = other_binder.get_symbol(other_sym_id) else {
+                                    continue;
+                                };
+                                // Find var declarations in the other file's symbol.
+                                // Merged global symbols may contain NodeIndex values from
+                                // multiple files. Verify each declaration belongs to this
+                                // file's arena by checking the name matches.
+                                for &other_decl in &other_sym.declarations {
+                                    if !other_decl.is_some() {
                                         continue;
                                     }
-                                    let Some(other_binder) = all_binders.get(file_idx) else {
+                                    let Some(other_node) = other_arena.get(other_decl) else {
                                         continue;
                                     };
-                                    // Only merge with other script files (non-module).
-                                    if other_binder.is_external_module {
-                                        continue;
-                                    }
-                                    let Some(other_arena) = all_arenas.get(file_idx) else {
-                                        continue;
-                                    };
-                                    // Skip non-checked JS files — tsc doesn't type-check
-                                    // JS files without checkJs, so they don't participate
-                                    // in cross-file TS2403. When checkJs is enabled, JS
-                                    // files are type-checked and DO participate.
-                                    let other_is_unchecked_js = !compiler_options.check_js
-                                        && other_arena.source_files.first().is_some_and(|sf| {
-                                            sf.file_name.ends_with(".js")
-                                                || sf.file_name.ends_with(".jsx")
-                                                || sf.file_name.ends_with(".mjs")
-                                                || sf.file_name.ends_with(".cjs")
-                                        });
-                                    if other_is_unchecked_js {
-                                        continue;
-                                    }
-                                    let Some(other_sym) = other_binder.get_symbol(other_sym_id)
-                                    else {
-                                        continue;
-                                    };
-                                    // Find var declarations in the other file's symbol.
-                                    // Merged global symbols may contain NodeIndex values from
-                                    // multiple files. Verify each declaration belongs to this
-                                    // file's arena by checking the name matches.
-                                    for &other_decl in &other_sym.declarations {
-                                        if !other_decl.is_some() {
-                                            continue;
-                                        }
-                                        let Some(other_node) = other_arena.get(other_decl) else {
-                                            continue;
-                                        };
-                                        // Guard: verify this NodeIndex resolves to a declaration
-                                        // with the expected name in this arena.
-                                        let decl_name_matches = other_arena
-                                            .get(other_decl)
-                                            .and_then(|n| {
-                                                other_arena.get_variable_declaration(n).and_then(
-                                                    |vd| {
-                                                        other_arena
-                                                            .get(vd.name)
-                                                            .and_then(|name_node| {
-                                                                other_arena
-                                                                    .get_identifier(name_node)
-                                                            })
-                                                            .map(|id| {
-                                                                other_arena
-                                                                    .resolve_identifier_text(id)
-                                                            })
-                                                    },
-                                                )
+                                    // Guard: verify this NodeIndex resolves to a declaration
+                                    // with the expected name in this arena.
+                                    let decl_name_matches = other_arena
+                                        .get(other_decl)
+                                        .and_then(|n| {
+                                            other_arena.get_variable_declaration(n).and_then(|vd| {
+                                                other_arena
+                                                    .get(vd.name)
+                                                    .and_then(|name_node| {
+                                                        other_arena.get_identifier(name_node)
+                                                    })
+                                                    .map(|id| {
+                                                        other_arena.resolve_identifier_text(id)
+                                                    })
                                             })
-                                            .is_some_and(|n| n == name_str.as_str());
-                                        if !decl_name_matches {
-                                            continue;
-                                        }
-                                        // Only compare against var declarations (not classes, namespaces, etc.)
-                                        if other_node.kind
+                                        })
+                                        .is_some_and(|n| n == name_str.as_str());
+                                    if !decl_name_matches {
+                                        continue;
+                                    }
+                                    // Only compare against var declarations (not classes, namespaces, etc.)
+                                    if other_node.kind
                                         != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
                                         && other_node.kind
                                             != tsz_parser::parser::syntax_kind_ext::PARAMETER
                                     {
                                         continue;
                                     }
-                                        // Check if the other declaration is also a `var` (not let/const)
-                                        if let Some(other_ext) = other_arena.get_extended(other_decl)
+                                    // Check if the other declaration is also a `var` (not let/const)
+                                    if let Some(other_ext) = other_arena.get_extended(other_decl)
                                         && let Some(other_parent) =
                                             other_arena.get(other_ext.parent)
                                         && other_parent.kind
@@ -1918,51 +1913,46 @@ impl<'a> CheckerState<'a> {
                                             continue; // block-scoped, skip
                                         }
                                     }
-                                        // Skip bare declarations in the other file
-                                        let other_is_bare = other_arena
-                                            .get(other_decl)
-                                            .and_then(|n| other_arena.get_variable_declaration(n))
-                                            .is_some_and(|d| {
-                                                d.type_annotation.is_none()
-                                                    && d.initializer.is_none()
-                                            });
-                                        if other_is_bare {
-                                            continue;
-                                        }
-                                        // Resolve the type of the cross-file declaration
-                                        if !CheckerState::enter_cross_arena_delegation() {
-                                            continue;
-                                        }
-                                        let mut cross_checker =
-                                            CheckerState::new_with_shared_def_store(
-                                                other_arena,
-                                                other_binder,
-                                                types,
-                                                format!("cross-file-{file_idx}"),
-                                                compiler_options.clone(),
-                                                definition_store.clone(),
-                                            );
-                                        cross_checker.ctx.set_lib_contexts(lib_contexts.clone());
-                                        let other_type = cross_checker.get_type_of_node(other_decl);
-                                        CheckerState::leave_cross_arena_delegation();
-                                        if other_type != TypeId::ERROR
-                                            && !self.are_var_decl_types_compatible(
-                                                other_type, final_type,
-                                            )
-                                        {
-                                            self.error_subsequent_variable_declaration(
-                                                name_str, other_type, final_type, decl_idx,
-                                            );
-                                        }
-                                        prior_type_found =
-                                            Some(if let Some(prev) = prior_type_found {
-                                                self.refine_var_decl_type(prev, other_type)
-                                            } else {
-                                                other_type
-                                            });
-                                        found_cross_file_type = true;
-                                        break; // One declaration per file is enough
+                                    // Skip bare declarations in the other file
+                                    let other_is_bare = other_arena
+                                        .get(other_decl)
+                                        .and_then(|n| other_arena.get_variable_declaration(n))
+                                        .is_some_and(|d| {
+                                            d.type_annotation.is_none() && d.initializer.is_none()
+                                        });
+                                    if other_is_bare {
+                                        continue;
                                     }
+                                    // Resolve the type of the cross-file declaration
+                                    if !CheckerState::enter_cross_arena_delegation() {
+                                        continue;
+                                    }
+                                    let mut cross_checker = CheckerState::new_with_shared_def_store(
+                                        other_arena,
+                                        other_binder,
+                                        types,
+                                        format!("cross-file-{file_idx}"),
+                                        compiler_options.clone(),
+                                        definition_store.clone(),
+                                    );
+                                    cross_checker.ctx.set_lib_contexts(lib_contexts.clone());
+                                    let other_type = cross_checker.get_type_of_node(other_decl);
+                                    CheckerState::leave_cross_arena_delegation();
+                                    if other_type != TypeId::ERROR
+                                        && !self
+                                            .are_var_decl_types_compatible(other_type, final_type)
+                                    {
+                                        self.error_subsequent_variable_declaration(
+                                            name_str, other_type, final_type, decl_idx,
+                                        );
+                                    }
+                                    prior_type_found = Some(if let Some(prev) = prior_type_found {
+                                        self.refine_var_decl_type(prev, other_type)
+                                    } else {
+                                        other_type
+                                    });
+                                    found_cross_file_type = true;
+                                    break; // One declaration per file is enough
                                 }
                             }
                         }

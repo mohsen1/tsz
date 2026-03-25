@@ -206,14 +206,13 @@ impl<'a> CheckerState<'a> {
                 // TS2708: import alias targeting an uninstantiated namespace.
                 // `import a = A` where namespace A only contains types (interfaces,
                 // type aliases) is not a value. `typeof a` should emit TS2708.
-                if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                    if let Some(sym_id) = self.resolve_identifier_symbol(type_query.expr_name) {
-                        if self.is_import_alias_to_type_only_namespace(sym_id) {
-                            let name = name_text.as_deref().unwrap_or("<unknown>");
-                            self.error_namespace_used_as_value_at(name, type_query.expr_name);
-                            return TypeId::ERROR;
-                        }
-                    }
+                if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && let Some(sym_id) = self.resolve_identifier_symbol(type_query.expr_name)
+                    && self.is_import_alias_to_type_only_namespace(sym_id)
+                {
+                    let name = name_text.as_deref().unwrap_or("<unknown>");
+                    self.error_namespace_used_as_value_at(name, type_query.expr_name);
+                    return TypeId::ERROR;
                 }
 
                 if !is_type_only_import {

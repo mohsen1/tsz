@@ -439,11 +439,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // (e.g., Result<T> -> T | "FAILURE").
                 let evaluated_param = if let Some(env) = &self.type_environment {
                     let env_borrow = env.borrow();
-                    flow_query::evaluate_application_type(
-                        self.interner,
-                        &*env_borrow,
-                        param.type_id,
-                    )
+                    flow_query::evaluate_application_type(self.interner, &env_borrow, param.type_id)
                 } else {
                     flow_query::evaluate_type_structure(self.interner, param.type_id)
                 };
@@ -569,7 +565,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Use the type environment's resolver for Application types.
         let expanded_param = if let Some(env_ref) = &self.type_environment {
             let env = env_ref.borrow();
-            let result = flow_query::evaluate_application_type(self.interner, &*env, param_type);
+            let result = flow_query::evaluate_application_type(self.interner, &env, param_type);
             if result == param_type {
                 flow_query::evaluate_type_structure(self.interner, param_type)
             } else {
@@ -611,7 +607,7 @@ impl<'a> FlowAnalyzer<'a> {
                         return resolved;
                     }
                     // Then try Application evaluation
-                    let result = flow_query::evaluate_application_type(self.interner, &*env, m);
+                    let result = flow_query::evaluate_application_type(self.interner, &env, m);
                     if result != m {
                         return result;
                     }
