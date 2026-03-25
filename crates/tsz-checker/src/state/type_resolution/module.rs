@@ -367,12 +367,11 @@ impl<'a> CheckerState<'a> {
         // the `export =` target, NOT to a member named "default" that may have
         // been copied from the target's static exports (e.g. `static default: "foo"`).
         // Check `export =` first for "default" lookups.
-        if export_name == "default" {
-            if let Some(export_equals_sym_id) = exports_table.get("export=")
-                && binder.get_symbol(export_equals_sym_id).is_some()
-            {
-                return Some(export_equals_sym_id);
-            }
+        if export_name == "default"
+            && let Some(export_equals_sym_id) = exports_table.get("export=")
+            && binder.get_symbol(export_equals_sym_id).is_some()
+        {
+            return Some(export_equals_sym_id);
         }
 
         if let Some(sym_id) = exports_table.get(export_name)
@@ -520,10 +519,10 @@ impl<'a> CheckerState<'a> {
         // where module_exports wasn't populated).
         // When looking for "default" and the module has `export =`, prefer the
         // `export =` target over a static member named "default".
-        if export_name == "default" {
-            if let Some(sym_id) = target_binder.file_locals.get("export=") {
-                return Some((sym_id, file_idx));
-            }
+        if export_name == "default"
+            && let Some(sym_id) = target_binder.file_locals.get("export=")
+        {
+            return Some((sym_id, file_idx));
         }
         if let Some(sym_id) = target_binder.file_locals.get(export_name) {
             return Some((sym_id, file_idx));

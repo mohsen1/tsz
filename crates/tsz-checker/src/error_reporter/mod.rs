@@ -12,6 +12,7 @@ pub(crate) enum TypeOnlyKind {
 mod assignability;
 mod assignability_helpers;
 mod call_errors;
+mod call_errors_anchors;
 mod core;
 mod core_formatting;
 mod emitters;
