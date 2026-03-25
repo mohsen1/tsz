@@ -111,11 +111,9 @@ impl<'a> CheckerState<'a> {
             return (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved);
         }
 
-        self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
-            .map(|module_type| {
-                self.instance_type_from_constructor_type(module_type)
-                    .unwrap_or(module_type)
-            })
+        self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx)).and_then(
+            |module_type| self.instance_type_from_constructor_type(module_type).or(Some(module_type)),
+        )
     }
     /// Parse a JSDoc-style `@type` expression into a concrete type.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
@@ -773,14 +771,10 @@ impl<'a> CheckerState<'a> {
             return Some(resolved);
         }
 
-        // 3b. File-local symbols (classes, interfaces, type aliases, enums, imports)
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
-                return Some(resolved);
-            }
-        }
-        // 3c. @typedef / @callback resolution from JSDoc comments
+        // 3b. @typedef / @callback resolution from JSDoc comments (takes precedence over
+        // file-local values in JSDoc type-position lookups).
+        // This matches tsc behavior where a JSDoc typedef can shadow an ambient value
+        // with the same name in JSDoc annotation contexts.
         if let Some(sf) = self.ctx.arena.source_files.first() {
             if sf.comments.is_empty() {
                 return None;
@@ -792,6 +786,14 @@ impl<'a> CheckerState<'a> {
             {
                 self.register_jsdoc_typedef_def(name, ty);
                 return Some(ty);
+            }
+        }
+
+        // 3c. File-local symbols (classes, interfaces, type aliases, enums, imports)
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                return Some(resolved);
             }
         }
         None
