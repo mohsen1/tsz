@@ -579,7 +579,7 @@ impl ParserState {
         // Check what type of opening element we got
         let kind = self.arena.get(opening).map_or(0, |n| n.kind);
 
-        if kind == syntax_kind_ext::JSX_OPENING_ELEMENT {
+        let jsx_node = if kind == syntax_kind_ext::JSX_OPENING_ELEMENT {
             // Get the tag name from the opening element for error reporting
             let opening_tag_name = self
                 .arena
@@ -657,7 +657,66 @@ impl ParserState {
         } else {
             // Self-closing element, already complete
             opening
+        };
+
+        if in_expression_context {
+            self.recover_adjacent_jsx_siblings(jsx_node);
         }
+
+        jsx_node
+    }
+
+    fn is_jsx_adjacent_sibling_candidate(&self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+
+        let Some(rest) = self.get_source_text().get(self.token_pos() as usize..) else {
+            return false;
+        };
+        let line_end = rest
+            .find(['\n', '\r', ';'])
+            .unwrap_or(rest.len());
+        let line = &rest[..line_end];
+        line.contains("</") || line.contains("/>")
+    }
+
+    pub(crate) fn recover_adjacent_jsx_siblings(&mut self, first_expr: NodeIndex) -> bool {
+        let Some(first_node) = self.arena.get(first_expr) else {
+            return false;
+        };
+
+        if !matches!(
+            first_node.kind,
+            syntax_kind_ext::JSX_ELEMENT
+                | syntax_kind_ext::JSX_FRAGMENT
+                | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+        ) {
+            return false;
+        }
+
+        if !self.is_jsx_file() || !self.is_jsx_adjacent_sibling_candidate() {
+            return false;
+        }
+
+        let start_pos = first_node.pos;
+        let mut end_pos = first_node.end;
+
+        while self.is_jsx_adjacent_sibling_candidate() {
+            let sibling = self.parse_jsx_element_or_self_closing_or_fragment(false);
+            end_pos = self
+                .arena
+                .get(sibling)
+                .map_or(self.token_end(), |node| node.end);
+        }
+
+        self.parse_error_at(
+            start_pos,
+            end_pos.saturating_sub(start_pos),
+            tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+            tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+        );
+        true
     }
 
     /// Parse JSX opening element, self-closing element, or opening fragment.

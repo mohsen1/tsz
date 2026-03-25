@@ -2299,3 +2299,35 @@ let b: ?number = 42;
         "Nullable types should not cause cascading errors, got: {cascade_codes:?}. All: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_adjacent_jsx_roots_report_ts2657_without_expression_cascade() {
+    let source = r"
+declare namespace JSX { interface Element { } }
+
+<div></div>
+<div></div>
+
+var x = <div></div><div></div>
+";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts2657_count = diagnostics.iter().filter(|d| d.code == 2657).count();
+    let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+
+    assert_eq!(
+        ts2657_count, 2,
+        "Expected TS2657 for both adjacent JSX root cases, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1003_count, 0,
+        "Adjacent JSX recovery should not leak TS1003, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1109_count, 0,
+        "Adjacent JSX recovery should not leak TS1109, got diagnostics: {diagnostics:?}"
+    );
+}

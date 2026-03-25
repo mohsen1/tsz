@@ -554,7 +554,9 @@ impl<'a> CheckerState<'a> {
                 || jsx_mode == JsxMode::ReactJsxDev
                 || self.extract_jsx_import_source_pragma().is_some()
                 || !self.ctx.compiler_options.jsx_import_source.is_empty();
-            if !uses_import_source && !self.ctx.has_parse_errors {
+            let file_has_any_parse_diag =
+                self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
+            if !uses_import_source && !file_has_any_parse_diag {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
                     idx,
@@ -865,10 +867,12 @@ impl<'a> CheckerState<'a> {
             || jsx_mode == JsxMode::ReactJsxDev
             || self.extract_jsx_import_source_pragma().is_some()
             || !self.ctx.compiler_options.jsx_import_source.is_empty();
+        let file_has_any_parse_diag =
+            self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
         if is_intrinsic
             && self.get_intrinsic_elements_type().is_none()
             && !uses_import_source
-            && !self.ctx.has_parse_errors
+            && !file_has_any_parse_diag
         {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
