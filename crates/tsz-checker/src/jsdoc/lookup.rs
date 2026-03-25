@@ -67,7 +67,10 @@ impl<'a> CheckerState<'a> {
         self.jsdoc_concrete_callable_type_from_expr(type_expr, node.pos, &comments, &source_text)
     }
 
-    pub(crate) fn resolve_global_jsdoc_typedef_type(&mut self, name: &str) -> Option<TypeId> {
+    pub(crate) fn resolve_global_jsdoc_typedef_info(
+        &mut self,
+        name: &str,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         if !self.ctx.should_resolve_jsdoc() {
             return None;
         }
@@ -75,11 +78,9 @@ impl<'a> CheckerState<'a> {
         if let Some(source_file) = self.ctx.arena.source_files.first() {
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
-            if let Some(ty) =
-                self.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
+            if let Some(info) = self.resolve_jsdoc_typedef_info(name, &comments, &source_text)
             {
-                self.register_jsdoc_typedef_def(name, ty);
-                return Some(ty);
+                return Some(info);
             }
         }
 
@@ -110,12 +111,10 @@ impl<'a> CheckerState<'a> {
             checker.ctx.current_file_idx = file_idx;
             self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
-            if let Some(ty) =
-                checker.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
+            if let Some(info) = checker.resolve_jsdoc_typedef_info(name, &comments, &source_text)
             {
                 self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-                self.register_jsdoc_typedef_def(name, ty);
-                return Some(ty);
+                return Some(info);
             }
         }
 
@@ -277,25 +276,14 @@ impl<'a> CheckerState<'a> {
             })
             .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
             .unwrap_or_default();
-        let typedef_constraints = if symbol_constraints.is_empty() {
-            self.jsdoc_typedef_template_constraints_before(
-                base_name,
-                anchor_pos,
-                comments,
-                source_text,
-            )
+        let type_params = if let Some((_, type_params)) = self.resolve_global_jsdoc_typedef_info(base_name) {
+            type_params
+        } else if !symbol_constraints.is_empty() {
+            symbol_constraints
         } else {
             Vec::new()
         };
-        let constraints: Vec<Option<TypeId>> = if !symbol_constraints.is_empty() {
-            symbol_constraints
-                .into_iter()
-                .map(|param| param.constraint)
-                .collect()
-        } else {
-            typedef_constraints
-        };
-        if constraints.is_empty() {
+        if type_params.is_empty() {
             return;
         }
         let Some((_, comment_pos)) =
@@ -307,9 +295,36 @@ impl<'a> CheckerState<'a> {
         let Some(type_expr_offset) = raw_comment.find(type_expr) else {
             return;
         };
+        let got = arg_strs.len();
+        let max_expected = type_params.len();
+        let min_required = type_params.iter().filter(|param| param.default.is_none()).count();
+        if got < min_required || got > max_expected {
+            let message = if min_required < max_expected {
+                format_message(
+                    diagnostic_messages::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                    &[base_name, &min_required.to_string(), &max_expected.to_string()],
+                )
+            } else {
+                format_message(
+                    diagnostic_messages::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                    &[base_name, &max_expected.to_string()],
+                )
+            };
+            self.error_at_position(
+                comment_pos + type_expr_offset as u32,
+                base_name.len() as u32,
+                &message,
+                if min_required < max_expected {
+                    diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS
+                } else {
+                    diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S
+                },
+            );
+            return;
+        }
         let mut arg_search_offset = angle_idx + 1;
-        for (arg_str, constraint) in arg_strs.iter().zip(constraints.iter()) {
-            let Some(constraint) = constraint else {
+        for (arg_str, param) in arg_strs.iter().zip(type_params.iter()) {
+            let Some(constraint) = param.constraint else {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             };
@@ -317,7 +332,7 @@ impl<'a> CheckerState<'a> {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             };
-            if self.is_assignable_to(type_arg, *constraint) {
+            if self.is_assignable_to(type_arg, constraint) {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             }
@@ -326,7 +341,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[
                     &self.format_type_diagnostic(widened_arg),
-                    &self.format_type_diagnostic(*constraint),
+                    &self.format_type_diagnostic(constraint),
                 ],
             );
             let Some(arg_rel_in_expr) = type_expr[arg_search_offset..].find(arg_str.trim()) else {
@@ -341,7 +356,7 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
             );
-            arg_search_offset += arg_str.len() + 1;
+            return;
         }
     }
     /// Resolve a direct leading JSDoc `@type` annotation (no parent fallback).

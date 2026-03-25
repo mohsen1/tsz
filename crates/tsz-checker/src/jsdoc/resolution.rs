@@ -118,35 +118,6 @@ impl<'a> CheckerState<'a> {
     // NOTE: jsdoc_callable_type_annotation_for_node, jsdoc_callable_type_annotation_for_node_direct,
     // resolve_global_jsdoc_typedef_type, source_file_data_for_node, resolve_type_query_type,
     // jsdoc_type_annotation_for_node are in lookup.rs
-    pub(super) fn jsdoc_typedef_template_constraints_before(
-        &mut self,
-        typedef_name: &str,
-        _anchor_pos: u32,
-        comments: &[tsz_common::comments::CommentRange],
-        source_text: &str,
-    ) -> Vec<Option<TypeId>> {
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        let mut result = Vec::new();
-        for comment in comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            let content = get_jsdoc_content(comment, source_text);
-            if !Self::parse_jsdoc_typedefs(&content)
-                .iter()
-                .any(|(name, _)| name == typedef_name)
-            {
-                continue;
-            }
-            result = Self::jsdoc_template_constraints(&content)
-                .into_iter()
-                .map(|(_, constraint)| {
-                    constraint.and_then(|expr| self.resolve_jsdoc_type_str(&expr))
-                })
-                .collect();
-        }
-        result
-    }
     // NOTE: validate_jsdoc_generic_constraints_at_node, jsdoc_type_annotation_for_node_direct,
     // jsdoc_satisfies_annotation_with_pos are in lookup.rs
 
@@ -1502,6 +1473,17 @@ impl<'a> CheckerState<'a> {
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
     ) -> Option<TypeId> {
+        self.resolve_jsdoc_typedef_info(type_expr, comments, source_text)
+            .map(|(body_type, _)| body_type)
+            .or(Some(TypeId::ANY))
+    }
+
+    pub(crate) fn resolve_jsdoc_typedef_info(
+        &mut self,
+        type_expr: &str,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         // Re-entrancy guard: recursive @typedef like `@typedef {... | Json[]} Json`
@@ -1540,21 +1522,15 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(type_expr.to_owned());
 
-        // If the typedef's base type couldn't be resolved, return `any` as fallback.
-        // TS2304 is emitted eagerly by `check_jsdoc_typedef_base_types()` during the
-        // post-checking phase, so we don't emit it here to avoid duplicates.
-        let result = self
-            .type_from_jsdoc_typedef(typedef_info)
-            .map(|(body_type, _)| body_type)
-            .or(Some(TypeId::ANY));
+        let result = self.type_from_jsdoc_typedef(typedef_info);
 
         self.ctx
             .jsdoc_typedef_resolving
             .borrow_mut()
             .remove(type_expr);
 
-        if let Some(ty) = result {
-            self.register_jsdoc_typedef_def(type_expr, ty);
+        if let Some((ty, _)) = result.as_ref() {
+            self.register_jsdoc_typedef_def(type_expr, *ty);
         }
         result
     }
