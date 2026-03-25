@@ -358,13 +358,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 match kind {
                     IntrinsicKind::Any => PropertyAccessResult::simple(TypeId::ANY),
                     IntrinsicKind::Unknown => PropertyAccessResult::IsUnknown,
-                    IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
-                        let cause =
-                            if kind == IntrinsicKind::Void || kind == IntrinsicKind::Undefined {
-                                TypeId::UNDEFINED
-                            } else {
-                                TypeId::NULL
-                            };
+                    IntrinsicKind::Void => {
+                        // In tsc, accessing a property on `void` produces TS2339
+                        // ("Property 'X' does not exist on type 'void'"), NOT TS2532
+                        // ("Object is possibly 'undefined'"). `void` is a distinct type
+                        // from `undefined` for property access purposes.
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
+                    }
+                    IntrinsicKind::Null | IntrinsicKind::Undefined => {
+                        let cause = if kind == IntrinsicKind::Undefined {
+                            TypeId::UNDEFINED
+                        } else {
+                            TypeId::NULL
+                        };
                         PropertyAccessResult::PossiblyNullOrUndefined {
                             property_type: None,
                             cause,
