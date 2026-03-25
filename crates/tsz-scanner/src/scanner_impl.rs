@@ -2948,13 +2948,17 @@ fn is_identifier_part(ch: u32) -> bool {
         return is_identifier_start(ch) || is_digit(ch);
     }
 
-    // Unicode path: is_alphanumeric covers alphabetic chars + numeric chars (Nd category)
-    // ECMAScript ID_Continue includes: ID_Start + Mn + Mc + Nd + Pc + ZWNJ + ZWJ
+    // Unicode path: ECMAScript ID_Continue includes: ID_Start + Mn + Mc + Nd + Pc + ZWNJ + ZWJ
+    // We use is_alphabetic() for letters (Lu, Ll, Lt, Lm, Lo, Nl) and a dedicated Nd check
+    // for decimal digits. Note: is_alphanumeric() is too broad — it includes No (Number, other)
+    // like subscript/superscript digits (U+2081 etc.) which are NOT valid in identifiers.
     if let Some(c) = char::from_u32(ch) {
-        // is_alphanumeric covers letters and numbers
-        if c.is_alphanumeric() {
+        if c.is_alphabetic() {
             return true;
         }
+    }
+    if is_unicode_decimal_digit(ch) {
+        return true;
     }
 
     // ZWNJ and ZWJ
@@ -2970,6 +2974,81 @@ fn is_identifier_part(ch: u32) -> bool {
     // - Hebrew combining marks (U+0591-U+05C7)
     // - And other Indic scripts
     is_unicode_combining_mark(ch)
+}
+
+/// Check if a character is a Unicode decimal digit (Nd category).
+/// This covers digit characters from various scripts that are valid in
+/// ECMAScript identifiers as ID_Continue characters.
+/// Unlike `char::is_numeric()`, this excludes No (Number, other) like
+/// subscript/superscript digits and Nl (Number, letter) like Roman numerals.
+fn is_unicode_decimal_digit(ch: u32) -> bool {
+    // ASCII digits are handled by the fast path in is_identifier_part
+    // This covers non-ASCII Nd ranges from Unicode
+    matches!(ch,
+        0x0660..=0x0669   // Arabic-Indic Digits
+        | 0x06F0..=0x06F9 // Extended Arabic-Indic Digits
+        | 0x07C0..=0x07C9 // NKo Digits
+        | 0x0966..=0x096F // Devanagari Digits
+        | 0x09E6..=0x09EF // Bengali Digits
+        | 0x0A66..=0x0A6F // Gurmukhi Digits
+        | 0x0AE6..=0x0AEF // Gujarati Digits
+        | 0x0B66..=0x0B6F // Oriya Digits
+        | 0x0BE6..=0x0BEF // Tamil Digits
+        | 0x0C66..=0x0C6F // Telugu Digits
+        | 0x0CE6..=0x0CEF // Kannada Digits
+        | 0x0D66..=0x0D6F // Malayalam Digits
+        | 0x0DE6..=0x0DEF // Sinhala Lith Digits
+        | 0x0E50..=0x0E59 // Thai Digits
+        | 0x0ED0..=0x0ED9 // Lao Digits
+        | 0x0F20..=0x0F29 // Tibetan Digits
+        | 0x1040..=0x1049 // Myanmar Digits
+        | 0x1090..=0x1099 // Myanmar Shan Digits
+        | 0x17E0..=0x17E9 // Khmer Digits
+        | 0x1810..=0x1819 // Mongolian Digits
+        | 0x1946..=0x194F // Limbu Digits
+        | 0x19D0..=0x19D9 // New Tai Lue Digits
+        | 0x1A80..=0x1A89 // Tai Tham Hora Digits
+        | 0x1A90..=0x1A99 // Tai Tham Tham Digits
+        | 0x1B50..=0x1B59 // Balinese Digits
+        | 0x1BB0..=0x1BB9 // Sundanese Digits
+        | 0x1C40..=0x1C49 // Lepcha Digits
+        | 0x1C50..=0x1C59 // Ol Chiki Digits
+        | 0xA620..=0xA629 // Vai Digits
+        | 0xA8D0..=0xA8D9 // Saurashtra Digits
+        | 0xA900..=0xA909 // Kayah Li Digits
+        | 0xA9D0..=0xA9D9 // Javanese Digits
+        | 0xA9F0..=0xA9F9 // Myanmar Tai Laing Digits
+        | 0xAA50..=0xAA59 // Cham Digits
+        | 0xABF0..=0xABF9 // Meetei Mayek Digits
+        | 0xFF10..=0xFF19 // Fullwidth Digits
+        | 0x104A0..=0x104A9 // Osmanya Digits
+        | 0x10D30..=0x10D39 // Hanifi Rohingya Digits
+        | 0x11066..=0x1106F // Brahmi Digits
+        | 0x110F0..=0x110F9 // Sora Sompeng Digits
+        | 0x11136..=0x1113F // Chakma Digits
+        | 0x111D0..=0x111D9 // Sharada Digits
+        | 0x112F0..=0x112F9 // Khudawadi Digits
+        | 0x11450..=0x11459 // Newa Digits
+        | 0x114D0..=0x114D9 // Tirhuta Digits
+        | 0x11650..=0x11659 // Modi Digits
+        | 0x116C0..=0x116C9 // Takri Digits
+        | 0x11730..=0x11739 // Ahom Digits
+        | 0x118E0..=0x118E9 // Warang Citi Digits
+        | 0x11950..=0x11959 // Dives Akuru Digits
+        | 0x11C50..=0x11C59 // Bhaiksuki Digits
+        | 0x11D50..=0x11D59 // Masaram Gondi Digits
+        | 0x11DA0..=0x11DA9 // Gunjala Gondi Digits
+        | 0x11F50..=0x11F59 // Soyombo Digits
+        | 0x16A60..=0x16A69 // Mro Digits
+        | 0x16AC0..=0x16AC9 // Tangsa Digits
+        | 0x16B50..=0x16B59 // Pahawh Hmong Digits
+        | 0x1D7CE..=0x1D7FF // Mathematical Digits (all styles)
+        | 0x1E140..=0x1E149 // Nyiakeng Puachue Hmong Digits
+        | 0x1E2F0..=0x1E2F9 // Wancho Digits
+        | 0x1E4F0..=0x1E4F9 // Nag Mundari Digits
+        | 0x1E950..=0x1E959 // Adlam Digits
+        | 0x1FBF0..=0x1FBF9 // Segmented Digit
+    )
 }
 
 /// Check if a character is a Unicode combining mark (Mn or Mc category).
@@ -3427,6 +3506,25 @@ mod tests {
         assert!(!is_identifier_start(CharacterCodes::_0));
         assert!(!is_identifier_start(CharacterCodes::SPACE));
         assert!(!is_identifier_start(CharacterCodes::PLUS));
+    }
+
+    #[test]
+    fn is_identifier_part_rejects_subscript_digits() {
+        // U+2081 SUBSCRIPT ONE is No (Number, other), NOT Nd — must be rejected
+        assert!(!is_identifier_part(0x2081)); // ₁
+        assert!(!is_identifier_part(0x2082)); // ₂
+        assert!(!is_identifier_part(0x00B2)); // ² SUPERSCRIPT TWO (No)
+        assert!(!is_identifier_part(0x00B3)); // ³ SUPERSCRIPT THREE (No)
+        assert!(!is_identifier_part(0x00BC)); // ¼ VULGAR FRACTION ONE QUARTER (No)
+        // Nd digits should be accepted
+        assert!(is_identifier_part(0x0966)); // Devanagari digit zero (Nd)
+        assert!(is_identifier_part(0x0660)); // Arabic-Indic digit zero (Nd)
+        assert!(is_identifier_part(0xFF10)); // Fullwidth digit zero (Nd)
+        // ASCII digits should be accepted
+        assert!(is_identifier_part(0x30)); // '0'
+        assert!(is_identifier_part(0x39)); // '9'
+        // Letters should be accepted
+        assert!(is_identifier_part(0x61)); // 'a'
     }
 
     #[test]
