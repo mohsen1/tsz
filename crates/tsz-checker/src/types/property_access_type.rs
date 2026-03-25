@@ -1476,8 +1476,13 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ANY;
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
-                    // Returns `any` type for properties that were assigned via expando pattern.
+                    // Recover the assigned value type when we can, then fall back to `any`.
                     if self.is_expando_property_read(access.expression, property_name) {
+                        if let Some(expando_type) =
+                            self.expando_property_read_type(idx, access.expression, property_name)
+                        {
+                            return expando_type;
+                        }
                         return TypeId::ANY;
                     }
                     // Check for expando function pattern: func.prop = value
