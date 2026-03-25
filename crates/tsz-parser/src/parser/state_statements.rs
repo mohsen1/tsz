@@ -572,7 +572,8 @@ impl ParserState {
                 // non-declaration-start token should NOT be parsed as a variable declaration.
                 // tsc checks `isLetDeclaration()`: next token must be identifier, `{`, or `[`.
                 if self.look_ahead_is_let_declaration() {
-                    self.parse_variable_statement()
+                    self.try_parse_invalid_let_array_declaration_statement()
+                        .unwrap_or_else(|| self.parse_variable_statement())
                 } else {
                     self.parse_expression_statement()
                 }
@@ -1511,6 +1512,80 @@ impl ParserState {
 
         self.arena
             .add_token(syntax_kind_ext::EMPTY_STATEMENT, start_pos, end_pos)
+    }
+
+    fn try_parse_invalid_let_array_declaration_statement(&mut self) -> Option<NodeIndex> {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        let next = self.scanner.scan();
+        let first_elem = if next == SyntaxKind::OpenBracketToken {
+            self.scanner.scan()
+        } else {
+            SyntaxKind::Unknown
+        };
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+
+        let invalid_first_array_binding_element = next == SyntaxKind::OpenBracketToken
+            && !matches!(
+                first_elem,
+                SyntaxKind::CloseBracketToken
+                    | SyntaxKind::CommaToken
+                    | SyntaxKind::DotDotDotToken
+                    | SyntaxKind::OpenBraceToken
+                    | SyntaxKind::OpenBracketToken
+            )
+            && !is_identifier_or_keyword(first_elem);
+
+        if !invalid_first_array_binding_element {
+            return None;
+        }
+
+        let start_pos = self.token_pos();
+        self.consume_keyword(); // let
+        self.parse_expected(SyntaxKind::OpenBracketToken);
+        self.error_array_element_destructuring_pattern_expected();
+
+        if !matches!(
+            self.token(),
+            SyntaxKind::CloseBracketToken | SyntaxKind::SemicolonToken | SyntaxKind::EndOfFileToken
+        ) {
+            self.next_token();
+        }
+
+        if self.is_token(SyntaxKind::CloseBracketToken) {
+            self.parse_error_at_current_token(
+                "';' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token();
+        }
+
+        if self.is_token(SyntaxKind::EqualsToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                tsz_common::diagnostics::diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+            self.next_token();
+            while !matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken | SyntaxKind::EndOfFileToken
+            ) {
+                self.next_token();
+            }
+        }
+
+        if self.is_token(SyntaxKind::SemicolonToken) {
+            self.next_token();
+        }
+
+        let end_pos = self.token_end();
+        Some(
+            self.arena
+                .add_token(syntax_kind_ext::EMPTY_STATEMENT, start_pos, end_pos),
+        )
     }
 
     /// Parse variable statement (var/let/const)
