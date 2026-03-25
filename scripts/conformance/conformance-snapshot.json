@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-24T22:13:44Z",
-  "git_sha": "8c8a169365af4c0505414ca5d360066352f22b13",
+  "timestamp": "2026-03-24T23:04:46Z",
+  "git_sha": "ffcb74a64fdf82a6d46ecc49d0a56aa97a228f5d",
   "summary": {
     "total_tests": 12581,
-    "passed": 11291,
-    "failed": 1290,
+    "passed": 11284,
+    "failed": 1297,
     "pass_rate": 89.7
   },
   "areas_by_pass_rate": [
@@ -297,10 +297,10 @@
     },
     {
       "area": "compiler",
-      "total": 6519,
-      "passed": 5883,
-      "failed": 636,
-      "pass_rate": 90.24
+      "total": 6513,
+      "passed": 5880,
+      "failed": 633,
+      "pass_rate": 90.28
     },
     {
       "area": "interfaces/interfaceDeclarations",
@@ -312,9 +312,9 @@
     {
       "area": "classes/members",
       "total": 198,
-      "passed": 180,
-      "failed": 18,
-      "pass_rate": 90.91
+      "passed": 179,
+      "failed": 19,
+      "pass_rate": 90.4
     },
     {
       "area": "ambient",
@@ -486,10 +486,10 @@
     },
     {
       "area": "parser/ecmascript5",
-      "total": 687,
-      "passed": 661,
+      "total": 685,
+      "passed": 659,
       "failed": 26,
-      "pass_rate": 96.22
+      "pass_rate": 96.2
     },
     {
       "area": "es6/classDeclaration",
@@ -804,15 +804,15 @@
       "count": 5
     },
     {
-      "code": "TS2657",
-      "count": 5
-    },
-    {
       "code": "TS2883",
       "count": 4
     },
     {
       "code": "TS2323",
+      "count": 4
+    },
+    {
+      "code": "TS2657",
       "count": 4
     },
     {
@@ -872,11 +872,11 @@
       "count": 2
     },
     {
-      "code": "TS2303",
+      "code": "TS1192",
       "count": 2
     },
     {
-      "code": "TS1192",
+      "code": "TS2303",
       "count": 2
     },
     {
@@ -1208,10 +1208,6 @@
       "count": 1
     },
     {
-      "code": "TS2323",
-      "count": 1
-    },
-    {
       "code": "TS1434",
       "count": 1
     },
@@ -1232,22 +1228,26 @@
       "count": 1
     },
     {
-      "code": "TS1340",
-      "count": 1
-    },
-    {
       "code": "TS2880",
       "count": 1
     },
     {
+      "code": "TS1340",
+      "count": 1
+    },
+    {
       "code": "TS5033",
+      "count": 1
+    },
+    {
+      "code": "TS2417",
       "count": 1
     }
   ],
   "one_extra_zero_missing": [
     {
       "code": "TS2322",
-      "count": 24
+      "count": 23
     },
     {
       "code": "TS2339",
@@ -1255,7 +1255,7 @@
     },
     {
       "code": "TS2345",
-      "count": 13
+      "count": 14
     },
     {
       "code": "TS2307",
@@ -1342,15 +1342,19 @@
       "count": 1
     },
     {
-      "code": "TS7053",
-      "count": 1
-    },
-    {
       "code": "TS1005",
       "count": 1
     },
     {
+      "code": "TS7053",
+      "count": 1
+    },
+    {
       "code": "TS2684",
+      "count": 1
+    },
+    {
+      "code": "TS2688",
       "count": 1
     },
     {
@@ -1365,7 +1369,7 @@
     },
     {
       "code": "TS2339",
-      "count": 19
+      "count": 18
     },
     {
       "code": "TS2345",
@@ -1440,19 +1444,15 @@
       "count": 1
     },
     {
-      "code": "TS2874",
-      "count": 1
-    },
-    {
-      "code": "TS2879",
-      "count": 1
-    },
-    {
       "code": "TS2749",
       "count": 1
     },
     {
       "code": "TS2451",
+      "count": 1
+    },
+    {
+      "code": "TS2769",
       "count": 1
     },
     {
@@ -1472,11 +1472,15 @@
       "count": 1
     },
     {
+      "code": "TS2391",
+      "count": 1
+    },
+    {
       "code": "TS1155",
       "count": 1
     },
     {
-      "code": "TS2391",
+      "code": "TS2300",
       "count": 1
     }
   ],
@@ -1590,10 +1594,6 @@
       "count": 5
     },
     {
-      "code": "TS2657",
-      "count": 5
-    },
-    {
       "code": "TS2532",
       "count": 5
     },
@@ -1634,6 +1634,10 @@
       "count": 4
     },
     {
+      "code": "TS2657",
+      "count": 4
+    },
+    {
       "code": "TS2786",
       "count": 4
     },
@@ -1653,7 +1657,7 @@
     },
     {
       "code": "TS2345",
-      "count": 41
+      "count": 43
     },
     {
       "code": "TS1005",
@@ -1752,6 +1756,10 @@
       "count": 4
     },
     {
+      "code": "TS2769",
+      "count": 3
+    },
+    {
       "code": "TS2708",
       "count": 3
     },
@@ -1796,19 +1804,15 @@
       "count": 3
     },
     {
-      "code": "TS2769",
-      "count": 2
-    },
-    {
       "code": "TS7031",
       "count": 2
     }
   ],
   "categories": {
-    "false_positive": 83,
-    "all_missing": 163,
-    "wrong_code": 418,
-    "fingerprint_only": 624,
-    "close_to_passing": 275
+    "false_positive": 81,
+    "all_missing": 162,
+    "wrong_code": 420,
+    "fingerprint_only": 620,
+    "close_to_passing": 277
   }
 }
