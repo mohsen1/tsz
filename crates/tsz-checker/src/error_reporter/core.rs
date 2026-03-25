@@ -322,7 +322,17 @@ impl<'a> CheckerState<'a> {
                     ..param.clone()
                 })
                 .collect();
+            // tsc widens literal return types in error messages:
+            // `(x: number) => number` not `(x: number) => 1`.
+            // This matches tsc's getWidenedLiteralType behavior in
+            // getReturnTypeFromBody. Use widen_type_for_display to
+            // preserve boolean literals (true/false) while widening
+            // numeric/string literals.
             let return_type = self.normalize_assignability_display_type(shape.return_type);
+            let return_type = crate::query_boundaries::common::widen_type_for_display(
+                self.ctx.types,
+                return_type,
+            );
             if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
                 && return_type == shape.return_type
             {
