@@ -351,20 +351,18 @@ impl<'a> CheckerState<'a> {
                         let Some(stmt_node) = arena.get(stmt_idx) else {
                             continue;
                         };
-                        if stmt_node.kind == INTERFACE_DECLARATION {
-                            if let Some(iface) = arena.get_interface(stmt_node)
-                                && let Some(name_node) = arena.get(iface.name)
-                                && let Some(id_data) = arena.get_identifier(name_node)
-                                && id_data.escaped_text == interface_name
-                            {
-                                let mut nested = tsz_binder::ModuleAugmentation::new(
-                                    interface_name.to_string(),
-                                    stmt_idx,
-                                );
-                                nested.arena =
-                                    external_arena.cloned().or_else(|| aug.arena.clone());
-                                result.push(nested);
-                            }
+                        if stmt_node.kind == INTERFACE_DECLARATION
+                            && let Some(iface) = arena.get_interface(stmt_node)
+                            && let Some(name_node) = arena.get(iface.name)
+                            && let Some(id_data) = arena.get_identifier(name_node)
+                            && id_data.escaped_text == interface_name
+                        {
+                            let mut nested = tsz_binder::ModuleAugmentation::new(
+                                interface_name.to_string(),
+                                stmt_idx,
+                            );
+                            nested.arena = external_arena.cloned().or_else(|| aug.arena.clone());
+                            result.push(nested);
                         }
                     }
                 }

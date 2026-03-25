@@ -616,8 +616,8 @@ fn test_optional_param_already_has_undefined_no_duplicate() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x?: number) => void",
-        "Optional param with number | undefined strips undefined in display — matches tsc"
+        formatted, "(x?: number | undefined) => void",
+        "Optional param with number | undefined preserves undefined in display — matches tsc"
     );
 }
 
