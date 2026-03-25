@@ -277,12 +277,21 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 has_prototype_evidence = true;
-                if let Some(prop) = self.prototype_define_property_binding(
-                    &arguments.nodes,
-                    parent_sym,
+                let current_file_idx = self.ctx.current_file_idx;
+                if let Some(name) = self.constant_define_property_name_in_file(
+                    current_file_idx,
+                    self.ctx.arena,
+                    arguments.nodes[1],
+                ) && let Some(mut prop) = self.define_property_info_from_descriptor(
+                    current_file_idx,
+                    self.ctx.arena,
+                    &name,
+                    arguments.nodes[2],
                     method_bindings.len() as u32,
                 ) {
-                    method_bindings.push(prop);
+                    prop.parent_id = Some(parent_sym);
+                    let name_atom = prop.name;
+                    method_bindings.push((name_atom, prop));
                 }
                 continue;
             }
@@ -510,31 +519,6 @@ impl<'a> CheckerState<'a> {
         }
 
         props
-    }
-
-    fn prototype_define_property_binding(
-        &mut self,
-        arg_nodes: &[NodeIndex],
-        parent_sym: tsz_binder::SymbolId,
-        declaration_order: u32,
-    ) -> Option<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)> {
-        if arg_nodes.len() < 3 {
-            return None;
-        }
-
-        let current_file_idx = self.ctx.current_file_idx;
-        let name =
-            self.constant_define_property_name_in_file(current_file_idx, self.ctx.arena, arg_nodes[1])?;
-        let mut prop = self.define_property_info_from_descriptor(
-            current_file_idx,
-            self.ctx.arena,
-            &name,
-            arg_nodes[2],
-            declaration_order,
-        )?;
-        prop.parent_id = Some(parent_sym);
-        let name_atom = prop.name;
-        Some((name_atom, prop))
     }
 
     fn collect_nested_arrow_this_properties(
