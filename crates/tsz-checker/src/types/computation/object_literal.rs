@@ -712,6 +712,16 @@ impl<'a> CheckerState<'a> {
                     && let Some(name_node) = self.ctx.arena.get(shorthand.name)
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 {
+                    // TS1255: Definite assignment assertion '!' is not permitted in object literals
+                    if shorthand.exclamation_token_pos > 0 {
+                        self.error(
+                            shorthand.exclamation_token_pos,
+                            1,
+                            "A definite assignment assertion '!' is not permitted in this context.".to_string(),
+                            tsz_common::diagnostics::diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                        );
+                    }
+
                     let name = ident.escaped_text.clone();
                     let shorthand_name_idx = shorthand.name;
 
