@@ -177,6 +177,13 @@ impl<'a> CheckerState<'a> {
             if is_union && self.is_jsx_string_tag_type(ty) {
                 return true;
             }
+            // Application/Lazy types (e.g., `ComponentClass<any>`) may evaluate to
+            // Callable types with call/construct signatures.  Treat them as potentially
+            // having signatures to avoid false TS2604.  The actual signature checking
+            // happens during props extraction where these types are fully evaluated.
+            if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, ty) {
+                return true;
+            }
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
                 .is_some_and(|sigs| !sigs.is_empty())
                 || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, ty)
