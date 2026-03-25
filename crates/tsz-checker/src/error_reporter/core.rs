@@ -1472,7 +1472,13 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             target,
                         )
-                        && !self.is_property_assignment_initializer(expr_idx)))
+                        && !self.is_property_assignment_initializer(expr_idx)
+                        // When the target is a bare type parameter (e.g. T),
+                        // tsc widens literals in error messages: "Type 'string'
+                        // is not assignable to type 'T'" rather than "Type '\"\"'
+                        // is not assignable to type 'T'". Preserve literals only
+                        // for complex generic targets like indexed access types.
+                        && !self.target_is_bare_type_parameter(target)))
             {
                 return display;
             }
@@ -1653,6 +1659,14 @@ impl<'a> CheckerState<'a> {
     pub(super) fn is_literal_sensitive_assignment_target(&mut self, target: TypeId) -> bool {
         let target = self.evaluate_type_for_assignability(target);
         self.is_literal_sensitive_assignment_target_inner(target)
+    }
+
+    /// Check if the target type is a bare type parameter (e.g. `T`).
+    /// Used to decide whether to widen literals in error messages:
+    /// tsc widens `""` → `string` when the target is a simple type param,
+    /// but preserves literals for complex generic targets like `Type[K]`.
+    pub(super) fn target_is_bare_type_parameter(&self, target: TypeId) -> bool {
+        tsz_solver::is_type_parameter(self.ctx.types, target)
     }
 
     fn is_literal_sensitive_assignment_target_inner(&self, target: TypeId) -> bool {
