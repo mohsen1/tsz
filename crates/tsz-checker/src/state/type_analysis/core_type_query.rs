@@ -203,6 +203,19 @@ impl<'a> CheckerState<'a> {
                         .resolve_identifier_symbol(type_query.expr_name)
                         .is_some_and(|sym_id| self.alias_resolves_to_type_only(sym_id));
 
+                // TS2708: import alias targeting an uninstantiated namespace.
+                // `import a = A` where namespace A only contains types (interfaces,
+                // type aliases) is not a value. `typeof a` should emit TS2708.
+                if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                    if let Some(sym_id) = self.resolve_identifier_symbol(type_query.expr_name) {
+                        if self.is_import_alias_to_type_only_namespace(sym_id) {
+                            let name = name_text.as_deref().unwrap_or("<unknown>");
+                            self.error_namespace_used_as_value_at(name, type_query.expr_name);
+                            return TypeId::ERROR;
+                        }
+                    }
+                }
+
                 if !is_type_only_import {
                     // Prefer the value-space type at the query site. Most `typeof`
                     // queries are flow-sensitive, but type-only function-like
@@ -372,6 +385,93 @@ impl<'a> CheckerState<'a> {
         }
 
         base
+    }
+
+    /// Check if a symbol is an import alias (`import a = A`) that targets
+    /// an uninstantiated (type-only) namespace. Used to emit TS2708 in typeof queries.
+    fn is_import_alias_to_type_only_namespace(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let lib_binders = self.get_lib_binders();
+        let symbol = match self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // Must be an alias without a value component
+        if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+            return false;
+        }
+        if (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0 {
+            return false;
+        }
+
+        // Must be an import-equals declaration (import a = X), not an ES import
+        if symbol.import_module.is_some() {
+            return false;
+        }
+
+        // Find the import equals declaration to get the target entity name
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return false;
+        }
+        let decl_node = match self.ctx.arena.get(decl_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return false;
+        }
+        let import_data = match self.ctx.arena.get_import_decl(decl_node) {
+            Some(d) => d,
+            None => return false,
+        };
+
+        // Resolve the module reference (entity name like `A` or `A.B`)
+        let target_sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, import_data.module_specifier)
+            .or_else(|| {
+                // For qualified names like `A.B`, resolve the full chain
+                self.resolve_qualified_symbol(import_data.module_specifier)
+            });
+
+        if let Some(target_sym_id) = target_sym_id {
+            let target_symbol = match self
+                .ctx
+                .binder
+                .get_symbol_with_libs(target_sym_id, &lib_binders)
+            {
+                Some(s) => s,
+                None => return false,
+            };
+            let target_flags = target_symbol.flags;
+            let is_namespace = (target_flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0;
+            if !is_namespace {
+                return false;
+            }
+            // Check if the namespace has any value flags beyond VALUE_MODULE
+            // (which the binder always sets). If it has CLASS, FUNCTION, etc. it's not type-only.
+            let value_flags_except_module =
+                tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
+            if (target_flags & value_flags_except_module) != 0 {
+                return false;
+            }
+            // Check whether any namespace declaration is actually instantiated
+            // (contains value members like variables, functions, classes, etc.)
+            let mut is_instantiated = false;
+            for &decl_idx in &target_symbol.declarations {
+                if self.is_namespace_declaration_instantiated(decl_idx) {
+                    is_instantiated = true;
+                    break;
+                }
+            }
+            return !is_instantiated;
+        }
+
+        false
     }
 
     fn is_import_type_query(&self, expr_name: NodeIndex) -> bool {
