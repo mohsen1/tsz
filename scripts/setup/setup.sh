@@ -107,8 +107,8 @@ TS_SHA=$(cd TypeScript 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || 
 if [ "$FORCE" = false ] && [ -n "$TS_SHA" ]; then
   skip "Already initialised (TypeScript@$TS_SHA)."
 else
-  if [ -f "$SCRIPT_DIR/setup-ts-submodule.sh" ]; then
-    bash "$SCRIPT_DIR/setup-ts-submodule.sh"
+  if [ -f "$SCRIPT_DIR/reset-ts-submodule.sh" ]; then
+    bash "$SCRIPT_DIR/reset-ts-submodule.sh"
   else
     git submodule update --init --depth 1 -- TypeScript
   fi
