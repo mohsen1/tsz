@@ -1483,12 +1483,11 @@ impl<'a> CheckerState<'a> {
                             props
                         };
 
-                        if !module_is_non_module_entity
-                            && let Some(augmentations) =
-                                self.ctx.binder.module_augmentations.get(&module_specifier)
-                        {
-                            for aug in augmentations {
-                                let name_atom = self.ctx.types.intern_string(&aug.name);
+                        if !module_is_non_module_entity {
+                            for aug_name in
+                                self.collect_module_augmentation_names(&module_specifier)
+                            {
+                                let name_atom = self.ctx.types.intern_string(&aug_name);
                                 if props.iter().any(|p| p.name == name_atom) {
                                     continue;
                                 }
@@ -1769,12 +1768,9 @@ impl<'a> CheckerState<'a> {
                         // Add augmentation declarations that introduce entirely new names.
                         // If the target resolves to a non-module export= value, these names
                         // are invalid and should not be surfaced on the namespace.
-                        if !module_is_non_module_entity
-                            && let Some(augmentations) =
-                                self.ctx.binder.module_augmentations.get(module_name)
-                        {
-                            for aug in augmentations {
-                                let name_atom = self.ctx.types.intern_string(&aug.name);
+                        if !module_is_non_module_entity {
+                            for aug_name in self.collect_module_augmentation_names(module_name) {
+                                let name_atom = self.ctx.types.intern_string(&aug_name);
                                 if props.iter().any(|p| p.name == name_atom) {
                                     continue;
                                 }
