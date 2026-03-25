@@ -1897,17 +1897,17 @@ impl<'a> CheckerState<'a> {
                                         if in_all
                                             && let Some((prop_node, prop_name)) =
                                                 named_property_nodes.get(&prop.name)
-                                            {
-                                                let message = format_message(
+                                        {
+                                            let message = format_message(
                                                     diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
                                                     &[prop_name],
                                                 );
-                                                self.error_at_node(
+                                            self.error_at_node(
                                                     *prop_node,
                                                     &message,
                                                     diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
                                                 );
-                                            }
+                                        }
                                     }
                                 }
                             }
