@@ -59,6 +59,116 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .set(self.constraint_recursion_depth.get() - 1);
     }
 
+    /// Propagate a top-like type (any/unknown) to all inference placeholders
+    /// nested inside a target type. This matches tsc's propagationType mechanism
+    /// where `inferFromTypes(target, target)` is called with propagationType set
+    /// to the source type, so all type parameter positions receive the source.
+    fn propagate_type_to_placeholders(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        propagation_type: TypeId,
+        target: TypeId,
+        priority: crate::types::InferencePriority,
+    ) {
+        // If target is directly a placeholder, add the propagation type as candidate
+        if let Some(&var) = var_map.get(&target) {
+            ctx.add_candidate(var, propagation_type, priority);
+            return;
+        }
+
+        // Recurse into the target structure to find nested placeholders
+        let target_key = self.interner.lookup(target);
+        match target_key {
+            Some(TypeData::Array(elem)) => {
+                self.propagate_type_to_placeholders(ctx, var_map, propagation_type, elem, priority);
+            }
+            Some(TypeData::Tuple(elems_id)) => {
+                let elems = self.interner.tuple_list(elems_id);
+                for elem in elems.iter() {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        elem.type_id,
+                        priority,
+                    );
+                }
+            }
+            Some(TypeData::Union(members_id) | TypeData::Intersection(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                for &member in members.iter() {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        member,
+                        priority,
+                    );
+                }
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        prop.type_id,
+                        priority,
+                    );
+                }
+            }
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                for param in &shape.params {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        param.type_id,
+                        priority,
+                    );
+                }
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    shape.return_type,
+                    priority,
+                );
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                for arg in app.args.iter().copied() {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        arg,
+                        priority,
+                    );
+                }
+            }
+            Some(TypeData::ReadonlyType(inner)) | Some(TypeData::KeyOf(inner)) => {
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    inner,
+                    priority,
+                );
+            }
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                self.propagate_type_to_placeholders(ctx, var_map, propagation_type, obj, priority);
+                self.propagate_type_to_placeholders(ctx, var_map, propagation_type, idx, priority);
+            }
+            _ => {
+                // No structural match — stop propagation
+            }
+        }
+    }
+
     /// Constrain type arguments of two Applications with the same base type,
     /// respecting the variance of each type parameter position.
     ///
@@ -149,20 +259,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        // Stop structural recursion when source or target is `any`.
+        // When source is `any`, propagate it to all inference placeholders
+        // nested inside the target. This matches tsc's propagationType
+        // mechanism: `inferFromTypes(target, target)` with propagationType =
+        // source, which ensures that e.g. `f<T>(x: T[]): T` called with
+        // `any` infers T = any (not unknown).
         //
-        // tsc's inferTypes returns early for `any` in either position (after
-        // the direct TypeParameter check above). Without this guard, union
-        // simplification can leak `any` through structural decomposition:
-        // e.g., `boolean | any` → `any` in a callback parameter would add
-        // `any` as a contra-candidate for placeholders nested inside the
-        // target union, polluting inference with `any` where `boolean` is the
-        // correct inference from another property.
-        //
-        // Direct placeholder targets are already handled above (the placeholder
-        // check adds `any` as a candidate when appropriate), so this only
-        // prevents structural *recursion* with `any`.
-        if source == TypeId::ANY || target == TypeId::ANY {
+        // Note: we only propagate `any`, not `unknown`. While tsc propagates
+        // both, `unknown` can appear as an intermediate source type in tsz
+        // for non-user-facing reasons, and propagating it causes regressions.
+        if source == TypeId::ANY {
+            self.propagate_type_to_placeholders(ctx, var_map, source, target, priority);
+            return;
+        }
+
+        // Stop structural recursion when source or target is a top type.
+        if source == TypeId::UNKNOWN || target == TypeId::ANY {
             return;
         }
 
