@@ -6,6 +6,7 @@ use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -22,6 +23,44 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn normalized_builtin_object_entries_return_type(
+        &self,
+        callee_expr: NodeIndex,
+        arg_types: &[TypeId],
+        return_type: TypeId,
+    ) -> TypeId {
+        if arg_types.len() != 1 || arg_types[0] != TypeId::ANY {
+            return return_type;
+        }
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return return_type;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return return_type;
+        };
+        if self.ctx.arena.get_identifier_text(access.name_or_argument) != Some("entries")
+            || self.ctx.arena.get_identifier_text(access.expression) != Some("Object")
+        {
+            return return_type;
+        }
+
+        let tuple = self.ctx.types.factory().tuple(vec![
+            tsz_solver::TupleElement {
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+                name: None,
+            },
+            tsz_solver::TupleElement {
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+                name: None,
+            },
+        ]);
+        self.ctx.types.factory().array(tuple)
+    }
+
     fn finalize_call_return_like_success(
         &mut self,
         callee_expr: NodeIndex,
@@ -228,6 +267,11 @@ impl<'a> CheckerState<'a> {
                 if is_super_call {
                     return TypeId::VOID;
                 }
+                let return_type = self.normalized_builtin_object_entries_return_type(
+                    callee_expr,
+                    arg_types,
+                    return_type,
+                );
                 self.finalize_call_return_like_success(
                     callee_expr,
                     arg_types,

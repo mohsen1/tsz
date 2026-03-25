@@ -129,8 +129,12 @@ pub struct Symbol {
     pub escaped_name: String,
     /// Declarations associated with this symbol
     pub declarations: Vec<NodeIndex>,
+    /// Stable source span of the first declaration, if known.
+    pub first_declaration_span: Option<(u32, u32)>,
     /// First value declaration of the symbol
     pub value_declaration: NodeIndex,
+    /// Stable source span of the value declaration, if known.
+    pub value_declaration_span: Option<(u32, u32)>,
     /// Parent symbol (for nested symbols)
     pub parent: SymbolId,
     /// Unique ID for this symbol
@@ -167,7 +171,9 @@ impl Symbol {
             flags,
             escaped_name: name,
             declarations: Vec::new(),
+            first_declaration_span: None,
             value_declaration: NodeIndex::NONE,
+            value_declaration_span: None,
             parent: SymbolId::NONE,
             id,
             exports: None,
@@ -191,6 +197,25 @@ impl Symbol {
     #[must_use]
     pub const fn has_any_flags(&self, flags: u32) -> bool {
         (self.flags & flags) != 0
+    }
+
+    /// Record a declaration and its stable source span.
+    pub fn add_declaration(&mut self, declaration: NodeIndex, span: Option<(u32, u32)>) {
+        if !self.declarations.contains(&declaration) {
+            self.declarations.push(declaration);
+        }
+        if self.first_declaration_span.is_none() {
+            self.first_declaration_span = span;
+        }
+    }
+
+    /// Record the symbol's value declaration and stable source span.
+    pub fn set_value_declaration(&mut self, declaration: NodeIndex, span: Option<(u32, u32)>) {
+        self.value_declaration = declaration;
+        self.value_declaration_span = span;
+        if self.first_declaration_span.is_none() {
+            self.first_declaration_span = span;
+        }
     }
 }
 

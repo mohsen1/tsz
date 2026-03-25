@@ -10,6 +10,10 @@ use tsz_scanner::SyntaxKind;
 use crate::state::{BinderState, FileFeatures};
 
 impl BinderState {
+    fn declaration_span(arena: &NodeArena, declaration: NodeIndex) -> Option<(u32, u32)> {
+        arena.get(declaration).map(|node| (node.pos, node.end))
+    }
+
     pub(crate) fn is_inside_class_member_computed_property_name(
         arena: &NodeArena,
         idx: NodeIndex,
@@ -259,7 +263,7 @@ impl BinderState {
             {
                 let is_exported = Self::has_export_modifier(arena, func.modifiers.as_ref());
                 let sym_id =
-                    self.declare_symbol(name, symbol_flags::FUNCTION, func_idx, is_exported);
+                    self.declare_symbol(arena, name, symbol_flags::FUNCTION, func_idx, is_exported);
 
                 // Also add to persistent scope
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
@@ -276,6 +280,7 @@ impl BinderState {
             // This makes it accessible before its actual declaration point
             let is_exported = Self::is_node_exported(arena, decl_idx);
             let sym_id = self.declare_symbol(
+                arena,
                 &name,
                 symbol_flags::FUNCTION_SCOPED_VARIABLE,
                 decl_idx,
@@ -1221,6 +1226,7 @@ impl BinderState {
     /// Declare a symbol in the current scope, merging when allowed.
     pub(crate) fn declare_symbol(
         &mut self,
+        arena: &NodeArena,
         name: &str,
         flags: u32,
         declaration: NodeIndex,
@@ -1239,9 +1245,10 @@ impl BinderState {
                     .get(self.current_scope_idx)
                     .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    sym.declarations.push(declaration);
+                    let span = Self::declaration_span(arena, declaration);
+                    sym.add_declaration(declaration, span);
                     if (flags & symbol_flags::VALUE) != 0 {
-                        sym.value_declaration = declaration;
+                        sym.set_value_declaration(declaration, span);
                     }
                     sym.is_exported = is_exported;
                     if let Some(parent_id) = container_sym {
@@ -1308,9 +1315,10 @@ impl BinderState {
                     .get(self.current_scope_idx)
                     .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    sym.declarations.push(declaration);
+                    let span = Self::declaration_span(arena, declaration);
+                    sym.add_declaration(declaration, span);
                     if (flags & symbol_flags::VALUE) != 0 {
-                        sym.value_declaration = declaration;
+                        sym.set_value_declaration(declaration, span);
                     }
                     sym.is_exported = is_exported;
                     if let Some(parent_id) = container_sym {
@@ -1345,9 +1353,10 @@ impl BinderState {
                     .get(self.current_scope_idx)
                     .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    sym.declarations.push(declaration);
+                    let span = Self::declaration_span(arena, declaration);
+                    sym.add_declaration(declaration, span);
                     if (flags & symbol_flags::VALUE) != 0 {
-                        sym.value_declaration = declaration;
+                        sym.set_value_declaration(declaration, span);
                     }
                     sym.is_exported = false;
                     if let Some(parent_id) = container_sym {
@@ -1376,13 +1385,14 @@ impl BinderState {
                 if can_merge {
                     sym.flags |= flags;
                     if sym.value_declaration.is_none() && (flags & symbol_flags::VALUE) != 0 {
-                        sym.value_declaration = declaration;
+                        sym.set_value_declaration(
+                            declaration,
+                            Self::declaration_span(arena, declaration),
+                        );
                     }
                 }
 
-                if !sym.declarations.contains(&declaration) {
-                    sym.declarations.push(declaration);
-                }
+                sym.add_declaration(declaration, Self::declaration_span(arena, declaration));
                 if is_exported {
                     sym.is_exported = true;
                 }
@@ -1423,9 +1433,7 @@ impl BinderState {
         {
             // Already hoisted — just ensure we don't double-add the declaration
             if let Some(sym) = self.symbols.get_mut(existing_id) {
-                if !sym.declarations.contains(&declaration) {
-                    sym.declarations.push(declaration);
-                }
+                sym.add_declaration(declaration, Self::declaration_span(arena, declaration));
                 if is_exported {
                     sym.is_exported = true;
                 }
@@ -1441,9 +1449,10 @@ impl BinderState {
             .get(self.current_scope_idx)
             .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
         if let Some(sym) = self.symbols.get_mut(sym_id) {
-            sym.declarations.push(declaration);
+            let span = Self::declaration_span(arena, declaration);
+            sym.add_declaration(declaration, span);
             if sym.value_declaration.is_none() && (flags & symbol_flags::VALUE) != 0 {
-                sym.value_declaration = declaration;
+                sym.set_value_declaration(declaration, span);
             }
             sym.is_exported = is_exported;
             if let Some(parent_id) = container_sym {

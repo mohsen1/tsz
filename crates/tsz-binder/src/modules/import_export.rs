@@ -42,8 +42,13 @@ impl BinderState {
                     && let Some(name) = Self::get_identifier_name(arena, clause.name)
                 {
                     // Use import_clause node as the declaration node
-                    let sym_id =
-                        self.declare_symbol(name, symbol_flags::ALIAS, import.import_clause, false);
+                    let sym_id = self.declare_symbol(
+                        arena,
+                        name,
+                        symbol_flags::ALIAS,
+                        import.import_clause,
+                        false,
+                    );
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                         sym.is_type_only = clause_type_only;
                         // Track module for cross-file resolution
@@ -65,6 +70,7 @@ impl BinderState {
                         if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings)
                         {
                             let sym_id = self.declare_symbol(
+                                arena,
                                 name,
                                 symbol_flags::ALIAS,
                                 clause.named_bindings,
@@ -86,6 +92,7 @@ impl BinderState {
                         {
                             // Use named_bindings (NamespaceImport) as the declaration node
                             let sym_id = self.declare_symbol(
+                                arena,
                                 name,
                                 symbol_flags::ALIAS,
                                 clause.named_bindings,
@@ -119,6 +126,7 @@ impl BinderState {
 
                                 if let Some(name) = local_name {
                                     let sym_id = self.declare_symbol(
+                                        arena,
                                         name,
                                         symbol_flags::ALIAS,
                                         spec_idx,
@@ -193,15 +201,17 @@ impl BinderState {
                 }
 
                 // Create symbol with ALIAS flag
-                let sym_id = self.declare_symbol(name, symbol_flags::ALIAS, idx, is_exported);
+                let sym_id =
+                    self.declare_symbol(arena, name, symbol_flags::ALIAS, idx, is_exported);
 
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    let span = arena.get(idx).map(|node| (node.pos, node.end));
                     // If this is the first value declaration, or if we're merging compatible
                     // declarations where this should be the value declaration.
                     // For aliases, we generally track the first one as value decl,
                     // but for duplicates we just want to ensure it's recorded.
                     if sym.value_declaration.is_none() {
-                        sym.value_declaration = idx;
+                        sym.set_value_declaration(idx, span);
                     }
 
                     // Track module for cross-file resolution and unresolved import detection
@@ -316,10 +326,13 @@ impl BinderState {
                     "default".to_string(),
                 );
                 if let Some(default_sym) = self.symbols.get_mut(default_sym_id) {
+                    let span = arena
+                        .get(export.export_clause)
+                        .map(|node| (node.pos, node.end));
                     default_sym.is_exported = true;
                     default_sym.is_type_only = export_type_only;
-                    default_sym.declarations.push(export.export_clause);
-                    default_sym.value_declaration = export.export_clause;
+                    default_sym.add_declaration(export.export_clause, span);
+                    default_sym.set_value_declaration(export.export_clause, span);
                 }
                 // Add to current scope so it's captured as a module export
                 self.current_scope
@@ -561,6 +574,7 @@ impl BinderState {
                             for (exported, original, spec_idx) in &export_mappings {
                                 // Use declare_symbol to add to file_locals
                                 let sym_id = self.declare_symbol(
+                                    arena,
                                     exported,
                                     symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
                                     *spec_idx,
@@ -612,9 +626,12 @@ impl BinderState {
 
                     let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
+                        let span = arena
+                            .get(export.export_clause)
+                            .map(|node| (node.pos, node.end));
                         sym.is_exported = true;
                         sym.is_type_only = export_type_only;
-                        sym.declarations.push(export.export_clause);
+                        sym.add_declaration(export.export_clause, span);
                         sym.is_umd_export = is_umd;
 
                         if is_umd {

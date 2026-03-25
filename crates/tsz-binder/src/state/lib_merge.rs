@@ -181,9 +181,8 @@ impl BinderState {
                                         if !aug_nodes.contains(&decl) {
                                             continue;
                                         }
-                                        if !existing_mut.declarations.contains(&decl) {
-                                            existing_mut.declarations.push(decl);
-                                        }
+                                        existing_mut
+                                            .add_declaration(decl, lib_sym.first_declaration_span);
                                         let arenas = self
                                             .declaration_arenas
                                             .entry((existing_id, decl))
@@ -196,9 +195,8 @@ impl BinderState {
                                 } else {
                                     existing_mut.flags |= lib_sym.flags;
                                     for &decl in &lib_sym.declarations {
-                                        if !existing_mut.declarations.contains(&decl) {
-                                            existing_mut.declarations.push(decl);
-                                        }
+                                        existing_mut
+                                            .add_declaration(decl, lib_sym.first_declaration_span);
                                         let arenas = self
                                             .declaration_arenas
                                             .entry((existing_id, decl))
@@ -212,7 +210,10 @@ impl BinderState {
                                 if existing_mut.value_declaration.is_none()
                                     && lib_sym.value_declaration.is_some()
                                 {
-                                    existing_mut.value_declaration = lib_sym.value_declaration;
+                                    existing_mut.set_value_declaration(
+                                        lib_sym.value_declaration,
+                                        lib_sym.value_declaration_span,
+                                    );
                                 }
                             }
                             existing_id
