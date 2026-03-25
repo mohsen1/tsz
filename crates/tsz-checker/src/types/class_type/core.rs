@@ -532,6 +532,7 @@ impl<'a> CheckerState<'a> {
                             method.body,
                             &mut properties,
                             current_sym,
+                            true,
                         );
                     }
 
@@ -641,6 +642,7 @@ impl<'a> CheckerState<'a> {
                             ctor.body,
                             &mut properties,
                             current_sym,
+                            true,
                         );
                     }
                 }

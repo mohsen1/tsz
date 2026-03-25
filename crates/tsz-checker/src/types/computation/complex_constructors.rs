@@ -277,6 +277,13 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 has_prototype_evidence = true;
+                if let Some(prop) = self.prototype_define_property_binding(
+                    &arguments.nodes,
+                    parent_sym,
+                    method_bindings.len() as u32,
+                ) {
+                    method_bindings.push(prop);
+                }
                 continue;
             }
             if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
@@ -393,6 +400,7 @@ impl<'a> CheckerState<'a> {
                 method_body,
                 &mut method_this_props,
                 Some(parent_sym),
+                false,
             );
             self.collect_nested_arrow_this_properties(
                 method_body,
@@ -544,7 +552,7 @@ impl<'a> CheckerState<'a> {
             if arrow.body.is_none() {
                 continue;
             }
-            self.collect_js_constructor_this_properties(arrow.body, properties, parent_sym);
+            self.collect_js_constructor_this_properties(arrow.body, properties, parent_sym, false);
         }
     }
 
