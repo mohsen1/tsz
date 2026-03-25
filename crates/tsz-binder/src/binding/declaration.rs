@@ -543,7 +543,15 @@ impl BinderState {
                     binder.bind_parameter(arena, param_idx);
                 }
 
+                // Hoisting: Collect var and function declarations from the body
+                // before binding. This ensures `var` declarations merge with
+                // same-named parameters (JavaScript hoisting behavior), preventing
+                // false TS7022 circularity when the initializer references the
+                // parameter (e.g., `constructor(x?) { var x = (x || 0); }`).
                 if body.is_some() {
+                    binder.collect_hoisted_from_node(arena, body);
+                    binder.process_hoisted_functions(arena);
+                    binder.process_hoisted_vars(arena);
                     binder.bind_node(arena, body);
                 }
             },
