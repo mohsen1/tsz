@@ -2946,6 +2946,42 @@ fn test_relation_request_and_outcome_live_in_query_boundaries() {
     );
 }
 
+/// The canonical request surface must continue exposing the full relation and
+/// property-policy enum vocabulary, not implicit booleans.
+#[test]
+fn test_relation_request_policy_enums_cover_canonical_modes() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    for variant in [
+        "Assign",
+        "CallArg",
+        "Return",
+        "JsxProps",
+        "Destructuring",
+        "Satisfies",
+    ] {
+        assert!(
+            source.contains(&format!("enum RelationKind")) && source.contains(variant),
+            "RelationKind must include the `{variant}` variant"
+        );
+    }
+
+    for variant in ["Skip", "Check", "CheckExplicitOnly"] {
+        assert!(
+            source.contains(&format!("enum ExcessPropertyMode")) && source.contains(variant),
+            "ExcessPropertyMode must include the `{variant}` variant"
+        );
+    }
+
+    for variant in ["Report", "Suppress"] {
+        assert!(
+            source.contains(&format!("enum MissingPropertyMode")) && source.contains(variant),
+            "MissingPropertyMode must include the `{variant}` variant"
+        );
+    }
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]
