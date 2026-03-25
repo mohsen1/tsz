@@ -3170,6 +3170,18 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
             && source.contains("target_type: TypeId::ERROR,"),
         "MissingIndexSignature and RecursionLimitExceeded must normalize to a TypeMismatch sentinel with ERROR/ERROR"
     );
+    assert!(
+        source.contains("SubtypeFailureReason::ArrayElementMismatch {")
+            && source.contains("source_type: source_element,")
+            && source.contains("target_type: target_element,")
+            && source.contains("SubtypeFailureReason::IndexSignatureMismatch {")
+            && source.contains("source_type: source_value_type,")
+            && source.contains("target_type: target_value_type,")
+            && source.contains("SubtypeFailureReason::TupleElementTypeMismatch {")
+            && source.contains("source_type: source_element,")
+            && source.contains("target_type: target_element,"),
+        "element/index-specific solver mismatches must normalize through TypeMismatch using the concrete element/value types"
+    );
 }
 
 /// `RelationRequest` must keep the builder helpers that encode freshness and
