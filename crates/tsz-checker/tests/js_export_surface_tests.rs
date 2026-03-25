@@ -649,6 +649,36 @@ exports["bar"] = "hello";
     let _len = diagnostics.len();
 }
 
+#[test]
+fn test_element_access_exports_cross_file() {
+    let diagnostics = check_commonjs_two_files(
+        "lib.js",
+        r#"
+exports["b"] = { x: "x" };
+exports["default"] = { x: "x" };
+module.exports["c"] = { x: "x" };
+module["exports"]["d"] = {};
+module["exports"]["d"].e = 0;
+"#,
+        "consumer.js",
+        r#"
+var lib = require("./lib.js");
+lib.b;
+lib.c;
+lib.d;
+lib.d.e;
+lib.default;
+"#,
+        "./lib.js",
+    );
+
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for literal CommonJS element-access exports, got: {diagnostics:#?}"
+    );
+}
+
 // ==========================================================================
 // IIFE export pattern tests
 // ==========================================================================
