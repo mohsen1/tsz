@@ -15,7 +15,7 @@ use tsz_solver::{GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePr
 use super::{FlowAnalyzer, PredicateSignature};
 use crate::query_boundaries::flow_analysis::{
     self as flow_query, PredicateSignatureKind, classify_for_predicate_signature,
-    is_narrowing_literal, stringify_literal_type,
+    is_narrowing_literal, stringify_literal_type, union_members_for_type,
 };
 
 impl<'a> FlowAnalyzer<'a> {
@@ -435,18 +435,19 @@ impl<'a> FlowAnalyzer<'a> {
         if pred_is_type_param {
             for (i, param) in params.iter().enumerate() {
                 // Evaluate the parameter type in case it's a type alias like Result<T>.
-                // Use ApplicationEvaluator with TypeEnvironment when available to expand
-                // type applications (e.g., Result<T> -> T | "FAILURE").
+                // Use the flow query boundary to expand type applications
+                // (e.g., Result<T> -> T | "FAILURE").
                 let evaluated_param = if let Some(env) = &self.type_environment {
                     let env_borrow = env.borrow();
-                    let evaluator =
-                        tsz_solver::ApplicationEvaluator::new(self.interner, &*env_borrow);
-                    evaluator.evaluate_or_original(param.type_id)
+                    flow_query::evaluate_application_type(
+                        self.interner,
+                        &*env_borrow,
+                        param.type_id,
+                    )
                 } else {
-                    tsz_solver::evaluate_type(self.interner, param.type_id)
+                    flow_query::evaluate_type_structure(self.interner, param.type_id)
                 };
-                if let Some(param_members) =
-                    tsz_solver::type_queries::get_union_members(self.interner, evaluated_param)
+                if let Some(param_members) = union_members_for_type(self.interner, evaluated_param)
                     && param_members.contains(&pred_type)
                     && let Some(&arg_idx) = args.get(i)
                     && let Some(&arg_type) = node_types.get(&arg_idx.0)
@@ -457,7 +458,7 @@ impl<'a> FlowAnalyzer<'a> {
                         .copied()
                         .collect();
                     let inferred_t = if let Some(arg_members) =
-                        tsz_solver::type_queries::get_union_members(self.interner, arg_type)
+                        union_members_for_type(self.interner, arg_type)
                     {
                         let remaining: Vec<TypeId> = arg_members
                             .iter()
@@ -506,8 +507,8 @@ impl<'a> FlowAnalyzer<'a> {
                 &substitution,
             );
             if instantiated != pred_type {
-                // Evaluate to resolve mapped types (e.g., `{ [K in "length"]: unknown }` → `{ length: unknown }`)
-                let evaluated = tsz_solver::evaluate_type(self.interner, instantiated);
+                // Evaluate to resolve mapped types (e.g., `{ [K in "length"]: unknown }` -> `{ length: unknown }`)
+                let evaluated = flow_query::evaluate_type_structure(self.interner, instantiated);
                 return TypePredicate {
                     type_id: Some(evaluated),
                     ..predicate.clone()
@@ -525,10 +526,7 @@ impl<'a> FlowAnalyzer<'a> {
         //   `function isSuccess<T>(result: T | "FAILURE"): result is T`
         //   param type = T | "FAILURE", arg type = number | "FAILURE"
         //   → infer T = number (subtract fixed union members from arg type)
-        if let Some(pred_param_info) = tsz_solver::type_queries::get_type_parameter_info(
-            self.interner.as_type_database(),
-            pred_type,
-        ) {
+        if let Some(pred_param_info) = flow_query::type_param_info(self.interner, pred_type) {
             let pred_param_name = pred_param_info.name;
             if type_params.iter().any(|tp| tp.name == pred_param_name) {
                 for (i, param) in params.iter().enumerate() {
@@ -570,28 +568,22 @@ impl<'a> FlowAnalyzer<'a> {
         // that need expansion to reveal the underlying union `T | "FAILURE"`.
         // Use the type environment's resolver for Application types.
         let expanded_param = if let Some(env_ref) = &self.type_environment {
-            let db = self.interner.as_type_database();
             let env = env_ref.borrow();
-            let result =
-                tsz_solver::ApplicationEvaluator::new(db, &*env).evaluate_or_original(param_type);
+            let result = flow_query::evaluate_application_type(self.interner, &*env, param_type);
             if result == param_type {
-                tsz_solver::evaluate_type(self.interner, param_type)
+                flow_query::evaluate_type_structure(self.interner, param_type)
             } else {
                 result
             }
         } else {
-            tsz_solver::evaluate_type(self.interner, param_type)
+            flow_query::evaluate_type_structure(self.interner, param_type)
         };
         // Get union members of the (expanded) parameter type
-        let param_members = tsz_solver::type_queries::get_union_members(
-            self.interner.as_type_database(),
-            expanded_param,
-        )?;
+        let param_members = union_members_for_type(self.interner, expanded_param)?;
 
         // Check if any member is the target type parameter
-        let db = self.interner.as_type_database();
         let is_target_param = |m: TypeId| -> bool {
-            tsz_solver::type_queries::get_type_parameter_info(db, m)
+            flow_query::type_param_info(self.interner, m)
                 .is_some_and(|info| info.name == target_param_name)
         };
         let has_target_param = param_members.iter().any(|&m| is_target_param(m));
@@ -611,29 +603,26 @@ impl<'a> FlowAnalyzer<'a> {
                 // Resolve Lazy/Application types to their concrete forms.
                 // Lazy(DefId) types are type aliases that need resolver lookup.
                 if let Some(env_ref) = &self.type_environment {
-                    let db = self.interner.as_type_database();
                     let env = env_ref.borrow();
                     // First try to resolve Lazy types via the environment
-                    if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(db, m)
+                    if let Some(def_id) = flow_query::get_lazy_def_id(self.interner, m)
                         && let Some(resolved) = env.get_def(def_id)
                     {
                         return resolved;
                     }
                     // Then try Application evaluation
-                    let result =
-                        tsz_solver::ApplicationEvaluator::new(db, &*env).evaluate_or_original(m);
+                    let result = flow_query::evaluate_application_type(self.interner, &*env, m);
                     if result != m {
                         return result;
                     }
                 }
-                tsz_solver::evaluate_type(self.interner, m)
+                flow_query::evaluate_type_structure(self.interner, m)
             })
             .collect();
 
         // Get union members of the argument type (or treat as single-member)
         let arg_members =
-            tsz_solver::type_queries::get_union_members(self.interner.as_type_database(), arg_type)
-                .unwrap_or_else(|| vec![arg_type]);
+            union_members_for_type(self.interner, arg_type).unwrap_or_else(|| vec![arg_type]);
 
         // Subtract the fixed members from the argument type
         let remaining: Vec<TypeId> = arg_members

@@ -466,7 +466,7 @@ impl<'a> FlowAnalyzer<'a> {
             // predicate type equals the argument type for the predicated parameter,
             // the inference was trivial. Skip cache and let the fallback resolve it.
             let should_skip_cache = if let Some(pred_ty) = predicate.type_id
-                && tsz_solver::type_queries::get_union_members(self.interner, pred_ty).is_some()
+                && flow_query::union_members_for_type(self.interner, pred_ty).is_some()
                 && let Some(param_idx) = predicate.parameter_index
             {
                 let callee_idx = self.skip_parens_and_assertions(call.expression);

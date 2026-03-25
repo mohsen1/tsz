@@ -1206,12 +1206,6 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
         if file_name == "lib.rs" {
             continue;
         }
-        // generic_checker.rs fully migrated to query boundaries (2026-03)
-        // TODO: narrowing.rs needs migration — temporarily skip
-        let rel = path.display().to_string();
-        if rel.contains("flow/control_flow/narrowing.rs") {
-            continue;
-        }
 
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
@@ -3932,11 +3926,6 @@ fn test_no_direct_application_evaluator_outside_query_boundaries() {
         if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
             continue;
         }
-        // TODO: narrowing.rs needs migration to query_boundaries for ApplicationEvaluator
-        if rel == "flow/control_flow/narrowing.rs" {
-            continue;
-        }
-
         let src = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(_) => continue,
