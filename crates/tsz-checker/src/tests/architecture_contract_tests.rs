@@ -3023,9 +3023,8 @@ fn test_relation_request_override_builders_remain_explicit() {
         "with_excess_property_mode must write the requested EPC mode into the request"
     );
     assert!(
-        source.contains(
-            "fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self"
-        ),
+        source
+            .contains("fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self"),
         "RelationRequest must keep with_missing_property_mode as the explicit missing-property override hook"
     );
     assert!(

@@ -44,7 +44,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ctor_idx: NodeIndex,
     ) -> Vec<(tsz_solver::TypeId, u32, u32)> {
-        use tsz_common::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
+        use tsz_common::comments::{
+            get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment,
+        };
 
         if !self.is_js_file() {
             return Vec::new();
@@ -60,18 +62,20 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
 
-        let instance_type = if let Some(class_idx) = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx) {
-            let class_node = self.ctx.arena.get(class_idx);
-            if let Some(class) = class_node.and_then(|node| self.ctx.arena.get_class(node)) {
-                self.get_class_instance_type(class_idx, class)
+        let instance_type =
+            if let Some(class_idx) = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx) {
+                let class_node = self.ctx.arena.get(class_idx);
+                if let Some(class) = class_node.and_then(|node| self.ctx.arena.get_class(node)) {
+                    self.get_class_instance_type(class_idx, class)
+                } else {
+                    TypeId::ANY
+                }
             } else {
                 TypeId::ANY
-            }
-        } else {
-            TypeId::ANY
-        };
+            };
 
-        let base_signature = self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &[]);
+        let base_signature =
+            self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &[]);
         let leading = get_leading_comments_from_cache(&sf.comments, node.pos, &sf.text);
         let mut overloads = Vec::new();
 

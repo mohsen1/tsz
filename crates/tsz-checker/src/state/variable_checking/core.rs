@@ -77,7 +77,11 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        let current_pos = self.ctx.arena.get(decl_idx).map_or(u32::MAX, |node| node.pos);
+        let current_pos = self
+            .ctx
+            .arena
+            .get(decl_idx)
+            .map_or(u32::MAX, |node| node.pos);
         let mut saw_current = false;
         for &other in &symbol.declarations {
             if other == decl_idx {
