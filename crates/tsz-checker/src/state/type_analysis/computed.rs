@@ -955,7 +955,14 @@ impl<'a> CheckerState<'a> {
                         .get(&sym_id)
                         .and_then(|&partner_id| self.ctx.binder.get_symbol(partner_id))
                         .is_some_and(|partner| partner.flags & symbol_flags::ALIAS != 0);
-                    if !self.has_parse_errors() && !has_import_partner {
+                    // tsc's hasParseDiagnostics() checks ALL parse diagnostics
+                    // (including grammar checks like TS1359) to suppress TS2456.
+                    // Our has_parse_errors only tracks "real" syntax errors, so
+                    // we also check all_parse_error_positions which includes
+                    // non-suppressing parse errors like TS1359.
+                    let file_has_any_parse_diag =
+                        self.has_parse_errors() || !self.ctx.all_parse_error_positions.is_empty();
+                    if !file_has_any_parse_diag && !has_import_partner {
                         let name = escaped_name;
                         let message = format_message(
                             diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
