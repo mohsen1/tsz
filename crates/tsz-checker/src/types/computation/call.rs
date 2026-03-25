@@ -80,6 +80,19 @@ impl<'a> CheckerState<'a> {
 
         let result = self.get_type_of_call_expression_inner(idx, request);
 
+        // TS2590: Check if the call produced a union type that is too complex.
+        // The solver sets a flag during union normalization when the constituent
+        // count exceeds the threshold. We check and clear it here to emit the
+        // diagnostic at the call expression that triggered it.
+        if self.ctx.types.take_union_too_complex() {
+            use crate::diagnostics::diagnostic_messages;
+            self.error_at_node(
+                idx,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
+
         self.ctx.call_depth.borrow_mut().leave();
         result
     }

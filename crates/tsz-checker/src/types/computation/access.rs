@@ -1105,6 +1105,10 @@ impl<'a> CheckerState<'a> {
                         ),
                         crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
                     );
+                    // tsc treats the type of an out-of-bounds tuple access as `undefined`,
+                    // not an error type. This prevents cascading errors (e.g., TS2403 for
+                    // subsequent variable declarations should still fire against `undefined`).
+                    result_type = TypeId::UNDEFINED;
                 }
             } else if self.is_union_of_tuples_all_out_of_bounds(object_type_for_access, index) {
                 // Union of tuples where ALL members are out of bounds: emit TS2339
