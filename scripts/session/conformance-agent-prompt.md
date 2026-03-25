@@ -21,7 +21,6 @@ Conformance shorthand used by the query scripts:
 - If you are running as a standalone fixer or explicit integrator, validate locally and push to `main`.
 - If you are running under `scripts/session/AGENT_PROTOCOL.md` as a campaign worker, **do not push to `main`**. Push to `campaign/<name>` and let `scripts/session/integrate.sh` merge after validation.
 - When in doubt, prefer the protocol-specific rule over this generic prompt.
-
 ---
 
 ## Architecture (must read before any code change)
@@ -263,6 +262,8 @@ else:
 4. Random failure from a root-cause campaign
 If the chosen target quickly becomes broad-surface (multi-file/module-wide or deep cross-crate changes), reroll once before committing time to campaign-level work.
 
+Use a narrow working set: prefer single-file TypeScript cases and avoid changing parser or build infrastructure unless the target explicitly requires it.
+
 **If your random pick turns out to be intractable** (multi-file module resolution,
 deep solver visitor changes, template literal evaluation), discard it and pick
 another random target. Do not waste time on targets that need campaign-level work.
@@ -443,6 +444,7 @@ On each iteration:
 4. **Run** the target test and a focused regression run (`--max 200`) before broader validation.
 5. **Update architecture** if needed — extract modules when files grow, ensure boundaries remain clean.
 6. **Update conformance snapshot only after the change is stable and regression checks pass.**
+7. **Commit in one change set** and push; avoid mixing unrelated file edits with conformance work.
 
 Update conformance baselines in the branch that is actually being integrated. Avoid snapshot-only churn when the fix is still under investigation or likely to be superseded by a nearby agent. Check recent commits on the repository — new changes (JSDoc typedef prioritisation, dynamic import fixes, extended hoisting in binder, etc.) may influence how to implement further fixes.
 
