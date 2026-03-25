@@ -181,9 +181,10 @@ Before target selection, create an attempt scratchpad:
 
 ```bash
 export ATTEMPT_ID="conformance-$(date +%Y%m%d-%H%M%S)"
+export ATTEMPT_MODE="${CONFORMANCE_MODE:-standalone}"
 mkdir -p /tmp/conformance-attempts
 echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/conformance-attempts/$ATTEMPT_ID.txt
-echo "mode=<standalone|campaign>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "mode=$ATTEMPT_MODE" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 ### Step 1: Identify targets from the snapshot (zero cost, instant)
@@ -234,7 +235,7 @@ if candidates:
     print(f'  extra codes: {data[\"x\"]}')
 else:
     print('No one-extra targets available')
-"
+" | tee -a /tmp/conformance-attempts/$ATTEMPT_ID.txt
 
 # Or pick a random one-missing target
 python3 -c "
@@ -249,7 +250,7 @@ if candidates:
     print(f'  missing codes: {data[\"m\"]}')
 else:
     print('No one-missing targets available')
-"
+" | tee -a /tmp/conformance-attempts/$ATTEMPT_ID.txt
 
 # Or pick a random close-to-passing target (diff ≤ 2)
 python3 -c "
@@ -264,7 +265,7 @@ if candidates:
     print(f'  missing: {data.get(\"m\", [])}  extra: {data.get(\"x\", [])}')
 else:
     print('No close targets available')
-"
+" | tee -a /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 **Category preference** (try the first category that has candidates):
@@ -285,23 +286,13 @@ When in doubt, use this fallback path:
 If a target requires edits across multiple crates before you’ve validated the first module change, mark it as blocked and reroll.
 
 When writing/reading the random-pick output, preserve command output as evidence:
+Each `python3 -c` above is already wrapped in `tee`; use the matching command
+from the category you ran, and then append your post-selection status in the same file.
 
 ```bash
-# Record the candidate used for this attempt
-python3 -c "
-import json, random
-with open('scripts/conformance/conformance-detail.json') as f:
-    d = json.load(f)
-candidates = [(t, data) for t, data in d.get('failures', {}).items()
-              if len(data.get('x', [])) == 1 and not data.get('m')]
-if candidates:
-    t, data = random.choice(candidates)
-    print(f'TARGET: {t}')
-    print(f'  extra codes: {data[\"x\"]}')
-else:
-    print('No one-extra targets available')
-" | tee -a /tmp/conformance-attempts/$ATTEMPT_ID.txt
+# Example append for the selected category
 echo "selection_logged=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "selection_status=selected" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 If no candidates exist for your preferred category, escalate immediately to the next category in the priority list.
