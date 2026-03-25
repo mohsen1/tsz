@@ -204,10 +204,10 @@ impl<'a> CheckerState<'a> {
                     .and_then(|p| self.get_property_name(p.name)),
                 _ => continue,
             };
-            if let Some(name) = prop_name {
-                if self.target_has_named_property(&name, target_type) {
-                    return true;
-                }
+            if let Some(name) = prop_name
+                && self.target_has_named_property(&name, target_type)
+            {
+                return true;
             }
         }
         false
@@ -232,19 +232,17 @@ impl<'a> CheckerState<'a> {
                 for member in members {
                     if let Some(shape) =
                         tsz_solver::type_queries::get_object_shape(self.ctx.types, member)
+                        && shape.properties.iter().any(|p| p.name == prop_atom)
                     {
-                        if shape.properties.iter().any(|p| p.name == prop_atom) {
-                            return true;
-                        }
+                        return true;
                     }
                 }
             }
             if let Some(shape) =
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                && shape.properties.iter().any(|p| p.name == prop_atom)
             {
-                if shape.properties.iter().any(|p| p.name == prop_atom) {
-                    return true;
-                }
+                return true;
             }
         }
         false
