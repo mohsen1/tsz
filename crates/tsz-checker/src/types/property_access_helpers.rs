@@ -304,6 +304,115 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(super) fn expando_property_read_type(
+        &mut self,
+        property_access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        fn property_access_chain(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let left = property_access_chain(arena, access.expression)?;
+                let right = arena
+                    .get_identifier_at(access.name_or_argument)?
+                    .escaped_text
+                    .clone();
+                return Some(format!("{left}.{right}"));
+            }
+            None
+        }
+
+        let Some(read_node) = self.ctx.arena.get(property_access_idx) else {
+            return None;
+        };
+        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
+            return None;
+        };
+        let expected_key = format!("{obj_key}.{property_name}");
+        let source_file = self.ctx.arena.source_files.get(self.ctx.current_file_idx)?;
+        let mut best_match: Option<(u32, TypeId)> = None;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_expando_property_assignment_type(
+                stmt_idx,
+                &expected_key,
+                read_node.pos,
+                &mut best_match,
+            );
+        }
+
+        best_match.map(|(_, ty)| ty)
+    }
+
+    fn collect_expando_property_assignment_type(
+        &mut self,
+        idx: NodeIndex,
+        expected_key: &str,
+        read_pos: u32,
+        best_match: &mut Option<(u32, TypeId)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        if self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && node.pos < read_pos
+            && self
+                .expando_assignment_access_key(binary.left)
+                .is_some_and(|key| key == expected_key)
+        {
+            let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
+            let rhs_type = self.get_type_of_node(rhs_idx);
+            if rhs_type != TypeId::ANY
+                && rhs_type != TypeId::ERROR
+                && best_match.is_none_or(|(best_pos, _)| node.pos >= best_pos)
+            {
+                *best_match = Some((node.pos, rhs_type));
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(idx) {
+            self.collect_expando_property_assignment_type(
+                child_idx,
+                expected_key,
+                read_pos,
+                best_match,
+            );
+        }
+    }
+
+    fn expando_assignment_access_key(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone()),
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let left = self.expando_assignment_access_key(access.expression)?;
+                let right = self.ctx.arena.get_identifier_at(access.name_or_argument)?;
+                Some(format!("{left}.{}", right.escaped_text))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn expando_property_read_before_assignment(
         &self,
         property_access_idx: NodeIndex,
