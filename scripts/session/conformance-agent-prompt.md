@@ -8,7 +8,7 @@ You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in
 
 **Absolute rule**: match `tsc` behavior exactly. Every fix must reduce the gap between tsz and tsc without introducing new gaps.
 
-**Current baseline**: ~90.0% pass rate (11,322 / 12,581 tests). Goal: push past 90% and keep climbing.
+**Current baseline**: around 90.0% pass rate (snapshot-specific counts; verify against your local snapshot before each iteration). Goal: push past 90% and keep climbing.
 Failure categories are directional and can overlap; rerun conformance counts when you change strategy or ownership.
 
 Conformance shorthand used by the query scripts:
@@ -267,6 +267,9 @@ Use a narrow working set: prefer single-file TypeScript cases and avoid changing
 **If your random pick turns out to be intractable** (multi-file module resolution,
 deep solver visitor changes, template literal evaluation), discard it and pick
 another random target. Do not waste time on targets that need campaign-level work.
+When in doubt, use this fallback path:
+1) Reroll once for a cleaner target.
+2) If second pick also feels broad-surface, switch to a known one-extra/one-missing or close-to-passing single-file candidate.
 
 **Avoid**:
 - Multi-file tests (`@Filename:` directives) — complex module resolution
@@ -313,6 +316,12 @@ Before making code changes, capture a quick four-step decision trail:
 2. Classify each required change as **WHAT** (solver) vs **WHERE** (checker).
 3. Verify the minimal impacted check path before adding new logic.
 4. Keep a focused local repro for every accepted hypothesis.
+
+For every attempt, record in your working notes:
+- Selected test name
+- Which codes were `m` and/or `x`
+- The exact command/output used to pick the target
+- Why this target is single-file / low-surface-area
 
 ### Architecture review (MANDATORY before writing code)
 
