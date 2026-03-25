@@ -2420,3 +2420,24 @@ let[0] = 100;
         "Expected TS1181/TS1005/TS1128 recovery for ambiguous `let[` statement, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_for_header_let_disambiguation_matches_invalid_for_of_recovery() {
+    let source = r#"
+var let = 10;
+for (let of [1,2,3]) {}
+
+for (let in [1,2,3]) {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![1005, 1181, 1005, 1128],
+        "Expected TS1005/TS1181/TS1005/TS1128 recovery for `for (let of [...])`, got diagnostics: {diagnostics:?}"
+    );
+}

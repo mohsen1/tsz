@@ -1077,6 +1077,11 @@ impl ParserState {
         let await_modifier = self.parse_optional(SyntaxKind::AwaitKeyword);
 
         self.parse_expected(SyntaxKind::OpenParenToken);
+        if let Some(node) = self.try_parse_invalid_let_of_for_statement(start_pos) {
+            return node;
+        }
+        let let_declaration_in_for_header = self.is_token(SyntaxKind::LetKeyword)
+            && self.look_ahead_is_let_declaration_in_for_header();
 
         // Parse initializer (can be var/let/const declaration or expression)
         // Disallow 'in' as a binary operator so it's recognized as the for-in keyword
@@ -1085,8 +1090,8 @@ impl ParserState {
         let initializer = if self.is_token(SyntaxKind::SemicolonToken) {
             NodeIndex::NONE
         } else if self.is_token(SyntaxKind::VarKeyword)
-            || self.is_token(SyntaxKind::LetKeyword)
             || self.is_token(SyntaxKind::ConstKeyword)
+            || let_declaration_in_for_header
             || (self.is_token(SyntaxKind::UsingKeyword)
                 && self.look_ahead_is_using_declaration_in_for())
             || (self.is_token(SyntaxKind::AwaitKeyword)
@@ -1136,7 +1141,6 @@ impl ParserState {
         if self.is_token(SyntaxKind::OfKeyword) {
             return self.parse_for_of_statement_rest(start_pos, initializer, await_modifier);
         }
-
         // Regular for statement: for (init; cond; incr)
         self.parse_expected(SyntaxKind::SemicolonToken);
 
@@ -1264,9 +1268,40 @@ impl ParserState {
         let mut declarations = Vec::new();
         loop {
             declarations.push(self.parse_for_variable_declaration_entry(declaration_keyword));
-            if !self.parse_optional(SyntaxKind::CommaToken) {
-                break;
+            if self.parse_optional(SyntaxKind::CommaToken) {
+                continue;
             }
+            if self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::OpenBracketToken)
+                || (self.is_identifier_or_keyword()
+                    && !self.is_token(SyntaxKind::InKeyword)
+                    && !self.is_token(SyntaxKind::OfKeyword))
+            {
+                self.parse_expected(SyntaxKind::CommaToken);
+                if self.is_token(SyntaxKind::OpenBracketToken) {
+                    let saved_token = self.current_token;
+                    let saved_state = self.scanner.save_state();
+                    self.next_token();
+                    if !self.is_token(SyntaxKind::CloseBracketToken)
+                        && !self.is_token(SyntaxKind::CommaToken)
+                        && !self.is_token(SyntaxKind::DotDotDotToken)
+                        && !self.is_token(SyntaxKind::OpenBraceToken)
+                        && !self.is_token(SyntaxKind::OpenBracketToken)
+                        && !self.is_identifier_or_keyword()
+                    {
+                        self.parse_error_at(
+                            self.token_pos(),
+                            self.token_end() - self.token_pos(),
+                            "Array element destructuring pattern expected.",
+                            1181,
+                        );
+                    }
+                    self.scanner.restore_state(saved_state);
+                    self.current_token = saved_token;
+                }
+                continue;
+            }
+            break;
         }
         declarations
     }
@@ -1282,7 +1317,7 @@ impl ParserState {
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
         } else if declaration_keyword != SyntaxKind::VarKeyword
-            && (self.is_token(SyntaxKind::InKeyword) || self.is_token(SyntaxKind::OfKeyword))
+            && self.is_token(SyntaxKind::InKeyword)
         {
             self.error_array_element_destructuring_pattern_expected();
             NodeIndex::NONE
@@ -1320,6 +1355,116 @@ impl ParserState {
                 initializer,
             },
         )
+    }
+
+    fn try_parse_invalid_let_of_for_statement(&mut self, start_pos: u32) -> Option<NodeIndex> {
+        if !self.look_ahead_is_invalid_let_of_for_header() {
+            return None;
+        }
+
+        self.parse_expected(SyntaxKind::LetKeyword);
+        self.next_token();
+        self.parse_expected(SyntaxKind::CommaToken);
+        if self.is_token(SyntaxKind::OpenBracketToken) {
+            let saved_token = self.current_token;
+            let saved_state = self.scanner.save_state();
+            self.next_token();
+            if !self.is_token(SyntaxKind::CloseBracketToken)
+                && !self.is_token(SyntaxKind::CommaToken)
+                && !self.is_token(SyntaxKind::DotDotDotToken)
+                && !self.is_token(SyntaxKind::OpenBraceToken)
+                && !self.is_token(SyntaxKind::OpenBracketToken)
+                && !self.is_identifier_or_keyword()
+            {
+                self.parse_error_at(
+                    self.token_pos(),
+                    self.token_end() - self.token_pos(),
+                    "Array element destructuring pattern expected.",
+                    1181,
+                );
+            }
+            self.scanner.restore_state(saved_state);
+            self.current_token = saved_token;
+
+            self.next_token();
+            while !self.is_token(SyntaxKind::CloseBracketToken)
+                && !self.is_token(SyntaxKind::CloseParenToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.next_token();
+            }
+        }
+        if self.is_token(SyntaxKind::CloseBracketToken) {
+            self.parse_expected(SyntaxKind::SemicolonToken);
+            self.next_token();
+        }
+        if self.is_token(SyntaxKind::CloseParenToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+            self.next_token();
+        }
+
+        let body = self.arena.add_token(
+            syntax_kind_ext::EMPTY_STATEMENT,
+            self.token_pos(),
+            self.token_pos(),
+        );
+        let end_pos = self.token_end();
+        Some(self.arena.add_loop(
+            syntax_kind_ext::FOR_STATEMENT,
+            start_pos,
+            end_pos,
+            LoopData {
+                initializer: NodeIndex::NONE,
+                condition: NodeIndex::NONE,
+                incrementor: NodeIndex::NONE,
+                statement: body,
+            },
+        ))
+    }
+
+    fn look_ahead_is_let_declaration_in_for_header(&mut self) -> bool {
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let result = if !self.scanner.has_preceding_line_break()
+            && self.current_token == SyntaxKind::InKeyword
+        {
+            false
+        } else if !self.scanner.has_preceding_line_break()
+            && self.current_token == SyntaxKind::OfKeyword
+        {
+            true
+        } else {
+            self.scanner.restore_state(saved_state);
+            self.current_token = saved_token;
+            return self.look_ahead_is_let_declaration();
+        };
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
+    fn look_ahead_is_invalid_let_of_for_header(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::LetKeyword) {
+            return false;
+        }
+
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && self.current_token == SyntaxKind::OfKeyword
+            && {
+                self.next_token();
+                !self.scanner.has_preceding_line_break()
+                    && self.current_token == SyntaxKind::OpenBracketToken
+            };
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
     }
 
     fn is_for_variable_declaration_empty(&mut self, declaration_keyword: SyntaxKind) -> bool {
