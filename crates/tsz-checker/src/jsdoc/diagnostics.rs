@@ -142,6 +142,119 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for JSDoc `@property`/`@prop`/`@member` tags that use private
+    /// names like `#id`. TypeScript reports TS1003 at the `#` token because
+    /// JSDoc property names must be identifiers, dotted names, or quoted names.
+    pub(crate) fn check_jsdoc_property_private_names(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::is_jsdoc_comment;
+
+        fn jsdoc_tag_len(line: &str) -> Option<usize> {
+            for tag in ["@property", "@prop", "@member"] {
+                if let Some(after_tag) = line.strip_prefix(tag) {
+                    let next = after_tag.chars().next().unwrap_or('\0');
+                    if next == '\0' || next.is_whitespace() || next == '{' {
+                        return Some(tag.len());
+                    }
+                }
+            }
+            None
+        }
+
+        fn skip_curly_type_expr(text: &str) -> Option<usize> {
+            if !text.starts_with('{') {
+                return None;
+            }
+            let mut depth = 0usize;
+            for (idx, ch) in text.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            return Some(idx + 1);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+
+            let comment_text = comment.get_text(source_text);
+            let mut comment_offset = 0usize;
+
+            for segment in comment_text.split_inclusive('\n') {
+                let raw_line = segment.trim_end_matches(['\r', '\n']);
+                let mut content_start = raw_line.len() - raw_line.trim_start().len();
+                let mut content = &raw_line[content_start..];
+
+                if let Some(after_open) = content.strip_prefix("/**") {
+                    content_start += 3;
+                    let ws_after_open = after_open.len() - after_open.trim_start().len();
+                    content_start += ws_after_open;
+                    content = &raw_line[content_start..];
+                } else if let Some(after_open) = content.strip_prefix("/*") {
+                    content_start += 2;
+                    let ws_after_open = after_open.len() - after_open.trim_start().len();
+                    content_start += ws_after_open;
+                    content = &raw_line[content_start..];
+                }
+
+                if let Some(after_star) = content.strip_prefix('*') {
+                    content_start += 1;
+                    let ws_after_star = after_star.len() - after_star.trim_start().len();
+                    content_start += ws_after_star;
+                    content = &raw_line[content_start..];
+                }
+
+                let Some(tag_len) = jsdoc_tag_len(content) else {
+                    comment_offset += segment.len();
+                    continue;
+                };
+
+                let after_tag = &content[tag_len..];
+                let ws_after_tag = after_tag.len() - after_tag.trim_start().len();
+                let rest = after_tag.trim_start();
+                let rest_offset = content_start + tag_len + ws_after_tag;
+
+                let private_name_offset = if rest.starts_with('{') {
+                    skip_curly_type_expr(rest).and_then(|type_end| {
+                        let after_type = &rest[type_end..];
+                        let ws_after_type = after_type.len() - after_type.trim_start().len();
+                        after_type
+                            .trim_start()
+                            .starts_with('#')
+                            .then_some(type_end + ws_after_type)
+                    })
+                } else {
+                    rest.starts_with('#').then_some(0)
+                };
+
+                if let Some(private_name_offset) = private_name_offset {
+                    self.ctx.error(
+                        comment.pos + (comment_offset + rest_offset + private_name_offset) as u32,
+                        1,
+                        diagnostic_messages::IDENTIFIER_EXPECTED.to_string(),
+                        diagnostic_codes::IDENTIFIER_EXPECTED,
+                    );
+                }
+
+                comment_offset += segment.len();
+            }
+        }
+    }
+
     /// TS8039: Check for `@template` tags that follow a `@typedef`, `@callback`,
     /// or `@overload` tag within the same JSDoc comment.
     ///
