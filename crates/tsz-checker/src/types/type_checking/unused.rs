@@ -95,7 +95,7 @@ impl<'a> CheckerState<'a> {
 
         // Track destructuring patterns for TS6198.
         // Map from binding pattern NodeIndex to (total_elements, unused_elements).
-        let destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
+        let mut destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
 
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
@@ -205,6 +205,26 @@ impl<'a> CheckerState<'a> {
                 .filter(|n| unused_var_decls.contains(n))
                 .count();
             variable_declarations.insert(*var_decl_list_idx, (total_count, unused_count));
+        }
+
+        // Now count binding elements in each destructuring pattern.
+        // TS6198 ("All destructured elements are unused") only applies to OBJECT binding
+        // patterns (`{ a, b }`), not array patterns (`[a, b]`).
+        for (pattern_idx, elements) in &pattern_children {
+            // Only consider object binding patterns
+            if let Some(node) = self.ctx.arena.get(*pattern_idx) {
+                if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            let total_count = elements.len();
+            let unused_count = elements
+                .iter()
+                .filter(|n| unused_pattern_elements.contains(n))
+                .count();
+            destructuring_patterns.insert(*pattern_idx, (total_count, unused_count));
         }
 
         for (sym_id, name) in symbols_to_check {
