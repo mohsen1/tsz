@@ -8,7 +8,8 @@ You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in
 
 **Absolute rule**: match `tsc` behavior exactly. Every fix must reduce the gap between tsz and tsc without introducing new gaps.
 
-**Current baseline**: ~90.0% pass rate (11,317 / 12,581 tests). Goal: push past 90% and keep climbing. There are ~1,264 failing tests: ~74 false positives (we emit errors tsc doesn't), ~171 all-missing (we miss all expected errors), ~618 fingerprint-only (same codes but wrong locations), ~398 wrong-code (codes differ), and ~261 close-to-passing (diff ≤ 2).
+**Current baseline**: ~90.0% pass rate (11,317 / 12,581 tests). Goal: push past 90% and keep climbing.
+Failure categories are directional and can overlap; rerun conformance counts when you change strategy or ownership.
 
 ---
 
@@ -233,6 +234,7 @@ else:
 2. One-missing (adding a diagnostic tsc emits)
 3. Close-to-passing (diff ≤ 2)
 4. Random failure from a root-cause campaign
+If the chosen target quickly becomes broad-surface (multi-file/module-wide or deep cross-crate changes), reroll once before committing time to campaign-level work.
 
 **If your random pick turns out to be intractable** (multi-file module resolution,
 deep solver visitor changes, template literal evaluation), discard it and pick
@@ -278,6 +280,12 @@ cargo run --bin tsz -- /tmp/test_repro.ts 2>&1
 
 ## Implementing the Fix
 
+Before making code changes, capture a quick four-step decision trail:
+1. Confirm the failure type (`m`, `x`, or both) and exact diagnostics from `query-conformance`.
+2. Classify each required change as **WHAT** (solver) vs **WHERE** (checker).
+3. Verify the minimal impacted check path before adding new logic.
+4. Keep a focused local repro for every accepted hypothesis.
+
 ### Architecture review (MANDATORY before writing code)
 
 For every fix, answer these questions from CLAUDE.md §15:
@@ -310,7 +318,7 @@ For every fix, answer these questions from CLAUDE.md §15:
 
 ### Coding rules
 
-- **Solver files** (`crates/tsz-solver/`) use Rust 2024 let-chains. `cargo fmt` (stable) will FAIL on these files. Use Python/sed to write changes and `git add && git commit` immediately before the PostToolUse hook reverts them.
+- **Solver files** (`crates/tsz-solver/`) must keep ownership boundaries intact; avoid solver assumptions in checker logic. Use normal edit/fmt workflows and keep changes localized.
 - **Checker files** can be edited normally with the Edit tool.
 - Keep checker files under ~2000 LOC. Extract into submodules when approaching the limit.
 - Use existing `nearest_enclosing_class()`, `resolve_lazy_type()`, `evaluate_type_for_assignability()` helpers.
@@ -365,8 +373,8 @@ cargo build --profile dist-fast --bin tsz
 # Quick regression (200 random tests)
 ./scripts/conformance/conformance.sh run --max 200
 
-# Must be ≥ 98% (pre-existing failures are ~1-2%)
-# If < 95%, your change introduced a regression. REVERT.
+# Use this as a smoke check; require non-regression vs the current snapshot baseline.
+# If the sample quality drops materially, investigate before broader validation.
 ```
 
 ### Step 3: Run Rust unit tests
@@ -403,9 +411,9 @@ On each iteration:
 1. **Pick** the highest-impact unimplemented or partially implemented error code from the quick-win tables above.
 2. **Identify** a representative failing test using the query tools.
 3. **Implement or extend** diagnostic logic in the appropriate module (checker, solver, binder, etc.), respecting architecture boundaries.
-4. **Run** the full conformance snapshot to verify the fix and commit the change.
+4. **Run** the target test and a focused regression run (`--max 200`) before broader validation.
 5. **Update architecture** if needed — extract modules when files grow, ensure boundaries remain clean.
-6. **Push to main** and update the conformance baseline when improvements are achieved.
+6. **Update conformance snapshot only after the change is stable and regression checks pass.**
 
 Always update conformance baselines and push code to main when improvements are made. Check recent commits on the repository — new changes (JSDoc typedef prioritisation, dynamic import fixes, extended hoisting in binder, etc.) may influence how to implement further fixes.
 
@@ -415,15 +423,7 @@ Always update conformance baselines and push code to main when improvements are 
 
 **If conformance drops more than 5 tests from the snapshot**: DO NOT PUSH. Investigate and fix or revert.
 
-**If a build breaks**: Fix it before doing anything else. Common issues:
-- Duplicate function definitions from merge conflicts
-- Missing fields on structs from incomplete reverts
-- Dangling `allow` attributes from clippy fixes
-
-**If the TypeScript submodule SHA mismatches**:
-```bash
-cd TypeScript && git checkout 35ff23d4b0cc715691323ebe54f523c16fe6e3a5 && cd ..
-```
+**If a build breaks**: Fix it before doing anything else.
 
 ---
 
