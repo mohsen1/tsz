@@ -9481,6 +9481,35 @@ function foo(x: A) {
     );
 }
 
+#[test]
+fn test_property_access_widening_element_write_reports_fresh_empty_branch() {
+    let source = r#"
+function foo(options?: { a: string, b: number }) {
+    (options || {})["a"] = 1;
+}
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053 = diagnostics
+        .iter()
+        .find(|d| d.code == 7053)
+        .expect("expected TS7053 for the element write");
+
+    assert!(
+        ts7053.message_text.contains("type '{}'."),
+        "Expected TS7053 to report the fresh empty-object branch, got: {ts7053:#?}"
+    );
+}
+
 // =============================================================================
 // JSX Intrinsic Element Resolution (TS2339)
 // =============================================================================
