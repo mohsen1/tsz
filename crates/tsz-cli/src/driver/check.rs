@@ -729,29 +729,17 @@ pub(super) fn collect_diagnostics(
             checker.ctx.set_current_file_idx(file_idx);
             checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
 
-            // Build resolved_modules set for backward compatibility
-            let mut resolved_modules = rustc_hash::FxHashSet::default();
-            for (specifier, _, _) in module_specifiers {
-                if resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
-                    || resolved_module_paths.contains_key(&(file_idx, specifier.clone()))
-                {
-                    resolved_modules.insert(specifier.clone());
-                } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone()))
-                    && let Some(resolved) = resolve_module_specifier(
-                        Path::new(&file.file_name),
-                        specifier,
-                        options,
-                        base_dir,
-                        &mut resolution_cache,
-                        &program_paths,
-                    )
-                {
-                    let canonical = canonicalize_or_owned(&resolved);
-                    if program_paths.contains(&canonical) {
-                        resolved_modules.insert(specifier.clone());
-                    }
-                }
-            }
+            // Build resolved_modules directly from the precomputed resolution facts.
+            // The sequential path used to re-resolve specifiers and only keep ones
+            // whose targets were part of `program_paths`, which incorrectly dropped
+            // imports satisfied by type packages loaded through `types`/`typeRoots`.
+            // The checker only needs to know whether the specifier resolved, not
+            // whether its target is a source file in the current program.
+            let resolved_modules: rustc_hash::FxHashSet<String> = resolved_module_specifiers
+                .iter()
+                .filter(|(idx, _)| *idx == file_idx)
+                .map(|(_, specifier)| specifier.clone())
+                .collect();
             checker.ctx.resolved_modules = Some(resolved_modules);
             // TSC suppresses many semantic diagnostics across the whole program when any
             // file has a real syntax parse error; mirror that behavior using the program-level

@@ -1507,6 +1507,19 @@ fn resolve_node_module_specifier(
         current = parent;
     }
 
+    // When a package was loaded through `types`/`typeRoots`, TypeScript still
+    // treats bare imports from that package as resolved. Mirror that here by
+    // consulting the configured type roots for package entrypoints after the
+    // normal node_modules walk-up fails.
+    if subpath.is_none() {
+        if let Some(type_roots) = options.type_roots.as_deref()
+            && let Some(resolved) =
+                resolve_type_package_from_roots(&package_name, type_roots, options)
+        {
+            return Some(resolved);
+        }
+    }
+
     None
 }
 
