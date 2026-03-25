@@ -1088,6 +1088,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref name) = var_name {
                         final_type =
                             self.augment_callable_type_with_expandos(name, sym_id, final_type);
+                        if self.ctx.is_js_file() {
+                            final_type =
+                                self.augment_object_type_with_define_properties(name, final_type);
+                        }
                     }
                     self.cache_symbol_type(sym_id, final_type);
                 }

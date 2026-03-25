@@ -1109,8 +1109,22 @@ impl<'a> CheckerState<'a> {
                     declared_type
                 }
             } else {
-                // Const variable - use flow type (preserves literal type)
-                result_type
+                // Const variable - usually use flow type to preserve literal type.
+                // In JS/checkJs, `Object.defineProperty(x, ...)` augments the declared
+                // object shape after the initializer is analyzed, so flow can still see
+                // the original `{}` initializer while the symbol type has the richer
+                // property surface. Prefer the declared type in that case.
+                if self.ctx.is_js_file()
+                    && declared_type != TypeId::ANY
+                    && declared_type != TypeId::ERROR
+                    && flow_type != declared_type
+                    && tsz_solver::type_queries::get_object_shape(self.ctx.types, declared_type)
+                        .is_some()
+                {
+                    declared_type
+                } else {
+                    result_type
+                }
             };
 
             // FIX: Flow analysis may return the original fresh type from the initializer expression.

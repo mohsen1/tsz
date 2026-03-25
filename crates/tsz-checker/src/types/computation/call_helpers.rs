@@ -443,6 +443,12 @@ impl<'a> CheckerState<'a> {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
                 return self.resolve_ref_type(annotated);
             }
+            let root_name = self
+                .ctx
+                .arena
+                .get(var_decl.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.clone());
             // For const declarations without type annotation, preserve the literal type
             // from the initializer (matching tsc behavior where `const x = "foo"` has
             // type `"foo"`, not `string`).
@@ -450,10 +456,23 @@ impl<'a> CheckerState<'a> {
                 && self.is_const_variable_declaration(decl_idx)
                 && let Some(literal_type) = self.literal_type_from_initializer(var_decl.initializer)
             {
+                if self.ctx.is_js_file()
+                    && let Some(root_name) = root_name.as_deref()
+                {
+                    return self
+                        .augment_object_type_with_define_properties(root_name, literal_type);
+                }
                 return literal_type;
             }
             if var_decl.initializer.is_some() {
-                return self.get_type_of_node(var_decl.initializer);
+                let mut init_type = self.get_type_of_node(var_decl.initializer);
+                if self.ctx.is_js_file()
+                    && let Some(root_name) = root_name.as_deref()
+                {
+                    init_type =
+                        self.augment_object_type_with_define_properties(root_name, init_type);
+                }
+                return init_type;
             }
             return TypeId::ANY;
         }
