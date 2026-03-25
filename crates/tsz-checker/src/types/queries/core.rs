@@ -958,12 +958,11 @@ impl<'a> CheckerState<'a> {
             //   const observable: typeof Symbol.obs = Symbol.obs;
             //   class C { [observable]() { ... } }
             // where type-based resolution yields plain `symbol` instead of a unique symbol.
-            if prop_name_type == TypeId::SYMBOL {
-                if let Some(well_known) =
+            if prop_name_type == TypeId::SYMBOL
+                && let Some(well_known) =
                     self.resolve_computed_symbol_property_name(computed.expression)
-                {
-                    return Some(well_known);
-                }
+            {
+                return Some(well_known);
             }
             // When the computed property type resolves to a unique symbol (e.g.
             // `typeof Symbol.obs`), map it to the canonical `[Symbol.xxx]` format
@@ -1071,10 +1070,10 @@ impl<'a> CheckerState<'a> {
         let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
 
         // Check initializer first: `= Symbol.obs`
-        if var_decl.initializer.is_some() {
-            if let Some(name) = self.get_symbol_property_name_from_expr(var_decl.initializer) {
-                return Some(name);
-            }
+        if var_decl.initializer.is_some()
+            && let Some(name) = self.get_symbol_property_name_from_expr(var_decl.initializer)
+        {
+            return Some(name);
         }
 
         // Check type annotation: `typeof Symbol.obs`
