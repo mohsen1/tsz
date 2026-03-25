@@ -11,8 +11,8 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
 
@@ -911,13 +911,13 @@ impl<'a> CheckerState<'a> {
                     arg_type
                 };
 
-                let arg_type = if sanitize_object_entries_any && index == 0 && arg_type == TypeId::ANY
-                {
-                    changed = true;
-                    TypeId::UNKNOWN
-                } else {
-                    arg_type
-                };
+                let arg_type =
+                    if sanitize_object_entries_any && index == 0 && arg_type == TypeId::ANY {
+                        changed = true;
+                        TypeId::UNKNOWN
+                    } else {
+                        arg_type
+                    };
 
                 let sanitized = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
                 if sanitized != arg_type {
