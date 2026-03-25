@@ -104,7 +104,16 @@ impl<'a> CheckerState<'a> {
         };
 
         // Push this type onto stack if found (methods will pick it up)
-        if let Some(this_type) = marker_this_type {
+        if let Some(mut this_type) = marker_this_type {
+            // The ThisType<T> marker may contain unresolved type parameters
+            // (e.g., `Data & Readonly<Props> & Instance` before inference completes).
+            // Evaluate through the type environment to resolve them to their
+            // inferred concrete types. Without this, property access on `this`
+            // inside method bodies would fail to find properties of the inferred
+            // type, producing false TS2322 errors.
+            if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, this_type) {
+                this_type = self.evaluate_type_with_env(this_type);
+            }
             self.ctx.this_type_stack.push(this_type);
         }
 
