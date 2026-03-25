@@ -1394,41 +1394,78 @@ impl<'a> CheckerState<'a> {
                 symbol.declarations.clone()
             };
 
-        for decl_idx in decl_candidates {
-            let node = self.ctx.arena.get(decl_idx)?;
-            let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
-                self.ctx
-                    .arena
-                    .get_interface(node)
-                    .and_then(|iface| iface.type_parameters.as_ref())
-            } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
-                self.ctx
-                    .arena
-                    .get_type_alias(node)
-                    .and_then(|ta| ta.type_parameters.as_ref())
-            } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
-                self.ctx
-                    .arena
-                    .get_class(node)
-                    .and_then(|c| c.type_parameters.as_ref())
-            } else {
-                None
-            };
+        // Track the minimum required count across all declarations.
+        // For merged interfaces (e.g., local `interface Generator<T>` merged with
+        // lib `interface Generator<T = unknown, TReturn = any, TNext = any>`),
+        // a declaration with defaults on its type params reduces the required count.
+        let mut best_required: Option<usize> = None;
 
-            if let Some(list) = type_params_list {
-                let required = list
-                    .nodes
-                    .iter()
-                    .filter(|&&param_idx| {
-                        self.ctx
-                            .arena
-                            .get(param_idx)
-                            .and_then(|n| self.ctx.arena.get_type_parameter(n))
-                            .is_some_and(|tp| tp.default == tsz_parser::parser::NodeIndex::NONE)
-                    })
-                    .count();
-                return Some(required);
+        for decl_idx in decl_candidates {
+            // Try the current arena first, then cross-arena lookup for lib files.
+            let result = Self::count_required_params_in_arena(self.ctx.arena, flags, decl_idx)
+                .or_else(|| {
+                    // For lib file declarations, the node lives in a different arena.
+                    // Look up the correct arena via declaration_arenas.
+                    let arenas = self
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))?;
+                    for arena in arenas {
+                        if let Some(count) =
+                            Self::count_required_params_in_arena(arena.as_ref(), flags, decl_idx)
+                        {
+                            return Some(count);
+                        }
+                    }
+                    None
+                });
+
+            if let Some(required) = result {
+                best_required = Some(match best_required {
+                    Some(prev) => prev.min(required),
+                    None => required,
+                });
             }
+        }
+        best_required
+    }
+
+    /// Count required type params for a single declaration in a specific arena.
+    fn count_required_params_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        flags: u32,
+        decl_idx: NodeIndex,
+    ) -> Option<usize> {
+        let node = arena.get(decl_idx)?;
+        let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
+            arena
+                .get_interface(node)
+                .and_then(|iface| iface.type_parameters.as_ref())
+        } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
+            arena
+                .get_type_alias(node)
+                .and_then(|ta| ta.type_parameters.as_ref())
+        } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
+            arena
+                .get_class(node)
+                .and_then(|c| c.type_parameters.as_ref())
+        } else {
+            None
+        };
+
+        if let Some(list) = type_params_list {
+            let required = list
+                .nodes
+                .iter()
+                .filter(|&&param_idx| {
+                    arena
+                        .get(param_idx)
+                        .and_then(|n| arena.get_type_parameter(n))
+                        .is_some_and(|tp| tp.default == tsz_parser::parser::NodeIndex::NONE)
+                })
+                .count();
+            return Some(required);
         }
         None
     }
