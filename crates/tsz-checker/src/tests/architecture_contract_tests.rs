@@ -3076,6 +3076,18 @@ fn test_assignability_checker_has_execute_relation_request() {
         "execute_relation_request must be able to downgrade a solver-related result \
          when checker-only semantics require it"
     );
+    assert!(
+        source.contains("let flags = self.ctx.pack_relation_flags();"),
+        "execute_relation_request must pass packed checker relation flags into the boundary"
+    );
+    assert!(
+        source.contains("let overrides = CheckerOverrideProvider::new(self, None);"),
+        "execute_relation_request must construct a checker override provider for the boundary call"
+    );
+    assert!(
+        source.contains("self.ctx.sound_mode(),"),
+        "execute_relation_request must pass checker sound_mode into the boundary"
+    );
 }
 
 /// `assignability_diagnostics.rs` diagnostic paths must use the relation
