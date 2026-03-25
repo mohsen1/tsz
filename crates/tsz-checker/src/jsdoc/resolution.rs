@@ -1230,7 +1230,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .definition_store
             .register(DefinitionInfo::type_alias(atom_name, Vec::new(), type_id));
-        self.ctx.definition_store.register_type_to_def(type_id, def_id);
+        self.ctx
+            .definition_store
+            .register_type_to_def(type_id, def_id);
         def_id
     }
     /// Resolve a generic JSDoc type reference: `Name<Arg1, Arg2, ...>`.
