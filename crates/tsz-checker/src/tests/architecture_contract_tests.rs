@@ -2973,6 +2973,35 @@ fn test_relation_failure_covers_semantic_families() {
     }
 }
 
+/// `RelationRequest` must keep the builder helpers that encode freshness and
+/// spread policy directly into the canonical relation request shape.
+#[test]
+fn test_relation_request_builders_encode_epc_policy() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    assert!(
+        source.contains("fn with_fresh_source"),
+        "RelationRequest must keep with_fresh_source as the canonical fresh-literal builder"
+    );
+    assert!(
+        source.contains("self.source_is_fresh = true;"),
+        "with_fresh_source must mark the request as fresh"
+    );
+    assert!(
+        source.contains("self.excess_property_mode = ExcessPropertyMode::Check;"),
+        "with_fresh_source must enable full excess-property checking"
+    );
+    assert!(
+        source.contains("fn with_spread_source"),
+        "RelationRequest must keep with_spread_source as the canonical spread-literal builder"
+    );
+    assert!(
+        source.contains("self.excess_property_mode = ExcessPropertyMode::CheckExplicitOnly;"),
+        "with_spread_source must enable explicit-only excess-property checking"
+    );
+}
+
 /// `assignability_checker.rs` must use `execute_relation_request` as the
 /// canonical checker-level entry point for structured relation queries.
 #[test]
@@ -3102,6 +3131,37 @@ fn test_relation_outcome_has_property_classification() {
         source.contains("classify_object_properties("),
         "execute_relation must populate property_classification via \
          classify_object_properties boundary function"
+    );
+    assert!(
+        source.contains("suppress_excess_property_failure_if_needed("),
+        "execute_relation must centralize excess-property suppression through \
+         suppress_excess_property_failure_if_needed"
+    );
+}
+
+/// The boundary must own the canonical excess-property suppression policy that
+/// used to be duplicated in checker-local failure analysis.
+#[test]
+fn test_boundary_owns_excess_property_suppression_policy() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read assignability.rs");
+
+    assert!(
+        source.contains("fn suppress_excess_property_failure_if_needed("),
+        "assignability boundary must define suppress_excess_property_failure_if_needed"
+    );
+    assert!(
+        source.contains("has_deferred_conditional_member"),
+        "boundary excess-property suppression must handle deferred conditional members"
+    );
+    assert!(
+        source.contains("get_intersection_members"),
+        "boundary excess-property suppression must inspect intersection members"
+    );
+    assert!(
+        source.contains("is_primitive_type(db, *member) || is_type_parameter_like(db, *member)"),
+        "boundary excess-property suppression must skip EPC for primitive/type-parameter \
+         intersection members"
     );
 }
 
