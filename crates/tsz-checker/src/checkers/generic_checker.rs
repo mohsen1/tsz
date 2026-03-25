@@ -1164,6 +1164,34 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
 
+                            // When the base constraint has no type parameters but the
+                            // original type argument did, constraint resolution fully
+                            // substituted type params with their constraints. This
+                            // substitution is lossy — mapped types and intersections
+                            // may lose index signature relationships that hold at
+                            // instantiation time (e.g., `{ [P in keyof T]: T[P] }`
+                            // preserves T's index signatures, but constraint resolution
+                            // may produce inconsistent index signatures). For non-callable
+                            // constraints, defer to instantiation time to match tsc.
+                            if !query::contains_type_parameters(self.ctx.types, base)
+                                && !query::is_callable_type(db, inst_constraint)
+                                && !self.is_function_constraint(original_constraint)
+                            {
+                                // Check if the type arg is an Application type (type alias
+                                // instantiation). These are especially prone to lossy
+                                // constraint resolution because the type alias body may
+                                // structurally preserve constraints that the base constraint
+                                // computation cannot track.
+                                let type_arg_is_application = query::application_base_def_id(
+                                    self.ctx.types.as_type_database(),
+                                    type_arg,
+                                )
+                                .is_some();
+                                if type_arg_is_application {
+                                    continue;
+                                }
+                            }
+
                             let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
                                 || self.satisfies_array_like_constraint(base, inst_constraint);
                             if !is_satisfied {
