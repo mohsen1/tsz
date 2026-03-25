@@ -360,8 +360,11 @@ impl<'a> CheckerState<'a> {
         }
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
-        let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_leading_jsdoc(&comments, node.pos, &source_text)?;
+        let jsdoc = self.try_leading_jsdoc(
+            &comments,
+            self.effective_jsdoc_pos_for_node(idx, &comments, &source_text)?,
+            &source_text,
+        )?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
         // Use the authoritative resolution kernel — no fallback chain needed.

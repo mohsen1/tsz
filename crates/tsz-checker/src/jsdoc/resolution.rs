@@ -23,9 +23,60 @@ use tsz_solver::{
     TypePredicate, TypePredicateTarget, Visibility,
 };
 impl<'a> CheckerState<'a> {
+    pub(crate) fn enclosing_expression_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        for _ in 0..6 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT {
+                return Some(parent);
+            }
+            current = parent;
+        }
+        None
+    }
+
+    pub(crate) fn expression_root(&self, idx: NodeIndex) -> NodeIndex {
+        let mut current = idx;
+        for _ in 0..8 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return current;
+            };
+            match node.kind {
+                k if k == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                        return current;
+                    };
+                    current = access.expression;
+                }
+                _ => return current,
+            }
+        }
+        current
+    }
+
     fn jsdoc_type_expr_is_broad_function(type_expr: &str) -> bool {
         let trimmed = type_expr.trim();
         trimmed.eq_ignore_ascii_case("function") || trimmed.eq_ignore_ascii_case("Function")
+    }
+
+    pub(crate) fn resolve_jsdoc_type_from_comment(
+        &mut self,
+        jsdoc: &str,
+        anchor_pos: u32,
+    ) -> Option<TypeId> {
+        let type_expr = Self::extract_jsdoc_type_expression(jsdoc)?.trim();
+        let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+        self.ctx.jsdoc_typedef_anchor_pos.set(anchor_pos);
+        let result = self.resolve_jsdoc_reference(type_expr);
+        self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+        result
     }
 
     pub(super) fn jsdoc_concrete_callable_type_from_expr(
@@ -947,7 +998,7 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
-    fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
+    pub(crate) fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
         let prototype_type = self.resolve_jsdoc_prototype_assignment_type(name);
 
         for raw_idx in 0..self.ctx.arena.len() {
@@ -966,6 +1017,33 @@ impl<'a> CheckerState<'a> {
             }
             if self.expression_text(binary.left).as_deref() != Some(name) {
                 continue;
+            }
+            if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(idx) {
+                return Some(
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
+                );
+            }
+            if let Some(stmt_idx) = self.enclosing_expression_statement(idx)
+                && let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx).or_else(|| {
+                    let sf = self.source_file_data_for_node(stmt_idx)?;
+                    let source_text = sf.text.to_string();
+                    let comments = sf.comments.clone();
+                    let jsdoc =
+                        self.try_jsdoc_with_ancestor_walk(stmt_idx, &comments, &source_text)?;
+                    self.resolve_jsdoc_type_from_comment(&jsdoc, self.ctx.arena.get(stmt_idx)?.pos)
+                })
+            {
+                return Some(
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
+                );
+            }
+            let left_root = self.expression_root(binary.left);
+            if left_root != binary.left
+                && let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(left_root)
+            {
+                return Some(
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
+                );
             }
             if let Some(resolved) = self.resolve_jsdoc_type_from_value_expression(binary.right) {
                 return Some(

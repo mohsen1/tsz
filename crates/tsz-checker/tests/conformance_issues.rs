@@ -9547,6 +9547,86 @@ Object.defineProperty(module.exports, "setonlyAccessor", {
     );
 }
 
+#[test]
+fn test_jsdoc_exports_property_assignment_contextually_types_object_literal_methods() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "test.js",
+            r#"
+/** @typedef {{
+    status: 'done'
+    m(n: number): void
+}} DoneStatus */
+
+/** @type {DoneStatus} */
+exports.x = {
+    status: 'done',
+    m(n) { }
+}
+exports.x
+"#,
+        )],
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 7006))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected JSDoc `exports.x` assignment to preserve contextual typing. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_module_exports_property_assignment_contextually_types_object_literal_methods() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "test.js",
+            r#"
+/** @typedef {{
+    status: 'done'
+    m(n: number): void
+}} DoneStatus */
+
+/** @type {DoneStatus} */
+module.exports.y = {
+    status: 'done',
+    m(n) { }
+}
+module.exports.y
+"#,
+        )],
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 7006))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected JSDoc `module.exports.y` assignment to preserve contextual typing. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // =============================================================================
 // JSX Intrinsic Element Resolution (TS2339)
 // =============================================================================

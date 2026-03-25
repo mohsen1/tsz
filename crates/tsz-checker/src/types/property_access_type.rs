@@ -1472,6 +1472,42 @@ impl<'a> CheckerState<'a> {
                     {
                         return self.current_file_commonjs_module_exports_namespace_type();
                     }
+                    if self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && let Some(jsdoc_type) = self
+                            .enclosing_expression_statement(idx)
+                            .and_then(|stmt_idx| {
+                                self.js_statement_declared_type(stmt_idx).or_else(|| {
+                                    let sf = self.source_file_data_for_node(stmt_idx)?;
+                                    let source_text = sf.text.to_string();
+                                    let comments = sf.comments.clone();
+                                    let jsdoc = self.try_jsdoc_with_ancestor_walk(
+                                        stmt_idx,
+                                        &comments,
+                                        &source_text,
+                                    )?;
+                                    self.resolve_jsdoc_type_from_comment(
+                                        &jsdoc,
+                                        self.ctx.arena.get(stmt_idx)?.pos,
+                                    )
+                                })
+                            })
+                            .or_else(|| self.jsdoc_type_annotation_for_node(idx))
+                            .or_else(|| self.jsdoc_type_annotation_for_node(access.expression))
+                            .or_else(|| {
+                                let root = self.expression_root(idx);
+                                (root != idx).then(|| self.jsdoc_type_annotation_for_node(root))?
+                            })
+                    {
+                        return jsdoc_type;
+                    }
+                    if self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && let Some(expr_text) = self.expression_text(idx)
+                        && let Some(jsdoc_type) = self.resolve_jsdoc_assigned_value_type(&expr_text)
+                    {
+                        return jsdoc_type;
+                    }
                     if js_expando_before_assignment {
                         return TypeId::ANY;
                     }
