@@ -199,6 +199,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // If still no direct augmentations found, search inside namespace augmentation
+        // bodies for nested interface declarations.  This handles:
+        //   declare module "./reexport" { namespace Root { interface Foo { self: Foo } } }
+        // When resolving `ns.Root.Foo`, the augmentation for "Foo" is nested inside
+        // the namespace "Root" augmentation, not registered as a top-level entry.
+        if result.is_empty() {
+            self.find_nested_augmentation_declarations(&candidates, interface_name, &mut result);
+        }
+
         // If still no augmentations found, check augmentations on modules that
         // re-export from our source module. For example, if `./index` re-exports
         // from `./eventList` via `export * from './eventList'`, augmentations
@@ -289,6 +298,115 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    /// Search inside namespace augmentation bodies for nested interface declarations.
+    ///
+    /// For an augmentation like:
+    /// ```typescript
+    /// declare module "./m" { namespace Root { interface Foo { self: Foo } } }
+    /// ```
+    /// A lookup for `interface_name = "Foo"` will not find it via the top-level
+    /// augmentation name ("Root").  This helper walks one level into namespace
+    /// augmentations and collects nested interface declarations that match.
+    fn find_nested_augmentation_declarations(
+        &self,
+        candidates: &[String],
+        interface_name: &str,
+        result: &mut Vec<tsz_binder::ModuleAugmentation>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext::{
+            INTERFACE_DECLARATION, MODULE_BLOCK, MODULE_DECLARATION,
+        };
+        // Helper: search a single augmentation list for nested interface declarations
+        let search_augmentations =
+            |augs: &[tsz_binder::ModuleAugmentation],
+             arena: &tsz_parser::parser::NodeArena,
+             external_arena: Option<&Arc<tsz_parser::parser::NodeArena>>,
+             result: &mut Vec<tsz_binder::ModuleAugmentation>| {
+                for aug in augs {
+                    let Some(node) = arena.get(aug.node) else {
+                        continue;
+                    };
+                    // Only look inside namespace (ModuleDeclaration) augmentations
+                    if node.kind != MODULE_DECLARATION {
+                        continue;
+                    }
+                    let Some(module_decl) = arena.get_module(node) else {
+                        continue;
+                    };
+                    let Some(body_node) = arena.get(module_decl.body) else {
+                        continue;
+                    };
+                    if body_node.kind != MODULE_BLOCK {
+                        continue;
+                    }
+                    let Some(block) = arena.get_module_block(body_node) else {
+                        continue;
+                    };
+                    let Some(statements) = block.statements.as_ref() else {
+                        continue;
+                    };
+                    for &stmt_idx in &statements.nodes {
+                        let Some(stmt_node) = arena.get(stmt_idx) else {
+                            continue;
+                        };
+                        if stmt_node.kind == INTERFACE_DECLARATION {
+                            if let Some(iface) = arena.get_interface(stmt_node)
+                                && let Some(name_node) = arena.get(iface.name)
+                                && let Some(id_data) = arena.get_identifier(name_node)
+                                && id_data.escaped_text == interface_name
+                            {
+                                let mut nested = tsz_binder::ModuleAugmentation::new(
+                                    interface_name.to_string(),
+                                    stmt_idx,
+                                );
+                                nested.arena =
+                                    external_arena.cloned().or_else(|| aug.arena.clone());
+                                result.push(nested);
+                            }
+                        }
+                    }
+                }
+            };
+        // Search current binder's augmentations
+        for candidate in candidates {
+            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(candidate) {
+                search_augmentations(augmentations, self.ctx.arena, None, result);
+            }
+        }
+        if !result.is_empty() {
+            return;
+        }
+        // Search cross-file augmentations
+        if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+            for candidate in candidates {
+                if let Some(entries) = aug_index.get(candidate) {
+                    for (file_idx, aug) in entries.iter() {
+                        let aug_slice = std::slice::from_ref(aug);
+                        if let Some(arenas) = self.ctx.all_arenas.as_ref()
+                            && let Some(arena) = arenas.get(*file_idx)
+                        {
+                            search_augmentations(aug_slice, arena, Some(arena), result);
+                        }
+                    }
+                }
+            }
+        } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                for candidate in candidates {
+                    if let Some(augmentations) = binder.module_augmentations.get(candidate) {
+                        let ext_arena = self
+                            .ctx
+                            .all_arenas
+                            .as_ref()
+                            .and_then(|arenas| arenas.get(file_idx));
+                        let arena = ext_arena.map_or(self.ctx.arena, |a| a.as_ref());
+                        search_augmentations(augmentations, arena, ext_arena, result);
+                    }
+                }
+            }
+        }
     }
 
     /// Get all module augmentation members for a given module specifier and interface name.
