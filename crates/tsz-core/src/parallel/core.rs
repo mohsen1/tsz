@@ -1293,6 +1293,11 @@ pub struct BoundFile {
     /// Expando property assignments detected during binding
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     pub file_features: crate::binder::FileFeatures,
+    /// Reverse mapping for merged lib symbols: remapped `SymbolId` ->
+    /// (`lib_binder_idx`, original lib-local `SymbolId`).
+    /// Reconstructed binders need this to keep lib delegation caches from
+    /// polluting file-local symbol state.
+    pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
     /// Per-file semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Contains only entries that originated in this file (post-remap `SymbolIds`).
     /// This enables file-scoped identity without cloning the entire global map.
@@ -1381,6 +1386,12 @@ impl BoundFile {
                 size += s.capacity() + std::mem::size_of::<u64>();
             }
         }
+
+        // lib_symbol_reverse_remap
+        size += self.lib_symbol_reverse_remap.capacity()
+            * (std::mem::size_of::<SymbolId>()
+                + std::mem::size_of::<(usize, SymbolId)>()
+                + 8);
 
         // semantic_defs (per-file)
         size += self.semantic_defs.capacity()
@@ -2935,14 +2946,17 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             let mut table = SymbolTable::new();
             for (name, old_sym_id) in scope.table.iter() {
                 if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
-                    // User symbol - include in scope
+                    // User symbol - include in scope.
                     table.set(name.clone(), new_sym_id);
+                } else {
+                    let name_atom = name_interner.intern(name);
+                    if let Some(&global_id) = lib_name_to_global.get(&name_atom) {
+                        // Preserve lib-backed scope entries exactly when they were present in
+                        // the original binder. Dropping them during merge weakens same-file
+                        // identifier resolution and forces later checker repair.
+                        table.set(name.clone(), global_id);
+                    }
                 }
-                // NOTE: We intentionally do NOT add lib symbols to scopes.
-                // Lib symbols have declaration NodeIndex values from lib arenas which
-                // can accidentally match valid indices in user file arenas, causing
-                // false duplicate identifier detection. Lib symbols are accessible
-                // through file_locals for type lookup, but should not be in scopes.
             }
             remapped_scopes.push(Scope {
                 parent: scope.parent,
@@ -3001,6 +3015,16 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             is_external_module: result.is_external_module,
             expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
             file_features: result.file_features,
+            lib_symbol_reverse_remap: result
+                .lib_symbol_reverse_remap
+                .iter()
+                .filter_map(|(&old_sym, &(lib_idx, lib_local_sym))| {
+                    id_remap
+                        .get(&old_sym)
+                        .copied()
+                        .map(|new_sym| (new_sym, (lib_idx, lib_local_sym)))
+                })
+                .collect(),
             semantic_defs: file_semantic_defs,
         });
     }
@@ -3453,6 +3477,30 @@ pub fn create_binder_from_bound_file(
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
+    let declaration_arenas: DeclarationArenaMap = program
+        .declaration_arenas
+        .iter()
+        .filter_map(|(&(sym_id, decl_idx), arenas)| {
+            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
+            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
+        })
+        .collect();
+
+    let symbols_with_non_local_declarations: FxHashSet<SymbolId> = declaration_arenas
+        .keys()
+        .map(|&(sym_id, _)| sym_id)
+        .collect();
+
+    let symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = program
+        .symbol_arenas
+        .iter()
+        .filter_map(|(&sym_id, arena)| {
+            let has_non_local_decl = symbols_with_non_local_declarations.contains(&sym_id);
+            (has_non_local_decl || !Arc::ptr_eq(arena, &file.arena))
+                .then(|| (sym_id, Arc::clone(arena)))
+        })
+        .collect();
+
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
 
@@ -3539,8 +3587,8 @@ pub fn create_binder_from_bound_file(
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
-            symbol_arenas: program.symbol_arenas.clone(),
-            declaration_arenas: program.declaration_arenas.clone(),
+            symbol_arenas,
+            declaration_arenas,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
@@ -3554,6 +3602,9 @@ pub fn create_binder_from_bound_file(
 
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
+    binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
+    binder.lib_binders = program.lib_binders.clone();
+    binder.lib_symbol_ids = program.lib_symbol_ids.clone();
 
     // Compose semantic_defs: start with the global map (cross-file + lib entries)
     // then overlay the file's own entries. Per-file entries take precedence for

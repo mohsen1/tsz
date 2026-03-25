@@ -1895,6 +1895,130 @@ let x2: string = f;
     }
 
     #[test]
+    fn test_collect_diagnostics_preserves_mapped_type_generic_indexed_access_context() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"// repro from #49242
+
+type Types = {
+    [key: string]: object;
+};
+
+type Filled<T extends Types> = {
+    [K in keyof T]: [T[K]];
+}
+
+class Test<Types extends {
+    [key: string]: object;
+}> {
+    entries: {
+        [T in keyof Types]?: Types[T][];
+    } = {}
+
+    get<T extends keyof Types>(name: T): Filled<Pick<Types, T>> {
+        let entry = this.entries[name];
+        if (entry) return { [name]: [entry[0]] } as Filled<Pick<Types, T>>;
+        throw new Error("Entry not found");
+    }
+}
+
+// repro from #49338
+
+type TypesMap = {
+    0: {
+        foo: string,
+    };
+    1: {
+        a: number,
+    };
+}
+type P<T extends keyof TypesMap> = {
+    t: T;
+} & TypesMap[T];
+type Handlers = { [M in keyof TypesMap]?: (p: P<M>) => void };
+const typeHandlers: Handlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p);
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        let relevant = diagnostics
+            .iter()
+            .filter(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                        | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            relevant.is_empty(),
+            "Expected mapped generic indexed access repro to keep context in collect_diagnostics, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn real_syntax_errors_suppress_cross_file_type_diagnostics() {
         let diagnostics = collect_test_diagnostics(&[
             ("/a.ts", "const x =\n"),
