@@ -998,6 +998,43 @@ z.t = 2
 }
 
 #[test]
+fn test_generic_constructor_function_template_self_alias_instantiation() {
+    let source = r#"
+/**
+ * @param {T} t
+ * @template T
+ */
+function Zet(t) {
+    var self = this;
+    self.t = t;
+    /** @type {T} */
+    self.u
+}
+var z = new Zet(1)
+z.t = 2
+z.u = false
+"#;
+    let diagnostics = check_js(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected generic self-alias constructor properties to stay visible, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly 1 TS2322 for 'z.u = false' through self-alias generic constructor, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_class_can_extend_js_constructor_function() {
     let source = r#"
 /**
