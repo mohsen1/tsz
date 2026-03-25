@@ -17697,7 +17697,7 @@ repro({
 }
 
 #[test]
-fn test_jsdoc_constructor_overload_tags_report_ts2394() {
+fn test_jsdoc_constructor_overload_tags_do_not_emit_stale_ts2394() {
     let diagnostics = compile_and_get_diagnostics_named(
         "overloadTag2.js",
         r#"
@@ -17744,13 +17744,52 @@ var d = new Foo('str', 2)
         CheckerOptions::default(),
     );
 
-    let ts2394_count = diagnostics.iter().filter(|(code, _)| *code == 2394).count();
     assert!(
-        has_error(&diagnostics, 2394),
-        "Expected TS2394 for incompatible JSDoc constructor overloads. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 2394),
+        "Expected no stale TS2394 for stacked JSDoc constructor overload tags. Actual diagnostics: {diagnostics:#?}"
     );
     assert_eq!(
-        ts2394_count, 1,
-        "Expected exactly one TS2394 for the stacked JSDoc constructor overloads. Actual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().filter(|(code, _)| *code == 2554).count(),
+        1,
+        "Expected the remaining error to be the zero-argument constructor call. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_generic_constructor_overload_tag_does_not_report_ts2394() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "overloadTag3.js",
+        r#"
+// @target: es2015
+// @checkJs: true
+// @allowJs: true
+// @strict: true
+// @noEmit: true
+
+/** @template T */
+export class Foo {
+    /**
+     * @constructor
+     * @overload
+     */
+    constructor() { }
+
+    /**
+     * @param {T} value
+     */
+    bar(value) { }
+}
+
+/** @type {Foo} */
+let foo;
+foo = new Foo();
+"#,
+        CheckerOptions::default(),
+    );
+
+    let ts2394_count = diagnostics.iter().filter(|(code, _)| *code == 2394).count();
+    assert_eq!(
+        ts2394_count, 0,
+        "Expected no TS2394 for generic JSDoc constructor overload tags. Actual diagnostics: {diagnostics:#?}"
     );
 }
