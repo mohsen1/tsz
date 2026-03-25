@@ -347,6 +347,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let file_has_any_parse_diag =
+            self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
+        if file_has_any_parse_diag {
+            return;
+        }
+
         // Check full scope chain (accept-all filter to include class members)
         let lib_binders = self.get_lib_binders();
         let found = self.ctx.binder.resolve_name_with_filter(

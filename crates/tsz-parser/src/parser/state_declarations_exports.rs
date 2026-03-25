@@ -1929,6 +1929,8 @@ impl ParserState {
             return NodeIndex::NONE;
         }
 
+        self.recover_adjacent_jsx_siblings(expression);
+
         // Use smart error reporting for missing semicolons (matches TypeScript's
         // parseExpressionOrLabeledStatement behavior). Instead of generic TS1005 "';' expected",
         // this checks if the expression is a misspelled keyword and emits TS1435/TS1434.
