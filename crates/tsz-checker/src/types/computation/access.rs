@@ -233,23 +233,29 @@ impl<'a> CheckerState<'a> {
             let chosen = if can_use_no_flow {
                 let read_object_type =
                     self.get_type_of_node_with_request(access.expression, &read_request);
-                let read_has_property = if let Some(name) = literal_string.as_deref() {
+                if let Some(name) = literal_string.as_deref() {
                     let evaluated_read = self.evaluate_application_type(read_object_type);
                     let resolved_read = self.resolve_type_for_property_access(evaluated_read);
-                    !matches!(
-                        self.resolve_property_access_with_env(resolved_read, name),
-                        PropertyAccessResult::PropertyNotFound { .. }
-                            | PropertyAccessResult::IsUnknown
-                    )
+                    if self.union_write_requires_existing_named_member(resolved_read, name) {
+                        (read_object_type, false)
+                    } else {
+                        let read_has_property = !matches!(
+                            self.resolve_property_access_with_env(resolved_read, name),
+                            PropertyAccessResult::PropertyNotFound { .. }
+                                | PropertyAccessResult::IsUnknown
+                        );
+                        (object_type_no_flow, !read_has_property)
+                    }
                 } else if literal_index.is_some() {
                     let evaluated_read = self.evaluate_application_type(read_object_type);
                     let resolved_read = self.resolve_type_for_property_access(evaluated_read);
-                    self.get_element_access_type(resolved_read, TypeId::NUMBER, literal_index)
-                        != TypeId::ERROR
+                    let read_has_property =
+                        self.get_element_access_type(resolved_read, TypeId::NUMBER, literal_index)
+                            != TypeId::ERROR;
+                    (object_type_no_flow, !read_has_property)
                 } else {
-                    false
-                };
-                (object_type_no_flow, !read_has_property)
+                    (object_type_no_flow, false)
+                }
             } else {
                 (
                     self.get_type_of_node_with_request(access.expression, &read_request),
@@ -712,9 +718,18 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     ..
                 } => {
-                    use_index_signature_check = false;
-                    // In write context (assignment target), prefer the setter type.
-                    Some(effective_write_result(type_id, write_type))
+                    if skip_flow_narrowing
+                        && self.union_write_requires_existing_named_member(
+                            resolved_type,
+                            &property_name,
+                        )
+                    {
+                        None
+                    } else {
+                        use_index_signature_check = false;
+                        // In write context (assignment target), prefer the setter type.
+                        Some(effective_write_result(type_id, write_type))
+                    }
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     use_index_signature_check = false;
