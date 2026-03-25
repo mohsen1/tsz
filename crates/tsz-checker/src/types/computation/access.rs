@@ -648,6 +648,12 @@ impl<'a> CheckerState<'a> {
         if !skip_flow_narrowing
             && self.is_expando_element_access_read(access.expression, access.name_or_argument)
         {
+            if let Some(prop_name) = self.expando_element_key_name(access.name_or_argument)
+                && let Some(expando_type) =
+                    self.expando_property_read_type(idx, access.expression, &prop_name)
+            {
+                return expando_type;
+            }
             return TypeId::ANY;
         }
         if self.is_jsdoc_annotated_this_member_declaration(idx) {
