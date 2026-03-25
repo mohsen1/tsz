@@ -851,7 +851,17 @@ impl<'a> CheckerState<'a> {
                 if ret.expression.is_none() {
                     return false;
                 }
-                self.try_elaborate_assignment_source_error(ret.expression, expected_return_type)
+                if expected_return_type == TypeId::VOID {
+                    return false;
+                }
+
+                let return_type = self.get_type_of_node(ret.expression);
+                !self.check_assignable_or_report_at_without_source_elaboration(
+                    return_type,
+                    expected_return_type,
+                    ret.expression,
+                    ret.expression,
+                )
             }
             syntax_kind_ext::BLOCK => {
                 self.try_elaborate_function_block_returns(stmt_idx, expected_return_type)
