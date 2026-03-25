@@ -270,29 +270,36 @@ impl<'a> CheckerState<'a> {
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
-            // Look up the exported symbol in module_exports
-            if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
-                && let Some(target_sym_id) = exports.get(export_name)
-            {
-                // Recursively resolve if the target is also an alias
-                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-            }
-            if let Some(all_binders) = &self.ctx.all_binders {
-                if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
-                    for &file_idx in file_indices {
-                        if let Some(binder) = all_binders.get(file_idx)
-                            && let Some(exports) = binder.module_exports.get(module_name)
-                            && let Some(target_sym_id) = exports.get(export_name)
-                        {
-                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+            // Look up the exported symbol in module_exports.
+            // Only do this for named/default imports (import_name is Some).
+            // For namespace/require imports (`import X = require("m")`),
+            // import_name is None and escaped_name could accidentally match
+            // a specific export, resolving the alias to that export instead
+            // of the module namespace.
+            if symbol.import_name.is_some() {
+                if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
+                    && let Some(target_sym_id) = exports.get(export_name)
+                {
+                    // Recursively resolve if the target is also an alias
+                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                }
+                if let Some(all_binders) = &self.ctx.all_binders {
+                    if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
+                        for &file_idx in file_indices {
+                            if let Some(binder) = all_binders.get(file_idx)
+                                && let Some(exports) = binder.module_exports.get(module_name)
+                                && let Some(target_sym_id) = exports.get(export_name)
+                            {
+                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                            }
                         }
-                    }
-                } else {
-                    for binder in all_binders.iter() {
-                        if let Some(exports) = binder.module_exports.get(module_name)
-                            && let Some(target_sym_id) = exports.get(export_name)
-                        {
-                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                    } else {
+                        for binder in all_binders.iter() {
+                            if let Some(exports) = binder.module_exports.get(module_name)
+                                && let Some(target_sym_id) = exports.get(export_name)
+                            {
+                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                            }
                         }
                     }
                 }
