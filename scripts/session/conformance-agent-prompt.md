@@ -162,9 +162,10 @@ scripts/session/healthcheck.sh
 # Read recent context so you do not duplicate or undo active work
 git log --oneline -20
 
-# If you are working as a campaign agent, read the campaign checkpoint first
-# If none exists yet, initialize it once and then read status
-scripts/session/campaign-checkpoint.sh <your-campaign> --init
+# If you are working as a campaign agent, read the campaign checkpoint first.
+# If none exists yet, initialize it once and then read status.
+scripts/session/campaign-checkpoint.sh <your-campaign> --status || \
+  scripts/session/campaign-checkpoint.sh <your-campaign> --init
 scripts/session/campaign-checkpoint.sh <your-campaign> --status
 ```
 
@@ -463,7 +464,7 @@ Fixes: testName1, testName2 (+N conformance tests)
 ```bash
 git add <changed files>
 git commit -m "..."
-git push origin main
+git push origin HEAD:main
 
 # If rejected (other agents pushed):
 git fetch origin main && git rebase origin/main && git push origin HEAD:main
@@ -491,7 +492,7 @@ scripts/session/campaign-checkpoint.sh <your-campaign>
 scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 git add scripts/conformance/
 git commit -m "chore: update conformance snapshot (XX.X%, NNNNN/12581)"
-git push origin main
+git push origin HEAD:main
 ```
 
 ---
@@ -531,7 +532,8 @@ cargo check --package tsz-checker
 cargo build --profile dist-fast --bin tsz
 
 # Campaign coordination
-scripts/session/campaign-checkpoint.sh <your-campaign> --init
+scripts/session/campaign-checkpoint.sh <your-campaign> --status || \
+  scripts/session/campaign-checkpoint.sh <your-campaign> --init
 scripts/session/campaign-checkpoint.sh <your-campaign> --status
 
 # Test specific
