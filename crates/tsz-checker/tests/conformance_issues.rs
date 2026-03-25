@@ -14778,6 +14778,10 @@ async function* f(): AsyncGenerator<"NOT_FOUND_AUTHOR" | "NOT_FOUND_BOOK", BookW
             .any(|(code, _)| matches!(*code, 2504 | 2769)),
         "Optional callback unions should preserve contextual signatures for generic mappers.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "Delegated `yield* await promise.then(mapper)` should not over-constrain the generic mapper callback.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
