@@ -14,6 +14,17 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn current_file_commonjs_module_identifier_is_unshadowed(&self, idx: NodeIndex) -> bool {
+        !self
+            .resolve_identifier_symbol_without_tracking(idx)
+            .is_some_and(|sym_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+            })
+    }
+
     pub(crate) fn is_jsdoc_annotated_this_member_declaration(&mut self, idx: NodeIndex) -> bool {
         if !self.is_js_file() {
             return false;
@@ -949,9 +960,7 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_identifier_at(access.expression)
                 .is_some_and(|ident| ident.escaped_text == "module")
-            && self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .is_none()
+            && self.current_file_commonjs_module_identifier_is_unshadowed(access.expression)
             && self
                 .ctx
                 .arena
@@ -1457,9 +1466,9 @@ impl<'a> CheckerState<'a> {
                         && let Some(obj_node) = self.ctx.arena.get(access.expression)
                         && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
                         && ident.escaped_text == "module"
-                        && self
-                            .resolve_identifier_symbol_without_tracking(access.expression)
-                            .is_none()
+                        && self.current_file_commonjs_module_identifier_is_unshadowed(
+                            access.expression,
+                        )
                     {
                         return self.current_file_commonjs_module_exports_namespace_type();
                     }

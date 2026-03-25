@@ -395,15 +395,18 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
+        let module_is_unshadowed = !self
+            .resolve_identifier_symbol_without_tracking(access.expression)
+            .is_some_and(|sym_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+            });
         self.ctx
             .arena
             .get_identifier_at(access.expression)
-            .is_some_and(|ident| {
-                ident.escaped_text == "module"
-                    && self
-                        .resolve_identifier_symbol_without_tracking(access.expression)
-                        .is_none()
-            })
+            .is_some_and(|ident| ident.escaped_text == "module" && module_is_unshadowed)
             && self
                 .ctx
                 .arena
