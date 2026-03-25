@@ -965,17 +965,17 @@ impl<'a> CheckerState<'a> {
         // using ES decorators (experimentalDecorators is NOT enabled).
         // With legacy experimentalDecorators, decorators are metadata-only and
         // don't affect initialization, so TS2564 is still required.
-        if !self.ctx.compiler_options.experimental_decorators {
-            if let Some(ref modifiers) = prop.modifiers {
-                let has_decorator = modifiers.nodes.iter().any(|&mod_idx| {
-                    self.ctx
-                        .arena
-                        .get(mod_idx)
-                        .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::DECORATOR)
-                });
-                if has_decorator {
-                    return false;
-                }
+        if !self.ctx.compiler_options.experimental_decorators
+            && let Some(ref modifiers) = prop.modifiers
+        {
+            let has_decorator = modifiers.nodes.iter().any(|&mod_idx| {
+                self.ctx
+                    .arena
+                    .get(mod_idx)
+                    .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::DECORATOR)
+            });
+            if has_decorator {
+                return false;
             }
         }
 
