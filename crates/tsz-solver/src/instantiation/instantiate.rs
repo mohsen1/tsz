@@ -1360,6 +1360,35 @@ pub fn instantiate_type(
     instantiate_type_with_depth_status(interner, type_id, substitution).0
 }
 
+/// Instantiate a type while preserving unsubstituted type parameters.
+///
+/// Unlike `instantiate_type`, this does NOT fall back to replacing type
+/// parameters with their instantiated constraints when they are not in the
+/// substitution map. This is needed when instantiating mapped type bodies
+/// (constraint + template) with the outer type arguments, so that the mapped
+/// key parameter (e.g., `P` from `[P in keyof T]: T[P]`) stays as a type
+/// parameter instead of being collapsed to its constraint.
+pub fn instantiate_type_preserving(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.preserve_unsubstituted_type_params = true;
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
 /// Instantiate a type and report whether instantiation depth overflowed.
 pub fn instantiate_type_with_depth_status(
     interner: &dyn TypeDatabase,

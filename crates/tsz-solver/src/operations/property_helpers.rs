@@ -96,13 +96,32 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
         }
 
-        // Step 3: Instantiate the template with this single key
-        let mut subst = TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, key_literal);
-        let property_type = instantiate_type(self.interner(), mapped.template, &subst);
-        let property_type = self
-            .db
-            .evaluate_type_with_options(property_type, self.no_unchecked_indexed_access);
+        // Step 3: Instantiate the template with this single key.
+        //
+        // For homomorphic mapped types with template `Source[K]`, construct
+        // IndexAccess(Source, key_literal) directly instead of using name-based
+        // substitution. This avoids a name collision when the mapped key parameter
+        // (e.g., `P` from `[P in keyof T]: T[P]`) shares a name atom with an
+        // outer type parameter inside the source (e.g., `Props<P> & P` where the
+        // outer function declares `<P>`). Name-based substitution would
+        // incorrectly replace both occurrences of `P` with the key literal.
+        let property_type = if let Some((idx_obj, idx_key)) =
+            crate::type_queries::get_index_access_types(self.interner(), mapped.template)
+            && let Some(crate::types::TypeData::TypeParameter(info)) =
+                self.interner().lookup(idx_key)
+            && info.name == mapped.type_param.name
+        {
+            // Template is Source[K] — construct Source["propName"] directly
+            let index_access = self.interner().index_access(idx_obj, key_literal);
+            self.db
+                .evaluate_type_with_options(index_access, self.no_unchecked_indexed_access)
+        } else {
+            let mut subst = TypeSubstitution::new();
+            subst.insert(mapped.type_param.name, key_literal);
+            let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+            self.db
+                .evaluate_type_with_options(instantiated, self.no_unchecked_indexed_access)
+        };
 
         // Step 4: Apply optional modifier
         let final_type = match mapped.optional_modifier {
@@ -735,13 +754,29 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let substitution =
                     TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
 
+                // Use preserve_unsubstituted_type_params to prevent the TypeInstantiator
+                // from replacing unsubstituted type parameters (like the mapped key param)
+                // with their instantiated constraints. Without this, the mapped key param
+                // (e.g., `P` from `[P in keyof T]: T[P]`) would be replaced by its
+                // instantiated constraint when T is substituted, corrupting the template.
                 let inst_constraint =
-                    instantiate_type(self.interner(), mapped.constraint, &substitution);
-                let inst_template =
-                    instantiate_type(self.interner(), mapped.template, &substitution);
-                let inst_name_type = mapped
-                    .name_type
-                    .map(|nt| instantiate_type(self.interner(), nt, &substitution));
+                    crate::instantiation::instantiate::instantiate_type_preserving(
+                        self.interner(),
+                        mapped.constraint,
+                        &substitution,
+                    );
+                let inst_template = crate::instantiation::instantiate::instantiate_type_preserving(
+                    self.interner(),
+                    mapped.template,
+                    &substitution,
+                );
+                let inst_name_type = mapped.name_type.map(|nt| {
+                    crate::instantiation::instantiate::instantiate_type_preserving(
+                        self.interner(),
+                        nt,
+                        &substitution,
+                    )
+                });
 
                 let new_mapped = MappedType {
                     type_param: mapped.type_param,
