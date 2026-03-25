@@ -569,15 +569,21 @@ impl<'a> CheckerState<'a> {
                             {
                                 return Some(param_type);
                             }
+                            // Class has construct params but none suitable for props.
+                            // Emit TS2607 to flag the missing attributes property.
+                            if let Some(elem_idx) = element_idx {
+                                use crate::diagnostics::diagnostic_codes;
+                                self.error_at_node_msg(
+                                    elem_idx,
+                                    diagnostic_codes::JSX_ELEMENT_CLASS_DOES_NOT_SUPPORT_ATTRIBUTES_BECAUSE_IT_DOES_NOT_HAVE_A_PROPERT,
+                                    &[name],
+                                );
+                            }
                         }
-                        if let Some(elem_idx) = element_idx {
-                            use crate::diagnostics::diagnostic_codes;
-                            self.error_at_node_msg(
-                                elem_idx,
-                                diagnostic_codes::JSX_ELEMENT_CLASS_DOES_NOT_SUPPORT_ATTRIBUTES_BECAUSE_IT_DOES_NOT_HAVE_A_PROPERT,
-                                &[name],
-                            );
-                        }
+                        // When the class has no construct parameters (e.g., inherited
+                        // from a generic base like React.Component), tsc falls back
+                        // gracefully without emitting TS2607. Skip the diagnostic
+                        // and let the caller handle the missing props type.
                         None
                     }
                 }
