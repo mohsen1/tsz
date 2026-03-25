@@ -1299,6 +1299,19 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     from_index_signature,
                 } => {
+                    if property_name == "exports"
+                        && prop_type == TypeId::ANY
+                        && self.is_js_file()
+                        && let Some(obj_node) = self.ctx.arena.get(access.expression)
+                        && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
+                        && ident.escaped_text == "module"
+                        && self.current_file_commonjs_module_identifier_is_unshadowed(
+                            access.expression,
+                        )
+                    {
+                        return self.current_file_commonjs_module_exports_namespace_type();
+                    }
+
                     // Substitute polymorphic `this` type with the receiver type.
                     // E.g., for `class C<T> { x = this; }`, accessing `c.x` where
                     // `c: C<string>` should yield `C<string>`, not raw `ThisType`.

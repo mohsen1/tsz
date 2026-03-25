@@ -206,6 +206,12 @@ impl<'a> CheckerState<'a> {
         object_expr_idx: NodeIndex,
         property_name: &str,
     ) -> bool {
+        if self.is_current_file_commonjs_export_base_syntax(object_expr_idx)
+            && !self.is_current_file_commonjs_export_base_for_expando(object_expr_idx)
+        {
+            return false;
+        }
+
         fn property_access_chain(
             arena: &tsz_parser::parser::node::NodeArena,
             idx: NodeIndex,
@@ -482,6 +488,26 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_current_file_commonjs_export_base_for_expando(&self, idx: NodeIndex) -> bool {
+        if self
+            .ctx
+            .js_export_surface_cache
+            .get(&self.ctx.current_file_idx)
+            .and_then(|surface| surface.direct_export_type)
+            .is_some_and(|direct_export_type| {
+                !crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                    self.ctx.types,
+                    direct_export_type,
+                )
+            })
+        {
+            return false;
+        }
+
+        self.is_current_file_commonjs_export_base_syntax(idx)
+    }
+
+    fn is_current_file_commonjs_export_base_syntax(&self, idx: NodeIndex) -> bool {
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };

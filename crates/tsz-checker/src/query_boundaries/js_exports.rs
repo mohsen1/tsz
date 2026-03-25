@@ -17,6 +17,41 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
+pub(crate) fn commonjs_direct_export_supports_named_props(
+    types: &dyn tsz_solver::TypeDatabase,
+    direct_export_type: TypeId,
+) -> bool {
+    if matches!(
+        direct_export_type,
+        TypeId::ANY
+            | TypeId::UNKNOWN
+            | TypeId::ERROR
+            | TypeId::NEVER
+            | TypeId::OBJECT
+    ) {
+        return true;
+    }
+
+    if matches!(
+        direct_export_type,
+        TypeId::NUMBER
+            | TypeId::STRING
+            | TypeId::BOOLEAN
+            | TypeId::BIGINT
+            | TypeId::SYMBOL
+            | TypeId::NULL
+            | TypeId::UNDEFINED
+            | TypeId::VOID
+    ) {
+        return false;
+    }
+
+    tsz_solver::visitor::is_object_like_type(types, direct_export_type)
+        || crate::query_boundaries::common::callable_shape_for_type(types, direct_export_type)
+            .is_some()
+        || tsz_solver::type_queries::get_function_shape(types, direct_export_type).is_some()
+}
+
 /// Represents the synthesized export surface of a JS/CommonJS module.
 #[derive(Debug, Clone)]
 pub struct JsExportSurface {
@@ -80,8 +115,11 @@ impl JsExportSurface {
         }
 
         let factory = checker.ctx.types.factory();
+        let can_merge_named_exports = self.direct_export_type.is_none_or(|direct_export_type| {
+            commonjs_direct_export_supports_named_props(checker.ctx.types, direct_export_type)
+        });
 
-        let namespace_type = if !self.named_exports.is_empty() {
+        let namespace_type = if can_merge_named_exports && !self.named_exports.is_empty() {
             Some(factory.object(self.named_exports.clone()))
         } else {
             None
@@ -111,6 +149,9 @@ impl JsExportSurface {
         // A bare direct export (module.exports = X) keeps the raw type display.
         if let Some(name) = display_name
             && !self.named_exports.is_empty()
+            && self.direct_export_type.is_none_or(|direct_export_type| {
+                commonjs_direct_export_supports_named_props(checker.ctx.types, direct_export_type)
+            })
         {
             checker.ctx.namespace_module_names.insert(type_id, name);
         }
@@ -432,6 +473,7 @@ impl<'a> CheckerState<'a> {
 
         let rhs_expr = rhs_expr?;
         let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None);
+        let rhs_type = crate::query_boundaries::common::widen_literal_type(self.ctx.types, rhs_type);
         (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
     }
 
