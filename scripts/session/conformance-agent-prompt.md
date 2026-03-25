@@ -11,6 +11,12 @@ You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in
 **Current baseline**: ~90.0% pass rate (11,322 / 12,581 tests). Goal: push past 90% and keep climbing.
 Failure categories are directional and can overlap; rerun conformance counts when you change strategy or ownership.
 
+Conformance shorthand used by the query scripts:
+- `m`: expected diagnostic(s) from tsc that tsz is missing (all-missing)
+- `x`: extra diagnostic(s) emitted by tsz but not expected by tsc (false positives)
+- `diff`: aggregate diagnostic signature distance (fingerprints + code + locations)
+- All buckets reflect current snapshot data and can drift as fixes land.
+
 **Delivery mode**:
 - If you are running as a standalone fixer or explicit integrator, validate locally and push to `main`.
 - If you are running under `scripts/session/AGENT_PROTOCOL.md` as a campaign worker, **do not push to `main`**. Push to `campaign/<name>` and let `scripts/session/integrate.sh` merge after validation.
