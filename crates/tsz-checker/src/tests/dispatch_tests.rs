@@ -815,6 +815,11 @@ b(1);
         "Expected TS2322 for assigning {{}} to generic callback typedef, got: {codes:?}"
     );
     assert!(
+        diags.iter()
+            .any(|d| d.code == 2322 && d.message_text.contains("B<string>")),
+        "Expected TS2322 to preserve the instantiated JSDoc callback alias in the message, got: {diags:?}"
+    );
+    assert!(
         codes.contains(&2554),
         "Expected TS2554 for calling instantiated callback typedef with an extra arg, got: {codes:?}"
     );

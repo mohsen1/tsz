@@ -1214,21 +1214,64 @@ impl<'a> CheckerState<'a> {
             .factory()
             .intersection2(instance_type, prototype_type)
     }
+    fn ensure_jsdoc_typedef_def(
+        &mut self,
+        name: &str,
+        body_type: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> tsz_solver::def::DefId {
+        use tsz_solver::def::{DefKind, DefinitionInfo};
+
+        if type_params.is_empty()
+            && let Some(def_id) = self.ctx.definition_store.find_type_alias_by_body(body_type)
+        {
+            return def_id;
+        }
+
+        let atom_name = self.ctx.types.intern_string(name);
+        if let Some(candidates) = self.ctx.definition_store.find_defs_by_name(atom_name) {
+            for def_id in candidates {
+                if let Some(def) = self.ctx.definition_store.get(def_id)
+                    && matches!(def.kind, DefKind::TypeAlias)
+                    && def.body == Some(body_type)
+                    && def.type_params.as_slice() == type_params
+                {
+                    return def_id;
+                }
+            }
+        }
+
+        let info = DefinitionInfo::type_alias(atom_name, type_params.to_vec(), body_type);
+        self.ctx.definition_store.register(info)
+    }
+
     /// Register a DefId for a JSDoc `@typedef` so the type formatter can find the alias name.
     pub(super) fn register_jsdoc_typedef_def(&mut self, name: &str, body_type: TypeId) {
-        use tsz_solver::def::DefinitionInfo;
-        // Avoid duplicate registration if called multiple times for the same typedef
-        if self
+        let _ = self.ensure_jsdoc_typedef_def(name, body_type, &[]);
+    }
+
+    fn ensure_jsdoc_instantiated_display_def(
+        &mut self,
+        name: &str,
+        type_id: TypeId,
+    ) -> tsz_solver::def::DefId {
+        use tsz_solver::def::{DefKind, DefinitionInfo};
+
+        let atom_name = self.ctx.types.intern_string(name);
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(type_id)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && matches!(def.kind, DefKind::TypeAlias)
+            && def.name == atom_name
+        {
+            return def_id;
+        }
+
+        let def_id = self
             .ctx
             .definition_store
-            .find_type_alias_by_body(body_type)
-            .is_some()
-        {
-            return;
-        }
-        let atom_name = self.ctx.types.intern_string(name);
-        let info = DefinitionInfo::type_alias(atom_name, Vec::new(), body_type);
-        self.ctx.definition_store.register(info);
+            .register(DefinitionInfo::type_alias(atom_name, Vec::new(), type_id));
+        self.ctx.definition_store.register_type_to_def(type_id, def_id);
+        def_id
     }
     /// Resolve a generic JSDoc type reference: `Name<Arg1, Arg2, ...>`.
     fn resolve_jsdoc_generic_type(
@@ -1894,12 +1937,15 @@ impl<'a> CheckerState<'a> {
         }
 
         use tsz_solver::instantiate_generic;
-        Some(instantiate_generic(
-            self.ctx.types,
-            body_type,
-            &type_params,
-            type_args,
-        ))
+        let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, type_args);
+        let args_display = type_args
+            .iter()
+            .map(|&arg| self.format_type_diagnostic(arg))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let display_name = format!("{base_name}<{args_display}>");
+        let _ = self.ensure_jsdoc_instantiated_display_def(&display_name, instantiated);
+        Some(instantiated)
     }
     // NOTE: jsdoc_has_readonly_tag, jsdoc_access_level, find_orphaned_extends_tags_for_statements,
     // is_in_different_function_scope, find_function_body_end are in lookup.rs
