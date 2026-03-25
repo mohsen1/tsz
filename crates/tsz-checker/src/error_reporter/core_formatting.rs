@@ -397,7 +397,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        best_candidate
+        // TSC wraps the suggestion in double quotes (it's a string literal type name)
+        best_candidate.map(|s| format!("\"{s}\""))
     }
 
     pub(super) fn first_nonpublic_constructor_param_property(
