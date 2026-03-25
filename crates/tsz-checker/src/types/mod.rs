@@ -11,6 +11,7 @@ pub mod module_augmentation;
 pub mod object_type;
 mod property_access_augmentation;
 pub(crate) mod property_access_helpers;
+mod property_access_narrowing_skip;
 pub(crate) mod property_access_type;
 pub(crate) mod queries;
 pub mod type_checking;
