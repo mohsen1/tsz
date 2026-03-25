@@ -456,6 +456,13 @@ impl BinderState {
         let sym = self.symbols.get(sym_id)?;
         let module_specifier = sym.import_module.as_ref()?;
 
+        // For namespace/require imports (`import * as X from "m"` or
+        // `import X = require("m")`), import_name is None. These resolve to the
+        // module namespace, NOT to a specific named export. Only try `export=`.
+        if sym.import_name.is_none() {
+            return self.resolve_import_with_reexports(module_specifier, "export=");
+        }
+
         // Determine the export name:
         // - If import_name is set, use it (for renamed imports like `import { foo as bar }`)
         // - Otherwise use the symbol's escaped_name
@@ -463,17 +470,6 @@ impl BinderState {
 
         // Try to resolve the import, following re-export chains
         if let Some(resolved) = self.resolve_import_with_reexports(module_specifier, export_name) {
-            return Some(resolved);
-        }
-
-        // For namespace imports (`import * as X from "m"`) and require imports
-        // (`import X = require("m")`), import_name is None and the symbol name
-        // won't match any module export. These should resolve to the module's
-        // `export =` value (stored under key "export=") when present.
-        // This handles `declare module "react" { export = __React; }`.
-        if sym.import_name.is_none()
-            && let Some(resolved) = self.resolve_import_with_reexports(module_specifier, "export=")
-        {
             return Some(resolved);
         }
 
