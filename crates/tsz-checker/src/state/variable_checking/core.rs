@@ -1650,6 +1650,10 @@ impl<'a> CheckerState<'a> {
                                         } else {
                                             TypeId::ANY
                                         };
+                                        // Rest parameters (...args) have array type
+                                        if param.dot_dot_dot_token {
+                                            param_type = self.ctx.types.array(param_type);
+                                        }
                                         // Optional parameters (?) include undefined in their type
                                         if param.question_token && param_type != TypeId::ANY {
                                             param_type = self
