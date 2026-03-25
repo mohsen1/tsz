@@ -17,6 +17,19 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn required_parameter_count_for_overload_compatibility(
+        &self,
+        type_id: tsz_solver::TypeId,
+    ) -> Option<usize> {
+        tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).map(|shape| {
+            shape
+                .params
+                .iter()
+                .filter(|param| param.is_required())
+                .count()
+        })
+    }
+
     /// Lower a type node with type parameter bindings.
     ///
     /// This is used to substitute type parameters with concrete types
@@ -468,6 +481,16 @@ impl<'a> CheckerState<'a> {
         // and overload use type params in different structural positions.
         let impl_type = erase_function_type_params_to_any(self.ctx.types, impl_type);
         let overload_type = erase_function_type_params_to_any(self.ctx.types, overload_type);
+
+        // An implementation cannot require more arguments than one of its overloads.
+        // Extra arguments are allowed at call sites, but missing required ones are not.
+        if let (Some(impl_required), Some(overload_required)) = (
+            self.required_parameter_count_for_overload_compatibility(impl_type),
+            self.required_parameter_count_for_overload_compatibility(overload_type),
+        ) && impl_required > overload_required
+        {
+            return false;
+        }
 
         // Get return types of both (erased) signatures
         let impl_return = get_function_return_type(self.ctx.types, impl_type);

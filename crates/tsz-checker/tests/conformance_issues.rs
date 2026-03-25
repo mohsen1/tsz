@@ -216,6 +216,23 @@ const bad: number = Holder["x"];
 }
 
 #[test]
+fn test_constructor_implementation_with_more_required_params_reports_ts2394() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Customers {
+    constructor(name: string);
+    constructor(name: string, age: number) {}
+}
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2394),
+        "Expected TS2394 for constructor overload/implementation arity mismatch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_const_alias_expando_element_reads_do_not_emit_ts7053_in_declaration_mode() {
     let source = r#"
 function foo() {}
