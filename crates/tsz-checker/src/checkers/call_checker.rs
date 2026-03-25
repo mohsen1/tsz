@@ -123,6 +123,11 @@ impl<'a> CheckerState<'a> {
             // They must survive call-expression diagnostic rollbacks.
             || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY
             || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY
+            // TS2304 (Cannot find name) is a name-resolution fact that does not
+            // depend on the overload candidate being tried. It must survive
+            // speculative rollbacks so undeclared identifiers in argument
+            // expressions always produce an error, matching tsc behavior.
+            || diag.code == diagnostic_codes::CANNOT_FIND_NAME
     }
 
     fn normalized_spread_argument_type(&mut self, expr: NodeIndex) -> TypeId {
