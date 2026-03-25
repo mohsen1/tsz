@@ -41,6 +41,18 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        // TS2524: 'await' expressions cannot be used in a parameter initializer.
+        // Only emit when there are no nearby parse errors (to avoid cascading diagnostics
+        // after parser recovery, e.g. `async function f(a = await => x) {}`).
+        if self.is_in_default_parameter(idx) && !self.node_has_nearby_parse_error(idx) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
+                diagnostic_codes::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
+            );
+        }
+
         // Match tsc's special-case for `await(...)` inside sync functions.
         // In these contexts TypeScript treats this as an unresolved identifier use
         // and reports TS2311 instead of await-context diagnostics.
