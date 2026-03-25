@@ -2022,15 +2022,13 @@ impl<'a> CheckerState<'a> {
                                 ));
                         }
                     } else {
-                        let assignability_ok = self.check_assignable_or_report(
-                            actual_return,
-                            expected_return_type,
-                            body,
-                        );
-                        // Store the TS2322 diagnostic from the return type check.
-                        // The arg collection filter will prune it (as a callback body
-                        // diagnostic), but we need to restore it later and suppress
-                        // the outer TS2345.
+                        let assignability_ok = self
+                            .check_assignable_or_report_at_without_source_elaboration(
+                                actual_return,
+                                expected_return_type,
+                                body,
+                                body,
+                            );
                         if !assignability_ok {
                             // Find and store any new TS2322 diagnostics from this check
                             for diag in self.ctx.diagnostics.iter().rev() {
