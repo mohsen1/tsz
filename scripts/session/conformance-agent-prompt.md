@@ -472,8 +472,13 @@ cargo build --profile dist-fast --bin tsz
 # Run the target test
 ./scripts/conformance/conformance.sh run --filter "TESTNAME" --verbose
 
-# Must show: PASS or the specific improvement you expected
+# Must show: PASS or the exact improvement you expected for the selected target
+# (for example: one fewer extra diagnostic, one added missing diagnostic, or a smaller diff)
 ```
+
+Do not treat a clean command exit as success by itself. Compare the target's before/after outcome to
+the pass/fail criteria you wrote down for this attempt, and log the actual `m_delta` / `x_delta`
+you achieved before moving on.
 
 ### Step 2: Run regression check
 
