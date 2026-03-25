@@ -255,6 +255,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.invalidate_node_type_cache(idx);
+                self.invalidate_implicit_any_tracking(idx);
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    self.invalidate_expression_for_contextual_retry(call.expression);
+                    if let Some(args) = &call.arguments {
+                        for &arg_idx in &args.nodes {
+                            self.invalidate_expression_for_contextual_retry(arg_idx);
+                        }
+                    }
+                }
+            }
             // ---- Wrapper expressions: recurse into inner ----
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 self.invalidate_node_type_cache(idx);
