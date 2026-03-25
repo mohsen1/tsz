@@ -1126,6 +1126,24 @@ class MyClass {
     );
 }
 
+/// Non-literal computed keys on `this[...]` in JS should still report TS7053.
+#[test]
+fn test_js_constructor_element_access_computed_key_reports_ts7053() {
+    let source = r#"
+class MyClass {
+    constructor() {
+        this["a" + "b"] = 0;
+    }
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts7053: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 7053).collect();
+    assert!(
+        !ts7053.is_empty(),
+        "Expected TS7053 for non-literal computed element assignment on `this`, got: {diagnostics:?}"
+    );
+}
+
 /// self[symbolKey] = value (this alias) in JS class constructor → no false error
 #[test]
 fn test_js_constructor_element_access_self_alias_no_false_error() {
