@@ -322,6 +322,29 @@ const test1 = authorPromise.then(mapper);
     );
 }
 
+#[test]
+fn generic_call_preserves_outer_type_param_in_contravariant_object_member() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Effect {}
+interface Enqueue<A> { offer: (value: A) => Effect; }
+declare const offer: { <A>(self: Enqueue<A>, value: A): Effect; };
+
+function g<T>(queue: Enqueue<T>, value: T) {
+    offer(queue, value);
+}
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected generic inference to preserve outer type parameter evidence for contravariant object members, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
 /// Union callee types require all members to accept the call (not overload semantics).
 #[test]
 fn union_callee_requires_all_members_callable() {

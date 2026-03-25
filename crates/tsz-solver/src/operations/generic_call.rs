@@ -1627,14 +1627,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let constraints = infer_ctx.get_constraints(var);
             // Check both ConstraintSet (covariant candidates + upper bounds) and
-            // concrete contra_candidates. Contra-candidates are NOT in
+            // usable contra_candidates. Contra-candidates are NOT in
             // ConstraintSet.lower_bounds to avoid polluting the resolved_direct path,
             // but they still represent valid inference that should trigger resolution.
-            // Only count contra_candidates with concrete (non-TypeParameter) types —
-            // raw TypeParameter placeholders from source inference vars should not
-            // drive the resolution gate.
+            // Ignore only synthetic placeholder type parameters; real outer type
+            // parameters like `T` must still count as usable evidence.
             let has_constraints = matches!(&constraints, Some(c) if !c.is_empty())
-                || infer_ctx.has_concrete_contra_candidates(var, self.interner.as_type_database());
+                || infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database());
             let lower_bounds = constraints
                 .as_ref()
                 .map(|c| c.lower_bounds.clone())
