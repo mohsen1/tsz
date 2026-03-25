@@ -8,6 +8,8 @@ You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in
 
 **Absolute rule**: match `tsc` behavior exactly. Every fix must reduce the gap between tsz and tsc without introducing new gaps.
 
+**Current baseline**: ~90.0% pass rate (11,317 / 12,581 tests). Goal: push past 90% and keep climbing. There are ~1,264 failing tests: ~74 false positives (we emit errors tsc doesn't), ~171 all-missing (we miss all expected errors), ~618 fingerprint-only (same codes but wrong locations), ~398 wrong-code (codes differ), and ~261 close-to-passing (diff ≤ 2).
+
 ---
 
 ## Architecture (must read before any code change)
@@ -22,8 +24,119 @@ Read these before writing code:
 - **Binder must not** import solver for semantic decisions.
 - All assignability must flow through `query_boundaries/assignability`.
 - New fixes belong in **solver query logic or boundary helpers**, not checker-local heuristics.
+- When adding new logic, encapsulate functionality in appropriate crates. Extract complex logic (dynamic import validation, computed symbol resolution, etc.) into separate modules.
 
 **Pipeline**: `scanner → parser → binder → checker → solver → emitter`
+
+---
+
+## High-Impact Targets
+
+### Quick wins: add 1 missing code → test passes instantly
+
+These error codes, if implemented or extended, each unlock multiple passing tests:
+
+| Code | Tests | Notes |
+|------|-------|-------|
+| TS2322 | 24 | Assignability — extend existing logic for edge cases |
+| TS2345 | 21 | Argument assignability — partial impl, widen coverage |
+| TS2339 | 14 | Property-does-not-exist — partial impl, more shapes needed |
+| TS2307 | 8 | Cannot find module — module resolution gaps |
+| TS2300 | 5 | Duplicate identifier — missing some declaration merge cases |
+| TS5107 | 5 | Not implemented at all — option validation |
+| TS2305 | 5 | Module has no exported member |
+| TS2694 | 4 | Namespace has no exported member |
+| TS1109 | 4 | Expression expected — parser recovery |
+| TS2769 | 4 | No overload matches this call |
+| TS7006 | 4 | Parameter implicitly has 'any' type |
+| TS2883 | 3 | Not implemented — using clause errors |
+| TS2354 | 3 | Not implemented — arithmetic operand checks |
+| TS2451 | 3 | Duplicate variable in block scope |
+| TS2344 | 3 | Type does not satisfy constraint |
+
+### Quick wins: remove 1 extra code → test passes instantly
+
+| Code | Tests | Notes |
+|------|-------|-------|
+| TS2322 | 21 | False assignability errors — over-strict checking |
+| TS2339 | 17 | False property-not-found — type not resolved far enough |
+| TS2345 | 9 | False argument errors |
+| TS2403 | 4 | Subsequent variable declarations |
+| TS2307 | 4 | False module-not-found |
+| TS2344 | 3 | False constraint errors |
+| TS7006 | 3 | False implicit-any |
+
+### Not-implemented codes (all-missing, high-impact)
+
+These codes are completely unimplemented — adding them unlocks all-missing test fixes:
+
+| Code | Tests | Description |
+|------|-------|-------------|
+| TS5107 | 10 | Option validation |
+| TS1181 | 5 | Decorator-related |
+| TS2657 | 5 | JSX attribute checks |
+| TS2883 | 4 | Using clause errors |
+| TS2323 | 4 | Type not assignable to index |
+| TS2819 | 4 | Type comparison edge cases |
+| TS1231–1234 | 3 each | Declaration checks |
+| TS1258 | 3 | Ambient context restrictions |
+| TS17014 | 3 | JSX children checks |
+| TS5101 | 3 | Option validation |
+
+---
+
+## Root-Cause Campaigns
+
+Prefer campaign-level thinking over individual test chasing. These campaigns address shared root causes:
+
+### 1. big3 — Assignability/property/call compatibility (254 tests)
+Codes: TS2322=103, TS2339=84, TS2345=69, TS7006=23, TS2769=13
+**Why**: Shared root causes in subtype checking, property resolution, and call compatibility. Fixing solver relation logic here has the widest blast radius.
+
+### 2. jsdoc-jsx-salsa — Semantic integration areas (252 tests)
+Codes: TS2322=103, TS2339=84, TS2345=69, TS7006=23, TS2741=9
+**Why**: These areas are broad consumers of solver/checker mechanics. Improvements to type resolution and contextual typing cascade here.
+
+### 3. narrowing-flow — Control-flow and narrowing (234 tests)
+Codes: TS2322=103, TS2339=84, TS2345=69, TS18048=11, TS2741=7
+**Why**: Narrowing information lost across aliases, predicates, optional chains, and assignment edges.
+
+### 4. contextual-typing — Inference transport (194 tests)
+Codes: TS2322=103, TS2345=69, TS7006=23, TS2339=19, TS2769=13
+**Why**: Contextual types fail to reach callbacks, object literals, rest tuples, and instantiated applications.
+
+### 5. property-resolution — Property/index on unions/intersections (121 tests)
+Codes: TS2339=84, TS2304=28, TS2322=18, TS2345=7, TS7053=6
+**Why**: Property lookup diverges from tsc on merged shapes, symbols, and partial member presence.
+
+### 6. parser-recovery — Diagnostic selection (73 tests)
+Codes: TS1005=40, TS1109=23, TS1003=22, TS1128=16, TS1434=8
+**Why**: Catch-all recovery emits the wrong TS1xxx code and cascades into secondary parser noise.
+
+---
+
+## Area-Specific Guidance
+
+Top failure areas by opportunity:
+
+| Area | Failures | Pass Rate | Strategy |
+|------|----------|-----------|----------|
+| compiler | 622 | 90.5% | Broad — use campaigns, focus on big3 root causes |
+| jsdoc | 62 | 75.1% | JSDoc typedef priority, `@type` annotation handling |
+| types/typeRelationships | 51 | 80.7% | Subtype relation edge cases in solver |
+| jsx | 50 | 74.4% | JSX element type checking, children types |
+| salsa | 44 | 77.0% | JavaScript inference, `checkJs` mode |
+| parser/ecmascript5 | 26 | 96.2% | Parser recovery for ES5 corner cases |
+| es6/destructuring | 24 | 83.7% | Binding patterns, nested destructuring types |
+| classes/members | 18 | 90.9% | Class member resolution, visibility |
+| node | 16 | 78.1% | Node module resolution semantics |
+| controlFlow | 13 | 77.2% | Narrowing, flow-sensitive typing |
+
+**Cross-module fixes** that improve multiple areas simultaneously:
+- Improving **binder hoisting** aids both compiler and parser areas
+- Fixing **solver intersection handling** aids typeRelationships and compiler areas
+- Better **contextual typing transport** aids compiler, jsx, and jsdoc areas
+- More complete **module resolution** aids compiler, node, and salsa areas
 
 ---
 
@@ -121,7 +234,7 @@ another random target. Do not waste time on targets that need campaign-level wor
 
 **Avoid**:
 - Multi-file tests (`@Filename:` directives) — complex module resolution
-- JSDoc/JSX/Salsa tests — broad integration surface
+- JSDoc/JSX/Salsa tests — broad integration surface (unless specifically targeting that campaign)
 - Tests requiring template literal type evaluation
 - Tests requiring flow analysis cache unification (instanceof narrowing)
 - Tests where the extra/missing code is TS2322/TS2339/TS2345 with no obvious
@@ -186,12 +299,14 @@ For every fix, answer these questions from CLAUDE.md §15:
 | Symbol resolution | `crates/tsz-checker/src/symbols/symbol_resolver.rs` |
 | Flow analysis / narrowing | `crates/tsz-checker/src/flow/` |
 | Duplicate identifiers | `crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs` |
+| Dynamic imports | `crates/tsz-checker/src/declarations/dynamic_import_checker.rs` |
+| Module augmentation | `crates/tsz-checker/src/types/module_augmentation.rs` |
 
 ### Coding rules
 
 - **Solver files** (`crates/tsz-solver/`) use Rust 2024 let-chains. `cargo fmt` (stable) will FAIL on these files. Use Python/sed to write changes and `git add && git commit` immediately before the PostToolUse hook reverts them.
 - **Checker files** can be edited normally with the Edit tool.
-- Keep checker files under ~2000 LOC.
+- Keep checker files under ~2000 LOC. Extract into submodules when approaching the limit.
 - Use existing `nearest_enclosing_class()`, `resolve_lazy_type()`, `evaluate_type_for_assignability()` helpers.
 - Prefer `query_boundaries/` wrappers over direct solver access.
 
@@ -201,11 +316,18 @@ For every fix, answer these questions from CLAUDE.md §15:
 - Find where the diagnostic is emitted (grep for the error code)
 - Add a condition to skip emission when the pattern matches tsc behavior
 - Often involves checking types more carefully before emitting
+- Audit the error code against its false-positive count (see tables above)
 
 **Adding a missing diagnostic**:
 - Find where tsc emits the diagnostic (check the error code meaning)
 - Find the equivalent code path in the checker
 - Add the emission with proper type checking via solver queries
+- For not-implemented codes, create the full check from scratch in the right module
+
+**Extending partial implementations**:
+- Many codes (TS2322, TS2339, TS2345, TS1005, TS2304, TS2769, etc.) are partially implemented
+- Find the existing check, understand what cases it handles, and extend for the missing cases
+- Use `--code TSXXXX` to see which tests would benefit
 
 **Fixing wrong narrowing**:
 - Flow narrowing issues are in `flow/control_flow/` and `flow/flow_analysis/`
@@ -253,13 +375,33 @@ cargo test --package tsz-solver --lib 2>&1 | grep "^test result"
 # Compare with pre-existing failures — your change must not add new ones
 ```
 
-### Step 4: Run full conformance (before pushing)
+### Step 4: Run full conformance and update snapshot (before pushing)
 
 ```bash
-./scripts/conformance/conformance.sh run 2>&1 | grep "FINAL"
+# Full run
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep "FINAL"
 
 # Must be ≥ previous snapshot count. If lower, investigate.
+
+# If improvement confirmed, update snapshot:
+scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+git add scripts/conformance/
+git commit -m "chore: update conformance snapshot (XX.X%, NNNNN/12581)"
 ```
+
+---
+
+## Iteration Loop
+
+On each iteration:
+1. **Pick** the highest-impact unimplemented or partially implemented error code from the quick-win tables above.
+2. **Identify** a representative failing test using the query tools.
+3. **Implement or extend** diagnostic logic in the appropriate module (checker, solver, binder, etc.), respecting architecture boundaries.
+4. **Run** the full conformance snapshot to verify the fix and commit the change.
+5. **Update architecture** if needed — extract modules when files grow, ensure boundaries remain clean.
+6. **Push to main** and update the conformance baseline when improvements are achieved.
+
+Always update conformance baselines and push code to main when improvements are made. Check recent commits on the repository — new changes (JSDoc typedef prioritisation, dynamic import fixes, extended hoisting in binder, etc.) may influence how to implement further fixes.
 
 ---
 
@@ -322,6 +464,8 @@ git push origin main
 8. **Don't run the full conformance suite for research** — use the offline query tools.
 9. **Don't fix symptoms in the checker when the root cause is in the solver.**
 10. **Don't introduce cascading diagnostics** — if a parser error exists, suppress semantic errors at that location.
+11. **Don't leak checker internals into parser modules** — respect crate boundaries.
+12. **Don't ignore recent commits** — check `git log --oneline -20` for context before starting work.
 
 ---
 
@@ -329,10 +473,14 @@ git push origin main
 
 ```bash
 # Offline analysis (instant, no build needed)
+python3 scripts/conformance/query-conformance.py
 python3 scripts/conformance/query-conformance.py --one-extra
 python3 scripts/conformance/query-conformance.py --one-missing
 python3 scripts/conformance/query-conformance.py --close 2
 python3 scripts/conformance/query-conformance.py --code TS2322
+python3 scripts/conformance/query-conformance.py --campaigns
+python3 scripts/conformance/query-conformance.py --campaign big3
+python3 scripts/conformance/query-conformance.py --false-positives
 
 # Build
 cargo check --package tsz-checker
@@ -345,7 +493,7 @@ cargo build --profile dist-fast --bin tsz
 ./scripts/conformance/conformance.sh run --max 200
 
 # Full run
-./scripts/conformance/conformance.sh run
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run
 
 # Rust tests
 cargo test --package tsz-checker --lib
