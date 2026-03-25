@@ -2962,21 +2962,21 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
         "Satisfies",
     ] {
         assert!(
-            source.contains(&format!("enum RelationKind")) && source.contains(variant),
+            source.contains(&"enum RelationKind".to_string()) && source.contains(variant),
             "RelationKind must include the `{variant}` variant"
         );
     }
 
     for variant in ["Skip", "Check", "CheckExplicitOnly"] {
         assert!(
-            source.contains(&format!("enum ExcessPropertyMode")) && source.contains(variant),
+            source.contains(&"enum ExcessPropertyMode".to_string()) && source.contains(variant),
             "ExcessPropertyMode must include the `{variant}` variant"
         );
     }
 
     for variant in ["Report", "Suppress"] {
         assert!(
-            source.contains(&format!("enum MissingPropertyMode")) && source.contains(variant),
+            source.contains(&"enum MissingPropertyMode".to_string()) && source.contains(variant),
             "MissingPropertyMode must include the `{variant}` variant"
         );
     }
@@ -3006,6 +3006,36 @@ fn test_relation_flags_surface_covers_checker_policy_bits() {
             "RelationFlags must expose the `{flag}` constant"
         );
     }
+}
+
+/// Checker compiler-option packing must stay on the boundary-owned
+/// `RelationFlags` wrapper rather than reaching into solver internals.
+#[test]
+fn test_pack_relation_flags_uses_boundary_relation_flags_surface() {
+    let source = fs::read_to_string("src/context/compiler_options.rs")
+        .expect("failed to read context/compiler_options.rs");
+
+    assert!(
+        source.contains("use crate::query_boundaries::assignability::RelationFlags;"),
+        "pack_relation_flags must import boundary-owned RelationFlags"
+    );
+
+    for flag in [
+        "RelationFlags::STRICT_NULL_CHECKS",
+        "RelationFlags::STRICT_FUNCTION_TYPES",
+        "RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES",
+        "RelationFlags::NO_UNCHECKED_INDEXED_ACCESS",
+    ] {
+        assert!(
+            source.contains(flag),
+            "pack_relation_flags must use `{flag}` when encoding checker policy"
+        );
+    }
+
+    assert!(
+        !source.contains("RelationCacheKey::FLAG_STRICT_NULL_CHECKS"),
+        "pack_relation_flags must not reach directly into RelationCacheKey bits"
+    );
 }
 
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
