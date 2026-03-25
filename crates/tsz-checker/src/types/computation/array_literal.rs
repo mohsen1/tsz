@@ -142,6 +142,47 @@ impl<'a> CheckerState<'a> {
         saw_tuple
     }
 
+    fn sole_array_applicable_union_context(&mut self, contextual: TypeId) -> Option<TypeId> {
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)?;
+        let mut applicable_shape = None;
+
+        for member in members {
+            if member.is_nullable() {
+                continue;
+            }
+
+            let candidate =
+                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
+                    .or_else(|| self.promise_like_array_context_shape(member));
+
+            let Some(candidate) = candidate else {
+                if member == TypeId::ANY
+                    || member == TypeId::UNKNOWN
+                    || tsz_solver::type_queries::get_type_parameter_constraint(
+                        self.ctx.types,
+                        member,
+                    )
+                    .is_some()
+                {
+                    return None;
+                }
+
+                if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
+                    continue;
+                }
+
+                return None;
+            };
+
+            if applicable_shape.is_some_and(|existing| existing != candidate) {
+                return None;
+            }
+            applicable_shape = Some(candidate);
+        }
+
+        applicable_shape
+    }
+
     /// Get type of array literal.
     ///
     /// Computes the type of array literals like `[1, 2, 3]` or `["a", "b"]`.
@@ -268,6 +309,9 @@ impl<'a> CheckerState<'a> {
                 {
                     tuple_context_from_constraint = true;
                 }
+                return Some(applicable);
+            }
+            if let Some(applicable) = self.sole_array_applicable_union_context(evaluated) {
                 return Some(applicable);
             }
             // When the contextual type is a type parameter (e.g., `T extends [string, number]`),
