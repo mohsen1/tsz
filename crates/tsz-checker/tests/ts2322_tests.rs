@@ -514,7 +514,9 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         "generic indexed access into mapped type should preserve the `keyof TypesMap` constraint, got: {diagnostics:?}"
     );
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "mapped type object literal handlers should contextually type callback params, got: {diagnostics:?}"
     );
 }

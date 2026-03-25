@@ -1462,10 +1462,7 @@ impl<'a> CheckerState<'a> {
     /// Extract type names from `@implements` JSDoc tags on a class declaration.
     /// Supports both `@implements {TypeName}` and `@implements TypeName` syntax.
     /// Returns a list of type name strings plus positions for empty tags that should emit TS1003.
-    fn extract_jsdoc_implements_names(
-        &self,
-        class_idx: NodeIndex,
-    ) -> (Vec<String>, Vec<u32>) {
+    fn extract_jsdoc_implements_names(&self, class_idx: NodeIndex) -> (Vec<String>, Vec<u32>) {
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return (Vec::new(), Vec::new());
         };
@@ -1481,9 +1478,8 @@ impl<'a> CheckerState<'a> {
         else {
             return (Vec::new(), Vec::new());
         };
-        let leading = tsz_common::comments::get_leading_comments_from_cache(
-            comments, node.pos, source_text,
-        );
+        let leading =
+            tsz_common::comments::get_leading_comments_from_cache(comments, node.pos, source_text);
         let raw_comment = leading
             .last()
             .and_then(|comment| source_text.get(comment.pos as usize..comment.end as usize))

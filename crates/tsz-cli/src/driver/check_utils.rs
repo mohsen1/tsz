@@ -960,7 +960,10 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
         .collect();
 
     let symbols_with_non_local_declarations: rustc_hash::FxHashSet<tsz::binder::SymbolId> =
-        declaration_arenas.keys().map(|&(sym_id, _)| sym_id).collect();
+        declaration_arenas
+            .keys()
+            .map(|&(sym_id, _)| sym_id)
+            .collect();
 
     let symbol_arenas: rustc_hash::FxHashMap<tsz::binder::SymbolId, Arc<tsz_parser::NodeArena>> =
         program
