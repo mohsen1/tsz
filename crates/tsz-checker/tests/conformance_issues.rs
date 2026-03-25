@@ -10310,6 +10310,56 @@ let y = x.getA().x;
 }
 
 #[test]
+fn test_divergent_accessor_read_keeps_getter_surface_without_ts2339() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+export {};
+
+interface Element {
+    get style(): CSSStyleDeclaration;
+    set style(cssText: string);
+}
+
+declare const element: Element;
+element.style = "color: red";
+element.style.animationTimingFunction;
+element.style = element.style;
+
+type Fail<T extends never> = T;
+interface I1 {
+    get x(): number;
+    set x(value: Fail<string>);
+}
+const o1 = {
+    get x(): number { return 0; },
+    set x(value: Fail<string>) {}
+}
+
+const o2 = {
+    get p1() { return 0; },
+    set p1(value: string) {},
+
+    get p2(): number { return 0; },
+    set p2(value: string) {},
+};
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected divergent accessor getter reads to preserve CSSStyleDeclaration members without TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_umd_global_conflict_prefers_first_namespace_export_surface() {
     let files = [
         (
