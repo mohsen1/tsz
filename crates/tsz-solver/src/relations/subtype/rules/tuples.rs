@@ -226,10 +226,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// even variadic tuples like [...T[]], because tuples have specific structural
     /// constraints that arrays don't satisfy.
     ///
-    /// The ONLY exception is `never[]` which represents an empty array and can be
-    /// assigned to any tuple that allows empty (has no required elements).
+    /// Exceptions:
+    /// - `any[]` is assignable to ANY tuple type (any propagation rule)
+    /// - `never[]` represents an empty array and can be assigned to tuples
+    ///   that allow empty (have no required elements)
     ///
     /// ## Cases:
+    /// - `any[]` -> `[string, number]` : Yes (any propagation)
+    /// - `any[]` -> `readonly [K, V]` : Yes (any propagation)
     /// - `never[]` -> `[]` : Yes (empty array to empty tuple)
     /// - `never[]` -> `[string?]` : Yes (empty array to optional-only tuple)
     /// - `never[]` -> `[...string[]]` : Yes (empty array to variadic tuple)
@@ -241,7 +245,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_elem: TypeId,
         target: &[TupleElement],
     ) -> SubtypeResult {
-        // Only never[] can potentially be assigned to tuples
+        // any[] is assignable to any tuple type in TypeScript.
+        // Each indexed access on any[] returns any, which satisfies all element types.
+        if source_elem == TypeId::ANY {
+            return SubtypeResult::True;
+        }
+
+        // Only never[] can potentially be assigned to tuples (represents empty array)
         if source_elem != TypeId::NEVER {
             return SubtypeResult::False;
         }
