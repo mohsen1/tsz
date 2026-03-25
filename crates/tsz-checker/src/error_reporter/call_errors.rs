@@ -170,6 +170,86 @@ impl<'a> CheckerState<'a> {
         Some((index_value_type, index_value_type))
     }
 
+    /// Check whether a target type has a named property matching ANY property
+    /// in a source object literal.  Used to detect "index-signature-only"
+    /// target types where per-property elaboration would produce confusing
+    /// diagnostics.  Returns `true` if at least one source property matches a
+    /// named target property (not an index signature).
+    fn target_has_named_property_for_any_source_prop(
+        &mut self,
+        source_obj_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(source_obj_idx) else {
+            return true; // conservative: assume named properties exist
+        };
+        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
+            return true;
+        };
+        let obj = obj.clone();
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let prop_name = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .and_then(|p| self.get_property_name(p.name)),
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|p| self.get_property_name(p.name)),
+                _ => continue,
+            };
+            if let Some(name) = prop_name {
+                if self.target_has_named_property(&name, target_type) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check whether a target type has a named (non-index-signature) property
+    /// with the given name.  Returns `true` when the target resolves to an
+    /// object shape that contains a property entry whose name matches
+    /// `prop_name`.  Returns `false` when the only path to `prop_name` goes
+    /// through a string/number index signature.
+    ///
+    /// For union types, returns `true` if any member has the named property.
+    fn target_has_named_property(&mut self, prop_name: &str, target_type: TypeId) -> bool {
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let resolved = self.resolve_type_for_property_access(target_type);
+        let evaluated = self.judge_evaluate(resolved);
+        for candidate in [target_type, resolved, evaluated] {
+            // Check union members individually
+            if let Some(members) =
+                tsz_solver::type_queries::get_union_members(self.ctx.types, candidate)
+            {
+                for member in members {
+                    if let Some(shape) =
+                        tsz_solver::type_queries::get_object_shape(self.ctx.types, member)
+                    {
+                        if shape.properties.iter().any(|p| p.name == prop_atom) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            if let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+            {
+                if shape.properties.iter().any(|p| p.name == prop_atom) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn object_literal_property_name_text(
         &self,
         prop_name_idx: NodeIndex,
@@ -1292,6 +1372,20 @@ impl<'a> CheckerState<'a> {
 
             let elem_type = self.elaboration_source_expression_type(elem_idx);
 
+            // When the target element type is an index-signature-only type
+            // (e.g., `NamedTransform { [name: string]: Transform3D }`),
+            // don't drill into per-property errors for object literal elements.
+            // Report at the element level instead:
+            //   "Type '{ ry: null }' is not assignable to type 'NamedTransform'"
+            // rather than the confusing inner error:
+            //   "Type 'null' is not assignable to type 'Transform3D'"
+            // This only applies to array element context — direct call argument
+            // and variable assignment elaboration still drills into properties.
+            let skip_deep_elaboration = elem_node.kind
+                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && !self
+                    .target_has_named_property_for_any_source_prop(elem_idx, target_element_type);
+
             // For object/array literal elements, use contextually-typed type
             // to decide whether to elaborate (avoids false positives from widening).
             if matches!(
@@ -1309,7 +1403,9 @@ impl<'a> CheckerState<'a> {
                     // Element is contextually assignable — no error needed.
                     continue;
                 }
-                if self.try_elaborate_assignment_source_error(elem_idx, target_element_type) {
+                if !skip_deep_elaboration
+                    && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
+                {
                     elaborated = true;
                     continue;
                 }
@@ -1338,7 +1434,9 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_assignable_to(elem_type, target_element_type) {
-                if self.try_elaborate_assignment_source_error(elem_idx, target_element_type) {
+                if !skip_deep_elaboration
+                    && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
+                {
                     elaborated = true;
                     continue;
                 }
