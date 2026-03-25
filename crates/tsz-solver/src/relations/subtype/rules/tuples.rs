@@ -226,14 +226,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// even variadic tuples like [...T[]], because tuples have specific structural
     /// constraints that arrays don't satisfy.
     ///
-    /// Exceptions:
-    /// - `any[]` is assignable to ANY tuple type (any propagation rule)
-    /// - `never[]` represents an empty array and can be assigned to tuples
-    ///   that allow empty (have no required elements)
+    /// The ONLY exception is `never[]` which represents an empty array and can be
+    /// assigned to any tuple that allows empty (has no required elements).
+    ///
+    /// Note: `any[]` is NOT assignable to tuples — only `any` itself bypasses
+    /// structural checks. `Array<any>.length` is `number`, which is not
+    /// assignable to a tuple's literal length type.
     ///
     /// ## Cases:
-    /// - `any[]` -> `[string, number]` : Yes (any propagation)
-    /// - `any[]` -> `readonly [K, V]` : Yes (any propagation)
+    /// - `any[]` -> `[string, number]` : No (array, not tuple)
     /// - `never[]` -> `[]` : Yes (empty array to empty tuple)
     /// - `never[]` -> `[string?]` : Yes (empty array to optional-only tuple)
     /// - `never[]` -> `[...string[]]` : Yes (empty array to variadic tuple)
@@ -245,13 +246,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_elem: TypeId,
         target: &[TupleElement],
     ) -> SubtypeResult {
-        // any[] is assignable to any tuple type in TypeScript.
-        // Each indexed access on any[] returns any, which satisfies all element types.
-        if source_elem == TypeId::ANY {
-            return SubtypeResult::True;
-        }
-
         // Only never[] can potentially be assigned to tuples (represents empty array)
+        // Note: any[] is NOT assignable to tuples in tsc. While each element access
+        // on any[] returns any, the structural comparison fails because Array<any>.length
+        // (type number) is not assignable to a tuple's literal length type (e.g., 2).
+        // The any TYPE (not any[]) is already handled earlier in the subtype check
+        // and bypasses all structural checks.
         if source_elem != TypeId::NEVER {
             return SubtypeResult::False;
         }
