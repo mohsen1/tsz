@@ -1822,15 +1822,15 @@ pub fn instantiate_mapped_template_for_property(
     if let Some((idx_obj, idx_key)) = get_index_access_types(db, template)
         && idx_obj != idx_key
     {
-        if let Some(info) = get_type_parameter_info(db, idx_key) {
-            if info.name == key_param_name {
-                return db.index_access(idx_obj, key_literal);
-            }
+        if let Some(info) = get_type_parameter_info(db, idx_key)
+            && info.name == key_param_name
+        {
+            return db.index_access(idx_obj, key_literal);
         }
-        if let Some(info) = get_type_parameter_info(db, idx_obj) {
-            if info.name == key_param_name {
-                return db.index_access(idx_obj, key_literal);
-            }
+        if let Some(info) = get_type_parameter_info(db, idx_obj)
+            && info.name == key_param_name
+        {
+            return db.index_access(idx_obj, key_literal);
         }
     }
 
