@@ -550,6 +550,15 @@ impl<'a> CheckerState<'a> {
                 None
             }
         } else {
+            // When the left side is a QualifiedName (e.g., `ns.Root` in `ns.Root.Foo`),
+            // extract the module specifier from the root identifier of the chain so that
+            // module augmentation merging can be applied to nested members.
+            if left_module_specifier.is_none()
+                && let Some(left_node) = self.ctx.arena.get(qn.left)
+                && left_node.kind == syntax_kind_ext::QUALIFIED_NAME
+            {
+                left_module_specifier = self.extract_root_module_specifier(qn.left, &lib_binders);
+            }
             None
         };
 
@@ -730,6 +739,29 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
+    }
+
+    /// Walk a qualified-name chain leftward to find the root identifier and return
+    /// its `import_module` (module specifier), if any.  This is used to propagate
+    /// module augmentation context through nested qualified names like `ns.Root.Foo`.
+    pub(crate) fn extract_root_module_specifier(
+        &self,
+        mut idx: NodeIndex,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<String> {
+        loop {
+            let node = self.ctx.arena.get(idx)?;
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let qn = self.ctx.arena.get_qualified_name(node)?;
+                idx = qn.left;
+            } else if node.kind == SyntaxKind::Identifier as u16 {
+                let sym_id = self.resolve_identifier_symbol_as_qualified_type_anchor(idx)?;
+                let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders)?;
+                return symbol.import_module.clone();
+            } else {
+                return None;
+            }
+        }
     }
 
     /// When a named class expression shadows an outer namespace of the same name,
