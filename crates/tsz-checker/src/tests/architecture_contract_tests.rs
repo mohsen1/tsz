@@ -3151,6 +3151,18 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
         "NoUnionMemberMatches must normalize to a TypeMismatch sentinel with target_type=TypeId::ERROR"
     );
     assert!(
+        source.contains("SubtypeFailureReason::TypeMismatch")
+            && source.contains("| SubtypeFailureReason::IntrinsicTypeMismatch")
+            && source.contains("| SubtypeFailureReason::LiteralTypeMismatch")
+            && source.contains("| SubtypeFailureReason::ErrorType")
+            && source.contains("| SubtypeFailureReason::ReadonlyToMutableAssignment")
+            && source.contains("| SubtypeFailureReason::NoIntersectionMemberMatches")
+            && source.contains("} => Self::TypeMismatch {")
+            && source.contains("source_type,")
+            && source.contains("target_type,"),
+        "direct type-mismatch solver reasons must normalize through the shared TypeMismatch passthrough"
+    );
+    assert!(
         source.contains("SubtypeFailureReason::MissingIndexSignature { .. }")
             && source.contains("| SubtypeFailureReason::RecursionLimitExceeded")
             && source.contains("=> Self::TypeMismatch {")
