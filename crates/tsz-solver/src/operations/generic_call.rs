@@ -182,12 +182,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &mut self,
         inferred: TypeId,
         contextual: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
     ) -> bool {
         if matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
             return true;
         }
 
-        if crate::visitor::contains_type_parameters(self.interner.as_type_database(), inferred)
+        // Only check for inference placeholders from the CURRENT generic call,
+        // not outer-scope type parameters. Outer-scope type parameters (e.g., `U`
+        // from an enclosing `function test<U>(...)`) are concrete in this context
+        // and should not trigger the contextual return substitution override.
+        let mut visited = FxHashSet::default();
+        if self.type_contains_placeholder(inferred, var_map, &mut visited)
             || crate::type_queries::contains_infer_types_db(
                 self.interner.as_type_database(),
                 inferred,
@@ -214,6 +220,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         infer_ctx: &mut InferenceContext<'_>,
         var: InferenceVar,
         inferred: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
     ) -> bool {
         let has_non_return_candidates =
             infer_ctx.var_has_candidates(var) && !infer_ctx.all_candidates_are_return_type(var);
@@ -222,8 +229,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return true;
         }
 
-        matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-            || crate::visitor::contains_type_parameters(self.interner.as_type_database(), inferred)
+        if matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+            return true;
+        }
+
+        // Only check for inference placeholders from the CURRENT generic call,
+        // not outer-scope type parameters.
+        let mut visited = FxHashSet::default();
+        self.type_contains_placeholder(inferred, var_map, &mut visited)
             || crate::type_queries::contains_infer_types_db(
                 self.interner.as_type_database(),
                 inferred,
@@ -1470,12 +1483,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Collect constraints using the (possibly re-instantiated) target
                     let r2_arg_type = self
                         .instantiate_generic_function_argument_against_target(arg_type, r2_target);
+                    // When the target is a bare placeholder (the parameter type is
+                    // directly the type variable, e.g., `fn: T`), use NakedTypeVariable
+                    // priority so argument inference takes precedence over contextual
+                    // return type substitution. Without this, Round 2 constraints for
+                    // `T` from direct arguments are all marked ReturnType, causing
+                    // `can_apply_contextual_return_substitution` to override the correctly
+                    // inferred type with the contextual return type.
+                    let r2_priority = if var_map.contains_key(&r2_target) {
+                        crate::types::InferencePriority::NakedTypeVariable
+                    } else {
+                        crate::types::InferencePriority::ReturnType
+                    };
                     self.constrain_types(
                         &mut infer_ctx,
                         &var_map,
                         r2_arg_type,
                         r2_target,
-                        crate::types::InferencePriority::ReturnType,
+                        r2_priority,
                     );
 
                     let source_is_function = self.type_evaluates_to_function(r2_arg_type);
@@ -1823,8 +1848,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let type_param_name = self.interner.resolve_atom(tp.name);
             let ty = if let Some(contextual_ty) = structural_return_subst.get(tp.name) {
-                if self.can_apply_contextual_return_substitution(&mut infer_ctx, var, ty)
-                    && self.should_use_contextual_return_substitution(ty, contextual_ty)
+                if self.can_apply_contextual_return_substitution(&mut infer_ctx, var, ty, &var_map)
+                    && self.should_use_contextual_return_substitution(ty, contextual_ty, &var_map)
                 {
                     contextual_ty
                 } else {
@@ -3552,8 +3577,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &mut infer_ctx,
                         type_param_vars[i],
                         resolved,
-                    ) && self.should_use_contextual_return_substitution(resolved, contextual_ty)
-                    {
+                        &var_map,
+                    ) && self.should_use_contextual_return_substitution(
+                        resolved,
+                        contextual_ty,
+                        &var_map,
+                    ) {
                         contextual_ty
                     } else {
                         resolved
