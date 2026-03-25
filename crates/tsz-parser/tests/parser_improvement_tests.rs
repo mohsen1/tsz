@@ -2335,7 +2335,11 @@ var x = <div></div><div></div>
 #[test]
 fn test_jsx_type_arguments_in_js_report_ts2657() {
     let source = r#"
-let x = <MyComp<Prop> a={10} b="hi" />;
+/// <reference path="/.lib/react.d.ts" />
+import { MyComp, Prop } from "./component";
+import * as React from "react";
+
+let x = <MyComp<Prop> a={10} b="hi" />; // error, no type arguments in js
 "#;
     let mut parser = ParserState::new("file.jsx".to_string(), source.to_string());
     let _root = parser.parse_source_file();

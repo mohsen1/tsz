@@ -811,7 +811,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
     )
 }
 
-/// `TS1xxx` codes that tsc is known to emit for JavaScript files.
+/// Parse-error codes that tsc is known to emit for JavaScript files.
 /// tsc's parser is lenient with TypeScript-only syntax in JS files and its
 /// checker grammar checks (`grammarErrorOnNode`) are suppressed for TS-only
 /// constructs. Only these `TS1xxx` codes are legitimately emitted for JS.
@@ -858,6 +858,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1473 // Module declaration names
         | 1479 // This syntax is only allowed when 'allowImportingTsExtensions'
         | 1489 // Duplicate identifier
+        | 2657 // JSX expressions must have one parent element
         | 17008 // JSX element '{0}' has no corresponding closing tag
     )
 }
@@ -1529,6 +1530,14 @@ mod tests {
         assert!(
             codes.contains(&1359),
             "TS1359 for 'await' should be kept when it's the only diagnostic, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn js_parse_allowlist_keeps_ts2657() {
+        assert!(
+            is_ts1xxx_allowed_in_js(2657),
+            "TS2657 should be preserved for JS JSX recovery diagnostics"
         );
     }
 
