@@ -3324,7 +3324,22 @@ pub const fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
 /// 2. Relative to the executable
 /// 3. Relative to current working directory
 /// 4. TypeScript/src/lib in the source tree
+/// Cache for `default_lib_dir()` result. The lib directory is determined by
+/// environment variables and filesystem probing that don't change during a
+/// process lifetime.
+static DEFAULT_LIB_DIR_CACHE: std::sync::OnceLock<Result<PathBuf, String>> =
+    std::sync::OnceLock::new();
+
 pub fn default_lib_dir() -> Result<PathBuf> {
+    let cached =
+        DEFAULT_LIB_DIR_CACHE.get_or_init(|| default_lib_dir_uncached().map_err(|e| e.to_string()));
+    match cached {
+        Ok(path) => Ok(path.clone()),
+        Err(msg) => bail!("{msg}"),
+    }
+}
+
+fn default_lib_dir_uncached() -> Result<PathBuf> {
     if let Some(dir) = env::var_os("TSZ_LIB_DIR") {
         let dir = PathBuf::from(dir);
         if !dir.is_dir() {
@@ -3491,7 +3506,35 @@ fn build_lib_map_from_embedded() -> FxHashMap<&'static str, &'static str> {
     map
 }
 
+/// Cache for `build_lib_map` results. The lib directory is typically resolved
+/// once per process and the same map is reused for all lib resolution calls.
+/// Without caching, `build_lib_map` was called once per lib being resolved,
+/// each time re-reading the directory and calling `realpath` on every `.d.ts`
+/// file (~110 files). This dominated total compilation time (>90% on macOS).
+static LIB_MAP_CACHE: std::sync::Mutex<Option<(PathBuf, FxHashMap<String, PathBuf>)>> =
+    std::sync::Mutex::new(None);
+
 fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
+    // Fast path: return cached map if lib_dir matches
+    if let Ok(guard) = LIB_MAP_CACHE.lock() {
+        if let Some((ref cached_dir, ref cached_map)) = *guard {
+            if cached_dir == lib_dir {
+                return Ok(cached_map.clone());
+            }
+        }
+    }
+
+    let map = build_lib_map_uncached(lib_dir)?;
+
+    // Cache the result for future calls with the same lib_dir
+    if let Ok(mut guard) = LIB_MAP_CACHE.lock() {
+        *guard = Some((lib_dir.to_path_buf(), map.clone()));
+    }
+
+    Ok(map)
+}
+
+fn build_lib_map_uncached(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
     let mut map = FxHashMap::default();
     for entry in std::fs::read_dir(lib_dir)
         .with_context(|| format!("failed to read lib directory {}", lib_dir.display()))?
