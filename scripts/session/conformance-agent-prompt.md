@@ -304,6 +304,7 @@ echo "selection_logged=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/conformance-attem
 echo "selection_target=TESTNAME" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 echo "selection_command=<query command used>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 echo "selection_category=<one-extra|one-missing|close|campaign>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "selection_shape=<m:[...] x:[...]>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 echo "selection_pool_size=<candidate count>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 echo "selection_rerolls=<0|1|2>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 echo "selection_status=selected" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
