@@ -116,6 +116,9 @@ impl<'a> CheckerState<'a> {
                     && mod_node.kind == syntax_kind_ext::DECORATOR
                     && let Some(decorator) = self.ctx.arena.get_decorator(mod_node)
                 {
+                    // TS1497: Check decorator expression grammar
+                    self.check_grammar_decorator(decorator.expression);
+
                     let decorator_type = self.compute_type_of_node(decorator.expression);
 
                     // TS1238: Validate class decorator call signature.
@@ -1545,6 +1548,112 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// TS1497: Check that a decorator expression follows the valid grammar.
+    ///
+    /// Valid decorator expressions are:
+    /// - `@identifier`
+    /// - `@identifier.name.name`  (property access chain)
+    /// - `@identifier.name()`     (single call at the top)
+    /// - `@(expression)`          (parenthesized)
+    ///
+    /// Invalid (TS1497) examples: `@x().y`, `@new x`, `@x?.y`, `` @x`` ``,
+    /// `@x?.()`, `@x?.["y"]`, `@x["y"]`.
+    ///
+    /// Matches tsc's `checkGrammarDecorator`. Only checked when the source file
+    /// has no parse diagnostics.
+    pub(crate) fn check_grammar_decorator(&mut self, expression_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::flags::node_flags;
+
+        // Skip if the source file has parse diagnostics (matches tsc's hasParseDiagnostics gate)
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
+        let Some(expr_node) = self.ctx.arena.get(expression_idx) else {
+            return;
+        };
+
+        // DecoratorParenthesizedExpression: ( Expression )
+        if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return;
+        }
+
+        let mut current = expression_idx;
+        let mut can_have_call = true;
+        let mut error_node: Option<NodeIndex> = None;
+
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+
+            // Allow TS syntax: ExpressionWithTypeArguments, NonNullExpression
+            if node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
+                if let Some(data) = self.ctx.arena.get_expr_type_args(node) {
+                    current = data.expression;
+                    continue;
+                }
+                break;
+            }
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+                if let Some(data) = self.ctx.arena.get_unary_expr_ex(node) {
+                    current = data.expression;
+                    continue;
+                }
+                break;
+            }
+
+            // DecoratorCallExpression: DecoratorMemberExpression Arguments
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                if !can_have_call {
+                    error_node = Some(current);
+                }
+                // Check for optional chaining on call: x?.()
+                let flags_u32 = u32::from(node.flags);
+                if (flags_u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                    // Optional chaining — always an error, even if we already have one
+                    error_node = Some(current);
+                }
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    current = call.expression;
+                    can_have_call = false;
+                    continue;
+                }
+                break;
+            }
+
+            // DecoratorMemberExpression: DecoratorMemberExpression . IdentifierName
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                    if access.question_dot_token {
+                        // Optional chaining — always error
+                        error_node = Some(current);
+                    }
+                    current = access.expression;
+                    can_have_call = false;
+                    continue;
+                }
+                break;
+            }
+
+            // If it's not an identifier, it's invalid
+            if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                error_node = Some(current);
+            }
+
+            break;
+        }
+
+        if error_node.is_some() {
+            self.error_at_node(
+                expression_idx,
+                diagnostic_messages::EXPRESSION_MUST_BE_ENCLOSED_IN_PARENTHESES_TO_BE_USED_AS_A_DECORATOR,
+                diagnostic_codes::EXPRESSION_MUST_BE_ENCLOSED_IN_PARENTHESES_TO_BE_USED_AS_A_DECORATOR,
+            );
+        }
     }
 }
 
