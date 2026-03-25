@@ -1117,6 +1117,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let annotation = annotation_text.trim();
+        // Don't use annotation text when it starts with `null` or `undefined` in
+        // a union — the computed type formatter correctly reorders null/undefined
+        // to the end (matching tsc's display), but annotation text preserves
+        // source order which would put them first.
+        if (annotation.starts_with("null |") || annotation.starts_with("undefined |"))
+            && !annotation.contains('&')
+        {
+            return false;
+        }
         annotation.contains('&') || !annotation.starts_with('{')
     }
 
