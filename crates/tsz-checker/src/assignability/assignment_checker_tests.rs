@@ -114,6 +114,27 @@ const value: Outer = { inner: { ok: 1, nope: 2 } };
 }
 
 #[test]
+fn contextual_assignment_conditional_callback_branches_keep_parameter_context() {
+    let diagnostics = diagnostics_for(
+        r#"
+declare const cond: boolean;
+type Handler = { cb: (value: string) => string };
+let handler!: Handler;
+handler = cond
+    ? { cb: value => value }
+    : { cb: value => value };
+"#,
+    );
+
+    let ts7006: Vec<_> = diagnostics.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected conditional assignment contextual retry to preserve callback parameter types, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn nested_object_literal_assignability_keeps_exact_property_anchor() {
     let source = r#"
 type Inner = { ok: string };

@@ -126,6 +126,62 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Invalidate a function-like node for contextual retry.
+    ///
+    /// This covers function expressions, methods, and accessors that are about
+    /// to be re-evaluated under a non-empty typing request. The function-like
+    /// node itself, parameter symbol types, and its body are invalidated, while
+    /// avoiding blanket recursive clearing of unrelated siblings.
+    pub(crate) fn invalidate_function_like_for_contextual_retry(&mut self, idx: NodeIndex) {
+        if idx.is_none() {
+            return;
+        }
+
+        self.ctx.request_cache_counters.targeted_invalidation_calls += 1;
+        self.invalidate_node_type_cache(idx);
+        self.invalidate_implicit_any_tracking(idx);
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    for &param_idx in &func.parameters.nodes {
+                        self.invalidate_function_param_symbols(param_idx);
+                    }
+                    if let Some(body_node) = self.ctx.arena.get(func.body) {
+                        if body_node.kind == syntax_kind_ext::BLOCK {
+                            self.clear_type_cache_recursive(func.body);
+                        } else {
+                            self.invalidate_expression_for_contextual_retry(func.body);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    for &param_idx in &method.parameters.nodes {
+                        self.invalidate_function_param_symbols(param_idx);
+                    }
+                    self.clear_type_cache_recursive(method.body);
+                }
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    for &param_idx in &accessor.parameters.nodes {
+                        self.invalidate_function_param_symbols(param_idx);
+                    }
+                    self.clear_type_cache_recursive(accessor.body);
+                }
+            }
+            _ => self.invalidate_expression_for_contextual_retry(idx),
+        }
+    }
+
     /// Invalidate a call argument expression for contextual retry.
     ///
     /// This is the targeted replacement for `clear_type_cache_recursive` in
@@ -154,29 +210,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
             {
-                // Function expressions need body clearing because cached
-                // expressions inside the body reference parameter types (via
-                // symbol_types) that change when contextual parameter types
-                // are applied.  Clear params + body.
-                self.invalidate_node_type_cache(idx);
-                self.invalidate_implicit_any_tracking(idx);
-                if let Some(func) = self.ctx.arena.get_function(node) {
-                    for &param_idx in &func.parameters.nodes {
-                        self.invalidate_function_param_symbols(param_idx);
-                    }
-                    // For expression-bodied arrows (body is not a Block),
-                    // use targeted invalidation — the body is a single
-                    // expression tree, not a statement list.
-                    if let Some(body_node) = self.ctx.arena.get(func.body) {
-                        if body_node.kind == syntax_kind_ext::BLOCK {
-                            self.clear_type_cache_recursive(func.body);
-                        } else {
-                            // Expression body: targeted invalidation recurses
-                            // into the expression form without walking statements.
-                            self.invalidate_expression_for_contextual_retry(func.body);
-                        }
-                    }
-                }
+                self.invalidate_function_like_for_contextual_retry(idx);
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 // Clear the object literal node and each property.  For

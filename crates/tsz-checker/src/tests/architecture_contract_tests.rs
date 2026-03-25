@@ -2688,6 +2688,34 @@ fn request_empty_cache_bypass_stays_confined_to_approved_entry_points() {
     );
 }
 
+#[test]
+fn request_aware_contextual_retry_hot_paths_do_not_reintroduce_recursive_cache_clears() {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let whole_file_bans = [
+        "assignability/assignment_checker.rs",
+        "state/state_checking/property.rs",
+        "types/type_checking/core.rs",
+    ];
+
+    for relative in whole_file_bans {
+        let path = base.join(relative);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+
+        assert!(
+            !source.contains("clear_type_cache_recursive("),
+            "request-aware contextual retry path {relative} must use targeted invalidation helpers instead of direct recursive cache clears"
+        );
+    }
+    let ambient_source =
+        fs::read_to_string(base.join("state/state_checking_members/ambient_signature_checks.rs"))
+            .expect("failed to read ambient_signature_checks.rs");
+    assert!(
+        ambient_source.contains("invalidate_initializer_for_context_change(prop.initializer)"),
+        "ambient declared-type initializer retries must keep using the targeted invalidation helper"
+    );
+}
+
 /// The `TypingRequest` type must exist and have the expected fields.
 #[test]
 fn typing_request_api_exists() {
