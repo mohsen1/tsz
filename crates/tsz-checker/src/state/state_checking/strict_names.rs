@@ -48,6 +48,12 @@ impl<'a> CheckerState<'a> {
         if !is_strict_mode_reserved_name(&ident.escaped_text) {
             return;
         }
+        // When an identifier is spelled with unicode escapes (e.g., \u0079ield for yield),
+        // TSC treats it as a regular identifier and does NOT emit TS1212/TS1213/TS1214.
+        // The presence of original_text indicates the identifier had unicode escapes.
+        if ident.original_text.is_some() {
+            return;
+        }
         self.emit_strict_mode_reserved_word_error(name_idx, &ident.escaped_text, true);
     }
 

@@ -264,9 +264,18 @@ impl<'a> CheckerState<'a> {
                 )
             })
         });
+        // When an identifier is spelled with unicode escapes (e.g., \u0079ield for yield),
+        // TSC treats it as a regular identifier and does NOT emit TS1212/TS1213/TS1214.
+        let has_unicode_escape = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .is_some_and(|ident| ident.original_text.is_some());
         if crate::state_checking::is_strict_mode_reserved_name(name)
             && self.ctx.checking_computed_property_name.is_none()
             && is_declaration_site
+            && !has_unicode_escape
         {
             // Detect class context by walking up the AST (enclosing_class may not
             // be set during type resolution or other non-statement-walk phases).
