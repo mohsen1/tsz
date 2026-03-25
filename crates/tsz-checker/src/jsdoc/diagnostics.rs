@@ -721,6 +721,99 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check unsupported multiline `@typedef {{ ... }}` wrappers in JSDoc comments
+    /// that do not use leading `*` comment lines.
+    ///
+    /// TypeScript reports TS1110 at the first wrapped value line and again at the
+    /// closing `}}` line for this malformed comment shape.
+    pub(crate) fn check_jsdoc_unwrapped_multiline_typedefs(&mut self) {
+        use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::is_jsdoc_comment;
+
+        if self.ctx.current_file_idx != 0 {
+            return;
+        }
+
+        let all_arenas = self.ctx.all_arenas.clone().unwrap_or_else(|| {
+            std::sync::Arc::new(vec![std::sync::Arc::new(self.ctx.arena.clone())])
+        });
+
+        for arena in all_arenas.iter() {
+            let Some(sf) = arena.source_files.first() else {
+                continue;
+            };
+            let source_text: &str = &sf.text;
+
+            for comment in &sf.comments {
+                if !is_jsdoc_comment(comment, source_text) {
+                    continue;
+                }
+
+                let comment_text = comment.get_text(source_text);
+                let mut in_unwrapped_typedef = false;
+                let mut awaiting_wrapped_value = false;
+                let mut first_type_expected = None;
+                let mut closing_type_expected = None;
+                let mut line_offset = 0usize;
+
+                for segment in comment_text.split_inclusive('\n') {
+                    let line = segment.trim_end_matches(['\r', '\n']);
+                    let trimmed = line.trim_start();
+                    let leading_ws = line.len().saturating_sub(trimmed.len());
+                    let has_comment_star = !in_unwrapped_typedef && trimmed.starts_with('*');
+                    let content = if has_comment_star {
+                        trimmed[1..].trim_start()
+                    } else {
+                        trimmed
+                    };
+
+                    if !in_unwrapped_typedef {
+                        if !has_comment_star && content.starts_with("@typedef {{") {
+                            in_unwrapped_typedef = true;
+                        }
+                    } else if content.starts_with("}}") {
+                        closing_type_expected =
+                            Some(comment.pos + line_offset as u32 + leading_ws as u32);
+                        break;
+                    } else if awaiting_wrapped_value
+                        && !content.is_empty()
+                        && first_type_expected.is_none()
+                    {
+                        let mut pos = comment.pos + line_offset as u32 + leading_ws as u32;
+                        if content.starts_with('*') {
+                            pos += 1;
+                        }
+                        first_type_expected = Some(pos);
+                    }
+
+                    if in_unwrapped_typedef {
+                        awaiting_wrapped_value = content.ends_with(':');
+                    }
+                    line_offset += segment.len();
+                }
+
+                if let Some(pos) = first_type_expected {
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        sf.file_name.clone(),
+                        pos,
+                        1,
+                        diagnostic_messages::TYPE_EXPECTED,
+                        diagnostic_codes::TYPE_EXPECTED,
+                    ));
+                }
+                if let Some(pos) = closing_type_expected {
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        sf.file_name.clone(),
+                        pos,
+                        1,
+                        diagnostic_messages::TYPE_EXPECTED,
+                        diagnostic_codes::TYPE_EXPECTED,
+                    ));
+                }
+            }
+        }
+    }
+
     /// TS8039: Check for `@template` tags that follow a `@typedef`, `@callback`,
     /// or `@overload` tag within the same JSDoc comment.
     ///

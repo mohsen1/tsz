@@ -1883,6 +1883,38 @@ const x = (a) => a + 1;
 }
 
 #[test]
+fn test_jsdoc_unwrapped_multiline_typedef_reports_ts1110() {
+    let source = r#"
+/** 
+   Multiline type expressions in comments without leading * are not supported.
+   @typedef {{
+     foo:
+     *,
+     bar:
+     *
+   }} Type7
+ */
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "mod7.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts1110_count = diagnostics.iter().filter(|(code, _)| *code == 1110).count();
+    assert_eq!(
+        ts1110_count, 2,
+        "Expected two TS1110 diagnostics for unsupported multiline typedef wrapping. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_deep_exports_assignment_reports_ts2339_against_current_module_surface() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",

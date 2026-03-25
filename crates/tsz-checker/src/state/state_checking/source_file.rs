@@ -253,6 +253,9 @@ impl<'a> CheckerState<'a> {
                 // TS7014/TS1110/TS2304: malformed JSDoc function parameter types
                 self.check_malformed_jsdoc_function_type_params();
 
+                // TS1110: unsupported multiline @typedef wrappers without leading `*`
+                self.check_jsdoc_unwrapped_multiline_typedefs();
+
                 // TS8021: Check for @typedef without type or @property tags
                 self.check_typedef_missing_type();
 
