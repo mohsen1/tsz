@@ -791,6 +791,7 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         | 1124 // Digit expected
         | 1125 // Hexadecimal digit expected
         | 1126 // Unexpected end of text
+        | 1127 // Invalid character
         | 1128 // Declaration or statement expected
         | 1131 // Property or signature expected
         | 1134 // Variable declaration expected
@@ -806,6 +807,7 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         | 1436 // Decorators are not valid here
         | 1389 // '{0}' is not allowed as a variable declaration name
         | 1440 // Variable declaration not allowed at this location
+        | 1442 // Expected '=' for property initializer
         | 1489 // Decimals with leading zeros are not allowed
     )
     // Specific 2xxx codes that tsc treats as syntactic/preprocessing errors
