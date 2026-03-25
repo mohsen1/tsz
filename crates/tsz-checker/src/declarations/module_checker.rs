@@ -923,6 +923,10 @@ impl<'a> CheckerState<'a> {
             .get_global_type_with_libs("Promise", &lib_binders)
         {
             let _ = self.get_type_of_symbol(sym_id);
+            // Ensure the Promise DefId has its type parameters and body registered
+            // so that resolve_application_property can substitute T with the inner type.
+            // Without this, .then() callback parameters remain as unsubstituted `T`.
+            self.ensure_def_ready_for_lowering(sym_id, "Promise");
             let promise_base = self.ctx.create_lazy_type_ref(sym_id);
             return factory.application(promise_base, vec![inner_type]);
         }
