@@ -436,7 +436,8 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             factory.intersection(ctor_types)
         };
-        let ctor_type = self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments);
+        let ctor_type =
+            self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments);
 
         // Preserve non-constructor static members on call-expression heritage
         // bases (e.g. mixin-style intersections like `CoreObject.extend(...)`
@@ -449,7 +450,12 @@ impl<'a> CheckerState<'a> {
         let resolved = if construct_signatures_for_type(self.ctx.types, ctor_type).is_some()
             && query::intersection_members(self.ctx.types, evaluated_type).is_some()
         {
-            Some(self.ctx.types.factory().intersection(vec![ctor_type, evaluated_type]))
+            Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .intersection(vec![ctor_type, evaluated_type]),
+            )
         } else {
             Some(ctor_type)
         };
