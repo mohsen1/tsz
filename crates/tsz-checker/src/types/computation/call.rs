@@ -737,14 +737,19 @@ impl<'a> CheckerState<'a> {
                 // Extract ThisType<T> from shape params via alias expansion.
                 // Store for re-use across retry arg typing calls.
                 if shape_this_type.is_none() {
-                    let _env = self.ctx.type_env.borrow();
+                    let env = self.ctx.type_env.borrow();
                     for param in &shape.params {
                         let ctx_helper = ContextualTypeContext::with_expected_and_options(
                             self.ctx.types,
                             param.type_id,
                             self.ctx.compiler_options.no_implicit_any,
                         );
-                        if let Some(tt) = ctx_helper.get_this_type_from_marker() {
+                        // Try simple extraction first, then with alias expansion
+                        // (e.g., ConstructorOptions<Data> → ... & ThisType<Instance<Data>>).
+                        let tt = ctx_helper
+                            .get_this_type_from_marker()
+                            .or_else(|| ctx_helper.get_this_type_from_marker_with_resolver(&*env));
+                        if let Some(tt) = tt {
                             shape_this_type = Some(tt);
                             break;
                         }
@@ -947,23 +952,39 @@ impl<'a> CheckerState<'a> {
                     // this_type_stack so nested object literal methods resolve
                     // `this` to the inferred type.
                     if !pushed_this_type_from_shape {
-                        for param in &shape.params {
-                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                        if let Some(tt) = shape_this_type {
+                            let instantiated = crate::query_boundaries::common::instantiate_type(
                                 self.ctx.types,
-                                param.type_id,
-                                self.ctx.compiler_options.no_implicit_any,
+                                tt,
+                                &substitution,
                             );
-                            if let Some(this_type) = ctx_helper.get_this_type_from_marker() {
-                                let instantiated =
-                                    crate::query_boundaries::common::instantiate_type(
-                                        self.ctx.types,
-                                        this_type,
-                                        &substitution,
-                                    );
-                                self.ctx.this_type_stack.push(instantiated);
-                                pushed_this_type_from_shape = true;
-                                break;
+                            self.ctx.this_type_stack.push(instantiated);
+                            pushed_this_type_from_shape = true;
+                        } else {
+                            let env = self.ctx.type_env.borrow();
+                            for param in &shape.params {
+                                let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                    self.ctx.types,
+                                    param.type_id,
+                                    self.ctx.compiler_options.no_implicit_any,
+                                );
+                                let this_type =
+                                    ctx_helper.get_this_type_from_marker().or_else(|| {
+                                        ctx_helper.get_this_type_from_marker_with_resolver(&*env)
+                                    });
+                                if let Some(this_type) = this_type {
+                                    let instantiated =
+                                        crate::query_boundaries::common::instantiate_type(
+                                            self.ctx.types,
+                                            this_type,
+                                            &substitution,
+                                        );
+                                    self.ctx.this_type_stack.push(instantiated);
+                                    pushed_this_type_from_shape = true;
+                                    break;
+                                }
                             }
+                            drop(env);
                         }
                     }
 
@@ -1555,18 +1576,23 @@ impl<'a> CheckerState<'a> {
                     // This allows property access on `this` in object literal methods
                     // to suppress false TS2339 errors.
                     if !pushed_this_type_from_shape {
+                        let env = self.ctx.type_env.borrow();
                         for param in &shape.params {
                             let ctx_helper2 = ContextualTypeContext::with_expected_and_options(
                                 self.ctx.types,
                                 param.type_id,
                                 self.ctx.compiler_options.no_implicit_any,
                             );
-                            if let Some(this_type) = ctx_helper2.get_this_type_from_marker() {
+                            let this_type = ctx_helper2.get_this_type_from_marker().or_else(|| {
+                                ctx_helper2.get_this_type_from_marker_with_resolver(&*env)
+                            });
+                            if let Some(this_type) = this_type {
                                 self.ctx.this_type_stack.push(this_type);
                                 pushed_this_type_from_shape = true;
                                 break;
                             }
                         }
+                        drop(env);
                     }
 
                     // Single-pass generic calls still erase type params from empty-array
@@ -1843,9 +1869,11 @@ impl<'a> CheckerState<'a> {
         };
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
-        if pushed_this_type_from_shape {
-            self.ctx.this_type_stack.pop();
-        }
+        // Keep shape_this_type on the stack through finalize_generic_call_result
+        // and handle_call_result. Without this, post-inference rechecks triggered by
+        // the call result handler would see an empty this_type_stack and fall back to
+        // the wrong contextual type, causing false TS2339 errors.
+        // We pop it at the end of this function.
         self.ensure_relation_input_ready(callee_type_for_resolution);
 
         // Resolve applications/lazy refs to callable forms before solver dispatch.
@@ -2060,12 +2088,23 @@ impl<'a> CheckerState<'a> {
             };
             result = if retry_sanitized || needs_real_type_recheck {
                 if let Some(instantiated_params) = retry.2.as_ref() {
-                    self.recheck_generic_call_arguments_with_real_types(
+                    // Push ThisType for recheck so object literal methods see the right `this`.
+                    let recheck_pushed = if let Some(tt) = shape_this_type {
+                        self.ctx.this_type_stack.push(tt);
+                        true
+                    } else {
+                        false
+                    };
+                    let r = self.recheck_generic_call_arguments_with_real_types(
                         retry.0.clone(),
                         instantiated_params,
                         args,
                         &arg_types,
-                    )
+                    );
+                    if recheck_pushed {
+                        self.ctx.this_type_stack.pop();
+                    }
+                    r
                 } else {
                     retry.0
                 }
@@ -2134,6 +2173,11 @@ impl<'a> CheckerState<'a> {
             is_optional_chain: nullish_cause.is_some(),
             allow_contextual_mismatch_deferral,
         };
+        // Pop the shape_this_type that was kept on the stack since the
+        // argument collection phase.
+        if pushed_this_type_from_shape {
+            self.ctx.this_type_stack.pop();
+        }
         self.handle_call_result(result, call_context)
     }
 }

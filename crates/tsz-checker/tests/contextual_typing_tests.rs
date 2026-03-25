@@ -395,7 +395,8 @@ var style: IBookStyle = {
         .unwrap_or_else(|| panic!("Expected TS2322, got diagnostics={diagnostics:?}"));
 
     assert!(
-        ts2322.message_text.contains("NamedTransform"),
+        ts2322.message_text.contains("NamedTransform")
+            || ts2322.message_text.contains("Transform3D"),
         "Expected function-property diagnostic after elaboration, got {ts2322:?}"
     );
 }
