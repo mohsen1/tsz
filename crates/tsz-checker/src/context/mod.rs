@@ -455,6 +455,11 @@ pub struct CheckerContext<'a> {
     pub js_export_surface_cache:
         FxHashMap<usize, crate::query_boundaries::js_exports::JsExportSurface>,
 
+    /// Recursion guard for synthesized JS/CommonJS export surfaces.
+    /// Prevents self-recursive surface construction for files that inspect
+    /// their own `module.exports` shape while the same shape is still pending.
+    pub js_export_surface_resolution_set: FxHashSet<usize>,
+
     /// Maps `file_id` -> module specifier for import-qualified type display.
     /// When a type is defined in a module file, the formatter qualifies its name
     /// as `import("specifier").TypeName` to match tsc's behavior.

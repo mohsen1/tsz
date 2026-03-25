@@ -237,7 +237,7 @@ impl<'a> CheckerState<'a> {
         let mut ordered_names = Vec::new();
 
         for rhs_expr in rhs_exprs {
-            let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
+            let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None);
             for prop in self.direct_module_export_object_literal_seed_props(rhs_type) {
                 if !pending.contains_key(&prop.name) {
                     ordered_names.push(prop.name);
@@ -277,7 +277,7 @@ impl<'a> CheckerState<'a> {
         // calls in that file.
         if !self
             .ctx
-            .js_export_surface_in_progress
+            .js_export_surface_resolution_set
             .insert(target_file_idx)
         {
             return JsExportSurface::empty();
@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
 
         let surface = self.compute_js_export_surface(target_file_idx);
         self.ctx
-            .js_export_surface_in_progress
+            .js_export_surface_resolution_set
             .remove(&target_file_idx);
 
         // Cache the result
@@ -372,7 +372,9 @@ impl<'a> CheckerState<'a> {
 
         // 1. Collect direct `module.exports = X` assignment
         surface.direct_export_type = last_direct_export
-            .map(|(_, rhs_expr)| self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr))
+            .map(|(_, rhs_expr)| {
+                self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None)
+            })
             .filter(|&rhs_type| rhs_type != TypeId::UNDEFINED);
 
         // 2. Seed named exports from a direct object-like export, then collect later
