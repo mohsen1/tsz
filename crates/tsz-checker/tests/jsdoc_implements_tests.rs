@@ -100,6 +100,22 @@ class B {
     );
 }
 
+#[test]
+fn test_jsdoc_implements_missing_type_emits_ts1003() {
+    let codes = check_js(
+        r#"
+class A { constructor() { this.x = 0; } }
+/** @implements */
+class B {
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1003),
+        "Expected TS1003 for empty @implements tag, got: {codes:?}"
+    );
+}
+
 /// @implements with multiple tags — missing member from second target
 #[test]
 fn test_jsdoc_implements_multiple_tags() {
