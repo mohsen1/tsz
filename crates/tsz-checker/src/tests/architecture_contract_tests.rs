@@ -3105,6 +3105,10 @@ fn test_relation_failure_covers_semantic_families() {
         "IncompatiblePropertyValue",
         "NoApplicableSignature",
         "TupleArityMismatch",
+        "ReturnTypeMismatch",
+        "ParameterTypeMismatch",
+        "ParameterCountMismatch",
+        "PropertyModifierMismatch",
         "WeakUnionViolation",
         "TypeMismatch",
     ] {
