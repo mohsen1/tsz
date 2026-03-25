@@ -3145,6 +3145,19 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
         source.contains("nested: nested_reason.map(|r| Box::new(Self::from_solver_reason(*r)))"),
         "nested property/return mismatches must recurse through from_solver_reason"
     );
+    assert!(
+        source.contains("SubtypeFailureReason::NoUnionMemberMatches { source_type, .. }")
+            && source.contains("target_type: TypeId::ERROR,"),
+        "NoUnionMemberMatches must normalize to a TypeMismatch sentinel with target_type=TypeId::ERROR"
+    );
+    assert!(
+        source.contains("SubtypeFailureReason::MissingIndexSignature { .. }")
+            && source.contains("| SubtypeFailureReason::RecursionLimitExceeded")
+            && source.contains("=> Self::TypeMismatch {")
+            && source.contains("source_type: TypeId::ERROR,")
+            && source.contains("target_type: TypeId::ERROR,"),
+        "MissingIndexSignature and RecursionLimitExceeded must normalize to a TypeMismatch sentinel with ERROR/ERROR"
+    );
 }
 
 /// `RelationRequest` must keep the builder helpers that encode freshness and
