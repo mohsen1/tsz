@@ -628,11 +628,16 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         for prop in &shape.properties {
             if prop.name == self.name_atom {
-                let mut ty = prop.type_id;
-                if prop.optional {
-                    ty = add_undefined_if_missing(self.db, ty);
-                }
-                return Some(ty);
+                // Return the declared property type without adding `undefined`
+                // for optional properties. In tsc, getTypeOfPropertyOfContextualType
+                // returns the raw declared type — optionality is handled separately
+                // by assignability checks. Adding `undefined` here pollutes
+                // contextual typing for generic calls where the contextual type
+                // flows through return type inference (e.g., a generic wrapper
+                // function used as an optional property value would infer
+                // `handler | undefined` instead of just `handler`, violating
+                // non-nullable constraints like `T extends Function`).
+                return Some(prop.type_id);
             }
         }
         // Fall back to index signatures for Object types too
