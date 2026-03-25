@@ -210,14 +210,35 @@ impl<'a> CheckerState<'a> {
         // Now count binding elements in each destructuring pattern.
         // TS6198 ("All destructured elements are unused") only applies to OBJECT binding
         // patterns (`{ a, b }`), not array patterns (`[a, b]`).
+        // Additionally, TS6198 must NOT be emitted for patterns that contain a rest element
+        // (e.g., `{ a, ...rest }`), because non-rest elements serve to exclude properties
+        // from the rest binding — TSC considers them structurally "used".
         for (pattern_idx, elements) in &pattern_children {
             // Only consider object binding patterns
-            if let Some(node) = self.ctx.arena.get(*pattern_idx) {
-                if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            let Some(node) = self.ctx.arena.get(*pattern_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+                continue;
+            }
+            // Skip patterns that contain a rest element — TS6198 never applies to them.
+            // Individual unused elements (including the rest element itself) will get TS6133.
+            if let Some(pattern_data) = self.ctx.arena.get_binding_pattern(node) {
+                let has_rest = pattern_data.elements.nodes.iter().any(|&elem_idx| {
+                    if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
+                        elem_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                            && self
+                                .ctx
+                                .arena
+                                .get_binding_element(elem_node)
+                                .is_some_and(|be| be.dot_dot_dot_token)
+                    } else {
+                        false
+                    }
+                });
+                if has_rest {
                     continue;
                 }
-            } else {
-                continue;
             }
             let total_count = elements.len();
             let unused_count = elements
