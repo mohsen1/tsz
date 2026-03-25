@@ -145,20 +145,36 @@ pub(crate) fn should_report_property_type_mismatch(
     target: TypeId,
     node_idx: NodeIndex,
 ) -> bool {
-    let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
-    if checker.should_suppress_assignability_diagnostic(source, target) {
+    let narrowed_source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    if checker.should_suppress_assignability_diagnostic(narrowed_source, target) {
         return false;
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
     }
-    if checker.is_assignable_to(source, target) {
+
+    let request = {
+        use crate::query_boundaries::assignability::RelationRequest;
+        let (prepared_source, prepared_target) =
+            checker.prepare_assignability_inputs(narrowed_source, target);
+        RelationRequest::assign(prepared_source, prepared_target)
+    };
+    let outcome = checker.execute_relation_request(&request);
+
+    if outcome.related {
         return false;
     }
-    if checker.should_skip_weak_union_error(source, target, node_idx) {
+    if outcome.weak_union_violation
+        || checker.should_skip_weak_union_error_with_outcome(
+            narrowed_source,
+            target,
+            node_idx,
+            Some(&outcome),
+        )
+    {
         return false;
     }
-    if is_coinductive_return_type_cycle(checker, source, target) {
+    if is_coinductive_return_type_cycle(checker, narrowed_source, target) {
         return false;
     }
     true
