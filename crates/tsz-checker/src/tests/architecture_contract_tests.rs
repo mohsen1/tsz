@@ -1,8 +1,11 @@
 use crate::context::{CheckerContext, CheckerOptions};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
+use tsz_solver::def::DefinitionStore;
 use tsz_solver::{
     CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId, TypeInterner,
     Visibility,
@@ -204,6 +207,36 @@ fn test_no_implicit_any_scope_inference_for_js_files() {
         },
     );
     assert!(ts_file.no_implicit_any());
+}
+
+#[test]
+fn def_id_fallback_prefers_symbol_stable_declaration_span() {
+    let source = "interface Foo { value: number }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new_with_shared_def_store(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let symbol = binder.symbols.get(sym_id).expect("expected symbol for Foo");
+    let def_id = ctx.get_or_create_def_id(sym_id);
+    let info = ctx
+        .definition_store
+        .get(def_id)
+        .expect("fallback should register DefinitionInfo");
+
+    assert_eq!(info.span, symbol.first_declaration_span);
+    assert_eq!(ctx.def_fallback_count.get(), 1);
 }
 
 #[test]

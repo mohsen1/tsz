@@ -3352,6 +3352,41 @@ interface Merged { b: number }
 }
 
 #[test]
+fn symbols_capture_stable_declaration_spans() {
+    let source = "
+interface Merged { a: string }
+interface Merged { b: number }
+const value = 1;
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena().clone();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let merged_sym_id = binder.file_locals.get("Merged").expect("expected Merged");
+    let merged = binder
+        .symbols
+        .get(merged_sym_id)
+        .expect("expected symbol for Merged");
+    let first_decl = merged.declarations[0];
+    let expected_first_span = arena.get(first_decl).map(|node| (node.pos, node.end));
+    assert_eq!(merged.first_declaration_span, expected_first_span);
+    assert_eq!(merged.value_declaration_span, None);
+
+    let value_sym_id = binder.file_locals.get("value").expect("expected value");
+    let value = binder
+        .symbols
+        .get(value_sym_id)
+        .expect("expected symbol for value");
+    let expected_value_span = arena
+        .get(value.value_declaration)
+        .map(|node| (node.pos, node.end));
+    assert_eq!(value.first_declaration_span, expected_value_span);
+    assert_eq!(value.value_declaration_span, expected_value_span);
+}
+
+#[test]
 fn semantic_defs_covers_all_seven_declaration_kinds() {
     let binder = bind_source(
         "

@@ -62,7 +62,7 @@ pub fn directives_to_check_options(directives: &HashMap<String, String>) -> Valu
     // even without `strict: true` (since TS 4.0+). The server derives these from
     // the `strict` flag (which defaults false), so we inject the tsc defaults.
     // Only inject when neither `strict` nor the specific sub-flag is set.
-    if !opts.contains_key("strict") {
+    if !opts.is_empty() && !opts.contains_key("strict") {
         // These flags default to true in tsc's conformance test harness
         for key in ["strictPropertyInitialization", "strictNullChecks"] {
             if !opts.contains_key(key) {

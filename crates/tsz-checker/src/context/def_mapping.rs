@@ -117,9 +117,17 @@ impl<'a> CheckerContext<'a> {
             tsz_solver::def::DefKind::TypeAlias
         };
 
-        // Create a placeholder DefinitionInfo - body will be set lazily
-        // Get span from the first declaration if available
-        let span = symbol.declarations.first().map(|n| (n.0, n.0));
+        // Create a placeholder DefinitionInfo - body will be set lazily.
+        // Prefer binder-owned stable declaration spans over raw NodeIndex-based
+        // reconstruction so fallback identity does not treat syntax handles as
+        // semantic coordinates.
+        let span = symbol.first_declaration_span.or_else(|| {
+            if symbol.value_declaration.is_some() {
+                symbol.value_declaration_span
+            } else {
+                None
+            }
+        });
 
         let info = DefinitionInfo {
             kind,
