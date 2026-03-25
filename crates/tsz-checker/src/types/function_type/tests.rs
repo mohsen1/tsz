@@ -103,3 +103,22 @@ fn async_inferred_return_union_with_promise() {
         "async returning Promise in union context should not double-wrap: {diags:?}"
     );
 }
+
+#[test]
+fn async_generic_return_call_does_not_get_promise_union_context() {
+    let diags = async_diagnostics(
+        "class Api<D = {}> {
+            async post<T = D>() { return this.request<T>(); }
+            async request<D>(): Promise<D> { throw new Error(); }
+         }
+         declare const api: Api;
+         interface Obj { x: number }
+         async function fn<T>(): Promise<T extends object ? { [K in keyof T]: Obj } : Obj> {
+             return api.post();
+         }",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "async generic return call should not be over-constrained by PromiseLike contextual unions: {diags:?}"
+    );
+}
