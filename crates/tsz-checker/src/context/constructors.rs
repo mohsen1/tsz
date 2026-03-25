@@ -109,6 +109,7 @@ impl<'a> CheckerContext<'a> {
             application_symbols_resolution_set: FxHashSet::default(),
             namespace_module_names: FxHashMap::default(),
             js_export_surface_cache: FxHashMap::default(),
+            js_export_surface_resolution_set: FxHashSet::default(),
             module_specifiers: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),

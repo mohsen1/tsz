@@ -10045,6 +10045,85 @@ fn compile_named_files_get_diagnostics_with_options(
         .collect()
 }
 
+fn compile_named_files_get_diagnostics_with_lib_and_options(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files_for_test();
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    let raw_lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| BinderLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    let checker_lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| CheckerLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        if !raw_lib_contexts.is_empty() {
+            binder.merge_lib_contexts_into_binder(&raw_lib_contexts);
+        }
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .expect("entry file should exist");
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    if !checker_lib_contexts.is_empty() {
+        checker.ctx.set_lib_contexts(checker_lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(roots[entry_idx]);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 #[test]
 fn test_namespace_import_from_umd_module_includes_global_and_module_augmentations() {
     let files = [
@@ -10093,6 +10172,56 @@ a2.x + a2.y + a2.z + a2.conflict;
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2339),
         "Expected namespace import from UMD module to keep x/y/z/conflict visible without TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_augmentation_global_imported_return_type_keeps_augmented_array_method() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let files = [
+        (
+            "/f1.ts",
+            r#"
+export class A { x: number; }
+"#,
+        ),
+        (
+            "/f2.ts",
+            r#"
+import { A } from "./f1";
+
+declare global {
+    interface Array<T> {
+        getA(): A;
+    }
+}
+
+let x = [1];
+let y = x.getA().x;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &files,
+        "/f2.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2564)
+        .collect();
+    assert!(
+        !relevant.iter().any(|(code, _)| *code == 2339),
+        "Expected imported return type in declare global Array augmentation to preserve getA().x without TS2339. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
