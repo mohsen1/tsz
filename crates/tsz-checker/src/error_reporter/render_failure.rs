@@ -392,14 +392,22 @@ impl<'a> CheckerState<'a> {
                 };
                 // TS2820: when the source is a string literal and a union member is
                 // close in spelling, emit "did you mean X?" instead of plain TS2322.
+                // TSC uses the expanded union form (not the alias name) in TS2820 messages.
                 let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);
                 if let Some(suggestion) = self.find_string_literal_spelling_suggestion(
                     source,
                     evaluated_target_for_suggestion,
                 ) {
+                    let expanded_target_str =
+                        self.format_type_diagnostic(evaluated_target_for_suggestion);
+                    let display_target_str = if expanded_target_str != target_str {
+                        &expanded_target_str
+                    } else {
+                        &target_str
+                    };
                     let msg = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                        &[&source_str, &target_str, &suggestion],
+                        &[&source_str, display_target_str, &suggestion],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -1508,11 +1516,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS2820: spelling suggestion for string literals
-        if let Some(suggestion) = self.find_string_literal_spelling_suggestion(source, target) {
+        // TS2820: spelling suggestion for string literals.
+        // Try both the raw target and its evaluated form (resolves type aliases
+        // like `T3 = T1 & ("string" | "boolean")` to their union of string literals).
+        let evaluated_target_for_ts2820 = self.evaluate_type_with_env(target);
+        let ts2820_suggestion = self
+            .find_string_literal_spelling_suggestion(source, target)
+            .or_else(|| {
+                self.find_string_literal_spelling_suggestion(source, evaluated_target_for_ts2820)
+            });
+        if let Some(suggestion) = ts2820_suggestion {
+            // TSC uses the expanded union form (not the alias name) when emitting TS2820.
+            let expanded_target_str = self.format_type_diagnostic(evaluated_target_for_ts2820);
+            let display_target_str = if expanded_target_str != target_str {
+                &expanded_target_str
+            } else {
+                &target_str
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                &[&source_str, &target_str, &suggestion],
+                &[&source_str, display_target_str, &suggestion],
             );
             return Diagnostic::error(
                 file_name,
