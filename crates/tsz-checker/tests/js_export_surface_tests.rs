@@ -1630,6 +1630,45 @@ lib.bar = "nope";
 }
 
 #[test]
+fn test_define_property_export_requires_literal_name_cross_file() {
+    let diagnostics = check_commonjs_two_files(
+        "lib.js",
+        r#"
+const dynamicName = "other";
+const constName = "prop";
+Object.defineProperty(exports, "thing", { value: 42, writable: true });
+Object.defineProperty(exports, dynamicName, { value: 42, writable: true });
+Object.defineProperty(exports, constName, { value: 42, writable: true });
+"#,
+        "consumer.ts",
+        r#"
+import lib = require("./lib.js");
+lib.thing;
+lib.other;
+lib.prop;
+"#,
+        "./lib.js",
+    );
+
+    let thing_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, msg)| *c == 2339 && msg.contains("thing"))
+        .collect();
+    let dynamic_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, msg)| *c == 2339 && (msg.contains("other") || msg.contains("prop")))
+        .collect();
+    assert!(
+        thing_missing.is_empty(),
+        "Expected literal defineProperty export to stay visible, got: {diagnostics:#?}"
+    );
+    assert!(
+        dynamic_missing.len() == 2,
+        "Expected identifier-named defineProperty exports to stay hidden from cross-file surface, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_plain_object_define_property_augments_local_js_object_type() {
     let x_type = format_commonjs_single_file_symbol_type(
         "lib.js",
