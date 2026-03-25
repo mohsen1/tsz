@@ -1137,7 +1137,10 @@ class MyClass {
 }
 "#;
     let diagnostics = check_js(source);
-    let ts7053: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 7053).collect();
+    let ts7053: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053)
+        .collect();
     assert!(
         !ts7053.is_empty(),
         "Expected TS7053 for non-literal computed element assignment on `this`, got: {diagnostics:?}"
