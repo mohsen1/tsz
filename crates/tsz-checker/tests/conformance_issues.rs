@@ -9696,6 +9696,61 @@ module.exports.y
     );
 }
 
+#[test]
+fn test_js_constructor_branch_property_visible_cross_file() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "foo.js",
+                r#"
+class C {
+    constructor() {
+        if (cond) {
+            this.p = null;
+        } else {
+            this.p = 0;
+        }
+    }
+}
+"#,
+            ),
+            (
+                "bar.ts",
+                r#"
+(new C()).p = "string";
+"#,
+            ),
+        ],
+        "bar.ts",
+        CheckerOptions {
+            allow_js: true,
+            check_js: false,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected the JS constructor branch property to surface as a number property. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.is_empty(),
+        "Did not expect missing-property TS2339 once branch assignments are collected. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // =============================================================================
 // JSX Intrinsic Element Resolution (TS2339)
 // =============================================================================
