@@ -3185,6 +3185,24 @@ fn test_relation_outcome_has_property_classification() {
     );
 }
 
+/// Successful relation results should return a clean `RelationOutcome`
+/// with no leftover failure metadata attached.
+#[test]
+fn test_execute_relation_success_path_returns_clean_outcome() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read assignability.rs");
+
+    assert!(
+        source.contains("if related {")
+            && source.contains("related: true,")
+            && source.contains("failure: None,")
+            && source.contains("weak_union_violation: false,")
+            && source.contains("property_classification: None,"),
+        "execute_relation success path must return a clean RelationOutcome \
+         with no failure, weak-union, or property-classification residue"
+    );
+}
+
 /// The boundary must own the canonical excess-property suppression policy that
 /// used to be duplicated in checker-local failure analysis.
 #[test]
