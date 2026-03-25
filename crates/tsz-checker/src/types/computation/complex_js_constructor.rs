@@ -156,7 +156,12 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             // Non-generic: use standard property collection
-            self.collect_js_constructor_this_properties(body_idx, &mut properties, Some(sym_id));
+            self.collect_js_constructor_this_properties(
+                body_idx,
+                &mut properties,
+                Some(sym_id),
+                true,
+            );
         }
 
         // Also scan Foo.prototype.m = ... patterns for:
@@ -175,11 +180,16 @@ impl<'a> CheckerState<'a> {
 
             // Add this-properties from prototype methods (with | undefined)
             for (name, mut prop) in this_props {
-                if let std::collections::hash_map::Entry::Vacant(e) = properties.entry(name) {
-                    let factory = self.ctx.types.factory();
-                    prop.type_id = factory.union(vec![prop.type_id, TypeId::UNDEFINED]);
+                let factory = self.ctx.types.factory();
+                let widened_prop_type = factory.union(vec![prop.type_id, TypeId::UNDEFINED]);
+                if let Some(existing) = properties.get_mut(&name) {
+                    if existing.write_type == TypeId::ANY {
+                        existing.type_id = factory.union2(existing.type_id, widened_prop_type);
+                    }
+                } else {
+                    prop.type_id = widened_prop_type;
                     prop.write_type = prop.type_id;
-                    e.insert(prop);
+                    properties.insert(name, prop);
                 }
             }
 
@@ -190,6 +200,14 @@ impl<'a> CheckerState<'a> {
             ) {
                 has_prototype_evidence = true;
                 properties.entry(name).or_insert(prop);
+            }
+        }
+
+        for prop in properties.values_mut() {
+            if prop.write_type == TypeId::ANY
+                && (prop.type_id == TypeId::NULL || prop.type_id == TypeId::UNDEFINED)
+            {
+                prop.type_id = TypeId::ANY;
             }
         }
 

@@ -236,6 +236,7 @@ impl CheckerState<'_> {
         body_idx: NodeIndex,
         properties: &mut FxHashMap<Atom, PropertyInfo>,
         parent_sym: Option<SymbolId>,
+        emit_implicit_any: bool,
     ) {
         let top_level_stmts: Vec<NodeIndex> = {
             let Some(body_node) = self.ctx.arena.get(body_idx) else {
@@ -297,7 +298,6 @@ impl CheckerState<'_> {
             {
                 continue;
             }
-
             let is_readonly = self.jsdoc_has_readonly_tag(stmt_idx);
 
             if !rhs_idx.is_none() && self.js_assignment_rhs_is_void_zero(rhs_idx) {
@@ -321,6 +321,7 @@ impl CheckerState<'_> {
             // (JSDoc @type, or a parameter with @param {any}) vs a truly implicit one
             // (no RHS, or RHS is null/undefined without annotation).
             let mut any_is_explicit = false;
+            let mut provisional_open = false;
             let type_id = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
                 any_is_explicit = true;
                 jsdoc_type
@@ -341,9 +342,10 @@ impl CheckerState<'_> {
                         == Some(TypeId::NEVER)
                 {
                     rhs_type = self.ctx.types.factory().array(TypeId::ANY);
+                    provisional_open = true;
                 }
                 if rhs_type == TypeId::NULL || rhs_type == TypeId::UNDEFINED {
-                    rhs_type = TypeId::ANY;
+                    provisional_open = true;
                 } else if rhs_type == TypeId::ANY
                     || tsz_solver::type_queries::get_array_element_type(self.ctx.types, rhs_type)
                         == Some(TypeId::ANY)
@@ -416,7 +418,11 @@ impl CheckerState<'_> {
                 TypeId::ANY
             };
 
-            if self.ctx.no_implicit_any() && !any_is_explicit && !enclosing_has_this_tag {
+            if emit_implicit_any
+                && self.ctx.no_implicit_any()
+                && !any_is_explicit
+                && !enclosing_has_this_tag
+            {
                 let implicit_type = if type_id == TypeId::ANY {
                     Some("any")
                 } else if tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
@@ -429,15 +435,16 @@ impl CheckerState<'_> {
                 if let Some(implicit_type) = implicit_type {
                     let message =
                         format!("Member '{prop_name}' implicitly has an '{implicit_type}' type.");
+                    let implicit_anchor = stmt_idx;
                     let already_emitted = self.ctx.diagnostics.iter().any(|d| {
                         d.code
                             == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
-                            && d.start == self.ctx.arena.get(report_idx).map_or(0, |n| n.pos)
+                            && d.start == self.ctx.arena.get(implicit_anchor).map_or(0, |n| n.pos)
                             && d.message_text == message
                     });
                     if !already_emitted {
                         self.error_at_node_msg(
-                            report_idx,
+                            implicit_anchor,
                             crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
                             &[&prop_name, implicit_type],
                         );
@@ -445,7 +452,7 @@ impl CheckerState<'_> {
                 }
             }
 
-            if type_id == TypeId::UNDEFINED || type_id == TypeId::VOID {
+            if type_id == TypeId::VOID {
                 if let Some(parent_sym) = parent_sym
                     && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
                 {
@@ -460,6 +467,24 @@ impl CheckerState<'_> {
                 }
                 continue;
             }
+            if let Some(existing) = properties.get_mut(&name_atom) {
+                if existing.write_type == TypeId::ANY {
+                    if existing.type_id == TypeId::UNDEFINED && !provisional_open {
+                        existing.type_id = type_id;
+                        existing.write_type = type_id;
+                    } else {
+                        let merged = self.ctx.types.factory().union2(existing.type_id, type_id);
+                        existing.type_id = merged;
+                        existing.write_type = if provisional_open {
+                            TypeId::ANY
+                        } else {
+                            merged
+                        };
+                    }
+                    existing.readonly &= is_readonly;
+                }
+                continue;
+            }
 
             constructor_collected_props.insert(name_atom);
             properties.insert(
@@ -467,7 +492,11 @@ impl CheckerState<'_> {
                 PropertyInfo {
                     name: name_atom,
                     type_id,
-                    write_type: type_id,
+                    write_type: if provisional_open {
+                        TypeId::ANY
+                    } else {
+                        type_id
+                    },
                     optional: false,
                     readonly: is_readonly,
                     is_method: false,

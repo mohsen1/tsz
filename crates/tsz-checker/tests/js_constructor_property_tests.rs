@@ -1159,6 +1159,78 @@ function A() {
 }
 
 #[test]
+fn test_plain_js_function_constructor_provisional_writes_merge_like_salsa() {
+    let source = r#"
+function Installer () {
+    this.arg = 0;
+    this.unknown = null;
+    this.twice = undefined;
+    this.twice = 'hi';
+    this.twices = [];
+    this.twices = null;
+}
+Installer.prototype.first = function () {
+    this.arg = 'hi';
+    this.unknown = 'hi';
+    this.newProperty = 1;
+    this.twice = undefined;
+    this.twice = 'hi';
+}
+Installer.prototype.second = function () {
+    this.arg = false;
+    this.unknown = false;
+    this.newProperty = false;
+    this.twice = null;
+    this.twice = false;
+    this.twices.push(1);
+    if (this.twices != null) {
+        this.twices.push('hi');
+    }
+}
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.iter().filter(|&&code| code == 2322).count() >= 4,
+        "Expected string/bool/null assignment errors for closed constructor properties, got: {diagnostics:?}"
+    );
+    let ts7008_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7008)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+    assert!(
+        ts7008_messages
+            .iter()
+            .any(|msg| msg.contains("Member 'twices' implicitly has an 'any[]' type.")),
+        "Expected a constructor-origin TS7008 for twices, got: {diagnostics:?}"
+    );
+    assert!(
+        ts7008_messages
+            .iter()
+            .all(|msg| !msg.contains("Member 'twice' implicitly has an 'any' type.")),
+        "Expected no prototype-method TS7008 duplication for twice, got: {diagnostics:?}"
+    );
+    let push_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(_, msg)| msg.contains("Property 'push' does not exist on type 'any[]'."))
+        .collect();
+    assert_eq!(
+        push_errors.len(),
+        1,
+        "Expected the no-lib harness to collapse the pre-narrowing twices push into one missing-member error, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_function_constructor_with_factory_guard_is_constructable() {
     let source = r#"
 /** @param {number} x */

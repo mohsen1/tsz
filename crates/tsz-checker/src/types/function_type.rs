@@ -125,9 +125,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         func_idx: NodeIndex,
     ) -> Option<TypeId> {
-        use rustc_hash::FxHashMap;
-        use tsz_solver::{PropertyInfo, Visibility};
-
         let body_idx = self
             .ctx
             .arena
@@ -140,71 +137,8 @@ impl<'a> CheckerState<'a> {
                     Some(func.body)
                 }
             })?;
-        let body_node = self.ctx.arena.get(body_idx)?;
-        let block = self.ctx.arena.get_block(body_node)?;
-
-        let mut properties = FxHashMap::default();
-        for &stmt_idx in &block.statements.nodes {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
-                continue;
-            };
-
-            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                && let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
-                && binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
-                && let Some((prop_name, prop_type)) =
-                    self.js_constructor_body_this_assignment(binary.left, binary.right, stmt_idx)
-            {
-                let name_atom = self.ctx.types.intern_string(&prop_name);
-                let declaration_order = properties.len() as u32;
-                properties.entry(name_atom).or_insert(PropertyInfo {
-                    name: name_atom,
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order,
-                });
-                continue;
-            }
-
-            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
-                && let Some(obj_node) = self.ctx.arena.get(access.expression)
-                && obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
-                && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                && let Some(prop_type) = self.js_statement_declared_type(stmt_idx)
-            {
-                let name_atom = self.ctx.types.intern_string(&ident.escaped_text);
-                let declaration_order = properties.len() as u32;
-                properties.entry(name_atom).or_insert(PropertyInfo {
-                    name: name_atom,
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order,
-                });
-            }
-        }
+        let mut properties = rustc_hash::FxHashMap::default();
+        self.collect_js_constructor_this_properties(body_idx, &mut properties, None, false);
 
         if properties.is_empty() {
             None
@@ -216,29 +150,6 @@ impl<'a> CheckerState<'a> {
                     .object(properties.into_values().collect()),
             )
         }
-    }
-
-    fn js_constructor_body_this_assignment(
-        &mut self,
-        lhs_idx: NodeIndex,
-        rhs_idx: NodeIndex,
-        stmt_idx: NodeIndex,
-    ) -> Option<(String, TypeId)> {
-        let lhs_node = self.ctx.arena.get(lhs_idx)?;
-        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-        let access = self.ctx.arena.get_access_expr(lhs_node)?;
-        let obj_node = self.ctx.arena.get(access.expression)?;
-        if obj_node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16 {
-            return None;
-        }
-        let name_node = self.ctx.arena.get(access.name_or_argument)?;
-        let ident = self.ctx.arena.get_identifier(name_node)?;
-        let prop_type = self
-            .js_statement_declared_type(stmt_idx)
-            .unwrap_or_else(|| self.get_type_of_node(rhs_idx));
-        Some((ident.escaped_text.clone(), prop_type))
     }
 
     /// Get type of function declaration/expression/arrow.
