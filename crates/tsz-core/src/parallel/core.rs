@@ -2500,6 +2500,12 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         {
             if let Some(target_exports) = target_symbol.exports.as_ref() {
                 for (export_name, old_sym_id) in target_exports.iter() {
+                    // Skip "default" — the `export =` target itself IS the default
+                    // export. A static member named `default` (e.g. `static default: "foo"`)
+                    // must not shadow the `export=` symbol in module_exports.
+                    if export_name == "default" {
+                        continue;
+                    }
                     if let Some(&remapped_id) = id_remap.get(old_sym_id) {
                         exports.set(export_name.clone(), remapped_id);
                     }
@@ -2507,6 +2513,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             }
             if let Some(target_members) = target_symbol.members.as_ref() {
                 for (member_name, old_sym_id) in target_members.iter() {
+                    if member_name == "default" {
+                        continue;
+                    }
                     if let Some(&remapped_id) = id_remap.get(old_sym_id) {
                         exports.set(member_name.clone(), remapped_id);
                     }

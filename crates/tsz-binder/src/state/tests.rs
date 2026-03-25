@@ -443,6 +443,52 @@ export = x;
 }
 
 #[test]
+fn export_equals_class_static_default_not_in_file_locals() {
+    // A class with `static default: "foo"` exported via `export = Point`
+    // must NOT put the `default` static member into file_locals as `"default"`.
+    // Otherwise default-import resolution picks up the static member instead
+    // of the class constructor.
+    let source = r#"
+declare class Point {
+    x: number;
+    y: number;
+    constructor(x: number, y: number);
+    static default: "foo";
+}
+export = Point;
+"#;
+    let mut parser = ParserState::new("point.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // file_locals should have "export=" but NOT "default"
+    assert!(
+        binder.file_locals.has("export="),
+        "expected export= in file_locals"
+    );
+    assert!(
+        !binder.file_locals.has("default"),
+        "static member named 'default' must not leak into file_locals from export= target"
+    );
+
+    // module_exports should also not have "default"
+    let module_exports = binder
+        .module_exports
+        .get("point.d.ts")
+        .expect("expected cached module exports for file");
+    assert!(
+        module_exports.has("export="),
+        "expected export= in module_exports"
+    );
+    assert!(
+        !module_exports.has("default"),
+        "static member named 'default' must not appear in module_exports"
+    );
+}
+
+#[test]
 fn iife_no_flow_start_node() {
     // For a non-async, non-generator IIFE, the binder should NOT create a
     // FlowStart node for the function body. This means the IIFE body runs
