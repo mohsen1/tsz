@@ -394,10 +394,14 @@ var style: IBookStyle = {
         .find(|diag| diag.code == 2322)
         .unwrap_or_else(|| panic!("Expected TS2322, got diagnostics={diagnostics:?}"));
 
+    // tsc reports this at the function return type level ("...not assignable to type
+    // '(width: number) => NamedTransform[]'"), while tsz currently reports at the deeper
+    // property level ("Type 'null' is not assignable to type 'Transform3D'").
+    // Both are valid TS2322 diagnostics for this code — accept either elaboration depth.
     assert!(
         ts2322.message_text.contains("NamedTransform")
             || ts2322.message_text.contains("Transform3D"),
-        "Expected function-property diagnostic after elaboration, got {ts2322:?}"
+        "Expected type mismatch diagnostic, got {ts2322:?}"
     );
 }
 
