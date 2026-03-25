@@ -44,6 +44,12 @@ impl<'a> CheckerState<'a> {
             // TS1096 is already emitted by the parser.
         }
 
+        // If nearby syntax parse errors were emitted for this index signature,
+        // skip the remaining grammar-only diagnostics to match TypeScript behavior.
+        if self.node_has_nearby_parse_error(member_idx) {
+            has_grammar_error = true;
+        }
+
         let Some(param_node) = self.ctx.arena.get(param_idx) else {
             return;
         };
@@ -129,9 +135,7 @@ impl<'a> CheckerState<'a> {
         // TS1021: An index signature must have a type annotation.
         // This is the LAST grammar check in TSC's checkGrammarIndexSignatureParameters,
         // so it only fires when no earlier grammar error was found.
-        // Also suppressed when the file has parse errors (TSC skips grammar checks
-        // when parseDiagnostics.length > 0).
-        if index_sig.type_annotation.is_none() && !has_grammar_error && !self.has_parse_errors() {
+        if index_sig.type_annotation.is_none() && !has_grammar_error {
             self.error_at_node(
                 member_idx,
                 "An index signature must have a type annotation.",
