@@ -2331,3 +2331,24 @@ var x = <div></div><div></div>
         "Adjacent JSX recovery should not leak TS1109, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_jsx_type_arguments_in_js_report_ts2657() {
+    let source = r#"
+let x = <MyComp<Prop> a={10} b="hi" />;
+"#;
+    let mut parser = ParserState::new("file.jsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2657),
+        "Expected TS2657 for JSX type arguments in JS recovery, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&1003),
+        "Expected TS1003 alongside TS2657 for illegal JSX type-argument syntax, got diagnostics: {diagnostics:?}"
+    );
+}
