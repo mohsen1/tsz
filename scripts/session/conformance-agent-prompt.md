@@ -373,6 +373,7 @@ Before making code changes, capture a quick four-step decision trail:
 For every attempt, record in your working notes:
 - Selected test name
 - Which codes were `m` and/or `x`
+- The exact pre-fix diagnostic fingerprint(s) or diff evidence you are trying to change
 - The exact command/output used to pick the target
 - Why this target is single-file / low-surface-area
 - Define explicit pass/fail criteria for this attempt (including what change in `m`/`x` would count as success).
