@@ -327,17 +327,58 @@ impl ParserState {
         // checks (e.g., TS2322) can still run without parser cascade noise.
         if self.is_token(SyntaxKind::QuestionToken) {
             let q_start = self.token_pos();
-            let q_end = self.token_end();
             self.next_token(); // consume '?'
             let inner_type = self.parse_primary_type();
-            // Build the suggestion: `T | undefined` where T is whatever follows
-            let msg = "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'T | undefined'?";
+            let (diag_end, suggested) = if let Some(node) = self.arena.get(inner_type) {
+                (
+                    node.end,
+                    self.scanner
+                        .source_slice(node.pos as usize, node.end as usize)
+                        .to_string(),
+                )
+            } else {
+                (self.token_pos(), String::from("T"))
+            };
+            let msg = format!(
+                "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggested} | null | undefined'?"
+            );
             self.parse_error_at(
                 q_start,
-                q_end - q_start,
-                msg,
+                diag_end - q_start,
+                &msg,
                 tsz_common::diagnostics::diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
             );
+            if let Some(node) = self.arena.get_mut(inner_type) {
+                node.pos = q_start;
+            }
+            return inner_type;
+        }
+        if self.is_token(SyntaxKind::ExclamationToken) {
+            let bang_start = self.token_pos();
+            self.next_token(); // consume '!'
+            let inner_type = self.parse_primary_type();
+            let (diag_end, suggested) = if let Some(node) = self.arena.get(inner_type) {
+                (
+                    node.end,
+                    self.scanner
+                        .source_slice(node.pos as usize, node.end as usize)
+                        .to_string(),
+                )
+            } else {
+                (self.token_pos(), String::from("T"))
+            };
+            let msg = format!(
+                "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggested}'?"
+            );
+            self.parse_error_at(
+                bang_start,
+                diag_end - bang_start,
+                &msg,
+                tsz_common::diagnostics::diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
+            );
+            if let Some(node) = self.arena.get_mut(inner_type) {
+                node.pos = bang_start;
+            }
             return inner_type;
         }
 
@@ -524,19 +565,55 @@ impl ParserState {
             self.current_token = saved_token;
 
             if !next_can_start_type {
-                let q_start = self.token_pos();
                 let q_end = self.token_end();
+                let (diag_start, suggested) = if let Some(node) = self.arena.get(base_type) {
+                    (
+                        node.pos,
+                        self.scanner
+                            .source_slice(node.pos as usize, node.end as usize)
+                            .to_string(),
+                    )
+                } else {
+                    (start_pos, String::from("T"))
+                };
                 self.next_token(); // consume '?'
-                let msg = "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'T | undefined'?";
+                let msg = format!(
+                    "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggested} | undefined'?"
+                );
                 self.parse_error_at(
-                    q_start,
-                    q_end - q_start,
-                    msg,
+                    diag_start,
+                    q_end - diag_start,
+                    &msg,
                     tsz_common::diagnostics::diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
                 );
                 // Recurse to handle `T?[]` (postfix ? followed by array suffix)
                 return self.parse_primary_type_array_suffix(start_pos, base_type);
             }
+        }
+
+        if self.is_token(SyntaxKind::ExclamationToken) && !self.scanner.has_preceding_line_break() {
+            let bang_end = self.token_end();
+            let (diag_start, suggested) = if let Some(node) = self.arena.get(base_type) {
+                (
+                    node.pos,
+                    self.scanner
+                        .source_slice(node.pos as usize, node.end as usize)
+                        .to_string(),
+                )
+            } else {
+                (start_pos, String::from("T"))
+            };
+            self.next_token(); // consume '!'
+            let msg = format!(
+                "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggested}'?"
+            );
+            self.parse_error_at(
+                diag_start,
+                bang_end - diag_start,
+                &msg,
+                tsz_common::diagnostics::diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
+            );
+            return self.parse_primary_type_array_suffix(start_pos, base_type);
         }
 
         base_type

@@ -2441,3 +2441,24 @@ for (let in [1,2,3]) {}
         "Expected TS1005/TS1181/TS1005/TS1128 recovery for `for (let of [...])`, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_invalid_nonnullable_type_recovery_reports_ts17019_and_ts17020() {
+    let source = r#"
+function f1(a: string): a is string! { return true; }
+function f2(a: string): a is !string { return true; }
+const a = 1 as any!;
+const b = 1 as !any;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![17019, 17020, 17019, 17020],
+        "Expected TS17019/TS17020 recovery for invalid non-nullable type syntax, got diagnostics: {diagnostics:?}"
+    );
+}
