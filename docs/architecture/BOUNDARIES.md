@@ -401,6 +401,17 @@ Emitter consumes checked facts and produces output.
 
 When emit behavior requires large amounts of fresh semantic rediscovery, the semantic boundary is usually too weak upstream.
 
+### 13.3 Resolver/Driver/Emit Coordination
+
+Node-style module behavior is its own coordination lane:
+
+1. Resolver should own module-not-found family diagnostic selection for Node/package exports and extension rules.
+2. Driver should own per-file resolution context such as ESM vs CJS format facts and import-mode inputs.
+3. Checker may consume those facts and orchestrate diagnostics, but should not become the long-term source of fallback module-mode heuristics.
+4. Declaration emit should reuse preserved resolution facts instead of re-deriving NodeNext/package semantics late.
+
+This work has real ROI, but it is not the same as core semantic relation unification.
+
 ---
 
 ## 14. Large-Repo / Incremental Boundary
