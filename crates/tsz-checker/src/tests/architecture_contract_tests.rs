@@ -3089,6 +3089,15 @@ fn test_assignability_checker_has_execute_relation_request() {
         source.contains("self.ctx.sound_mode(),"),
         "execute_relation_request must pass checker sound_mode into the boundary"
     );
+    assert!(
+        source.contains("&self.ctx.inheritance_graph,"),
+        "execute_relation_request must pass the checker inheritance graph into the boundary"
+    );
+    assert!(
+        source.contains("Some(&self.ctx),"),
+        "execute_relation_request must pass checker context into the boundary \
+         for structured failure analysis"
+    );
 }
 
 /// `assignability_diagnostics.rs` diagnostic paths must use the relation
