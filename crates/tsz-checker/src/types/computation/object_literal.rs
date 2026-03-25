@@ -1953,8 +1953,8 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             for (name, required) in &always_required {
-                                if *required {
-                                    if let Some((prop_node, prop_name)) =
+                                if *required
+                                    && let Some((prop_node, prop_name)) =
                                         named_property_nodes.get(name)
                                     {
                                         let message = format_message(
@@ -1967,10 +1967,9 @@ impl<'a> CheckerState<'a> {
                                             diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
                                         );
                                     }
-                                }
                             }
                             // Clear named-property tracking for overwritten props
-                            for (name, _) in &always_required {
+                            for name in always_required.keys() {
                                 named_property_nodes.remove(name);
                             }
                         }
