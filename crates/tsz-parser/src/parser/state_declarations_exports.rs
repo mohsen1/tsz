@@ -1201,8 +1201,9 @@ impl ParserState {
 
     pub(crate) fn parse_for_variable_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
-        let (_, flags) = self.parse_for_variable_declaration_declaration_keyword();
-        let declarations = self.parse_for_variable_declarations();
+        let (declaration_keyword, flags) =
+            self.parse_for_variable_declaration_declaration_keyword();
+        let declarations = self.parse_for_variable_declarations(declaration_keyword);
         let declarations_list = self.make_node_list(declarations);
         let end_pos = self.token_end();
 
@@ -1242,8 +1243,11 @@ impl ParserState {
         (decl_keyword, flags)
     }
 
-    fn parse_for_variable_declarations(&mut self) -> Vec<NodeIndex> {
-        if self.is_for_variable_declaration_empty() {
+    fn parse_for_variable_declarations(
+        &mut self,
+        declaration_keyword: SyntaxKind,
+    ) -> Vec<NodeIndex> {
+        if self.is_for_variable_declaration_empty(declaration_keyword) {
             let pos = self.token_full_start();
             self.parse_error_at(
                 pos,
@@ -1257,7 +1261,7 @@ impl ParserState {
 
         let mut declarations = Vec::new();
         loop {
-            declarations.push(self.parse_for_variable_declaration_entry());
+            declarations.push(self.parse_for_variable_declaration_entry(declaration_keyword));
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 break;
             }
@@ -1265,13 +1269,21 @@ impl ParserState {
         declarations
     }
 
-    fn parse_for_variable_declaration_entry(&mut self) -> NodeIndex {
+    fn parse_for_variable_declaration_entry(
+        &mut self,
+        declaration_keyword: SyntaxKind,
+    ) -> NodeIndex {
         let decl_start = self.token_pos();
 
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
+        } else if declaration_keyword != SyntaxKind::VarKeyword
+            && (self.is_token(SyntaxKind::InKeyword) || self.is_token(SyntaxKind::OfKeyword))
+        {
+            self.error_array_element_destructuring_pattern_expected();
+            NodeIndex::NONE
         } else if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
         } else {
@@ -1308,7 +1320,11 @@ impl ParserState {
         )
     }
 
-    fn is_for_variable_declaration_empty(&mut self) -> bool {
+    fn is_for_variable_declaration_empty(&mut self, declaration_keyword: SyntaxKind) -> bool {
+        if declaration_keyword != SyntaxKind::VarKeyword {
+            return false;
+        }
+
         if self.is_token(SyntaxKind::InKeyword) {
             return true;
         }
