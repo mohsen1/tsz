@@ -208,6 +208,33 @@ xx = (xx ? 3 : 4, 10);
 }
 
 #[test]
+fn test_regex_extended_unicode_escape_without_u_or_v_reports_ts1538() {
+    let source = r#"
+const regexes: RegExp[] = [
+  /\u{10000}[\u{10000}]/,
+  /\u{10000}[\u{10000}]/u,
+  /\u{10000}[\u{10000}]/v,
+];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1538_count = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::UNICODE_ESCAPE_SEQUENCES_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR_THE_UNICO
+        })
+        .count();
+
+    assert_eq!(
+        ts1538_count, 2,
+        "Expected exactly two TS1538 diagnostics for regexes without /u or /v, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_conditional_object_literal_true_branch_is_not_treated_as_missing_arrow() {
     let source = r#"
 var value = (Math.random() ? {} : null);
