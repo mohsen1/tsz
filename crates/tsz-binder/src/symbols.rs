@@ -210,7 +210,11 @@ impl Symbol {
     }
 
     /// Record the symbol's value declaration and stable source span.
-    pub fn set_value_declaration(&mut self, declaration: NodeIndex, span: Option<(u32, u32)>) {
+    pub const fn set_value_declaration(
+        &mut self,
+        declaration: NodeIndex,
+        span: Option<(u32, u32)>,
+    ) {
         self.value_declaration = declaration;
         self.value_declaration_span = span;
         if self.first_declaration_span.is_none() {

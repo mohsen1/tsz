@@ -556,6 +556,82 @@ impl<'a> CheckerState<'a> {
         if expected == TypeId::ERROR {
             return None;
         }
+        if crate::query_boundaries::common::index_access_types(self.ctx.types, expected).is_some()
+            || crate::query_boundaries::common::type_application(self.ctx.types, expected).is_some()
+        {
+            let evaluated = self.evaluate_type_with_env(expected);
+            if evaluated != expected {
+                return self.contextual_parameter_type_for_call_with_env_from_expected(
+                    evaluated, index, arg_count,
+                );
+            }
+        }
+        let evaluated_expected = self.evaluate_contextual_type(expected);
+        if evaluated_expected != expected {
+            return self.contextual_parameter_type_for_call_with_env_from_expected(
+                evaluated_expected,
+                index,
+                arg_count,
+            );
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, expected)
+        {
+            let union_has_direct_call_signatures =
+                crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, expected)
+                    .is_some();
+            let evaluated_members: Vec<_> = members
+                .iter()
+                .map(|&member| (member, self.evaluate_type_with_env(member)))
+                .collect();
+            let has_evaluated_members = evaluated_members
+                .iter()
+                .any(|(member, evaluated)| member != evaluated);
+            if has_evaluated_members || !union_has_direct_call_signatures {
+                let contextual_members: Vec<_> = evaluated_members
+                    .into_iter()
+                    .filter_map(|(member, evaluated_member)| {
+                        let target_member = if evaluated_member != member {
+                            evaluated_member
+                        } else {
+                            member
+                        };
+                        if evaluated_member != member {
+                            self.contextual_parameter_type_for_call_with_env_from_expected(
+                                target_member,
+                                index,
+                                arg_count,
+                            )
+                            .or_else(|| {
+                                self.contextual_mixed_overload_param_type_for_call(
+                                    target_member,
+                                    index,
+                                    arg_count,
+                                )
+                            })
+                        } else if !union_has_direct_call_signatures {
+                            self.contextual_mixed_overload_param_type_for_call(
+                                target_member,
+                                index,
+                                arg_count,
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                return match contextual_members.len() {
+                    0 => None,
+                    1 => Some(contextual_members[0]),
+                    _ => Some(
+                        self.ctx
+                            .types
+                            .factory()
+                            .union_preserve_members(contextual_members),
+                    ),
+                };
+            }
+        }
         if let Some(rest_tuple_type) =
             self.contextual_rest_tuple_parameter_type(expected, index, false)
         {
@@ -626,9 +702,41 @@ impl<'a> CheckerState<'a> {
             return self.normalize_contextual_signature_with_env(constraint);
         }
 
-        if tsz_solver::is_union_type(self.ctx.types, expected)
-            || tsz_solver::is_intersection_type(self.ctx.types, expected)
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, expected)
         {
+            let normalized_members: Vec<_> = members
+                .iter()
+                .map(|&member| self.normalize_contextual_signature_with_env(member))
+                .collect();
+            if normalized_members
+                .iter()
+                .zip(members.iter())
+                .any(|(normalized, original)| normalized != original)
+            {
+                return self
+                    .ctx
+                    .types
+                    .factory()
+                    .union_preserve_members(normalized_members);
+            }
+            return expected;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, expected)
+        {
+            let normalized_members: Vec<_> = members
+                .iter()
+                .map(|&member| self.normalize_contextual_signature_with_env(member))
+                .collect();
+            if normalized_members
+                .iter()
+                .zip(members.iter())
+                .any(|(normalized, original)| normalized != original)
+            {
+                return self.ctx.types.factory().intersection(normalized_members);
+            }
             return expected;
         }
 
