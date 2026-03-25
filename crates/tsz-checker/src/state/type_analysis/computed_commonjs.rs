@@ -1599,6 +1599,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         target_file_idx: usize,
         props: &mut Vec<tsz_solver::PropertyInfo>,
+        start_statement_ordinal: Option<usize>,
     ) {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let Some(source_file) = target_arena.source_files.first() else {
@@ -1613,7 +1614,10 @@ impl<'a> CheckerState<'a> {
         // In CommonJS files, `exports.X = value` inside IIFEs like `(function() { ... })()`
         // are valid export declarations (tsc recognizes them regardless of scope).
         let mut all_stmts: Vec<NodeIndex> = Vec::new();
-        for &stmt_idx in &source_file.statements.nodes {
+        for (stmt_ordinal, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+            if start_statement_ordinal.is_some_and(|start| stmt_ordinal < start) {
+                continue;
+            }
             all_stmts.push(stmt_idx);
             // Check if this statement is an IIFE and extract its body statements
             if let Some(stmt_node) = target_arena.get(stmt_idx)
@@ -1707,6 +1711,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         target_file_idx: usize,
         props: &mut Vec<tsz_solver::PropertyInfo>,
+        start_statement_ordinal: Option<usize>,
     ) {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let Some(source_file) = target_arena.source_files.first() else {
@@ -1714,7 +1719,10 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut pending = Vec::new();
-        for &stmt_idx in &source_file.statements.nodes {
+        for (stmt_ordinal, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+            if start_statement_ordinal.is_some_and(|start| stmt_ordinal < start) {
+                continue;
+            }
             let Some(stmt_node) = target_arena.get(stmt_idx) else {
                 continue;
             };
@@ -1813,16 +1821,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(crate) fn augment_namespace_props_with_commonjs_exports_for_file(
+    pub(crate) fn augment_namespace_props_with_commonjs_exports_for_file_after(
         &mut self,
         target_file_idx: usize,
         props: &mut Vec<tsz_solver::PropertyInfo>,
+        start_statement_ordinal: Option<usize>,
     ) {
         self.augment_namespace_props_with_direct_assignment_exports_for_file(
             target_file_idx,
             props,
+            start_statement_ordinal,
         );
-        self.augment_namespace_props_with_define_property_exports_for_file(target_file_idx, props);
+        self.augment_namespace_props_with_define_property_exports_for_file(
+            target_file_idx,
+            props,
+            start_statement_ordinal,
+        );
     }
 
     pub(crate) fn commonjs_module_value_type(
@@ -1889,8 +1903,10 @@ impl<'a> CheckerState<'a> {
                 for (order, prop) in named_exports.iter_mut().enumerate() {
                     prop.declaration_order = order as u32;
                 }
-                if export_equals_type.is_none() {
-                    export_equals_type = surface.as_ref().and_then(|s| s.direct_export_type);
+                if let Some(surface_direct_type) =
+                    surface.as_ref().and_then(|s| s.direct_export_type)
+                {
+                    export_equals_type = Some(surface_direct_type);
                 }
                 named_exports
             } else {
@@ -1947,20 +1963,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let namespace_type = factory.object(props);
-            let display_module_name =
-                self.resolve_namespace_display_module_name(&exports_table, module_name);
-            self.ctx
-                .namespace_module_names
-                .insert(namespace_type, display_module_name);
+            let has_named_props = !props.is_empty();
+            let namespace_type = has_named_props.then(|| {
+                let namespace_type = factory.object(props);
+                let display_module_name =
+                    self.resolve_namespace_display_module_name(&exports_table, module_name);
+                self.ctx
+                    .namespace_module_names
+                    .insert(namespace_type, display_module_name);
+                namespace_type
+            });
             if let Some(export_equals_type) = export_equals_type {
                 if module_is_non_module_entity {
                     return Some(export_equals_type);
                 }
-                return Some(factory.intersection2(export_equals_type, namespace_type));
+                return Some(
+                    namespace_type
+                        .map(|namespace_type| {
+                            factory.intersection2(export_equals_type, namespace_type)
+                        })
+                        .unwrap_or(export_equals_type),
+                );
             }
 
-            return Some(namespace_type);
+            return namespace_type;
         }
 
         // Use the unified JS export surface for the no-export-table fallback.

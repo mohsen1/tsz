@@ -119,6 +119,145 @@ impl JsExportSurface {
 }
 
 impl<'a> CheckerState<'a> {
+    fn last_direct_module_export_assignment_for_file(
+        &self,
+        target_file_idx: usize,
+    ) -> Option<(usize, tsz_parser::parser::NodeIndex)> {
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let source_file = target_arena.source_files.first()?;
+        let mut last = None;
+
+        for (stmt_ordinal, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            let rhs_expr = if stmt_node.kind
+                == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+            {
+                target_arena
+                    .get_expression_statement(stmt_node)
+                    .and_then(|stmt| {
+                        self.direct_commonjs_module_export_assignment_rhs(
+                            target_arena,
+                            stmt.expression,
+                        )
+                    })
+            } else if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
+                self.direct_commonjs_module_export_rhs_from_variable_statement(
+                    target_arena,
+                    stmt_idx,
+                )
+            } else {
+                None
+            };
+
+            if let Some(rhs_expr) = rhs_expr {
+                last = Some((stmt_ordinal, rhs_expr));
+            }
+        }
+
+        last
+    }
+
+    fn direct_module_export_object_literal_seed_props(
+        &mut self,
+        direct_export_type: TypeId,
+    ) -> Vec<PropertyInfo> {
+        let shape = crate::query_boundaries::checkers::generic::get_object_shape(
+            self.ctx.types,
+            direct_export_type,
+        )
+        .map(|shape| shape.as_ref().clone())
+        .or_else(|| {
+            let widened = crate::query_boundaries::common::widen_freshness(
+                self.ctx.types,
+                direct_export_type,
+            );
+            crate::query_boundaries::checkers::generic::get_object_shape(self.ctx.types, widened)
+                .map(|shape| shape.as_ref().clone())
+        });
+        let Some(shape) = shape else {
+            return Vec::new();
+        };
+
+        shape
+            .properties
+            .into_iter()
+            .enumerate()
+            .map(|(idx, mut prop)| {
+                prop.optional = true;
+                prop.declaration_order = idx as u32;
+                prop
+            })
+            .collect()
+    }
+
+    fn all_direct_module_export_object_literal_seed_props_for_file(
+        &mut self,
+        target_file_idx: usize,
+    ) -> Vec<PropertyInfo> {
+        use rustc_hash::FxHashMap;
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        let Some(source_file) = target_arena.source_files.first() else {
+            return Vec::new();
+        };
+
+        let mut rhs_exprs = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            let rhs_expr = if stmt_node.kind
+                == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+            {
+                target_arena
+                    .get_expression_statement(stmt_node)
+                    .and_then(|stmt| {
+                        self.direct_commonjs_module_export_assignment_rhs(
+                            &target_arena,
+                            stmt.expression,
+                        )
+                    })
+            } else if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
+                self.direct_commonjs_module_export_rhs_from_variable_statement(
+                    &target_arena,
+                    stmt_idx,
+                )
+            } else {
+                None
+            };
+
+            if let Some(rhs_expr) = rhs_expr {
+                rhs_exprs.push(rhs_expr);
+            }
+        }
+
+        let mut pending: FxHashMap<tsz_common::Atom, PropertyInfo> = FxHashMap::default();
+        let mut ordered_names = Vec::new();
+
+        for rhs_expr in rhs_exprs {
+            let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
+            for prop in self.direct_module_export_object_literal_seed_props(rhs_type) {
+                if !pending.contains_key(&prop.name) {
+                    ordered_names.push(prop.name);
+                }
+                pending.insert(prop.name, prop);
+            }
+        }
+
+        ordered_names
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, name)| {
+                pending.remove(&name).map(|mut prop| {
+                    prop.declaration_order = idx as u32;
+                    prop
+                })
+            })
+            .collect()
+    }
+
     /// Main entry point: resolve the complete JS export surface for a target file.
     ///
     /// This is the ONE AUTHORITY for synthesizing JS/CommonJS export shapes.
@@ -132,7 +271,22 @@ impl<'a> CheckerState<'a> {
             return cached.clone();
         }
 
+        // Guard against self-recursive synthesis. This can happen when typing
+        // `module.exports` asks for the current file's export surface while the
+        // same surface is still being derived from `Object.defineProperty(...)`
+        // calls in that file.
+        if !self
+            .ctx
+            .js_export_surface_in_progress
+            .insert(target_file_idx)
+        {
+            return JsExportSurface::empty();
+        }
+
         let surface = self.compute_js_export_surface(target_file_idx);
+        self.ctx
+            .js_export_surface_in_progress
+            .remove(&target_file_idx);
 
         // Cache the result
         self.ctx
@@ -213,12 +367,24 @@ impl<'a> CheckerState<'a> {
     fn compute_js_export_surface(&mut self, target_file_idx: usize) -> JsExportSurface {
         let mut surface = JsExportSurface::empty();
 
-        // 1. Collect direct `module.exports = X` assignment
-        surface.direct_export_type = self.compute_direct_module_export_type(target_file_idx);
+        let last_direct_export =
+            self.last_direct_module_export_assignment_for_file(target_file_idx);
 
-        // 2. Collect named property exports (`exports.foo = ...`, `module.exports.foo = ...`)
-        let mut props = Vec::new();
-        self.augment_namespace_props_with_commonjs_exports_for_file(target_file_idx, &mut props);
+        // 1. Collect direct `module.exports = X` assignment
+        surface.direct_export_type = last_direct_export
+            .map(|(_, rhs_expr)| self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr))
+            .filter(|&rhs_type| rhs_type != TypeId::UNDEFINED);
+
+        // 2. Seed named exports from a direct object-like export, then collect later
+        // property exports (`exports.foo = ...`, `module.exports.foo = ...`) that
+        // augment the final export object after the last full `module.exports = ...`.
+        let mut props =
+            self.all_direct_module_export_object_literal_seed_props_for_file(target_file_idx);
+        self.augment_namespace_props_with_commonjs_exports_for_file_after(
+            target_file_idx,
+            &mut props,
+            None,
+        );
         surface.named_exports = props;
 
         // 3. Collect prototype property assignments for constructor functions
@@ -241,14 +407,22 @@ impl<'a> CheckerState<'a> {
             let Some(stmt_node) = target_arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind != tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT {
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT {
+                let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                    continue;
+                };
+                if let Some(found_rhs) =
+                    self.direct_commonjs_module_export_assignment_rhs(target_arena, stmt.expression)
+                {
+                    rhs_expr = Some(found_rhs);
+                    continue;
+                }
+            }
+            if stmt_node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
                 continue;
             }
-            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            if let Some(found_rhs) =
-                self.direct_commonjs_module_export_assignment_rhs(target_arena, stmt.expression)
+            if let Some(found_rhs) = self
+                .direct_commonjs_module_export_rhs_from_variable_statement(target_arena, stmt_idx)
             {
                 rhs_expr = Some(found_rhs);
             }
@@ -257,6 +431,34 @@ impl<'a> CheckerState<'a> {
         let rhs_expr = rhs_expr?;
         let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None);
         (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
+    }
+
+    fn direct_commonjs_module_export_rhs_from_variable_statement(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        stmt_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<tsz_parser::parser::NodeIndex> {
+        let stmt_node = arena.get(stmt_idx)?;
+        let var_stmt = arena.get_variable(stmt_node)?;
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let decl_list_node = arena.get(decl_list_idx)?;
+            let decl_list = arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = arena.get(decl_idx)?;
+                let decl = arena.get_variable_declaration(decl_node)?;
+                if decl.initializer.is_none() {
+                    continue;
+                }
+                if let Some(found_rhs) =
+                    self.direct_commonjs_module_export_assignment_rhs(arena, decl.initializer)
+                {
+                    return Some(found_rhs);
+                }
+            }
+        }
+
+        None
     }
 
     /// Collect prototype property assignments for constructor functions exported from a file.

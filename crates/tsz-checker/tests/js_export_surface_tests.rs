@@ -196,6 +196,127 @@ lib.b;
 }
 
 #[test]
+fn test_require_call_resolves_module_exports_class_property_object_literal() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+module.exports = {
+    Baz: class { }
+};
+"#,
+        "use.js",
+        r#"
+var mod = require("./mod1.js");
+new mod.Baz();
+"#,
+        "./mod1.js",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'Baz'"))
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for require() of module.exports object literal class property, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_require_call_prefers_last_module_exports_object_literal_over_earlier_exports_writes() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+exports.Bar = class { };
+module.exports = {
+    Baz: class { }
+};
+"#,
+        "use.js",
+        r#"
+var mod = require("./mod1.js");
+new mod.Baz();
+"#,
+        "./mod1.js",
+    );
+
+    let baz_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'Baz'"))
+        .collect();
+    assert!(
+        baz_missing.is_empty(),
+        "Expected no TS2339 for require() after module.exports overwrite, got: {baz_missing:#?}"
+    );
+}
+
+#[test]
+fn test_require_call_uses_unified_surface_when_jsdoc_typedefs_merge_with_commonjs_exports() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+/** @typedef {number} Bar */
+exports.Bar = class { };
+
+/** @typedef {number} Baz */
+module.exports = {
+    Baz: class { }
+};
+"#,
+        "use.js",
+        r#"
+var mod = require("./mod1.js");
+/** @type {mod.Baz} */
+var bb;
+new mod.Baz();
+"#,
+        "./mod1.js",
+    );
+
+    let baz_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'Baz'"))
+        .collect();
+    assert!(
+        baz_missing.is_empty(),
+        "Expected no TS2339 for require() when JSDoc typedefs merge with CommonJS exports, got: {baz_missing:#?}"
+    );
+}
+
+#[test]
+fn test_require_call_preserves_earlier_direct_export_object_members_as_optional_namespace_props() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+/** @typedef {number} Baz */
+module.exports = {
+    Baz: class { }
+};
+
+/** @typedef {number} Quack */
+module.exports = {
+    Quack: 2
+};
+"#,
+        "use.js",
+        r#"
+var mod = require("./mod1.js");
+new mod.Baz();
+"#,
+        "./mod1.js",
+    );
+
+    let baz_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'Baz'"))
+        .collect();
+    assert!(
+        baz_missing.is_empty(),
+        "Expected no TS2339 for earlier direct-export object members after later overwrite, got: {baz_missing:#?}"
+    );
+}
+
+#[test]
 fn test_module_exports_function() {
     // module.exports = function greet() { return "hi"; }
     let diagnostics = check_commonjs_two_files(
@@ -711,6 +832,108 @@ var b = lib.y;
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for module.exports = new Foo(), got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_module_exports_instance_with_late_property_writes() {
+    let diagnostics = check_commonjs_two_files(
+        "npmlog.js",
+        r#"
+class EE {
+    on(s) { }
+}
+var npmlog = module.exports = new EE();
+npmlog.x = 1;
+module.exports.y = 2;
+"#,
+        "use.ts",
+        r#"
+import npmlog = require("./npmlog.js");
+npmlog.x;
+npmlog.y;
+npmlog.on;
+"#,
+        "./npmlog.js",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, msg)| {
+            *c == 2339 && (msg.contains("'x'") || msg.contains("'y'") || msg.contains("'on'"))
+        })
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for instance export + late property writes, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_module_exports_instance_with_late_property_writes_js_require() {
+    let diagnostics = check_commonjs_two_files(
+        "npmlog.js",
+        r#"
+class EE {
+    on(s) { }
+}
+var npmlog = module.exports = new EE();
+npmlog.x = 1;
+module.exports.y = 2;
+"#,
+        "use.js",
+        r#"
+var npmlog = require("./npmlog.js");
+npmlog.x;
+npmlog.y;
+npmlog.on;
+"#,
+        "./npmlog.js",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, msg)| {
+            *c == 2339 && (msg.contains("'x'") || msg.contains("'y'") || msg.contains("'on'"))
+        })
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for JS require() of instance export + late property writes, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_module_exports_instance_with_late_property_writes_js_require_no_extension() {
+    let diagnostics = check_commonjs_two_files(
+        "npmlog.js",
+        r#"
+class EE {
+    on(s) { }
+}
+var npmlog = module.exports = new EE();
+npmlog.x = 1;
+module.exports.y = 2;
+"#,
+        "use.js",
+        r#"
+var npmlog = require("./npmlog");
+npmlog.x;
+npmlog.y;
+npmlog.on;
+"#,
+        "./npmlog",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, msg)| {
+            *c == 2339 && (msg.contains("'x'") || msg.contains("'y'") || msg.contains("'on'"))
+        })
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for extensionless JS require() of instance export + late property writes, got: {ts2339:#?}"
     );
 }
 
