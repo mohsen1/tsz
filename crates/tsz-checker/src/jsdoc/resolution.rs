@@ -18,6 +18,8 @@ use super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{
     FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId,
     TypePredicate, TypePredicateTarget, Visibility,
@@ -904,6 +906,86 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn resolve_jsdoc_commonjs_binding_element_type(
+        &mut self,
+        value_decl: NodeIndex,
+        local_name: &str,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(value_decl)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let be_idx = self.ctx.arena.get_extended(value_decl)?.parent;
+        let be_node = self.ctx.arena.get(be_idx)?;
+        if be_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return None;
+        }
+        let be_data = self.ctx.arena.get_binding_element(be_node)?;
+
+        let pat_idx = self.ctx.arena.get_extended(be_idx)?.parent;
+        let pat_node = self.ctx.arena.get(pat_idx)?;
+        if pat_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+
+        let var_decl_idx = self.ctx.arena.get_extended(pat_idx)?.parent;
+        let var_decl_node = self.ctx.arena.get(var_decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(var_decl_node)?;
+        if !var_decl.initializer.is_some() {
+            return None;
+        }
+
+        let module_specifier = self.get_require_module_specifier(var_decl.initializer)?;
+        let export_name = if be_data.property_name.is_some() {
+            self.get_identifier_text_from_idx(be_data.property_name)?
+        } else {
+            local_name.to_string()
+        };
+
+        let export_type = self.resolve_js_export_named_type(
+            &module_specifier,
+            &export_name,
+            Some(self.ctx.current_file_idx),
+        );
+        if let Some(export_type) = export_type {
+            if let Some(instance_type) = self.instance_type_from_constructor_type(export_type) {
+                return Some(instance_type);
+            }
+            if export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN {
+                return Some(export_type);
+            }
+        }
+
+        let export_sym_id = self
+            .resolve_cross_file_export_from_file(
+                &module_specifier,
+                &export_name,
+                Some(self.ctx.current_file_idx),
+            )
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(&module_specifier)
+                    .and_then(|exports| exports.get(&export_name))
+            })
+            .or_else(|| {
+                self.resolve_named_export_via_export_equals(&module_specifier, &export_name)
+            })
+            .or_else(|| {
+                let mut visited_aliases = Vec::new();
+                self.resolve_reexported_member_symbol(
+                    &module_specifier,
+                    &export_name,
+                    &mut visited_aliases,
+                )
+            })?;
+
+        let export_type = self.resolve_jsdoc_symbol_type(export_sym_id);
+        (export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN).then_some(export_type)
+    }
+
     pub(super) fn resolve_jsdoc_symbol_type(&mut self, sym_id: tsz_binder::SymbolId) -> TypeId {
         let Some(symbol) = self
             .get_cross_file_symbol(sym_id)
@@ -956,11 +1038,19 @@ impl<'a> CheckerState<'a> {
             & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
             != 0
         {
+            if symbol.value_declaration.is_some()
+                && let Some(instance_type) = self.resolve_jsdoc_commonjs_binding_element_type(
+                    symbol.value_declaration,
+                    symbol.escaped_name.as_str(),
+                )
+            {
+                return instance_type;
+            }
             let value_type = self.get_type_of_symbol(sym_id);
-            // Return the value type directly, matching TSC's getTypeFromJSDocValueReference
-            // which calls getTypeOfSymbol without instance type extraction.
-            // Instance type extraction for JS constructor functions is handled by the
-            // FUNCTION branch above via synthesize_js_constructor_instance_type.
+            if let Some(instance_type) = self.instance_type_from_constructor_type(value_type) {
+                return instance_type;
+            }
+            // Fall back to the raw value type for non-constructor variables.
             if value_type != TypeId::ERROR && value_type != TypeId::UNKNOWN {
                 return value_type;
             }
