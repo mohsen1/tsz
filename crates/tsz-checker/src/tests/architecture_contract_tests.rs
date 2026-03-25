@@ -3203,6 +3203,24 @@ fn test_execute_relation_success_path_returns_clean_outcome() {
     );
 }
 
+/// Failed relation results should return a structured `RelationOutcome`
+/// that keeps the normalized failure facts attached.
+#[test]
+fn test_execute_relation_failure_path_returns_structured_outcome() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read assignability.rs");
+
+    assert!(
+        source.contains("RelationOutcome {")
+            && source.contains("related: false,")
+            && source.contains("failure,")
+            && source.contains("weak_union_violation,")
+            && source.contains("property_classification,"),
+        "execute_relation failure path must return a structured RelationOutcome \
+         with related=false plus failure, weak-union, and property-classification facts"
+    );
+}
+
 /// The boundary must own the canonical excess-property suppression policy that
 /// used to be duplicated in checker-local failure analysis.
 #[test]
