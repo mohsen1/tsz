@@ -1894,8 +1894,8 @@ impl<'a> CheckerState<'a> {
                                                     .iter()
                                                     .any(|p| p.name == prop.name && !p.optional)
                                             });
-                                        if in_all {
-                                            if let Some((prop_node, prop_name)) =
+                                        if in_all
+                                            && let Some((prop_node, prop_name)) =
                                                 named_property_nodes.get(&prop.name)
                                             {
                                                 let message = format_message(
@@ -1908,7 +1908,6 @@ impl<'a> CheckerState<'a> {
                                                     diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
                                                 );
                                             }
-                                        }
                                     }
                                 }
                             }

@@ -1643,7 +1643,7 @@ impl<'a> CheckerState<'a> {
                                 // is from a different file's arena.
                                 let name_matches = if let Some(ref expected_name) = var_name {
                                     self.get_declaration_name_text(other_decl)
-                                        .map_or(false, |n| n == *expected_name)
+                                        .is_some_and(|n| n == *expected_name)
                                 } else {
                                     true // No name to compare, assume OK
                                 };
