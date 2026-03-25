@@ -1775,7 +1775,8 @@ impl ParserState {
                 // Optional chaining: expr?.prop, expr?.[index], expr?.()
                 SyntaxKind::QuestionDotToken => {
                     self.next_token();
-                    if self.is_less_than_or_compound()
+                    if !self.is_js_file()
+                        && self.is_less_than_or_compound()
                         && let Some(type_args) = self.try_parse_type_arguments_for_call()
                     {
                         if self.is_token(SyntaxKind::OpenParenToken) {
@@ -1945,6 +1946,9 @@ impl ParserState {
                 // Type arguments followed by call: expr<T>() or expr<T, U>()
                 // Also handles `<<` for nested generics: foo<<T>(x: T) => number>(fn)
                 SyntaxKind::LessThanToken | SyntaxKind::LessThanLessThanToken => {
+                    if self.is_js_file() {
+                        break;
+                    }
                     if self
                         .arena
                         .get(expr)

@@ -757,6 +757,33 @@ impl ParserState {
                 "Identifier expected.",
                 tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
             );
+            let mismatched_closing_tag = self
+                .get_source_text()
+                .get(self.token_pos() as usize..)
+                .and_then(|rest| {
+                    let line_end = rest.find(['\n', '\r', ';']).unwrap_or(rest.len());
+                    let line = &rest[..line_end];
+                    let close_idx = line.find("></")?;
+                    let open_name = line
+                        .strip_prefix('<')?
+                        .split(['>', '/', ' ', '\t'])
+                        .next()
+                        .filter(|name| !name.is_empty())?;
+                    let close_name_start_rel = close_idx + 3;
+                    let close_tail = line.get(close_name_start_rel..)?;
+                    let close_name_len = close_tail
+                        .chars()
+                        .take_while(|ch| {
+                            ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.' | '-')
+                        })
+                        .map(char::len_utf8)
+                        .sum::<usize>();
+                    (close_name_len > 0).then_some((
+                        open_name.to_string(),
+                        self.token_pos() + close_name_start_rel as u32,
+                        close_name_len as u32,
+                    ))
+                });
             if let Some(rest) = self.get_source_text().get(start_pos as usize..) {
                 let line_len = rest.find(['\n', '\r']).unwrap_or(rest.len()) as u32;
                 self.parse_error_at(
@@ -764,6 +791,14 @@ impl ParserState {
                     line_len,
                     tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
                     tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+                );
+            }
+            if let Some((open_name, close_start, close_length)) = mismatched_closing_tag {
+                self.parse_error_at(
+                    close_start,
+                    close_length,
+                    &format!("Expected corresponding JSX closing tag for '{open_name}'."),
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR,
                 );
             }
             return self.arena.add_jsx_opening(
