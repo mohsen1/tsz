@@ -532,15 +532,18 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
+        let module_is_unshadowed = !self
+            .resolve_identifier_symbol_without_tracking(access.expression)
+            .is_some_and(|sym_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+            });
         self.ctx
             .arena
             .get_identifier_at(access.expression)
-            .is_some_and(|ident| {
-                ident.escaped_text == "module"
-                    && self
-                        .resolve_identifier_symbol_without_tracking(access.expression)
-                        .is_none()
-            })
+            .is_some_and(|ident| ident.escaped_text == "module" && module_is_unshadowed)
             && self
                 .ctx
                 .arena
@@ -1297,22 +1300,11 @@ impl<'a> CheckerState<'a> {
         arena.get_literal_expr(init_node).cloned()
     }
 
-    pub(super) fn augment_namespace_props_with_define_property_exports(
+    fn augment_namespace_props_with_define_property_exports_for_file(
         &mut self,
-        module_name: &str,
-        source_file_idx: Option<usize>,
+        target_file_idx: usize,
         props: &mut Vec<tsz_solver::PropertyInfo>,
     ) {
-        let target_file_idx = source_file_idx
-            .and_then(|file_idx| {
-                self.ctx
-                    .resolve_import_target_from_file(file_idx, module_name)
-            })
-            .or_else(|| self.ctx.resolve_import_target(module_name));
-        let Some(target_file_idx) = target_file_idx else {
-            return;
-        };
-
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let Some(source_file) = target_arena.source_files.first() else {
             return;
@@ -1390,7 +1382,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(name) = self.current_file_commonjs_static_member_name(name_expr) else {
+            let Some(name) = self.constant_define_property_name_in_file(
+                target_file_idx,
+                &target_arena,
+                name_expr,
+            ) else {
                 continue;
             };
             let name_atom = self.ctx.types.intern_string(&name);
@@ -1423,16 +1419,7 @@ impl<'a> CheckerState<'a> {
             target_file_idx,
             props,
         );
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let Some(source_file) = target_arena.source_files.first() else {
-            return;
-        };
-        let module_name = source_file.file_name.clone();
-        self.augment_namespace_props_with_define_property_exports(
-            &module_name,
-            Some(target_file_idx),
-            props,
-        );
+        self.augment_namespace_props_with_define_property_exports_for_file(target_file_idx, props);
     }
 
     pub(crate) fn commonjs_module_value_type(

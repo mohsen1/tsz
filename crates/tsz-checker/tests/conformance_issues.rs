@@ -9510,6 +9510,43 @@ function foo(options?: { a: string, b: number }) {
     );
 }
 
+#[test]
+fn test_module_exports_define_property_does_not_fall_back_to_lib_signature() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "mod2.js",
+        r#"
+Object.defineProperty(module.exports, "thing", { value: "yes", writable: true });
+Object.defineProperty(module.exports, "readonlyProp", { value: "Smith", writable: false });
+Object.defineProperty(module.exports, "rwAccessors", { get() { return 98122 }, set(_) { /*ignore*/ } });
+Object.defineProperty(module.exports, "readonlyAccessor", { get() { return 21.75 } });
+Object.defineProperty(module.exports, "setonlyAccessor", {
+    /** @param {string} str */
+    set(str) {
+        this.rwAccessors = Number(str)
+    }
+});
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2345 | 7006))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Did not expect Object.defineProperty(module.exports, ...) to fall back to lib-call TS2345/TS7006 diagnostics. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // =============================================================================
 // JSX Intrinsic Element Resolution (TS2339)
 // =============================================================================
