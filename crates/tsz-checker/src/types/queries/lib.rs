@@ -619,6 +619,37 @@ impl<'a> CheckerState<'a> {
         self.get_validated_member_type(resolved_member_id, property_name)
     }
 
+    fn namespace_has_umd_augmentation_member(
+        &self,
+        namespace_name: &str,
+        property_name: &str,
+    ) -> bool {
+        let mut module_specs = Vec::new();
+        let mut collect_from_binder = |binder: &tsz_binder::BinderState| {
+            if let Some(sym_id) = binder.file_locals.get(namespace_name)
+                && let Some(symbol) = binder.get_symbol(sym_id)
+                && symbol.is_umd_export
+                && let Some(module_spec) = symbol.import_module.as_ref()
+                && !module_specs.iter().any(|existing| existing == module_spec)
+            {
+                module_specs.push(module_spec.clone());
+            }
+        };
+
+        collect_from_binder(self.ctx.binder);
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for binder in all_binders.iter() {
+                collect_from_binder(binder);
+            }
+        }
+
+        module_specs.into_iter().any(|module_spec| {
+            self.collect_module_augmentation_names(&module_spec)
+                .iter()
+                .any(|name| name == property_name)
+        })
+    }
+
     /// Check if a resolved member symbol is a runtime value and return its type.
     ///
     /// For already-resolved symbols (e.g., re-exported members that have already
@@ -840,6 +871,14 @@ impl<'a> CheckerState<'a> {
                     ) {
                         return self.get_validated_member_type(reexported_sym, property_name);
                     }
+
+                    if self
+                        .collect_module_augmentation_names(module_specifier)
+                        .iter()
+                        .any(|name| name == property_name)
+                    {
+                        return Some(TypeId::ANY);
+                    }
                 }
 
                 if sym_flags & symbol_flags::ENUM != 0
@@ -860,6 +899,12 @@ impl<'a> CheckerState<'a> {
                         member_id,
                         property_name,
                     );
+                }
+
+                if sym_flags & symbol_flags::MODULE != 0
+                    && self.namespace_has_umd_augmentation_member(sym_name.as_str(), property_name)
+                {
+                    return Some(TypeId::ANY);
                 }
 
                 None
@@ -912,6 +957,15 @@ impl<'a> CheckerState<'a> {
                         member_id,
                         property_name,
                     );
+                }
+
+                if let Some(ref module_specifier) = symbol.import_module
+                    && self
+                        .collect_module_augmentation_names(module_specifier)
+                        .iter()
+                        .any(|name| name == property_name)
+                {
+                    return Some(TypeId::ANY);
                 }
 
                 None

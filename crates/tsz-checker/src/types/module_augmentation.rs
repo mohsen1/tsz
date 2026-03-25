@@ -15,34 +15,9 @@ use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
 impl<'a> CheckerState<'a> {
-    /// Get module augmentation declarations for a given module specifier and interface name.
-    ///
-    /// This function looks up interface/type declarations inside `declare module 'x'` blocks
-    /// that should be merged with the target module's interface.
-    ///
-    /// # Arguments
-    /// * `module_spec` - The module specifier (e.g., "express", "lodash")
-    /// * `interface_name` - The name of the interface to find augmentations for
-    ///
-    /// # Returns
-    /// A vector of `NodeIndex` pointing to augmentation declarations
-    ///
-    /// # Example
-    /// ```typescript
-    /// // In user code:
-    /// declare module 'express' {
-    ///     interface Request {
-    ///         user: User;  // This augments the original Request interface
-    ///     }
-    /// }
-    /// ```
-    pub(crate) fn get_module_augmentation_declarations(
-        &self,
-        module_spec: &str,
-        interface_name: &str,
-    ) -> Vec<tsz_binder::ModuleAugmentation> {
-        let mut result = Vec::new();
+    fn module_augmentation_key_candidates(&self, module_spec: &str) -> Vec<String> {
         let mut candidates = crate::module_resolution::module_specifier_candidates(module_spec);
+
         fn push_unique(candidates: &mut Vec<String>, candidate: String) {
             if !candidate.is_empty() && !candidates.iter().any(|existing| existing == &candidate) {
                 candidates.push(candidate);
@@ -60,9 +35,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // When module_spec is a resolved file path, augmentations may be keyed by a
-        // bare specifier. Reverse-lookup: resolve file path to file index, then find
-        // augmentation keys that resolve to the same target file.
         if resolved_source_idx.is_none()
             && let Some(arenas) = self.ctx.all_arenas.as_ref()
         {
@@ -75,6 +47,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
         if let Some(source_idx) = resolved_source_idx {
             let all_aug_keys: Vec<(String, usize)> =
                 if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
@@ -142,6 +115,75 @@ impl<'a> CheckerState<'a> {
                     });
             push_unique(&mut candidates, normalized.to_string_lossy().to_string());
         }
+
+        candidates
+    }
+
+    pub(crate) fn collect_module_augmentation_names(&self, module_spec: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        for candidate in self.module_augmentation_key_candidates(module_spec) {
+            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(&candidate) {
+                for aug in augmentations {
+                    if !names.iter().any(|existing| existing == &aug.name) {
+                        names.push(aug.name.clone());
+                    }
+                }
+            }
+            if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref()
+                && let Some(entries) = aug_index.get(&candidate)
+            {
+                for (_, aug) in entries {
+                    if !names.iter().any(|existing| existing == &aug.name) {
+                        names.push(aug.name.clone());
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// Get module augmentation declarations for a given module specifier and interface name.
+    ///
+    /// This function looks up interface/type declarations inside `declare module 'x'` blocks
+    /// that should be merged with the target module's interface.
+    ///
+    /// # Arguments
+    /// * `module_spec` - The module specifier (e.g., "express", "lodash")
+    /// * `interface_name` - The name of the interface to find augmentations for
+    ///
+    /// # Returns
+    /// A vector of `NodeIndex` pointing to augmentation declarations
+    ///
+    /// # Example
+    /// ```typescript
+    /// // In user code:
+    /// declare module 'express' {
+    ///     interface Request {
+    ///         user: User;  // This augments the original Request interface
+    ///     }
+    /// }
+    /// ```
+    pub(crate) fn get_module_augmentation_declarations(
+        &self,
+        module_spec: &str,
+        interface_name: &str,
+    ) -> Vec<tsz_binder::ModuleAugmentation> {
+        let mut result = Vec::new();
+        let candidates = self.module_augmentation_key_candidates(module_spec);
+        let trimmed = module_spec.trim().trim_matches('"').trim_matches('\'');
+        let resolved_source_idx = self
+            .ctx
+            .resolve_import_target(module_spec)
+            .or_else(|| self.ctx.resolve_import_target(trimmed))
+            .or_else(|| {
+                self.ctx.all_arenas.as_ref().and_then(|arenas| {
+                    arenas.iter().enumerate().find_map(|(idx, arena)| {
+                        arena.source_files.first().and_then(|sf| {
+                            (sf.file_name == module_spec || sf.file_name == trimmed).then_some(idx)
+                        })
+                    })
+                })
+            });
 
         for candidate in &candidates {
             if let Some(augmentations) = self.ctx.binder.module_augmentations.get(candidate) {
