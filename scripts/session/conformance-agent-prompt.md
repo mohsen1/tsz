@@ -163,6 +163,8 @@ scripts/session/healthcheck.sh
 git log --oneline -20
 
 # If you are working as a campaign agent, read the campaign checkpoint first
+# If none exists yet, initialize it once and then read status
+scripts/session/campaign-checkpoint.sh <your-campaign> --init
 scripts/session/campaign-checkpoint.sh <your-campaign> --status
 ```
 
@@ -464,7 +466,7 @@ git commit -m "..."
 git push origin main
 
 # If rejected (other agents pushed):
-git pull --rebase origin main && git push origin main
+git fetch origin main && git rebase origin/main && git push origin HEAD:main
 ```
 
 ### Campaign-worker push protocol
@@ -528,6 +530,10 @@ python3 scripts/conformance/query-conformance.py --false-positives
 cargo check --package tsz-checker
 cargo build --profile dist-fast --bin tsz
 
+# Campaign coordination
+scripts/session/campaign-checkpoint.sh <your-campaign> --init
+scripts/session/campaign-checkpoint.sh <your-campaign> --status
+
 # Test specific
 ./scripts/conformance/conformance.sh run --filter "TESTNAME" --verbose
 
@@ -543,4 +549,8 @@ cargo test --package tsz-solver --lib
 
 # Snapshot
 scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+
+# Push
+git push origin HEAD:main
+git push origin campaign/<your-campaign>
 ```
