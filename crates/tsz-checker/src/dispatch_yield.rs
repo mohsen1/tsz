@@ -255,13 +255,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .and_then(|kind| {
                             // Only direct call expressions (e.g. `yield* gen()`) should
                             // receive a generator contextual type. Await expressions
-                            // (e.g. `yield* await promise.then(fn)`) must NOT: the
-                            // generator contextual type would flow into .then() return-type
-                            // inference and produce spurious union types like
-                            // `AsyncGenerator<T> | Result<U, E>` instead of just
-                            // `Result<U, E>`, causing false TS2504 errors.
-                            let supports_return_context = kind == syntax_kind_ext::CALL_EXPRESSION;
-                            if !supports_return_context {
+                            // (e.g. `yield* await promise.then(fn)`) must receive no
+                            // contextual type at all here: `await` propagates its
+                            // contextual type into the operand, and that would
+                            // over-constrain `.then()` callback inference, producing
+                            // spurious generic mismatches like TS2345/TS2504.
+                            if kind == syntax_kind_ext::AWAIT_EXPRESSION {
+                                return Some(TypeId::UNKNOWN);
+                            }
+                            if kind != syntax_kind_ext::CALL_EXPRESSION {
                                 return None;
                             }
                             let expected_generator = self.get_expected_generator_type(idx)?;

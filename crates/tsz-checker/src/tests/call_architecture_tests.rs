@@ -283,6 +283,45 @@ const strs: string[] = map(nums, n => n.toFixed(2));
     );
 }
 
+#[test]
+fn generic_promise_then_accepts_generic_mapper_identifier() {
+    let diags = check_source_diagnostics(
+        r#"
+interface PromiseLike<T> {
+    then<TResult1 = T>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null
+    ): PromiseLike<TResult1>;
+}
+
+interface Promise<T> {
+    then<TResult1 = T>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null
+    ): Promise<TResult1>;
+}
+
+interface Result<T, E> {
+    value: T;
+    error: E;
+}
+
+type Author = { id: string; name: string };
+
+declare const authorPromise: Promise<Result<Author, "NOT_FOUND_AUTHOR">>;
+declare const mapper: <T>(result: Result<T, "NOT_FOUND_AUTHOR">) => Result<T, "NOT_FOUND_AUTHOR">;
+
+const test1 = authorPromise.then(mapper);
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected generic mapper identifier to match Promise.then callback without TS2345, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
 /// Union callee types require all members to accept the call (not overload semantics).
 #[test]
 fn union_callee_requires_all_members_callable() {
