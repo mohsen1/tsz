@@ -1748,6 +1748,18 @@ impl ParserState {
             }
         }
 
+        // Check for definite assignment assertion '!' - not allowed in object literals.
+        // TSC emits TS1255 as a grammar error (not a parse error), so it does not
+        // suppress downstream semantic checks. We skip the '!' here for error recovery
+        // and let the checker emit TS1255 based on the exclamation_token_pos field.
+        let exclamation_pos = if self.is_token(SyntaxKind::ExclamationToken) {
+            let pos = self.u32_from_usize(self.scanner.get_token_start());
+            self.next_token(); // Skip the '!' for error recovery
+            pos
+        } else {
+            0
+        };
+
         if self.parse_optional(SyntaxKind::ColonToken) {
             let expr = self.parse_assignment_expression();
             let initializer = if expr.is_none() {
@@ -1799,6 +1811,7 @@ impl ParserState {
                     modifiers: None,
                     name,
                     equals_token: has_equals,
+                    exclamation_token_pos: exclamation_pos,
                     object_assignment_initializer: initializer,
                 },
             )

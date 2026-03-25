@@ -623,6 +623,9 @@ pub struct ShorthandPropertyData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
     pub equals_token: bool,
+    /// Position of a `!` (definite assignment assertion) that was parsed and skipped.
+    /// 0 means no exclamation token was present.
+    pub exclamation_token_pos: u32,
     pub object_assignment_initializer: NodeIndex,
 }
 
