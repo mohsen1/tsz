@@ -805,6 +805,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1206 // Decorators are not valid here
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
+        | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
     )
