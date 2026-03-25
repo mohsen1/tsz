@@ -596,7 +596,18 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
             )
         });
-        let request = match return_context {
+        // When the return context is a bare type parameter (e.g., `B` from an outer
+        // generic signature like `compose<A, B, C>`), do NOT pass it as the contextual
+        // type for the body expression. Type parameters carry no useful inference
+        // information for inner generic calls, and passing them causes the solver to
+        // seed return-type inference from the type parameter, producing incorrect
+        // results (e.g., `unbox(a)` resolving W=B instead of W=T[]).
+        // This matches tsc's behavior where type parameter contextual return types
+        // do not flow into inner call expression inference.
+        use crate::query_boundaries::common::type_param_info;
+        let effective_return_context =
+            return_context.filter(|&ctx_type| type_param_info(self.ctx.types, ctx_type).is_none());
+        let request = match effective_return_context {
             Some(ctx_type) => TypingRequest::with_contextual_type(ctx_type),
             None => TypingRequest::NONE,
         };
