@@ -748,6 +748,36 @@ impl ParserState {
         // Parse attributes
         let attributes = self.parse_jsx_attributes();
 
+        // In JavaScript JSX files, `<Comp<T> ... />` is not legal type-argument syntax.
+        // When the remainder still looks like JSX (`</...>` or `/>` on the same line),
+        // recover as adjacent JSX roots instead of falling into the self-closing `/>`
+        // parser path that would emit the wrong `'/` expected diagnostic.
+        if self.is_js_file() && self.is_jsx_adjacent_sibling_candidate() {
+            self.parse_error_at_current_token(
+                "Identifier expected.",
+                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
+            if let Some(rest) = self.get_source_text().get(start_pos as usize..) {
+                let line_len = rest.find(['\n', '\r']).unwrap_or(rest.len()) as u32;
+                self.parse_error_at(
+                    start_pos,
+                    line_len,
+                    tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+                    tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+                );
+            }
+            return self.arena.add_jsx_opening(
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                start_pos,
+                self.token_pos(),
+                crate::parser::node::JsxOpeningData {
+                    tag_name,
+                    type_arguments,
+                    attributes,
+                },
+            );
+        }
+
         // Check for opening element: >
         // Must check > first (matching tsc order) so that error tokens
         // (like stray `<`) fall through to the self-closing path, which

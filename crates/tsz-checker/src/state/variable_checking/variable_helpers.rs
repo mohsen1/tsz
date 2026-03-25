@@ -1,6 +1,7 @@
 //! Variable declaration checking helpers: shadowing, TS2403 type computation,
 //! unnameable type detection, and symbol resolution utilities.
 
+use crate::query_boundaries::common::{collect_referenced_types, lazy_def_id};
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -932,6 +933,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if let Some((from_path, type_name)) = self.first_non_portable_type_reference(inferred_type)
+        {
+            self.error_at_node_msg(
+                name_idx,
+                crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
+                &[name, &type_name, &from_path],
+            );
+            return;
+        }
+
         let Some((referenced_name, module_specifier)) =
             self.first_unnameable_external_unique_symbol_reference(inferred_type)
         else {
@@ -971,6 +982,249 @@ impl<'a> CheckerState<'a> {
         });
 
         result
+    }
+
+    fn first_non_portable_type_reference(&self, inferred_type: TypeId) -> Option<(String, String)> {
+        let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
+
+        for &type_id in &referenced_types {
+            if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
+                && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+                && let Some(info) = self.find_non_portable_symbol_reference(sym_id) {
+                    return Some(info);
+                }
+
+            if let Some(shape) = query::object_shape(self.ctx.types, type_id)
+                && let Some(sym_id) = shape.symbol
+                && let Some(info) = self.find_non_portable_symbol_reference(sym_id) {
+                    return Some(info);
+                }
+
+            if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
+                && let Some(sym_id) = shape.symbol
+                && let Some(info) = self.find_non_portable_symbol_reference(sym_id) {
+                    return Some(info);
+                }
+        }
+
+        None
+    }
+
+    fn find_non_portable_symbol_reference(&self, sym_id: SymbolId) -> Option<(String, String)> {
+        use std::path::{Component, Path};
+        use tsz_binder::symbol_flags;
+
+        let resolved_sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
+
+        let Some(symbol) = self.get_symbol_from_any_binder(resolved_sym_id) else {
+            return None;
+        };
+        let type_name = symbol.escaped_name.clone();
+        let Some(source_path) = self.symbol_source_path(resolved_sym_id) else {
+            return None;
+        };
+
+        let components: Vec<_> = Path::new(&source_path).components().collect();
+        let nm_positions: Vec<usize> = components
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match c {
+                Component::Normal(part) if part.to_str() == Some("node_modules") => Some(i),
+                _ => None,
+            })
+            .collect();
+
+        if !nm_positions.is_empty()
+            && symbol.has_any_flags(symbol_flags::ALIAS)
+            && let Some(import_module) = &symbol.import_module
+            && !import_module.starts_with('.')
+            && !import_module.starts_with('/')
+        {
+            let last_nm = *nm_positions.last().unwrap();
+            let pkg_start = last_nm + 1;
+            let pkg_len = if components.get(pkg_start).is_some_and(|c| {
+                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
+            }) {
+                2
+            } else {
+                1
+            };
+
+            let parent_package: Vec<String> = components[pkg_start..pkg_start + pkg_len]
+                .iter()
+                .filter_map(|c| match c {
+                    Component::Normal(part) => part.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+
+            if !parent_package.is_empty() {
+                let from_path = format!(
+                    "{}/node_modules/{}",
+                    parent_package.join("/"),
+                    import_module
+                );
+                return Some((from_path, type_name));
+            }
+        }
+
+        if nm_positions.len() >= 2 {
+            let first_nm = nm_positions[0];
+            let second_nm = nm_positions[1];
+
+            let parent_parts: Vec<String> = components[first_nm + 1..second_nm]
+                .iter()
+                .filter_map(|c| match c {
+                    Component::Normal(part) => part.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+
+            let nested_start = second_nm + 1;
+            let nested_len = if components.get(nested_start).is_some_and(|c| {
+                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
+            }) {
+                2
+            } else {
+                1
+            };
+
+            let nested_parts: Vec<String> = components[nested_start..nested_start + nested_len]
+                .iter()
+                .filter_map(|c| match c {
+                    Component::Normal(part) => part.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+
+            if !parent_parts.is_empty() && !nested_parts.is_empty() {
+                let from_path = format!(
+                    "{}/node_modules/{}",
+                    parent_parts.join("/"),
+                    nested_parts.join("/")
+                );
+                return Some((from_path, type_name));
+            }
+        }
+
+        if nm_positions.len() == 1 {
+            let nm_idx = nm_positions[0];
+            let pkg_start = nm_idx + 1;
+            let pkg_len = if components.get(pkg_start).is_some_and(|c| {
+                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
+            }) {
+                2
+            } else {
+                1
+            };
+
+            let subpath_start = pkg_start + pkg_len;
+            if subpath_start < components.len() {
+                let package_root = Path::new(&source_path)
+                    .components()
+                    .take(nm_idx + 1 + pkg_len)
+                    .collect::<std::path::PathBuf>();
+
+                let subpath_parts: Vec<String> = components[subpath_start..]
+                    .iter()
+                    .filter_map(|c| match c {
+                        Component::Normal(part) => part.to_str().map(str::to_string),
+                        _ => None,
+                    })
+                    .collect();
+                let relative_path = subpath_parts.join("/");
+
+                if let Some(runtime_path) = self.declaration_runtime_relative_path(&relative_path)
+                    && self
+                        .reverse_export_specifier_for_runtime_path(&package_root, &runtime_path)
+                        .is_none()
+                {
+                    let pkg_json_path = package_root.join("package.json");
+                    if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
+                        && let Ok(pkg_json) =
+                            serde_json::from_str::<serde_json::Value>(&pkg_content)
+                        && let Some(exports) = pkg_json.get("exports")
+                        && Self::exports_has_explicit_subpaths(exports)
+                    {
+                        let mut from_path =
+                            self.calculate_relative_path(&self.ctx.file_name, &source_path);
+                        from_path = self.strip_ts_extensions(&from_path);
+                        from_path = from_path.trim_end_matches('/').to_string();
+                        return Some((from_path, type_name));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn symbol_source_path(&self, sym_id: SymbolId) -> Option<String> {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
+            let arena = self.ctx.get_arena_for_file(file_idx as u32);
+            if let Some(source_file) = arena.source_files.first() {
+                return Some(source_file.file_name.clone());
+            }
+        }
+
+        let symbol = self.get_symbol_from_any_binder(sym_id)?;
+        if symbol.decl_file_idx != u32::MAX {
+            let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
+            if let Some(source_file) = arena.source_files.first() {
+                return Some(source_file.file_name.clone());
+            }
+        }
+
+        if let Some(arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
+            && let Some(source_file) = arena.source_files.first()
+        {
+            return Some(source_file.file_name.clone());
+        }
+
+        for binder in self
+            .ctx
+            .all_binders
+            .as_ref()
+            .into_iter()
+            .flat_map(|binders| binders.iter())
+        {
+            if let Some(arena) = binder.symbol_arenas.get(&sym_id)
+                && let Some(source_file) = arena.source_files.first()
+            {
+                return Some(source_file.file_name.clone());
+            }
+            for &decl_idx in &symbol.declarations {
+                if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    for arena in arenas {
+                        if let Some(source_file) = arena.source_files.first() {
+                            return Some(source_file.file_name.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        for lib_ctx in &self.ctx.lib_contexts {
+            let binder = &lib_ctx.binder;
+            if let Some(arena) = binder.symbol_arenas.get(&sym_id)
+                && let Some(source_file) = arena.source_files.first()
+            {
+                return Some(source_file.file_name.clone());
+            }
+            for &decl_idx in &symbol.declarations {
+                if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    for arena in arenas {
+                        if let Some(source_file) = arena.source_files.first() {
+                            return Some(source_file.file_name.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     fn inspect_unique_symbol_properties(
@@ -1093,6 +1347,201 @@ impl<'a> CheckerState<'a> {
         }
 
         Some((symbol.escaped_name.clone(), sym_id, file_idx))
+    }
+
+    fn exports_has_explicit_subpaths(exports: &serde_json::Value) -> bool {
+        match exports {
+            serde_json::Value::Object(map) => map.keys().any(|k| k.starts_with("./") || k == "."),
+            _ => false,
+        }
+    }
+
+    fn declaration_runtime_relative_path(&self, relative_path: &str) -> Option<String> {
+        let relative_path = relative_path.replace('\\', "/");
+
+        for (decl_ext, runtime_ext) in [
+            (".d.ts", ".js"),
+            (".d.tsx", ".jsx"),
+            (".d.mts", ".mjs"),
+            (".d.cts", ".cjs"),
+            (".ts", ".js"),
+            (".tsx", ".jsx"),
+            (".mts", ".mjs"),
+            (".cts", ".cjs"),
+        ] {
+            if let Some(prefix) = relative_path.strip_suffix(decl_ext) {
+                return Some(format!("{prefix}{runtime_ext}"));
+            }
+        }
+
+        Some(relative_path)
+    }
+
+    fn calculate_relative_path(&self, current: &str, source: &str) -> String {
+        use std::path::{Component, Path};
+
+        let current_path = Path::new(current);
+        let source_path = Path::new(source);
+        let current_dir = current_path.parent().unwrap_or(current_path);
+
+        let current_components: Vec<_> = current_dir.components().collect();
+        let source_components: Vec<_> = source_path.components().collect();
+
+        let common_len = current_components
+            .iter()
+            .zip(source_components.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        let ups = current_components.len() - common_len;
+        let mut result = String::new();
+        if ups == 0 {
+            result.push_str("./");
+        } else {
+            for _ in 0..ups {
+                result.push_str("../");
+            }
+        }
+
+        let remaining: Vec<_> = source_components[common_len..]
+            .iter()
+            .filter_map(|component| match component {
+                Component::Normal(part) => Some(part.to_str()?),
+                _ => None,
+            })
+            .collect();
+        result.push_str(&remaining.join("/"));
+
+        result
+    }
+
+    fn reverse_export_specifier_for_runtime_path(
+        &self,
+        package_root: &std::path::Path,
+        runtime_relative_path: &str,
+    ) -> Option<String> {
+        let package_json_path = package_root.join("package.json");
+        let package_json = std::fs::read_to_string(package_json_path).ok()?;
+        let package_json: serde_json::Value = serde_json::from_str(&package_json).ok()?;
+        let exports = package_json.get("exports")?;
+        let runtime_relative_path = format!("./{}", runtime_relative_path.trim_start_matches("./"));
+        self.reverse_match_exports_subpath(exports, &runtime_relative_path)
+    }
+
+    fn reverse_match_exports_subpath(
+        &self,
+        exports: &serde_json::Value,
+        runtime_path: &str,
+    ) -> Option<String> {
+        match exports {
+            serde_json::Value::String(target) => {
+                self.match_export_target(".", target, runtime_path)
+            }
+            serde_json::Value::Array(entries) => entries
+                .iter()
+                .find_map(|entry| self.reverse_match_exports_subpath(entry, runtime_path)),
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    if key == "." || key.starts_with("./") {
+                        if let Some(specifier) =
+                            self.reverse_match_export_entry(key, value, runtime_path)
+                        {
+                            return Some(specifier);
+                        }
+                        continue;
+                    }
+
+                    if let Some(specifier) = self.reverse_match_exports_subpath(value, runtime_path)
+                    {
+                        return Some(specifier);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn reverse_match_export_entry(
+        &self,
+        subpath_key: &str,
+        value: &serde_json::Value,
+        runtime_path: &str,
+    ) -> Option<String> {
+        match value {
+            serde_json::Value::String(target) => {
+                self.match_export_target(subpath_key, target, runtime_path)
+            }
+            serde_json::Value::Array(entries) => entries.iter().find_map(|entry| {
+                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
+            }),
+            serde_json::Value::Object(map) => map.values().find_map(|entry| {
+                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
+            }),
+            _ => None,
+        }
+    }
+
+    fn match_export_target(
+        &self,
+        subpath_key: &str,
+        target: &str,
+        runtime_path: &str,
+    ) -> Option<String> {
+        let target = target.trim();
+        let runtime_path = runtime_path.trim();
+
+        if target.contains('*') {
+            let wildcard = self.match_export_wildcard(target, runtime_path)?;
+            return Some(self.apply_export_wildcard(subpath_key, &wildcard));
+        }
+
+        if target.ends_with('/') && subpath_key.ends_with('/') {
+            let remainder = runtime_path.strip_prefix(target)?;
+            return Some(format!(
+                "{}{}",
+                subpath_key.trim_start_matches("./"),
+                remainder
+            ));
+        }
+
+        if target != runtime_path {
+            return None;
+        }
+
+        if subpath_key == "." {
+            return Some(String::new());
+        }
+
+        Some(subpath_key.trim_start_matches("./").to_string())
+    }
+
+    fn match_export_wildcard(&self, pattern: &str, value: &str) -> Option<String> {
+        let star_idx = pattern.find('*')?;
+        let prefix = &pattern[..star_idx];
+        let suffix = &pattern[star_idx + 1..];
+        let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
+        Some(middle.to_string())
+    }
+
+    fn apply_export_wildcard(&self, pattern: &str, wildcard: &str) -> String {
+        pattern
+            .replace('*', wildcard)
+            .trim_start_matches("./")
+            .to_string()
+    }
+
+    fn strip_ts_extensions(&self, path: &str) -> String {
+        for ext in [
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".tsx", ".ts", ".mts", ".cts", ".jsx", ".js",
+            ".mjs", ".cjs",
+        ] {
+            if let Some(path) = path.strip_suffix(ext) {
+                return path.to_string();
+            }
+        }
+
+        path.to_string()
     }
 
     pub(crate) fn get_symbol_from_any_binder(

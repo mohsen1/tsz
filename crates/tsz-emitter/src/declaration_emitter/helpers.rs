@@ -8718,13 +8718,18 @@ impl<'a> DeclarationEmitter<'a> {
         // Collect all types referenced by this type (deeply walks into
         // objects, tuples, unions, intersections, etc.)
         let referenced_types = tsz_solver::visitor::collect_referenced_types(interner, type_id);
-
+        let resolve_symbol_portability = |sym_id: SymbolId| -> SymbolId {
+            binder.resolve_import_symbol(sym_id).unwrap_or(sym_id)
+        };
         for &ref_type_id in &referenced_types {
             // Check Lazy(DefId) types - these are named type references
             if let Some(def_id) = tsz_solver::lazy_def_id(interner, ref_type_id)
                 && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
-                && let Some(result) =
-                    self.check_symbol_portability(sym_id, binder, current_file_path)
+                && let Some(result) = self.check_symbol_portability(
+                    resolve_symbol_portability(sym_id),
+                    current_file_path,
+                    binder,
+                )
             {
                 return Some(result);
             }
@@ -8734,8 +8739,11 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(shape_id) = tsz_solver::object_shape_id(interner, ref_type_id) {
                 let shape = interner.object_shape(shape_id);
                 if let Some(sym_id) = shape.symbol
-                    && let Some(result) =
-                        self.check_symbol_portability(sym_id, binder, current_file_path)
+                    && let Some(result) = self.check_symbol_portability(
+                        resolve_symbol_portability(sym_id),
+                        current_file_path,
+                        binder,
+                    )
                 {
                     return Some(result);
                 }
@@ -8753,16 +8761,17 @@ impl<'a> DeclarationEmitter<'a> {
     fn check_symbol_portability(
         &self,
         sym_id: SymbolId,
+        current_file_path: &str,
         binder: &BinderState,
-        _current_file_path: &str,
     ) -> Option<(String, String)> {
         use std::path::{Component, Path};
 
-        let symbol = binder.symbols.get(sym_id)?;
+        let resolved_sym_id = binder.resolve_import_symbol(sym_id).unwrap_or(sym_id);
+        let symbol = binder.symbols.get(resolved_sym_id)?;
         let type_name = symbol.escaped_name.clone();
-
-        // Get the source file path for this symbol
-        let source_path = self.get_symbol_source_path(sym_id, binder)?;
+        let Some(source_path) = self.get_symbol_source_path(resolved_sym_id, binder) else {
+            return None;
+        };
 
         // Parse node_modules segments from the source path
         let components: Vec<_> = Path::new(&source_path).components().collect();
@@ -8909,21 +8918,10 @@ impl<'a> DeclarationEmitter<'a> {
                         // inline the type.
                         && Self::exports_has_explicit_subpaths(exports)
                     {
-                        // Build "from" path: ./node_modules/pkg/subpath
-                        let mut path_parts: Vec<String> = components[nm_idx..]
-                            .iter()
-                            .filter_map(|c| match c {
-                                Component::Normal(part) => part.to_str().map(str::to_string),
-                                _ => None,
-                            })
-                            .collect();
-                        if let Some(last) = path_parts.last_mut() {
-                            *last = self.strip_ts_extensions(last);
-                        }
-                        if path_parts.last().is_some_and(|p| p == "index") {
-                            path_parts.pop();
-                        }
-                        let from_path = format!("./{}", path_parts.join("/"));
+                        let from_path =
+                            self.calculate_relative_path(current_file_path, &source_path);
+                        let from_path = from_path.trim_end_matches('/').to_string();
+                        let from_path = self.strip_ts_extensions(&from_path);
                         return Some((from_path, type_name));
                     }
                 }
@@ -8941,8 +8939,9 @@ impl<'a> DeclarationEmitter<'a> {
         match exports {
             // "exports": { ".": ..., "./foo": ... } — check for subpath keys
             serde_json::Value::Object(map) => {
-                // If any key starts with "./" (not just "."), there are explicit subpaths
-                map.keys().any(|k| k.starts_with("./"))
+                // If any key starts with "./" or key is "." (main export), there
+                // are explicit subpaths.
+                map.keys().any(|k| k.starts_with("./") || k == ".")
             }
             // String, Array, and other forms — no subpath restrictions
             _ => false,
