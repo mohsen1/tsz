@@ -889,6 +889,25 @@ impl<'a> CheckerState<'a> {
                 {
                     return fixed;
                 }
+                // Eagerly evaluate monomorphic Application return types from
+                // constructor calls, matching the call expression path in
+                // `finalize_call_return_like_success`. Without this, the
+                // Application type may be evaluated later through a path that
+                // doesn't correctly instantiate interface type parameters,
+                // causing false TS2345 errors (e.g., `new FinalizationRegistry(()=>{})`
+                // returning raw interface body with unsubstituted `T` instead of
+                // `FinalizationRegistry<unknown>` with `T=unknown`).
+                // Skip Promise-like types to preserve `await` unwrapping semantics.
+                let return_type = if crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    return_type,
+                ) && !self.contains_type_parameters_cached(return_type)
+                    && !self.is_promise_type(return_type)
+                {
+                    self.evaluate_application_type(return_type)
+                } else {
+                    return_type
+                };
                 return_type
             }
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {
