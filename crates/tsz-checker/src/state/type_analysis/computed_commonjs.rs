@@ -170,7 +170,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Start with the surface's typed named exports
+        // Start with the surface's typed named exports and any deep-scan names.
         let mut props = surface.named_exports;
 
         // Add ANY-typed entries for any deep-scan names not already in the surface
@@ -193,12 +193,18 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        let has_named_props = !props.is_empty();
         let namespace_type = self.ctx.types.factory().object(props);
+        let type_id = match (surface.direct_export_type, has_named_props) {
+            (Some(direct), true) => self.ctx.types.factory().intersection2(direct, namespace_type),
+            (Some(direct), false) => direct,
+            (None, _) => namespace_type,
+        };
         self.ctx.namespace_module_names.insert(
-            namespace_type,
+            type_id,
             self.current_file_commonjs_module_name(preserve_js_extension),
         );
-        namespace_type
+        type_id
     }
 
     fn collect_current_file_commonjs_export_names(
