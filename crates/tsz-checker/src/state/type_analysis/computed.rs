@@ -1794,6 +1794,35 @@ impl<'a> CheckerState<'a> {
                                 });
                             }
                         }
+
+                        if let Some(source_idx) = declaring_file_idx.or(import_source_file_idx)
+                            && let Some(umd_name) =
+                                self.resolve_umd_namespace_name_for_module(module_name, source_idx)
+                        {
+                            for (name, member_sym_id) in
+                                self.collect_namespace_exports_across_binders(&umd_name)
+                            {
+                                let name_atom = self.ctx.types.intern_string(&name);
+                                if props.iter().any(|p| p.name == name_atom) {
+                                    continue;
+                                }
+
+                                let prop_type = self.get_type_of_symbol(member_sym_id);
+                                props.push(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: prop_type,
+                                    write_type: prop_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    is_class_prototype: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
+                                    declaration_order: 0,
+                                });
+                            }
+                        }
+
                         // When esModuleInterop / allowSyntheticDefaultImports is
                         // enabled and the module uses `export =`, synthesize a
                         // "default" property on the namespace so that
