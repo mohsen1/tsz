@@ -9443,6 +9443,44 @@ try {} catch (e) { if (true) { function e() {} } }
     );
 }
 
+#[test]
+fn test_function_arg_shadowing_preserves_parameter_surface_and_ts2403() {
+    let source = r#"
+class A { foo() { } }
+class B { bar() { } }
+function foo(x: A) {
+   var x: B = new B();
+     x.bar();
+}
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2403),
+        "Expected TS2403 for the var/parameter redeclaration.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2339
+                && d.message_text
+                    .contains("Property 'bar' does not exist on type 'A'")
+        }),
+        "Expected x.bar() to keep the original parameter type surface and emit TS2339.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "Did not expect a false TS2322 on the redeclaration initializer.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // =============================================================================
 // JSX Intrinsic Element Resolution (TS2339)
 // =============================================================================
