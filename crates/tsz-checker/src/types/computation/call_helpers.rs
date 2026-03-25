@@ -1417,10 +1417,16 @@ impl<'a> CheckerState<'a> {
                             && !self
                                 .contextual_type_is_unresolved_for_argument_refresh(evaluated_param)
                         {
+                            // Use the unevaluated parameter type as the contextual
+                            // type for object literal refresh so that ThisType<T>
+                            // markers inside intersection type aliases (e.g.,
+                            // `Props & ThisType<Instance>`) are preserved. Evaluating
+                            // the intersection can strip the ThisType marker, causing
+                            // false TS2339 when `this` is used in method bodies.
                             let arg_type = self.refreshed_generic_call_arg_type_with_context(
                                 arg_idx,
                                 arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
-                                Some(evaluated_param),
+                                Some(param.type_id),
                             );
                             self.check_object_literal_excess_properties(
                                 arg_type,
