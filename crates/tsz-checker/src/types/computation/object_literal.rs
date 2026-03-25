@@ -1866,6 +1866,54 @@ impl<'a> CheckerState<'a> {
                     });
 
                     if let Some(members) = union_members_opt {
+                        // TS2783: Check if any earlier named properties will be
+                        // overwritten by required properties from this union spread.
+                        // A property triggers TS2783 when it is required (non-optional)
+                        // in ALL non-nullish members of the union.
+                        if self.ctx.strict_null_checks() {
+                            let non_nullish_members: Vec<TypeId> = members
+                                .iter()
+                                .copied()
+                                .filter(|m| !m.is_nullable())
+                                .collect();
+                            if !non_nullish_members.is_empty() {
+                                // Collect properties per member
+                                let all_member_props: Vec<Vec<_>> = non_nullish_members
+                                    .iter()
+                                    .map(|m| self.collect_object_spread_properties(*m))
+                                    .collect();
+                                // Find properties that are required in ALL members
+                                if let Some(first) = all_member_props.first() {
+                                    for prop in first {
+                                        if prop.optional {
+                                            continue;
+                                        }
+                                        let in_all =
+                                            all_member_props[1..].iter().all(|member_props| {
+                                                member_props
+                                                    .iter()
+                                                    .any(|p| p.name == prop.name && !p.optional)
+                                            });
+                                        if in_all {
+                                            if let Some((prop_node, prop_name)) =
+                                                named_property_nodes.get(&prop.name)
+                                            {
+                                                let message = format_message(
+                                                    diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                                    &[prop_name],
+                                                );
+                                                self.error_at_node(
+                                                    *prop_node,
+                                                    &message,
+                                                    diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Union spread distribution: fork current property set
                         // into N branches, one per union member.
                         has_union_spread = true;
