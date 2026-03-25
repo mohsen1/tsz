@@ -3046,6 +3046,16 @@ fn test_assignability_checker_has_execute_relation_request() {
         source.contains("execute_relation("),
         "execute_relation_request must delegate to the query_boundaries::execute_relation helper"
     );
+    assert!(
+        source.contains("checker_only_assignability_failure_reason(request.source, request.target)"),
+        "execute_relation_request must preserve checker-only post-check downgrades \
+         after the canonical boundary returns"
+    );
+    assert!(
+        source.contains("outcome.related = false;"),
+        "execute_relation_request must be able to downgrade a solver-related result \
+         when checker-only semantics require it"
+    );
 }
 
 /// `assignability_diagnostics.rs` diagnostic paths must use the relation
