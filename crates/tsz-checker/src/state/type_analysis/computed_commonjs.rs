@@ -12,6 +12,25 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{ObjectShape, PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn commonjs_static_member_name_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            k if k == SyntaxKind::Identifier as u16 => arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.to_string()),
+            _ => None,
+        }
+    }
+
     fn commonjs_export_rhs_symbol_type(&mut self, rhs_expr: NodeIndex) -> Option<TypeId> {
         let rhs_node = self.ctx.arena.get(rhs_expr)?;
         if rhs_node.kind != SyntaxKind::Identifier as u16 {
@@ -403,7 +422,17 @@ impl<'a> CheckerState<'a> {
         }
 
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
+            if node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                return false;
+            }
+            let Some(access) = arena.get_access_expr(node) else {
+                return false;
+            };
+            return arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "module")
+                && Self::commonjs_static_member_name_in_arena(arena, access.name_or_argument)
+                    .is_some_and(|name| name == "exports");
         }
 
         let Some(access) = arena.get_access_expr(node) else {
@@ -662,43 +691,52 @@ impl<'a> CheckerState<'a> {
             return;
         };
         if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(left_access) = arena.get_access_expr(left_node)
+            || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
         {
+            let Some(left_access) = arena.get_access_expr(left_node) else {
+                return;
+            };
             let direct_exports = arena
                 .get_identifier_at(left_access.expression)
                 .and_then(|ident| {
                     (ident.escaped_text == "exports").then(|| {
-                        arena
-                            .get_identifier_at(left_access.name_or_argument)
-                            .map(|name| {
-                                (
-                                    name.escaped_text.to_string(),
-                                    Some(format!("exports.{}", name.escaped_text)),
-                                )
-                            })
+                        Self::commonjs_static_member_name_in_arena(
+                            arena,
+                            left_access.name_or_argument,
+                        )
+                        .map(|name| (name.clone(), Some(format!("exports.{name}"))))
                     })
                 })
                 .flatten();
             let module_exports = arena.get(left_access.expression).and_then(|target_node| {
-                if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                    return None;
-                }
                 let target_access = arena.get_access_expr(target_node)?;
-                let is_module_exports = arena
-                    .get_identifier_at(target_access.expression)
-                    .is_some_and(|ident| ident.escaped_text == "module")
-                    && arena
-                        .get_identifier_at(target_access.name_or_argument)
-                        .is_some_and(|ident| ident.escaped_text == "exports");
-                is_module_exports.then(|| {
+                let is_module_exports = if target_node.kind
+                    == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                {
                     arena
-                        .get_identifier_at(left_access.name_or_argument)
-                        .map(|name| {
-                            (
-                                name.escaped_text.to_string(),
-                                Some(format!("module.exports.{}", name.escaped_text)),
-                            )
-                        })
+                        .get_identifier_at(target_access.expression)
+                        .is_some_and(|ident| ident.escaped_text == "module")
+                        && arena
+                            .get_identifier_at(target_access.name_or_argument)
+                            .is_some_and(|ident| ident.escaped_text == "exports")
+                } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                    arena
+                        .get_identifier_at(target_access.expression)
+                        .is_some_and(|ident| ident.escaped_text == "module")
+                        && Self::commonjs_static_member_name_in_arena(
+                            arena,
+                            target_access.name_or_argument,
+                        )
+                        .is_some_and(|name| name == "exports")
+                } else {
+                    false
+                };
+                is_module_exports.then(|| {
+                    Self::commonjs_static_member_name_in_arena(
+                        arena,
+                        left_access.name_or_argument,
+                    )
+                    .map(|name| (name.clone(), Some(format!("module.exports.{name}"))))
                 })?
             });
 
@@ -710,9 +748,11 @@ impl<'a> CheckerState<'a> {
                         export_aliases
                             .contains(ident.escaped_text.as_str())
                             .then(|| {
-                                arena
-                                    .get_identifier_at(left_access.name_or_argument)
-                                    .map(|name| (name.escaped_text.to_string(), None))
+                                Self::commonjs_static_member_name_in_arena(
+                                    arena,
+                                    left_access.name_or_argument,
+                                )
+                                .map(|name| (name, None))
                             })
                     })
                     .flatten()
@@ -751,6 +791,11 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| self.get_type_of_node(rhs_expr));
             ty = self.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
+            ty = self.augment_commonjs_export_object_type_with_expandos(
+                target_file_idx,
+                expando_root,
+                ty,
+            );
             ty = self.augment_commonjs_export_callable_type_with_expandos(
                 target_file_idx,
                 expando_root,
@@ -793,6 +838,11 @@ impl<'a> CheckerState<'a> {
             .or_else(|| checker.commonjs_export_rhs_symbol_type(rhs_expr))
             .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
         ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
+        ty = checker.augment_commonjs_export_object_type_with_expandos(
+            target_file_idx,
+            expando_root,
+            ty,
+        );
         ty = checker.augment_commonjs_export_callable_type_with_expandos(
             target_file_idx,
             expando_root,
@@ -801,6 +851,74 @@ impl<'a> CheckerState<'a> {
         ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
+    }
+
+    fn augment_commonjs_export_object_type_with_expandos(
+        &mut self,
+        target_file_idx: usize,
+        expando_root: Option<&str>,
+        base_type: TypeId,
+    ) -> TypeId {
+        use rustc_hash::FxHashMap;
+        use tsz_solver::ObjectShape;
+
+        let Some(root_name) = expando_root else {
+            return base_type;
+        };
+        let expando_props =
+            self.collect_commonjs_expando_property_types_for_root(target_file_idx, root_name);
+        if expando_props.is_empty() {
+            return base_type;
+        }
+
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, base_type)
+        else {
+            return base_type;
+        };
+
+        let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> = shape
+            .properties
+            .iter()
+            .map(|prop| (prop.name, prop.clone()))
+            .collect();
+        let mut changed = false;
+
+        for (prop_name, prop_type) in expando_props {
+            let prop_atom = self.ctx.types.intern_string(&prop_name);
+            if properties.contains_key(&prop_atom) {
+                continue;
+            }
+
+            properties.insert(
+                prop_atom,
+                PropertyInfo {
+                    name: prop_atom,
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: properties.len() as u32,
+                },
+            );
+            changed = true;
+        }
+
+        if !changed {
+            return base_type;
+        }
+
+        self.ctx.types.factory().object_with_index(ObjectShape {
+            flags: shape.flags,
+            properties: properties.into_values().collect(),
+            string_index: shape.string_index.clone(),
+            number_index: shape.number_index.clone(),
+            symbol: shape.symbol,
+        })
     }
 
     fn augment_commonjs_export_callable_type_with_expandos(
@@ -906,13 +1024,6 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(String, TypeId)> {
         use rustc_hash::FxHashMap;
 
-        if self
-            .collect_expando_properties_for_root(root_name)
-            .is_empty()
-        {
-            return Vec::new();
-        }
-
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let Some(source_file) = target_arena.source_files.first() else {
             return Vec::new();
@@ -984,6 +1095,13 @@ impl<'a> CheckerState<'a> {
                 let left = Self::commonjs_expando_assignment_access_key(arena, access.expression)?;
                 let right = arena.get_identifier_at(access.name_or_argument)?;
                 Some(format!("{left}.{}", right.escaped_text))
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = arena.get_access_expr(node)?;
+                let left = Self::commonjs_expando_assignment_access_key(arena, access.expression)?;
+                let right =
+                    Self::commonjs_static_member_name_in_arena(arena, access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
             }
             _ => None,
         }
