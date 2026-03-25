@@ -408,6 +408,102 @@ impl<'a> CheckerState<'a> {
         (method_bindings, this_props, has_prototype_evidence)
     }
 
+    pub(crate) fn collect_define_property_bindings_on_function_prototype(
+        &mut self,
+        func_decl_idx: NodeIndex,
+        func_name: &str,
+        parent_sym: tsz_binder::SymbolId,
+    ) -> Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut parent_idx = self
+            .ctx
+            .arena
+            .get_extended(func_decl_idx)
+            .map_or(NodeIndex::NONE, |e| e.parent);
+        let mut parent_node = match self.ctx.arena.get(parent_idx) {
+            Some(node) => node,
+            None => return Vec::new(),
+        };
+
+        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
+            && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
+        {
+            parent_idx = grandparent_idx;
+            parent_node = grandparent;
+        }
+        if parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
+            && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
+        {
+            parent_node = grandparent;
+        }
+
+        let siblings: Vec<NodeIndex> = if let Some(block) = self.ctx.arena.get_block(parent_node) {
+            block.statements.nodes.clone()
+        } else if let Some(source) = self.ctx.arena.get_source_file(parent_node) {
+            source.statements.nodes.clone()
+        } else {
+            return Vec::new();
+        };
+
+        let mut props = Vec::new();
+        for &stmt_idx in &siblings {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(call_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                continue;
+            }
+            let Some(call) = self.ctx.arena.get_call_expr(call_node) else {
+                continue;
+            };
+            let Some(args) = call.arguments.as_ref() else {
+                continue;
+            };
+            if !self.is_object_define_property_on_function_prototype(
+                call.expression,
+                &args.nodes,
+                func_name,
+            ) {
+                continue;
+            }
+
+            let current_file_idx = self.ctx.current_file_idx;
+            let Some(name) = self.constant_define_property_name_in_file(
+                current_file_idx,
+                self.ctx.arena,
+                args.nodes[1],
+            ) else {
+                continue;
+            };
+            let Some(mut prop) = self.define_property_info_from_descriptor(
+                current_file_idx,
+                self.ctx.arena,
+                &name,
+                args.nodes[2],
+                props.len() as u32,
+            ) else {
+                continue;
+            };
+            prop.parent_id = Some(parent_sym);
+            let name_atom = prop.name;
+            props.push((name_atom, prop));
+        }
+
+        props
+    }
+
     fn collect_nested_arrow_this_properties(
         &mut self,
         body_idx: NodeIndex,

@@ -1,3 +1,4 @@
+use crate::context::TypingRequest;
 use crate::query_boundaries::common::{callable_shape_for_type, function_shape_for_type};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -952,6 +953,52 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn infer_commonjs_descriptor_method_type(
+        &mut self,
+        target_file_idx: usize,
+        method_idx: NodeIndex,
+        contextual_type: Option<TypeId>,
+    ) -> TypeId {
+        if target_file_idx == self.ctx.current_file_idx {
+            let request = TypingRequest::NONE.contextual_opt(contextual_type);
+            return self.get_type_of_function_impl(method_idx, &request);
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(all_binders) = self.ctx.all_binders.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(arena) = all_arenas.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(binder) = all_binders.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(source_file) = arena.source_files.first() else {
+            return TypeId::ANY;
+        };
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            arena.as_ref(),
+            binder.as_ref(),
+            self.ctx.types,
+            source_file.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.current_file_idx = target_file_idx;
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+        let request = TypingRequest::NONE.contextual_opt(contextual_type);
+        let ty = checker.get_type_of_function_impl(method_idx, &request);
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        ty
+    }
+
     fn infer_symbol_type_for_file(
         &mut self,
         target_file_idx: usize,
@@ -1038,7 +1085,7 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
-    fn constant_define_property_name_in_file(
+    pub(crate) fn constant_define_property_name_in_file(
         &self,
         target_file_idx: usize,
         arena: &tsz_parser::parser::NodeArena,
@@ -1163,7 +1210,7 @@ impl<'a> CheckerState<'a> {
                     let Some(method) = arena.get_method_decl(element_node) else {
                         continue;
                     };
-                    let Some(method_name) =
+                    let Some(prop_name) =
                         crate::types_domain::queries::core::get_literal_property_name(
                             arena,
                             method.name,
@@ -1171,31 +1218,37 @@ impl<'a> CheckerState<'a> {
                     else {
                         continue;
                     };
-                    match method_name.as_str() {
+                    let contextual_method_type = (prop_name.as_str() == "set")
+                        .then_some(getter_type)
+                        .flatten();
+                    let method_type = self.infer_commonjs_descriptor_method_type(
+                        target_file_idx,
+                        element_idx,
+                        contextual_method_type.map(|ty| {
+                            self.ctx
+                                .types
+                                .factory()
+                                .function(tsz_solver::FunctionShape::new(
+                                    vec![tsz_solver::ParamInfo::unnamed(ty)],
+                                    TypeId::VOID,
+                                ))
+                        }),
+                    );
+                    let Some(shape) = function_shape_for_type(self.ctx.types, method_type) else {
+                        continue;
+                    };
+                    match prop_name.as_str() {
                         "get" => {
-                            let inferred = if method.type_annotation.is_some() {
-                                self.get_type_from_type_node(method.type_annotation)
-                            } else {
-                                self.infer_getter_return_type_for_file(target_file_idx, method.body)
-                            };
-                            getter_type = Some(inferred);
+                            getter_type = Some(shape.return_type);
                         }
                         "set" => {
                             has_setter = true;
-                            let Some(&first_param) = method.parameters.nodes.first() else {
-                                setter_type.get_or_insert(TypeId::ANY);
-                                continue;
-                            };
-                            let Some(binder) = self.ctx.get_binder_for_file(target_file_idx) else {
-                                setter_type.get_or_insert(TypeId::ANY);
-                                continue;
-                            };
-                            let Some(&param_sym) = binder.node_symbols.get(&first_param.0) else {
-                                setter_type.get_or_insert(TypeId::ANY);
-                                continue;
-                            };
-                            setter_type =
-                                Some(self.infer_symbol_type_for_file(target_file_idx, param_sym));
+                            setter_type = shape
+                                .params
+                                .first()
+                                .map(|param| param.type_id)
+                        .or(getter_type)
+                        .or(Some(TypeId::ANY));
                         }
                         _ => {}
                     }
@@ -1234,6 +1287,10 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {}
             }
+        }
+
+        if has_setter && setter_type == Some(TypeId::ANY) && getter_type.is_some() {
+            setter_type = getter_type;
         }
 
         let writable = has_setter || (has_value && writable_true);

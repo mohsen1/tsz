@@ -17793,3 +17793,80 @@ foo = new Foo();
         "Expected no TS2394 for generic JSDoc constructor overload tags. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_define_property_prototype_descriptor_setter_is_contextualized() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "mod1.js",
+        r#"
+/**
+ * @constructor
+ * @param {string} name
+ */
+function Person(name) {
+    this.name = name;
+}
+Object.defineProperty(Person.prototype, "thing", { value: 42, writable: true });
+Object.defineProperty(Person.prototype, "readonlyProp", { value: "Smith", writable: false });
+Object.defineProperty(Person.prototype, "rwAccessors", { get() { return 98122 }, set(_) { /*ignore*/ } });
+Object.defineProperty(Person.prototype, "readonlyAccessor", { get() { return 21.75 } });
+Object.defineProperty(Person.prototype, "setonlyAccessor", {
+    /** @param {string} str */
+    set(str) {
+        this.rwAccessors = Number(str);
+    }
+});
+const m1 = new Person("Name");
+m1.rwAccessors = 11;
+m1.setonlyAccessor = "yes";
+m1.readonlyProp = "name";
+m1.readonlyAccessor = 12;
+m1.rwAccessors = "no";
+m1.setonlyAccessor = 0;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    let ts7006: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7006)
+        .collect();
+    let ts2540: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2540)
+        .collect();
+    let has_rw_setter_mismatch = diagnostics.iter().any(|(code, message)| {
+        *code == 2322
+            && message.contains("string")
+            && message.contains("number")
+            && message.contains("not assignable")
+    });
+
+    assert!(
+        ts2339.is_empty(),
+        "Expected prototype defineProperty members to appear on constructor instances. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7006.is_empty(),
+        "Expected paired descriptor setter methods to be contextually typed. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2540.is_empty(),
+        "Expected readonly defineProperty descriptors to stay readonly. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_rw_setter_mismatch,
+        "Expected rwAccessors setter writes to be checked against the getter's number type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
