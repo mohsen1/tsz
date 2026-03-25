@@ -804,9 +804,7 @@ impl<'a> CheckerState<'a> {
                         && !binder.declared_modules.contains(normalized_module_name)
                     {
                         let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                        if let Some(source_file) = arena.source_files.first()
-                            && !source_file.is_declaration_file
-                        {
+                        if let Some(source_file) = arena.source_files.first() {
                             let file_name = source_file.file_name.as_str();
                             let is_js_like = file_name.ends_with(".js")
                                 || file_name.ends_with(".jsx")

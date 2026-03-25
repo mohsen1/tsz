@@ -182,9 +182,6 @@ impl<'a> CheckerState<'a> {
         let Some(source_file) = arena.source_files.first() else {
             return;
         };
-        if source_file.is_declaration_file {
-            return;
-        }
         let file_name = source_file.file_name.as_str();
         let is_js_like = file_name.ends_with(".js")
             || file_name.ends_with(".jsx")
