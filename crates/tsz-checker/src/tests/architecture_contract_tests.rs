@@ -3007,6 +3007,33 @@ fn test_relation_request_new_encodes_default_policy() {
     );
 }
 
+/// The canonical request builders must preserve explicit override hooks for
+/// excess-property and missing-property policy at the boundary.
+#[test]
+fn test_relation_request_override_builders_remain_explicit() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    assert!(
+        source.contains("fn with_excess_property_mode(mut self, mode: ExcessPropertyMode) -> Self"),
+        "RelationRequest must keep with_excess_property_mode as the explicit EPC override hook"
+    );
+    assert!(
+        source.contains("self.excess_property_mode = mode;"),
+        "with_excess_property_mode must write the requested EPC mode into the request"
+    );
+    assert!(
+        source.contains(
+            "fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self"
+        ),
+        "RelationRequest must keep with_missing_property_mode as the explicit missing-property override hook"
+    );
+    assert!(
+        source.contains("self.missing_property_mode = mode;"),
+        "with_missing_property_mode must write the requested missing-property mode into the request"
+    );
+}
+
 /// The boundary-owned `RelationFlags` wrapper must continue exposing the
 /// checker-safe flag surface for request-sensitive relation policy.
 #[test]
