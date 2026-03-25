@@ -990,21 +990,24 @@ impl<'a> CheckerState<'a> {
         for &type_id in &referenced_types {
             if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
-                && let Some(info) = self.find_non_portable_symbol_reference(sym_id) {
-                    return Some(info);
-                }
+                && let Some(info) = self.find_non_portable_symbol_reference(sym_id)
+            {
+                return Some(info);
+            }
 
             if let Some(shape) = query::object_shape(self.ctx.types, type_id)
                 && let Some(sym_id) = shape.symbol
-                && let Some(info) = self.find_non_portable_symbol_reference(sym_id) {
-                    return Some(info);
-                }
+                && let Some(info) = self.find_non_portable_symbol_reference(sym_id)
+            {
+                return Some(info);
+            }
 
             if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
                 && let Some(sym_id) = shape.symbol
-                && let Some(info) = self.find_non_portable_symbol_reference(sym_id) {
-                    return Some(info);
-                }
+                && let Some(info) = self.find_non_portable_symbol_reference(sym_id)
+            {
+                return Some(info);
+            }
         }
 
         None

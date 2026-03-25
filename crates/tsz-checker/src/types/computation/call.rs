@@ -622,7 +622,9 @@ impl<'a> CheckerState<'a> {
             callee_type_for_context,
             args.len(),
         )
-        .or_else(|| call_checker::get_call_signature(self.ctx.types, callee_type_for_context, args.len()));
+        .or_else(|| {
+            call_checker::get_call_signature(self.ctx.types, callee_type_for_context, args.len())
+        });
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
