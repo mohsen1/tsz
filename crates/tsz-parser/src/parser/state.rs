@@ -1456,6 +1456,18 @@ impl ParserState {
         }
     }
 
+    /// Error: Array element destructuring pattern expected (TS1181)
+    /// Used in array binding-pattern-like contexts when an element-like token is invalid.
+    pub(crate) fn error_array_element_destructuring_pattern_expected(&mut self) {
+        if self.should_report_error() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Array element destructuring pattern expected.",
+                diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED,
+            );
+        }
+    }
+
     /// Error: Type expected (TS1110)
     pub(crate) fn error_type_expected(&mut self) {
         use tsz_common::diagnostics::diagnostic_codes;
