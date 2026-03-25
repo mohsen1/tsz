@@ -10045,6 +10045,57 @@ fn compile_named_files_get_diagnostics_with_options(
         .collect()
 }
 
+#[test]
+fn test_namespace_import_from_umd_module_includes_global_and_module_augmentations() {
+    let files = [
+        (
+            "/a.d.ts",
+            r#"
+export as namespace a;
+export const x = 0;
+export const conflict = 0;
+"#,
+        ),
+        (
+            "/b.ts",
+            r#"
+import * as a2 from "./a";
+
+declare global {
+    namespace a {
+        export const y = 0;
+        export const conflict = 0;
+    }
+}
+
+declare module "./a" {
+    export const z = 0;
+    export const conflict = 0;
+}
+
+a2.x + a2.y + a2.z + a2.conflict;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/b.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            allow_umd_global_access: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected namespace import from UMD module to keep x/y/z/conflict visible without TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 fn compile_two_global_files_get_diagnostics_with_options(
     a_name: &str,
     a_source: &str,

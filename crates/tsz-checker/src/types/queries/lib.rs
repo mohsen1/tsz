@@ -1480,4 +1480,64 @@ impl<'a> CheckerState<'a> {
             _ => None,
         }
     }
+
+    pub(crate) fn resolve_umd_namespace_name_for_module(
+        &self,
+        module_specifier: &str,
+        source_file_idx: usize,
+    ) -> Option<String> {
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))?;
+        let target_binder = self.ctx.get_binder_for_file(target_idx)?;
+
+        for (name, &sym_id) in target_binder.file_locals.iter() {
+            if let Some(symbol) = target_binder.get_symbol(sym_id)
+                && symbol.is_umd_export
+            {
+                return Some(name.clone());
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn collect_namespace_exports_across_binders(
+        &mut self,
+        namespace_name: &str,
+    ) -> Vec<(String, tsz_binder::SymbolId)> {
+        let mut exports = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+
+        let mut collect_from_binder =
+            |binder: &tsz_binder::BinderState, file_idx: Option<usize>| {
+                if let Some(ns_sym_id) = binder.file_locals.get(namespace_name)
+                    && let Some(ns_symbol) = binder.get_symbol(ns_sym_id)
+                    && ns_symbol.flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                        != 0
+                    && let Some(ns_exports) = ns_symbol.exports.as_ref()
+                {
+                    for (name, member_id) in ns_exports.iter() {
+                        if seen.insert(name.clone()) {
+                            if let Some(file_idx) = file_idx {
+                                self.ctx.register_symbol_file_target(*member_id, file_idx);
+                            }
+                            exports.push((name.clone(), *member_id));
+                        }
+                    }
+                }
+            };
+
+        collect_from_binder(self.ctx.binder, None);
+
+        if let Some(all_binders) = self.ctx.all_binders.clone() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                collect_from_binder(binder, Some(file_idx));
+            }
+        }
+
+        exports
+    }
 }
