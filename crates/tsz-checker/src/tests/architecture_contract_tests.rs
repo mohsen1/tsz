@@ -3000,6 +3000,30 @@ fn test_call_arg_diagnostic_uses_canonical_relation_path() {
     );
 }
 
+/// Interface/base property compatibility should route through the canonical
+/// relation boundary instead of re-running local assignability + weak-union logic.
+#[test]
+fn test_class_query_boundary_uses_relation_request_for_property_mismatch() {
+    let source =
+        fs::read_to_string("src/query_boundaries/class.rs").expect("failed to read class.rs");
+
+    assert!(
+        source.contains("RelationRequest::assign("),
+        "query_boundaries/class.rs must build a RelationRequest::assign \
+         for property mismatch checks"
+    );
+    assert!(
+        source.contains("execute_relation_request("),
+        "query_boundaries/class.rs must use execute_relation_request \
+         for property mismatch checks"
+    );
+    assert!(
+        source.contains("should_skip_weak_union_error_with_outcome("),
+        "query_boundaries/class.rs must use the structured RelationOutcome \
+         when suppressing weak-union/excess-property diagnostics"
+    );
+}
+
 // =============================================================================
 // Phase 2: Object/property/call compatibility through canonical boundary
 // =============================================================================
