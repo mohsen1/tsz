@@ -9,6 +9,7 @@
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 const INTERFACE_MEMBER_KIND_PROPERTY: u8 = 1;
@@ -74,14 +75,21 @@ impl<'a> CheckerState<'a> {
             let mut remote_members = FxHashMap::default();
 
             for (decl_idx, arena) in augmentations {
-                if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                    local_interface_decls.push(decl_idx);
-                } else {
-                    self.collect_interface_member_kinds(
-                        arena.as_ref(),
-                        decl_idx,
-                        &mut remote_members,
-                    );
+                let Some(node) = arena.get(decl_idx) else {
+                    continue;
+                };
+                let is_local = std::ptr::eq(arena.as_ref(), self.ctx.arena);
+                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                    if is_local {
+                        local_interface_decls.push(decl_idx);
+                    } else {
+                        self.collect_interface_member_kinds(
+                            arena.as_ref(),
+                            decl_idx,
+                            &mut remote_members,
+                        );
+                    }
+                    continue;
                 }
             }
 
@@ -90,6 +98,8 @@ impl<'a> CheckerState<'a> {
                 &remote_members,
             );
         }
+
+        self.check_cross_file_global_augmentation_namespace_member_conflicts();
     }
 
     pub(crate) fn check_cross_file_module_augmentation_member_conflicts(&mut self) {
@@ -240,6 +250,297 @@ impl<'a> CheckerState<'a> {
                 .entry(name)
                 .and_modify(|existing| *existing |= kind)
                 .or_insert(kind);
+        }
+    }
+
+    fn collect_namespace_member_flags(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+        members: &mut FxHashMap<String, u32>,
+    ) {
+        for (name, _name_idx, flags) in self.namespace_member_declarations(arena, decl_idx) {
+            members
+                .entry(name)
+                .and_modify(|existing| *existing |= flags)
+                .or_insert(flags);
+        }
+    }
+
+    fn check_cross_file_global_augmentation_namespace_member_conflicts(&mut self) {
+        use tsz_parser::parser::node_flags;
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return;
+        };
+
+        let mut local_namespaces = FxHashMap::default();
+        let mut remote_namespaces = FxHashMap::default();
+
+        for arena in &*all_arenas {
+            let is_local = std::ptr::eq(arena.as_ref(), self.ctx.arena);
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                    continue;
+                }
+                let Some(module_decl) = arena.get_module(stmt_node) else {
+                    continue;
+                };
+                let is_global_augmentation =
+                    (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
+                        || arena
+                            .get(module_decl.name)
+                            .and_then(|name_node| arena.get_identifier(name_node))
+                            .is_some_and(|ident| ident.escaped_text == "global");
+                if !is_global_augmentation {
+                    continue;
+                }
+                let Some(body_node) = arena.get(module_decl.body) else {
+                    continue;
+                };
+                let Some(block) = arena.get_module_block(body_node) else {
+                    continue;
+                };
+                let Some(statements) = &block.statements else {
+                    continue;
+                };
+
+                for &inner_idx in &statements.nodes {
+                    let Some(inner_node) = arena.get(inner_idx) else {
+                        continue;
+                    };
+                    if inner_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                        continue;
+                    }
+                    let Some(namespace_decl) = arena.get_module(inner_node) else {
+                        continue;
+                    };
+                    let Some(name) = arena
+                        .get(namespace_decl.name)
+                        .and_then(|name_node| arena.get_identifier(name_node))
+                        .map(|ident| ident.escaped_text.to_string())
+                    else {
+                        continue;
+                    };
+
+                    if is_local {
+                        local_namespaces
+                            .entry(name)
+                            .or_insert_with(Vec::new)
+                            .push(inner_idx);
+                    } else {
+                        self.collect_namespace_member_flags(
+                            arena.as_ref(),
+                            inner_idx,
+                            remote_namespaces.entry(name).or_default(),
+                        );
+                    }
+                }
+            }
+        }
+
+        for (name, local_namespace_decls) in local_namespaces {
+            let Some(remote_members) = remote_namespaces.get(&name) else {
+                continue;
+            };
+            self.report_cross_file_namespace_member_conflicts(
+                &local_namespace_decls,
+                remote_members,
+            );
+        }
+    }
+
+    fn report_cross_file_namespace_member_conflicts(
+        &mut self,
+        local_namespace_decls: &[NodeIndex],
+        remote_members: &FxHashMap<String, u32>,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if local_namespace_decls.is_empty() || remote_members.is_empty() {
+            return;
+        }
+
+        for &decl_idx in local_namespace_decls {
+            for (name, name_idx, flags) in
+                self.namespace_member_declarations(self.ctx.arena, decl_idx)
+            {
+                let Some(&remote_flags) = remote_members.get(&name) else {
+                    continue;
+                };
+                if !Self::declarations_conflict(flags, remote_flags) {
+                    continue;
+                }
+
+                let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                self.error_at_node(name_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+            }
+        }
+    }
+
+    fn namespace_member_declarations(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Vec<(String, NodeIndex, u32)> {
+        let Some(node) = arena.get(decl_idx) else {
+            return Vec::new();
+        };
+        let Some(module_decl) = arena.get_module(node) else {
+            return Vec::new();
+        };
+        let Some(body_node) = arena.get(module_decl.body) else {
+            return Vec::new();
+        };
+        let Some(block) = arena.get_module_block(body_node) else {
+            return Vec::new();
+        };
+        let Some(statements) = &block.statements else {
+            return Vec::new();
+        };
+
+        let mut members = Vec::new();
+        for &stmt_idx in &statements.nodes {
+            self.collect_namespace_statement_declarations(arena, stmt_idx, &mut members);
+        }
+        members
+    }
+
+    fn collect_namespace_statement_declarations(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        stmt_idx: NodeIndex,
+        members: &mut Vec<(String, NodeIndex, u32)>,
+    ) {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return;
+        };
+
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(export_decl) = arena.get_export_decl(stmt_node)
+                && export_decl.export_clause.is_some()
+            {
+                self.collect_namespace_statement_declarations(
+                    arena,
+                    export_decl.export_clause,
+                    members,
+                );
+            }
+            return;
+        }
+
+        if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            let Some(var_stmt) = arena.get_variable(stmt_node) else {
+                return;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let Some(ident) = arena.get_identifier_at(var_decl.name) else {
+                        continue;
+                    };
+                    let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) else {
+                        continue;
+                    };
+                    members.push((
+                        ident.escaped_text.to_string(),
+                        var_decl.name,
+                        self.normalize_namespace_member_flags(arena, decl_idx, flags),
+                    ));
+                }
+            }
+            return;
+        }
+
+        let Some(name_idx) = self.get_declaration_name_node_in_arena(arena, stmt_idx) else {
+            return;
+        };
+        let Some(name) = arena
+            .get(name_idx)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.to_string())
+        else {
+            return;
+        };
+        let Some(flags) = self.declaration_symbol_flags(arena, stmt_idx) else {
+            return;
+        };
+        members.push((
+            name,
+            name_idx,
+            self.normalize_namespace_member_flags(arena, stmt_idx, flags),
+        ));
+    }
+
+    fn normalize_namespace_member_flags(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+        mut flags: u32,
+    ) -> u32 {
+        let Some(node) = arena.get(decl_idx) else {
+            return flags;
+        };
+        if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return flags;
+        }
+        let Some(import_decl) = arena.get_import_decl(node) else {
+            return flags;
+        };
+        let Some(target_node) = arena.get(import_decl.module_specifier) else {
+            return flags;
+        };
+        if target_node.kind == SyntaxKind::Identifier as u16
+            || target_node.kind == syntax_kind_ext::QUALIFIED_NAME
+        {
+            // Namespace import aliases can contribute a type-space member even when the
+            // binder stores them as pure aliases. Include that meaning so merged
+            // namespace members like `export import VNode = react.ReactNode` conflict
+            // with `type VNode = ...` the same way tsc reports TS2300.
+            flags |= tsz_binder::symbol_flags::TYPE_ALIAS;
+        }
+        flags
+    }
+
+    fn get_declaration_name_node_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = arena.get(decl_idx)?;
+        match node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION => arena.get_function(node).map(|decl| decl.name),
+            syntax_kind_ext::CLASS_DECLARATION => arena.get_class(node).map(|decl| decl.name),
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                arena.get_interface(node).map(|decl| decl.name)
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                arena.get_type_alias(node).map(|decl| decl.name)
+            }
+            syntax_kind_ext::ENUM_DECLARATION => arena.get_enum(node).map(|decl| decl.name),
+            syntax_kind_ext::MODULE_DECLARATION => arena.get_module(node).map(|decl| decl.name),
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                arena.get_import_decl(node).map(|decl| decl.import_clause)
+            }
+            _ => None,
         }
     }
 
