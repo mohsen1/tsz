@@ -1160,6 +1160,14 @@ impl<'a> CheckerState<'a> {
                         if let Some(literal_type) =
                             self.literal_type_from_initializer(var_decl.initializer)
                         {
+                            let literal_type = if self.ctx.is_js_file() {
+                                self.augment_object_type_with_define_properties(
+                                    &escaped_name,
+                                    literal_type,
+                                )
+                            } else {
+                                literal_type
+                            };
                             return (literal_type, Vec::new());
                         }
                     }
@@ -1194,6 +1202,12 @@ impl<'a> CheckerState<'a> {
                             sym_id,
                             inferred_type,
                         );
+                        if self.ctx.is_js_file() {
+                            inferred_type = self.augment_object_type_with_define_properties(
+                                &escaped_name,
+                                inferred_type,
+                            );
+                        }
                         let init_is_direct_empty_array = self
                             .ctx
                             .arena

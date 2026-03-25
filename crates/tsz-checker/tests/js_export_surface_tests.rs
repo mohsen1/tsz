@@ -132,6 +132,42 @@ fn check_commonjs_single_file(file_name: &str, source: &str) -> Vec<(u32, String
         .collect()
 }
 
+fn format_commonjs_single_file_symbol_type(
+    file_name: &str,
+    source: &str,
+    symbol_name: &str,
+) -> String {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let sym_id = binder
+        .file_locals
+        .get(symbol_name)
+        .unwrap_or_else(|| panic!("missing symbol {symbol_name}"));
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.check_source_file(root);
+    let symbol_type = checker.get_type_of_symbol(sym_id);
+    checker.format_type(symbol_type)
+}
+
 // ==========================================================================
 // module.exports = X tests
 // ==========================================================================
@@ -1029,6 +1065,96 @@ lib.myProp;
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for Object.defineProperty export, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_define_property_export_preserves_write_type_and_readonly_cross_file() {
+    let diagnostics = check_commonjs_two_files(
+        "lib.js",
+        r#"
+Object.defineProperty(exports, "foo", { value: "ok", writable: true });
+Object.defineProperty(exports, "bar", { value: "fixed" });
+"#,
+        "consumer.ts",
+        r#"
+import lib = require("./lib.js");
+lib.foo = 1;
+lib.bar = "nope";
+"#,
+        "./lib.js",
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    let ts2540: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2540).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for writable defineProperty export with string type, got: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2540.is_empty(),
+        "Expected TS2540 for readonly defineProperty export, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_plain_object_define_property_augments_local_js_object_type() {
+    let x_type = format_commonjs_single_file_symbol_type(
+        "lib.js",
+        r#"
+const x = {};
+Object.defineProperty(x, "name", { value: "Charles", writable: true });
+Object.defineProperty(x, "middleInit", { value: "H" });
+Object.defineProperty(x, "zipStr", {
+  /** @param {string} str */
+  set(str) {}
+});
+"#,
+        "x",
+    );
+    let diagnostics = check_commonjs_single_file(
+        "lib.js",
+        r#"
+const x = {};
+Object.defineProperty(x, "name", { value: "Charles", writable: true });
+Object.defineProperty(x, "middleInit", { value: "H" });
+Object.defineProperty(x, "zipStr", {
+  /** @param {string} str */
+  set(str) {}
+});
+/** @param {{name: string}} named */
+function takeName(named) { return named.name; }
+takeName(x);
+x.name = 12;
+x.middleInit = "R";
+x.zipStr = 12;
+"#,
+    );
+
+    assert!(
+        x_type.contains("name"),
+        "Expected local symbol type to include defineProperty members, got: {x_type}"
+    );
+
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2345: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2345).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    let ts2540: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2540).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 after Object.defineProperty augments object type, got: {ts2339:#?}"
+    );
+    assert!(
+        ts2345.is_empty(),
+        "Expected no TS2345 for passing augmented object to typed consumer, got: {ts2345:#?}"
+    );
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for setter-backed string property assignment, got: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2540.is_empty(),
+        "Expected TS2540 for readonly defineProperty member assignment, got: {diagnostics:#?}"
     );
 }
 
