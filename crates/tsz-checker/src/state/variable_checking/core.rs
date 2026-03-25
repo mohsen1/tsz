@@ -1413,6 +1413,13 @@ impl<'a> CheckerState<'a> {
             // Skip TS2403 for mergeable declarations (namespace, enum, class, interface, function overloads).
             // Bare declarations (`var x;` with no annotation/initializer) don't establish a
             // type constraint and never trigger TS2403 in tsc.
+            //
+            // Non-checked JS files should not participate in TS2403 at all.
+            // tsc doesn't type-check JS files without checkJs, so they don't
+            // establish `var_decl_types` entries. Without this guard, a JS file
+            // processed before a TS file can set a bogus prev_type that causes
+            // false TS2403 on the TS file's declaration.
+            let is_non_checked_js = self.ctx.is_js_file() && !self.ctx.should_resolve_jsdoc();
             // Exception: for-in/for-of loop variables (`for (var x in obj)`) ARE typed
             // (string for for-in, element type for for-of) even without explicit annotation.
             let is_bare_declaration = var_decl.type_annotation.is_none()
@@ -1476,7 +1483,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
                     if local_decl_count <= 1 {
                         let refined = self.refine_var_decl_type(prev_type, final_type);
-                        if refined != prev_type {
+                        if refined != prev_type && !is_non_checked_js {
                             self.ctx.var_decl_types.insert(sym_id, refined);
                         }
                         return;
@@ -1534,7 +1541,7 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         let refined = self.refine_var_decl_type(prev_type, final_type);
-                        if refined != prev_type {
+                        if refined != prev_type && !is_non_checked_js {
                             self.ctx.var_decl_types.insert(sym_id, refined);
                         }
                     }
@@ -1627,6 +1634,22 @@ impl<'a> CheckerState<'a> {
                                 break;
                             }
                             if other_decl.is_some() {
+                                // For merged global symbols, the declarations list may
+                                // contain NodeIndex values from OTHER files' arenas.
+                                // Accessing them in the current arena yields wrong nodes
+                                // (different declarations at the same index). Guard: verify
+                                // the node at other_decl resolves to a declaration with the
+                                // same name as our symbol. A name mismatch means the NodeIndex
+                                // is from a different file's arena.
+                                let name_matches = if let Some(ref expected_name) = var_name {
+                                    self.get_declaration_name_text(other_decl)
+                                        .map_or(false, |n| n == *expected_name)
+                                } else {
+                                    true // No name to compare, assume OK
+                                };
+                                if !name_matches {
+                                    continue;
+                                }
                                 let other_is_bare = self.is_bare_var_declaration_node(other_decl)
                                     && !self.is_var_decl_in_for_in_or_for_of(other_decl);
                                 let other_type = if other_is_bare {
@@ -1725,7 +1748,11 @@ impl<'a> CheckerState<'a> {
                     // (`var x;` → type `any`). In tsc, bare declarations establish
                     // type `any` for TS2403 purposes, so subsequent declarations
                     // with different types correctly trigger TS2403.
-                    self.ctx.var_decl_types.insert(sym_id, type_to_store);
+                    // Skip for non-checked JS files to avoid polluting cross-file
+                    // TS2403 checks with types from unchecked JavaScript sources.
+                    if !is_non_checked_js {
+                        self.ctx.var_decl_types.insert(sym_id, type_to_store);
+                    }
                 }
             }
         } else {
