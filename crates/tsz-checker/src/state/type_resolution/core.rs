@@ -220,6 +220,8 @@ impl<'a> CheckerState<'a> {
 
                 // For `import * as x from "m"; type T = x.A`, apply module augmentations
                 // to the referenced member type (A) using the module specifier from `x`.
+                // Also handles nested qualified names like `ns.Root.Foo` by walking
+                // up the chain to find the root identifier's module specifier.
                 if let Some(qn) = self
                     .ctx
                     .arena
@@ -227,20 +229,26 @@ impl<'a> CheckerState<'a> {
                     .and_then(|n| self.ctx.arena.get_qualified_name(n))
                     && let Some(right_node) = self.ctx.arena.get(qn.right)
                     && let Some(right_ident) = self.ctx.arena.get_identifier(right_node)
-                    && let Some(left_node) = self.ctx.arena.get(qn.left)
-                    && left_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(left_sym_id) =
-                        self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
                 {
-                    let lib_binders = self.get_lib_binders();
-                    if let Some(left_symbol) = self
-                        .ctx
-                        .binder
-                        .get_symbol_with_libs(left_sym_id, &lib_binders)
-                        && let Some(module_specifier) = left_symbol.import_module.as_ref()
+                    let module_specifier = if let Some(left_node) = self.ctx.arena.get(qn.left)
+                        && left_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(left_sym_id) =
+                            self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
                     {
+                        let lib_binders = self.get_lib_binders();
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(left_sym_id, &lib_binders)
+                            .and_then(|s| s.import_module.clone())
+                    } else {
+                        // Nested qualified name (e.g., ns.Root.Foo) — walk to
+                        // root identifier to extract the module specifier.
+                        let lib_binders = self.get_lib_binders();
+                        self.extract_root_module_specifier(qn.left, &lib_binders)
+                    };
+                    if let Some(module_specifier) = module_specifier {
                         result = self.apply_module_augmentations(
-                            module_specifier,
+                            &module_specifier,
                             &right_ident.escaped_text,
                             result,
                         );
