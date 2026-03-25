@@ -1089,7 +1089,8 @@ impl ParserState {
             || self.is_token(SyntaxKind::ConstKeyword)
             || (self.is_token(SyntaxKind::UsingKeyword)
                 && self.look_ahead_is_using_declaration_in_for())
-            || (self.is_token(SyntaxKind::AwaitKeyword) && self.look_ahead_is_await_using())
+            || (self.is_token(SyntaxKind::AwaitKeyword)
+                && self.look_ahead_is_await_using_declaration_in_for())
         {
             self.parse_for_variable_declaration()
         } else {
