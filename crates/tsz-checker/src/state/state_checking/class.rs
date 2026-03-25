@@ -1558,7 +1558,7 @@ impl<'a> CheckerState<'a> {
     /// - `@identifier.name()`     (single call at the top)
     /// - `@(expression)`          (parenthesized)
     ///
-    /// Invalid (TS1497) examples: `@x().y`, `@new x`, `@x?.y`, `` @x`` ``,
+    /// Invalid (TS1497) examples: `@x().y`, `@new x`, `@x?.y`, @x\`\`,
     /// `@x?.()`, `@x?.["y"]`, `@x["y"]`.
     ///
     /// Matches tsc's `checkGrammarDecorator`. Only checked when the source file
