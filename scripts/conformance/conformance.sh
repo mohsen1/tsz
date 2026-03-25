@@ -569,7 +569,18 @@ check_submodule_clean() {
         expected_sha="$pinned_sha"
     fi
     local actual_sha
-    actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null)
+    actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null || true)
+
+    # Fresh worktrees can leave the submodule on an unborn/invalid HEAD
+    # (for example "ref: refs/heads/.invalid"), which breaks rev-parse and
+    # later checkout/clean steps. Recover to the pinned SHA before running.
+    if [ -z "$actual_sha" ] || [ "$actual_sha" = "HEAD" ]; then
+        echo -e "${YELLOW}⚠ TypeScript submodule HEAD is not checked out; resetting to pinned SHA...${NC}"
+        if ! (cd "$REPO_ROOT" && bash scripts/setup/reset-ts-submodule.sh 2>/dev/null); then
+            echo -e "${YELLOW}⚠ Automatic submodule reset failed; continuing with current state.${NC}"
+        fi
+        actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null || true)
+    fi
 
     if [ -n "$expected_sha" ] && [ -n "$actual_sha" ] && [ "$expected_sha" != "$actual_sha" ]; then
         echo -e "${YELLOW}⚠ TypeScript submodule SHA mismatch!${NC}"
