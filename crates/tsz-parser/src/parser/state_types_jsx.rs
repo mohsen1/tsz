@@ -674,9 +674,7 @@ impl ParserState {
         let Some(rest) = self.get_source_text().get(self.token_pos() as usize..) else {
             return false;
         };
-        let line_end = rest
-            .find(['\n', '\r', ';'])
-            .unwrap_or(rest.len());
+        let line_end = rest.find(['\n', '\r', ';']).unwrap_or(rest.len());
         let line = &rest[..line_end];
         line.contains("</") || line.contains("/>")
     }
