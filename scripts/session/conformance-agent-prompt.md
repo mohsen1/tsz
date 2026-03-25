@@ -161,6 +161,9 @@ scripts/session/healthcheck.sh
 
 # Read recent context so you do not duplicate or undo active work
 git log --oneline -20
+
+# If you are working as a campaign agent, read the campaign checkpoint first
+scripts/session/campaign-checkpoint.sh <your-campaign> --status
 ```
 
 ### Step 1: Identify targets from the snapshot (zero cost, instant)
@@ -413,6 +416,7 @@ scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep "FINAL"
 # Must be ≥ previous snapshot count. If lower, investigate.
 
 # If improvement confirmed and you are the branch that will be integrated, update snapshot:
+# Skip snapshot churn for exploratory/WIP branches that are not ready to merge.
 scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 git add scripts/conformance/
 git commit -m "chore: update conformance snapshot (XX.X%, NNNNN/12581)"
@@ -430,7 +434,7 @@ On each iteration:
 5. **Update architecture** if needed — extract modules when files grow, ensure boundaries remain clean.
 6. **Update conformance snapshot only after the change is stable and regression checks pass.**
 
-Update conformance baselines in the branch that is actually being integrated. Check recent commits on the repository — new changes (JSDoc typedef prioritisation, dynamic import fixes, extended hoisting in binder, etc.) may influence how to implement further fixes.
+Update conformance baselines in the branch that is actually being integrated. Avoid snapshot-only churn when the fix is still under investigation or likely to be superseded by a nearby agent. Check recent commits on the repository — new changes (JSDoc typedef prioritisation, dynamic import fixes, extended hoisting in binder, etc.) may influence how to implement further fixes.
 
 ---
 
@@ -472,7 +476,15 @@ git push origin campaign/<your-campaign>
 # The integrator validates and merges with scripts/session/integrate.sh
 ```
 
-### After pushing, update snapshot if significant improvement:
+### After pushing, record campaign progress if applicable:
+```bash
+export CHECKPOINT_BLOCKED_ON="..."
+export CHECKPOINT_TRIED="..."
+export CHECKPOINT_LEADS="lead one; lead two"
+scripts/session/campaign-checkpoint.sh <your-campaign>
+```
+
+### After integrating to `main`, update snapshot if significant improvement:
 ```bash
 scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 git add scripts/conformance/
