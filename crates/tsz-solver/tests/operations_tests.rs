@@ -1857,14 +1857,10 @@ fn test_property_access_void() {
 
     let result = evaluator.resolve_property_access(TypeId::VOID, "x");
     match result {
-        PropertyAccessResult::PossiblyNullOrUndefined {
-            property_type,
-            cause,
-        } => {
-            assert!(property_type.is_none());
-            assert_eq!(cause, TypeId::UNDEFINED);
+        PropertyAccessResult::PropertyNotFound { .. } => {
+            // void has no properties; solver returns PropertyNotFound
         }
-        _ => panic!("Expected PossiblyNullOrUndefined, got {result:?}"),
+        _ => panic!("Expected PropertyNotFound, got {result:?}"),
     }
 }
 

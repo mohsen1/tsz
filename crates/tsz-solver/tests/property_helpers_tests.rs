@@ -886,8 +886,8 @@ fn test_void_type_property_access() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
-    // void.anything => PossiblyNullOrUndefined (void is like undefined for property access)
-    assert_possibly_null_or_undefined(&evaluator.resolve_property_access(TypeId::VOID, "x"));
+    // void has no properties; solver returns PropertyNotFound
+    assert_property_not_found(&evaluator.resolve_property_access(TypeId::VOID, "x"));
 }
 
 // =============================================================================
