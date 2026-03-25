@@ -369,6 +369,31 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
         diag_idx: NodeIndex,
     ) -> bool {
+        self.check_assignable_or_report_at_with_options(source, target, source_idx, diag_idx, false)
+    }
+
+    /// Same as `check_assignable_or_report_at`, but skips deep assignment
+    /// source elaboration so failures are reported at the enclosing source
+    /// context (for example, return statements) rather than a nested
+    /// property/element node.
+    pub(crate) fn check_assignable_or_report_at_without_source_elaboration(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        self.check_assignable_or_report_at_with_options(source, target, source_idx, diag_idx, true)
+    }
+
+    fn check_assignable_or_report_at_with_options(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+        skip_source_elaboration: bool,
+    ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
@@ -439,7 +464,9 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        if self.try_elaborate_assignment_source_error(source_idx, target) {
+        if !skip_source_elaboration
+            && self.try_elaborate_assignment_source_error(source_idx, target)
+        {
             return false;
         }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
