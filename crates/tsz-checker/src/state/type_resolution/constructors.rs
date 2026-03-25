@@ -88,6 +88,31 @@ impl<'a> CheckerState<'a> {
         }
 
         if matching.is_empty() {
+            // When type arguments were provided but no construct signature has
+            // type parameters, the base class is not generic.  Return a callable
+            // type with no construct signatures so that `super()` fails with
+            // NotCallable and emits TS2346 ("Call target does not contain any
+            // signatures.").  Without this, the original constructor signatures
+            // are returned unchanged, letting the super() call succeed silently
+            // even though the extends clause already errored with TS2315.
+            if !type_args.is_empty()
+                && shape
+                    .construct_signatures
+                    .iter()
+                    .all(|sig| sig.type_params.is_empty())
+            {
+                let empty_shape = CallableShape {
+                    call_signatures: shape.call_signatures.clone(),
+                    construct_signatures: vec![],
+                    properties: shape.properties.clone(),
+                    string_index: shape.string_index.clone(),
+                    number_index: shape.number_index.clone(),
+                    symbol: None,
+                    is_abstract: false,
+                };
+                let factory = self.ctx.types.factory();
+                return factory.callable(empty_shape);
+            }
             return ctor_type;
         }
 

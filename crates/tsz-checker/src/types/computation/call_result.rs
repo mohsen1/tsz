@@ -241,6 +241,17 @@ impl<'a> CheckerState<'a> {
             }
             CallResult::NotCallable { .. } => {
                 if is_super_call {
+                    // Emit TS2346 when the super() call target has no signatures
+                    // (e.g., when the base class is used with invalid type arguments).
+                    // Suppress the error when the callee type is already an error
+                    // to avoid cascading diagnostics.
+                    if callee_type != TypeId::ERROR {
+                        self.error_at_node(
+                            callee_expr,
+                            "Call target does not contain any signatures.",
+                            diagnostic_codes::CALL_TARGET_DOES_NOT_CONTAIN_ANY_SIGNATURES,
+                        );
+                    }
                     return TypeId::VOID;
                 }
                 if self.is_constructor_type(callee_type) {
