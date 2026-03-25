@@ -340,7 +340,7 @@ For every fix, answer these questions from CLAUDE.md §15:
 ### Coding rules
 
 - **Solver files** (`crates/tsz-solver/`) must keep ownership boundaries intact; avoid solver assumptions in checker logic. Use normal edit/fmt workflows and keep changes localized.
-- **Checker files** can be edited normally with the Edit tool.
+- **Checker files** must stay focused on source-facing control flow and diagnostics; move reusable semantics behind solver queries or boundary helpers.
 - Keep checker files under ~2000 LOC. Extract into submodules when approaching the limit.
 - Use existing `nearest_enclosing_class()`, `resolve_lazy_type()`, `evaluate_type_for_assignability()` helpers.
 - Prefer `query_boundaries/` wrappers over direct solver access.
@@ -376,8 +376,9 @@ For every fix, answer these questions from CLAUDE.md §15:
 ### Step 1: Build and test the specific fix
 
 ```bash
-# Check compilation
+# Check compilation for the package(s) you changed
 cargo check --package tsz-checker
+cargo check --package tsz-solver
 
 # Build optimized binary for conformance
 cargo build --profile dist-fast --bin tsz
@@ -529,9 +530,10 @@ python3 scripts/conformance/query-conformance.py --false-positives
 
 # Build
 cargo check --package tsz-checker
+cargo check --package tsz-solver
 cargo build --profile dist-fast --bin tsz
 
-# Campaign coordination
+# Campaign coordination (campaign agents only)
 scripts/session/campaign-checkpoint.sh <your-campaign> --status || \
   scripts/session/campaign-checkpoint.sh <your-campaign> --init
 scripts/session/campaign-checkpoint.sh <your-campaign> --status
