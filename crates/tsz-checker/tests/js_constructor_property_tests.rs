@@ -747,6 +747,43 @@ class C extends UI.TreeElement {
     );
 }
 
+#[test]
+fn test_js_class_expression_assigned_to_element_property_preserves_base_instance_members() {
+    let source = r#"
+var UI = {}
+UI["TreeElement"] = class {
+    constructor() {
+        this.treeOutline = 12
+    }
+};
+UI.context = new UI["TreeElement"]()
+
+class C extends UI["TreeElement"] {
+    onpopulate() {
+        this.doesNotExist
+        this.treeOutline.doesntExistEither()
+    }
+};
+"#;
+
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert!(
+        ts2339.len() >= 2,
+        "Expected missing-member diagnostics for unknown `this` property and invalid number member access through element-assigned base class, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, msg)| msg.contains("doesNotExist")),
+        "Expected TS2339 for `this.doesNotExist`, got: {diagnostics:?}"
+    );
+}
+
 /// Plain JS constructor functions with computed prototype assignments are still
 /// constructable in checkJs, even though the computed members themselves remain
 /// unsupported for property lookup.
