@@ -363,6 +363,48 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns true when an async iterator's `next()` result is thenable but not a
+    /// valid promise/thenable shape that can be awaited safely.
+    pub fn async_iterator_has_invalid_thenable_next_result(&mut self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let type_id = self.resolve_lazy_type(type_id);
+        let iterator_fn = self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
+        let iterator_fn_type = match iterator_fn {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return false,
+        };
+
+        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type =
+            if iterator_type == TypeId::ANY || is_this_type(self.ctx.types, iterator_type) {
+                type_id
+            } else {
+                iterator_type
+            };
+
+        let next_result = self.resolve_property_access_with_env(iterator_type, "next");
+        let mut next_fn_type = match next_result {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return false,
+        };
+
+        if next_fn_type == TypeId::ANY && iterator_type != type_id {
+            let fallback_next = self.resolve_property_access_with_env(type_id, "next");
+            if let PropertyAccessResult::Success { type_id: fb, .. } = fallback_next
+                && fb != TypeId::ANY
+            {
+                next_fn_type = fb;
+            }
+        }
+
+        let next_return = self.get_call_return_type(next_fn_type);
+        tsz_solver::type_queries::is_promise_like(self.ctx.types, next_return)
+            && self
+                .promise_like_return_type_argument(next_return)
+                .is_none()
+    }
+
     // =========================================================================
     // For-Of Element Type Computation
     // =========================================================================
