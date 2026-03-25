@@ -1461,41 +1461,74 @@ impl<'a> CheckerState<'a> {
 
     /// Extract type names from `@implements` JSDoc tags on a class declaration.
     /// Supports both `@implements {TypeName}` and `@implements TypeName` syntax.
-    /// Returns a list of type name strings.
-    fn extract_jsdoc_implements_names(&self, class_idx: NodeIndex) -> Vec<String> {
+    /// Returns a list of type name strings plus positions for empty tags that should emit TS1003.
+    fn extract_jsdoc_implements_names(
+        &self,
+        class_idx: NodeIndex,
+    ) -> (Vec<String>, Vec<u32>) {
         let Some(sf) = self.ctx.arena.source_files.first() else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
 
         let Some(node) = self.ctx.arena.get(class_idx) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
 
-        let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text) else {
-            return Vec::new();
+        let Some((jsdoc, jsdoc_start)) =
+            self.try_leading_jsdoc_with_pos(comments, node.pos, source_text)
+        else {
+            return (Vec::new(), Vec::new());
         };
+        let leading = tsz_common::comments::get_leading_comments_from_cache(
+            comments, node.pos, source_text,
+        );
+        let raw_comment = leading
+            .last()
+            .and_then(|comment| source_text.get(comment.pos as usize..comment.end as usize))
+            .unwrap_or("");
 
         let mut names = Vec::new();
+        let mut missing_positions = Vec::new();
         let needle = "@implements";
+        let raw_offsets: Vec<usize> = raw_comment
+            .match_indices(needle)
+            .filter_map(|(pos, _)| {
+                let after = pos + needle.len();
+                if after < raw_comment.len()
+                    && raw_comment[after..]
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+                {
+                    None
+                } else {
+                    Some(pos)
+                }
+            })
+            .collect();
+
+        let mut tag_index = 0usize;
         for (pos, _) in jsdoc.match_indices(needle) {
             let after = pos + needle.len();
-            if after >= jsdoc.len() {
+            if after < jsdoc.len()
+                && jsdoc[after..]
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric())
+            {
                 continue;
             }
-            // Ensure @implements is not a prefix of another tag
-            let next_ch = jsdoc[after..]
-                .chars()
-                .next()
-                .expect("after < len checked above");
-            if next_ch.is_ascii_alphanumeric() {
-                continue;
-            }
+            let raw_pos = raw_offsets.get(tag_index).copied();
+            tag_index += 1;
 
             // Skip whitespace after @implements
-            let rest = jsdoc[after..].trim_start();
+            let rest = jsdoc.get(after..).unwrap_or("").trim_start();
             if rest.is_empty() {
+                if let Some(raw_pos) = raw_pos {
+                    missing_positions.push(jsdoc_start + raw_pos as u32 + needle.len() as u32);
+                }
                 continue;
             }
 
@@ -1519,7 +1552,7 @@ impl<'a> CheckerState<'a> {
                 names.push(type_name.to_string());
             }
         }
-        names
+        (names, missing_positions)
     }
 
     /// Check JSDoc `@implements` tags on a class declaration (JS files only).
@@ -1541,7 +1574,22 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let implements_names = self.extract_jsdoc_implements_names(class_idx);
+        let (implements_names, missing_positions) = self.extract_jsdoc_implements_names(class_idx);
+        for pos in missing_positions {
+            let already_emitted = self
+                .ctx
+                .diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED && d.start == pos);
+            if !already_emitted {
+                self.emit_error_at(
+                    pos,
+                    0,
+                    diagnostic_messages::IDENTIFIER_EXPECTED,
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+        }
         if implements_names.is_empty() {
             return;
         }
