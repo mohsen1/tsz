@@ -347,6 +347,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
 
                 if is_async_generator {
+                    if self
+                        .checker
+                        .async_iterator_has_invalid_thenable_next_result(expression_type)
+                    {
+                        self.checker.error_at_node(
+                            yield_expr.expression,
+                            diagnostic_messages::TYPE_OF_AWAIT_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT_CONTAIN_A_CALLA,
+                            diagnostic_codes::TYPE_OF_AWAIT_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT_CONTAIN_A_CALLA,
+                        );
+                    }
                     let async_info = tsz_solver::operations::get_iterator_info(
                         self.checker.ctx.types,
                         expression_type,
