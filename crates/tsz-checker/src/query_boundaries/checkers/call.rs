@@ -24,6 +24,56 @@ pub(crate) fn get_contextual_signature_for_arity(
     tsz_solver::get_contextual_signature_for_arity_with_compat_checker(db, type_id, arg_count)
 }
 
+/// Get the call signature of a type, preferring a generic one.
+///
+/// Used by the checker's two-pass call path when overloaded callables mix
+/// generic and non-generic signatures. `get_contextual_signature_for_arity`
+/// intentionally returns `None` for that case to avoid unsafe contextual typing
+/// of callbacks, but we still need to know whether there is an arity-compatible
+/// generic signature so generic inference/sanitization can run.
+pub(crate) fn get_call_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    arg_count: usize,
+) -> Option<FunctionShape> {
+    let sigs = tsz_solver::type_queries::get_call_signatures(db, type_id)?;
+    let signature_accepts_arg_count = |params: &[tsz_solver::ParamInfo], count: usize| {
+        let required_count = params.iter().filter(|p| !p.optional).count();
+        let has_rest = params.iter().any(|p| p.rest);
+        if has_rest {
+            count >= required_count
+        } else {
+            count >= required_count && count <= params.len()
+        }
+    };
+    let applicable: Vec<_> = sigs
+        .iter()
+        .filter(|s| signature_accepts_arg_count(&s.params, arg_count))
+        .collect();
+
+    let sig = if !applicable.is_empty() {
+        applicable
+            .iter()
+            .find(|s| !s.type_params.is_empty())
+            .copied()
+            .or_else(|| applicable.first().copied())?
+    } else {
+        sigs.iter()
+            .find(|s| !s.type_params.is_empty())
+            .or_else(|| sigs.first())?
+    };
+
+    Some(FunctionShape {
+        type_params: sig.type_params.clone(),
+        params: sig.params.clone(),
+        this_type: sig.this_type,
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate.clone(),
+        is_constructor: false,
+        is_method: sig.is_method,
+    })
+}
+
 pub(crate) fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
     tsz_solver::type_queries::get_function_parameter_types(db, type_id)
 }

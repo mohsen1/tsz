@@ -264,6 +264,35 @@ pub fn load_lib_files_for_test() -> Vec<Arc<crate::lib_loader::LibFile>> {
 /// Internal function to load lib files from known paths.
 /// Checks multiple locations where TypeScript libs might be installed.
 fn load_lib_files_from_paths() -> Vec<Arc<crate::lib_loader::LibFile>> {
+    const EMBEDDED_LIB_CHAIN: &[&str] = &[
+        "es5.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.d.ts",
+    ];
+
+    let embedded_libs: Vec<_> = EMBEDDED_LIB_CHAIN
+        .iter()
+        .filter_map(|file_name| {
+            crate::embedded_libs::get_lib_content(file_name).map(|content| {
+                Arc::new(crate::lib_loader::LibFile::from_source(
+                    (*file_name).to_string(),
+                    content.to_string(),
+                ))
+            })
+        })
+        .collect();
+    if !embedded_libs.is_empty() {
+        return embedded_libs;
+    }
+
     // Use CARGO_MANIFEST_DIR for absolute paths so tests work with nextest
     // (which runs each test in a separate process with a different working directory)
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -279,24 +308,86 @@ fn load_lib_files_from_paths() -> Vec<Arc<crate::lib_loader::LibFile>> {
     };
     let suffixes = [
         "scripts/node_modules/typescript/lib/lib.es5.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.symbol.wellknown.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.core.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.collection.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.iterable.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.generator.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.promise.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.proxy.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.reflect.d.ts",
+        "scripts/node_modules/typescript/lib/lib.es2015.d.ts",
         "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.symbol.wellknown.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.collection.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.iterable.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.generator.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.promise.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.proxy.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.reflect.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts",
         "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.symbol.wellknown.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.core.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.collection.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.iterable.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.generator.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.promise.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.proxy.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.reflect.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts",
         "TypeScript/src/lib/es5.d.ts",
+        "TypeScript/src/lib/es2015.symbol.d.ts",
+        "TypeScript/src/lib/es2015.symbol.wellknown.d.ts",
+        "TypeScript/src/lib/es2015.core.d.ts",
+        "TypeScript/src/lib/es2015.collection.d.ts",
+        "TypeScript/src/lib/es2015.iterable.d.ts",
+        "TypeScript/src/lib/es2015.generator.d.ts",
+        "TypeScript/src/lib/es2015.promise.d.ts",
+        "TypeScript/src/lib/es2015.proxy.d.ts",
+        "TypeScript/src/lib/es2015.reflect.d.ts",
+        "TypeScript/src/lib/es2015.d.ts",
         "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.symbol.wellknown.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.core.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.collection.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.iterable.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.generator.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.promise.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.proxy.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.reflect.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es2015.d.ts",
     ];
     let lib_paths: Vec<std::path::PathBuf> = search_roots
         .iter()
         .flat_map(|root| suffixes.iter().map(move |s| root.join(s)))
         .collect();
 
+    let mut loaded = Vec::new();
     for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let lib_file =
-                crate::lib_loader::LibFile::from_source("lib.es5.d.ts".to_string(), content);
-            return vec![Arc::new(lib_file)];
+        if !lib_path.exists() {
+            continue;
         }
+        let Some(file_name) = lib_path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Ok(content) = std::fs::read_to_string(lib_path) {
+            loaded.push(Arc::new(crate::lib_loader::LibFile::from_source(
+                file_name
+                    .strip_prefix("lib.")
+                    .unwrap_or(file_name)
+                    .to_string(),
+                content,
+            )));
+        }
+    }
+    if !loaded.is_empty() {
+        return loaded;
     }
 
     Vec::new()

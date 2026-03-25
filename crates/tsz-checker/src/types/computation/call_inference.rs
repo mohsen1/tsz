@@ -11,6 +11,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
@@ -98,6 +99,26 @@ fn instantiate_contextual_target_shape_for_return_context(
 }
 
 impl<'a> CheckerState<'a> {
+    fn is_builtin_object_entries_call(&self, callee_expr: NodeIndex) -> bool {
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(member_name) = self.identifier_name_text(access.name_or_argument) else {
+            return false;
+        };
+        if member_name != "entries" {
+            return false;
+        }
+        matches!(self.identifier_name_text(access.expression), Some("Object"))
+    }
+
+    fn identifier_name_text(&self, idx: NodeIndex) -> Option<&str> {
+        self.ctx.arena.get_identifier_text(idx)
+    }
+
     pub(crate) fn widen_round2_contextual_substitution(
         &mut self,
         shape: &FunctionShape,
@@ -856,14 +877,18 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn sanitize_generic_inference_arg_types(
         &mut self,
+        callee_expr: NodeIndex,
         args: &[NodeIndex],
         arg_types: &[TypeId],
     ) -> (Vec<TypeId>, bool) {
+        let sanitize_object_entries_any =
+            self.is_builtin_object_entries_call(callee_expr) && arg_types.len() == 1;
         let mut changed = false;
         let sanitized = args
             .iter()
             .zip(arg_types.iter().copied())
-            .map(|(&arg_idx, arg_type)| {
+            .enumerate()
+            .map(|(index, (&arg_idx, arg_type))| {
                 // Resolve enum types to their namespace object representation.
                 // When an enum identifier (like `E1`) is used as a call argument,
                 // it resolves to an Enum type with a DefId. For inference against
@@ -882,6 +907,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         arg_type
                     }
+                } else {
+                    arg_type
+                };
+
+                let arg_type = if sanitize_object_entries_any && index == 0 && arg_type == TypeId::ANY
+                {
+                    changed = true;
+                    TypeId::UNKNOWN
                 } else {
                     arg_type
                 };
