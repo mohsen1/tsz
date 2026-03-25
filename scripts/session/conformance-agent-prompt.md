@@ -177,6 +177,12 @@ scripts/session/campaign-checkpoint.sh <your-campaign> --status || \
 scripts/session/campaign-checkpoint.sh <your-campaign> --status
 ```
 
+If `git status` shows unrelated modified files, keep them out of your conformance attempt:
+- do not revert user/other-agent changes
+- do not stage unrelated files with your fix
+- prefer a commit that contains only the conformance change and any directly required tests
+- if unrelated staged changes are present, unstage them before committing your fix
+
 Before target selection, create an attempt scratchpad:
 
 ```bash
@@ -335,6 +341,11 @@ cat > /tmp/test_repro.ts << 'EOF'
 EOF
 cargo run --bin tsz -- /tmp/test_repro.ts 2>&1
 ```
+
+If the live repro disagrees with `query-conformance.py` or `conformance-detail.json`, trust the
+live repro first and explain the mismatch in your notes. Snapshot/detail artifacts can lag behind
+recent fixes or partial reruns; do not "fix" a stale diagnostic target without reproducing the
+current failure.
 
 ---
 
