@@ -183,9 +183,11 @@ Before target selection, create an attempt scratchpad:
 export ATTEMPT_ID="conformance-$(date +%Y%m%d-%H%M%S)"
 export ATTEMPT_MODE="${CONFORMANCE_MODE:-standalone}"
 export ATTEMPT_STARTED_EPOCH_MS="$(date +%s%3N)"
+export ATTEMPT_PATH="/tmp/conformance-attempts/$ATTEMPT_ID.txt"
 mkdir -p /tmp/conformance-attempts
-echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/conformance-attempts/$ATTEMPT_ID.txt
-echo "mode=$ATTEMPT_MODE" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "attempt_id=$ATTEMPT_ID" > "$ATTEMPT_PATH"
+echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$ATTEMPT_PATH"
+echo "mode=$ATTEMPT_MODE" >> "$ATTEMPT_PATH"
 ```
 
 ### Step 1: Identify targets from the snapshot (zero cost, instant)
@@ -354,18 +356,24 @@ For every attempt, record in your working notes:
 - Use machine-parseable one-line outcomes with key/value pairs: `attempt`, `test`, `outcome`, `m_delta`, `x_delta`, `duration_ms`, optional `reason`, and optional free-form `notes`.
 - `m_delta` and `x_delta` are signed integers: negative for regression, positive for gain, zero for no net delta.
 - `duration_ms` must be wall-clock elapsed milliseconds since `ATTEMPT_STARTED_EPOCH_MS` (or `0` if unavailable).
+- Write final timing fields before the summary append:
+  - `end_ms`: wall-clock end epoch milliseconds.
+  - `duration_ms`: final elapsed time.
 - Append a one-line final summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt` before moving to a new test.
 - If provided, `reason` should be one of: `multi-crate-touch-required`, `intractable`, `infra`, `cross-cutting`, `regression`, `no-progress`.
   - Example with reason: `attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=no-progress m_delta=0 x_delta=0 duration_ms=12456 notes=\"no progress after 2 rerolls\"`
 
 ```bash
-# Compute and log final duration before appending your attempt summary
+# Compute and log final timing before appending your attempt summary
 end_ms="$(date +%s%3N)"
 duration_ms="$((end_ms - ATTEMPT_STARTED_EPOCH_MS))"
 if [ -z "$ATTEMPT_STARTED_EPOCH_MS" ] || [ "$duration_ms" -lt 0 ]; then duration_ms=0; fi
+echo "end=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$ATTEMPT_PATH"
+echo "end_ms=$end_ms" >> "$ATTEMPT_PATH"
+echo "duration_ms=$duration_ms" >> "$ATTEMPT_PATH"
 
 # Example attempt summary format
-echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 duration_ms=$duration_ms notes=\"parser+checker+solver touch\"" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 duration_ms=$duration_ms notes=\"parser+checker+solver touch\"" >> "$ATTEMPT_PATH"
 ```
 
 ### Architecture review (MANDATORY before writing code)
