@@ -758,8 +758,18 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn literal_expression_display(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        // Skip only parentheses, NOT type assertions. A type assertion like
+        // `'bar' as any` changes the type to `any`, so the literal display
+        // should not be used — the asserted type should be displayed instead.
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
+        // If this is a type assertion expression (as/angle-bracket), don't
+        // display the inner literal — let the caller use the asserted type.
+        if node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::TYPE_ASSERTION
+        {
+            return None;
+        }
 
         match node.kind {
             k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
