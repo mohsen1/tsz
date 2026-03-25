@@ -8,7 +8,7 @@ You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in
 
 **Absolute rule**: match `tsc` behavior exactly. Every fix must reduce the gap between tsz and tsc without introducing new gaps.
 
-**Current baseline**: around 90.0% pass rate (snapshot-specific counts; verify against your local snapshot before each iteration). Goal: push past 90% and keep climbing.
+**Current baseline**: snapshot-specific (do not rely on static percentages). Before each iteration, capture and reuse the latest local snapshot count.
 Failure categories are directional and can overlap; rerun conformance counts when you change strategy or ownership.
 
 Conformance shorthand used by the query scripts:
@@ -163,6 +163,7 @@ Top failure areas by opportunity:
 ```bash
 # Confirm the repository is in a good state before you pick work
 scripts/session/healthcheck.sh
+git status --short --branch
 
 # Read recent context so you do not duplicate or undo active work
 git log --oneline -20
@@ -270,6 +271,7 @@ another random target. Do not waste time on targets that need campaign-level wor
 When in doubt, use this fallback path:
 1) Reroll once for a cleaner target.
 2) If second pick also feels broad-surface, switch to a known one-extra/one-missing or close-to-passing single-file candidate.
+If a target requires edits across multiple crates before you’ve validated the first module change, mark it as blocked and reroll.
 
 **Avoid**:
 - Multi-file tests (`@Filename:` directives) — complex module resolution
@@ -322,6 +324,7 @@ For every attempt, record in your working notes:
 - Which codes were `m` and/or `x`
 - The exact command/output used to pick the target
 - Why this target is single-file / low-surface-area
+- Define explicit pass/fail criteria for this attempt (including what change in `m`/`x` would count as success).
 
 ### Architecture review (MANDATORY before writing code)
 
@@ -464,6 +467,7 @@ Update conformance baselines in the branch that is actually being integrated. Av
 **If conformance drops more than 5 tests from the snapshot**: DO NOT PUSH. Investigate and fix or revert.
 
 **If a build breaks**: Fix it before doing anything else.
+**If an attempt has no measurable progress after 2 rerolls**: stop and reroll or switch to a simpler target.
 
 ---
 
