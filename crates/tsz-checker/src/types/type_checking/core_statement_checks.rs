@@ -194,7 +194,7 @@ impl<'a> CheckerState<'a> {
             && expected_type != TypeId::ANY
             && !self.type_contains_error(expected_type)
         {
-            let ok = self.check_assignable_or_report_at(
+            let ok = self.check_assignable_or_report_at_without_source_elaboration(
                 return_type,
                 expected_type,
                 source_error_node,
