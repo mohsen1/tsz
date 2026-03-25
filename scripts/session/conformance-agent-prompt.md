@@ -350,12 +350,12 @@ For every attempt, record in your working notes:
 - Why this target is single-file / low-surface-area
 - Define explicit pass/fail criteria for this attempt (including what change in `m`/`x` would count as success).
 - Timestamp the attempt and final outcome (`blocked`, `fixed`, `regression`, `handoff`).
-- Use machine-parseable one-line outcomes: `attempt`, `test`, `outcome`, `reason` (when blocked/handoff), and `m_delta`/`x_delta` deltas.
+- Use machine-parseable one-line outcomes with key/value pairs: `attempt`, `test`, `outcome`, `m_delta`, `x_delta`, optional `reason`, and optional free-form `notes`.
 - Append a one-line final summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt` before moving to a new test.
 
 ```bash
 # Example attempt summary format
-echo "attempt=$ATTEMPT_ID test=TS2322 outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 notes=parser+checker+solver touch" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 ### Architecture review (MANDATORY before writing code)
@@ -501,6 +501,7 @@ Update conformance baselines in the branch that is actually being integrated. Av
 **If a build breaks**: Fix it before doing anything else.
 **If an attempt has no measurable progress after 2 rerolls**: stop and reroll or switch to a simpler target.
 **If progress is blocked by cross-cutting scope** (e.g., requires parser + checker + solver edits in one go), set `outcome=handoff`, append a handoff summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt`, update campaign checkpoint, and stop attempting local fixes.
+**If run failures are infra-related** (timeouts/IO/CI resource issues), set `outcome=blocked reason=infra` in the attempt log, annotate `notes`, reroll once after capturing environment context, then re-run the same target.
 
 ---
 
