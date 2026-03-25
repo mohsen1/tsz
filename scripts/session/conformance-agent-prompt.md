@@ -404,6 +404,7 @@ echo "duration_ms=$duration_ms" >> "$ATTEMPT_PATH"
 echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 duration_ms=$duration_ms notes=\"parser+checker+solver touch\"" >> "$ATTEMPT_PATH"
 ```
 - Include `selection_category=<...>` in that summary line so later triage can group outcomes by pick lane.
+- Include `selection_target=TESTNAME` in that summary line so rerolls and final outcomes stay aligned.
 
 ### Architecture review (MANDATORY before writing code)
 
