@@ -1327,6 +1327,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Re-seed inference from `this` after Round 1 fixing.
+        // When the `this` type contains variadic tuple patterns like `[...T, ...U]`,
+        // the initial seeding (before Round 1) cannot split the source tuple between
+        // multiple rest type variables. After Round 1 fixes some variables (e.g. T
+        // from argument types), we re-instantiate the expected `this` type with the
+        // fixed substitution and re-run constraint collection. This allows the
+        // remaining variables (e.g. U) to be inferred from the leftover elements.
+        if let Some(expected_this) = func.this_type {
+            let has_unfixed = type_param_vars
+                .iter()
+                .any(|&var| infer_ctx.probe(var).is_none());
+            if has_unfixed && !fixed_subst.is_empty() {
+                let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+                // Re-instantiate with the fixed_subst so resolved type params
+                // are replaced with their inferred types.
+                let expected_this_reinst = instantiate_type(
+                    self.interner,
+                    instantiate_call_type(
+                        self.interner,
+                        expected_this,
+                        &substitution,
+                        actual_this_type,
+                    ),
+                    &fixed_subst,
+                );
+                self.constrain_types(
+                    &mut infer_ctx,
+                    &var_map,
+                    actual_this,
+                    expected_this_reinst,
+                    crate::types::InferencePriority::NakedTypeVariable,
+                );
+            }
+        }
+
         // === Round 2: Process contextual arguments ===
         // These are arguments like lambdas that need contextual typing.
         // Now that non-contextual arguments have been processed, we can provide
