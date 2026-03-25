@@ -359,8 +359,13 @@ For every attempt, record in your working notes:
   - Example with reason: `attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=no-progress m_delta=0 x_delta=0 duration_ms=12456 notes=\"no progress after 2 rerolls\"`
 
 ```bash
+# Compute and log final duration before appending your attempt summary
+end_ms="$(date +%s%3N)"
+duration_ms="$((end_ms - ATTEMPT_STARTED_EPOCH_MS))"
+if [ -z "$ATTEMPT_STARTED_EPOCH_MS" ] || [ "$duration_ms" -lt 0 ]; then duration_ms=0; fi
+
 # Example attempt summary format
-echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 duration_ms=1200 notes=\"parser+checker+solver touch\"" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 duration_ms=$duration_ms notes=\"parser+checker+solver touch\"" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 ### Architecture review (MANDATORY before writing code)
