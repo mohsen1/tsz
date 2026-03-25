@@ -1043,7 +1043,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // would create spurious constraints in Round 1, poisoning inference.
             // Defer such args to Round 2, where they will be re-typed with the specific
             // overload's contextual type after type parameters are resolved from Round 1.
-            if self.arg_contains_callers_type_params(contextual_arg_type, &substitution) {
+            //
+            // Only apply this check to contextually sensitive arguments — those whose
+            // parameter types came from contextual typing. For fully annotated function
+            // arguments (e.g., `(x: T) => ''` where `T` is from an outer scope), the
+            // parameter types are explicit source annotations, not leaked caller type
+            // params. Deferring them would cause both rounds to skip inference, since
+            // Round 2 only processes contextually sensitive args.
+            if self.is_contextually_sensitive(arg_type)
+                && self.arg_contains_callers_type_params(contextual_arg_type, &substitution)
+            {
                 saw_deferred_arg = true;
                 continue;
             }
