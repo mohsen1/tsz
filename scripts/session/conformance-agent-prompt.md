@@ -358,6 +358,7 @@ If the chosen test already passes locally, or the live failure shape no longer m
 `m`/`x` target, treat it as a stale pick instead of forcing a fix:
 - log `outcome=blocked reason=no-progress` with notes explaining that the target drifted
 - reroll once using the same category before broadening scope
+- if the reroll replaces the original target, append fresh `selection_*` metadata for the new pick
 - only keep working the test if the updated live failure is still a clear single-file, low-surface-area target
 
 ---
