@@ -1,6 +1,7 @@
 //! Core import/export checking implementation.
 
 use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -285,6 +286,212 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn resolve_export_assignment_target_symbol(
+        &self,
+        export_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let node = self.ctx.arena.get(export_idx)?;
+        let export_data = self.ctx.arena.get_export_assignment(node)?;
+        let expr_node = self.ctx.arena.get(export_data.expression)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            self.resolve_identifier_symbol(export_data.expression)
+        } else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            self.resolve_qualified_symbol(export_data.expression)
+        } else {
+            None
+        }
+    }
+
+    fn top_level_exported_name_nodes(
+        &self,
+        statements: &[NodeIndex],
+    ) -> FxHashMap<String, Vec<NodeIndex>> {
+        let mut exported = FxHashMap::default();
+
+        for &stmt_idx in statements {
+            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match node.kind {
+                syntax_kind_ext::EXPORT_DECLARATION => {
+                    let Some(export_decl) = self.ctx.arena.get_export_decl(node) else {
+                        continue;
+                    };
+                    if export_decl.is_default_export || export_decl.module_specifier.is_some() {
+                        continue;
+                    }
+                    let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+                        continue;
+                    };
+                    if let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) {
+                        for &specifier_idx in &named_exports.elements.nodes {
+                            let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                                continue;
+                            };
+                            let Some(specifier) = self.ctx.arena.get_specifier(specifier_node)
+                            else {
+                                continue;
+                            };
+                            if specifier.is_type_only {
+                                continue;
+                            }
+                            let Some(name) = self.get_identifier_text_from_idx(specifier.name)
+                            else {
+                                continue;
+                            };
+                            exported
+                                .entry(name)
+                                .or_insert_with(Vec::new)
+                                .push(specifier.name);
+                        }
+                    } else if let Some(name_idx) =
+                        self.get_declaration_name_node(export_decl.export_clause)
+                        && let Some(name) = self.get_identifier_text_from_idx(name_idx)
+                    {
+                        exported.entry(name).or_insert_with(Vec::new).push(name_idx);
+                    }
+                }
+                _ => {
+                    if !self.has_export_modifier(stmt_idx) {
+                        continue;
+                    }
+                    let Some(name_idx) = self.get_declaration_name_node(stmt_idx) else {
+                        continue;
+                    };
+                    let Some(name) = self.get_identifier_text_from_idx(name_idx) else {
+                        continue;
+                    };
+                    exported.entry(name).or_insert_with(Vec::new).push(name_idx);
+                }
+            }
+        }
+
+        exported
+    }
+
+    fn namespace_exported_name_nodes_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> FxHashMap<String, Vec<NodeIndex>> {
+        let mut exported = FxHashMap::default();
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return exported;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = self.ctx.arena.get_module(node) else {
+                continue;
+            };
+            let Some(body_node) = self.ctx.arena.get(module_decl.body) else {
+                continue;
+            };
+            let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(statements) = &block.statements else {
+                continue;
+            };
+
+            for &stmt_idx in &statements.nodes {
+                let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                    continue;
+                };
+                match stmt_node.kind {
+                    syntax_kind_ext::EXPORT_DECLARATION => {
+                        let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
+                            continue;
+                        };
+                        if export_decl.is_default_export || export_decl.module_specifier.is_some() {
+                            continue;
+                        }
+                        let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause)
+                        else {
+                            continue;
+                        };
+                        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node)
+                        else {
+                            continue;
+                        };
+                        for &specifier_idx in &named_exports.elements.nodes {
+                            let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                                continue;
+                            };
+                            let Some(specifier) = self.ctx.arena.get_specifier(specifier_node)
+                            else {
+                                continue;
+                            };
+                            if specifier.is_type_only {
+                                continue;
+                            }
+                            let Some(name) = self.get_identifier_text_from_idx(specifier.name)
+                            else {
+                                continue;
+                            };
+                            exported
+                                .entry(name)
+                                .or_insert_with(Vec::new)
+                                .push(specifier.name);
+                        }
+                    }
+                    _ => {
+                        if !self.has_export_modifier(stmt_idx) {
+                            continue;
+                        }
+                        let Some(name_idx) = self.get_declaration_name_node(stmt_idx) else {
+                            continue;
+                        };
+                        let Some(name) = self.get_identifier_text_from_idx(name_idx) else {
+                            continue;
+                        };
+                        exported.entry(name).or_insert_with(Vec::new).push(name_idx);
+                    }
+                }
+            }
+        }
+
+        exported
+    }
+
+    fn check_export_assignment_target_member_duplicates(
+        &mut self,
+        statements: &[NodeIndex],
+        export_idx: NodeIndex,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some(target_sym_id) = self.resolve_export_assignment_target_symbol(export_idx) else {
+            return;
+        };
+
+        let namespace_exports = self.namespace_exported_name_nodes_for_symbol(target_sym_id);
+        if namespace_exports.is_empty() {
+            return;
+        }
+
+        let file_exports = self.top_level_exported_name_nodes(statements);
+        let mut reported_nodes = FxHashSet::default();
+
+        for (name, namespace_nodes) in namespace_exports {
+            let Some(file_nodes) = file_exports.get(&name) else {
+                continue;
+            };
+            let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+
+            for &node_idx in file_nodes.iter().chain(namespace_nodes.iter()) {
+                if reported_nodes.insert(node_idx) {
+                    self.error_at_node(node_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+                }
+            }
+        }
     }
 
     fn named_import_found_via_reexport(
@@ -1591,6 +1798,7 @@ impl<'a> CheckerState<'a> {
             && !is_preserve
             && !suppress_ts2309
         {
+            self.check_export_assignment_target_member_duplicates(statements, export_idx);
             self.error_at_node(
                 export_idx,
                 "An export assignment cannot be used in a module with other exported elements.",
