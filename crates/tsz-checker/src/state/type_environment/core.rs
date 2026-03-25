@@ -1406,6 +1406,33 @@ impl<'a> CheckerState<'a> {
                 symbol.declarations.clone()
             };
 
+        let count_required_in_arena = |arena: &tsz_parser::parser::node::NodeArena,
+                                       decl_idx: NodeIndex|
+         -> Option<usize> {
+            let node = arena.get(decl_idx)?;
+            let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
+                arena.get_interface(node).and_then(|iface| iface.type_parameters.as_ref())
+            } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
+                arena.get_type_alias(node).and_then(|ta| ta.type_parameters.as_ref())
+            } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
+                arena.get_class(node).and_then(|c| c.type_parameters.as_ref())
+            } else {
+                None
+            }?;
+
+            Some(
+                type_params_list
+                    .nodes
+                    .iter()
+                    .filter(|&&param_idx| {
+                        arena.get(param_idx)
+                            .and_then(|n| arena.get_type_parameter(n))
+                            .is_some_and(|tp| tp.default == tsz_parser::parser::NodeIndex::NONE)
+                    })
+                    .count(),
+            )
+        };
+
         for decl_idx in decl_candidates {
             let mut decl_arenas = Vec::new();
             if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
@@ -1417,36 +1444,7 @@ impl<'a> CheckerState<'a> {
             }
 
             for arena in decl_arenas {
-                let Some(node) = arena.get(decl_idx) else {
-                    continue;
-                };
-                let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
-                    arena
-                        .get_interface(node)
-                        .and_then(|iface| iface.type_parameters.as_ref())
-                } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
-                    arena
-                        .get_type_alias(node)
-                        .and_then(|ta| ta.type_parameters.as_ref())
-                } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
-                    arena
-                        .get_class(node)
-                        .and_then(|c| c.type_parameters.as_ref())
-                } else {
-                    None
-                };
-
-                if let Some(list) = type_params_list {
-                    let required = list
-                        .nodes
-                        .iter()
-                        .filter(|&&param_idx| {
-                            arena
-                                .get(param_idx)
-                                .and_then(|n| arena.get_type_parameter(n))
-                                .is_some_and(|tp| tp.default == tsz_parser::parser::NodeIndex::NONE)
-                        })
-                        .count();
+                if let Some(required) = count_required_in_arena(arena, decl_idx) {
                     return Some(required);
                 }
             }
