@@ -2462,3 +2462,39 @@ const b = 1 as !any;
         "Expected TS17019/TS17020 recovery for invalid non-nullable type syntax, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_unclosed_jsx_fragment_after_unary_plus_reports_ts17014() {
+    let source = r#"
+const x = "oops";
+const y = + <> x;
+"#;
+    let mut parser = ParserState::new("index.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&17014),
+        "Expected TS17014 for an unclosed JSX fragment after unary plus, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_unclosed_jsx_fragment_after_unary_plus_reports_ts17014() {
+    let source = r#"
+const x = "oops";
+const y = + <> x;
+"#;
+    let mut parser = ParserState::new("index.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&17014),
+        "Expected TS17014 for JS unary `+ <>` JSX-fragment recovery, got diagnostics: {diagnostics:?}"
+    );
+}

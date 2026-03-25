@@ -473,7 +473,7 @@ impl ParserState {
     pub(crate) fn parse_jsx_element_or_type_assertion(&mut self) -> NodeIndex {
         // In .tsx/.jsx files, all <...> syntax is JSX (use "as Type" for type assertions)
         // In .ts files, we need to distinguish type assertions from JSX
-        if self.is_jsx_file() {
+        if self.is_jsx_file() || (self.is_js_file() && self.look_ahead_is_jsx_fragment_start()) {
             return self.parse_jsx_element_or_self_closing_or_fragment(true);
         }
 
@@ -483,6 +483,21 @@ impl ParserState {
             self.error_expression_expected();
         }
         self.parse_type_assertion()
+    }
+
+    fn look_ahead_is_jsx_fragment_start(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let is_fragment =
+            !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::GreaterThanToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_fragment
     }
 
     fn is_ambiguous_generic_type_assertion(&mut self) -> bool {
@@ -641,6 +656,9 @@ impl ParserState {
         } else if kind == syntax_kind_ext::JSX_OPENING_FRAGMENT {
             // Parse children and closing fragment
             let children = self.parse_jsx_children(None);
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                self.emit_jsx_unclosed_fragment_error(opening);
+            }
             let closing = self.parse_jsx_closing_fragment();
             let end_pos = self.token_end();
 
@@ -1329,6 +1347,23 @@ impl ParserState {
                 end - start,
                 &format!("JSX element '{tag_text}' has no corresponding closing tag."),
                 diagnostic_codes::JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+            );
+        }
+    }
+
+    fn emit_jsx_unclosed_fragment_error(&mut self, opening_fragment: NodeIndex) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+        if let Some(node) = self.arena.get(opening_fragment) {
+            let start = if self.is_js_file() {
+                node.pos.saturating_sub(1)
+            } else {
+                node.pos
+            };
+            self.parse_error_at(
+                start,
+                node.end - start,
+                diagnostic_messages::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+                diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
             );
         }
     }
