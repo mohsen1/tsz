@@ -347,6 +347,12 @@ live repro first and explain the mismatch in your notes. Snapshot/detail artifac
 recent fixes or partial reruns; do not "fix" a stale diagnostic target without reproducing the
 current failure.
 
+If the chosen test already passes locally, or the live failure shape no longer matches the selected
+`m`/`x` target, treat it as a stale pick instead of forcing a fix:
+- log `outcome=blocked reason=no-progress` with notes explaining that the target drifted
+- reroll once using the same category before broadening scope
+- only keep working the test if the updated live failure is still a clear single-file, low-surface-area target
+
 ---
 
 ## Implementing the Fix
