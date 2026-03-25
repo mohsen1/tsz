@@ -183,6 +183,7 @@ Before target selection, create an attempt scratchpad:
 export ATTEMPT_ID="conformance-$(date +%Y%m%d-%H%M%S)"
 mkdir -p /tmp/conformance-attempts
 echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "mode=<standalone|campaign>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 ### Step 1: Identify targets from the snapshot (zero cost, instant)
@@ -300,6 +301,7 @@ if candidates:
 else:
     print('No one-extra targets available')
 " | tee -a /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "selection_logged=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 If no candidates exist for your preferred category, escalate immediately to the next category in the priority list.
@@ -357,6 +359,7 @@ For every attempt, record in your working notes:
 - Why this target is single-file / low-surface-area
 - Define explicit pass/fail criteria for this attempt (including what change in `m`/`x` would count as success).
 - Timestamp the attempt and final outcome (`blocked`, `fixed`, `regression`, `handoff`).
+- Append a one-line final summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt` before moving to a new test.
 
 ### Architecture review (MANDATORY before writing code)
 
