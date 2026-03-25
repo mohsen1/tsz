@@ -10,6 +10,56 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn fresh_empty_object_member_for_missing_union(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)?;
+        let mut saw_present_member = false;
+        let mut fresh_empty_member = None;
+
+        for &member in members.iter() {
+            if member.is_nullable() {
+                continue;
+            }
+
+            let evaluated_member = self.evaluate_application_type(member);
+            let resolved_member = self.resolve_type_for_property_access(evaluated_member);
+            match self.resolve_property_access_with_env(resolved_member, property_name) {
+                crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+                | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(_),
+                    ..
+                } => {
+                    saw_present_member = true;
+                }
+                crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. } => {
+                    if crate::query_boundaries::common::is_empty_object_type(
+                        self.ctx.types,
+                        resolved_member,
+                    ) && crate::query_boundaries::common::is_fresh_object_type(
+                        self.ctx.types,
+                        resolved_member,
+                    ) {
+                        fresh_empty_member = Some(resolved_member);
+                    }
+                }
+                crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: None,
+                    ..
+                }
+                | crate::query_boundaries::common::PropertyAccessResult::IsUnknown => {}
+            }
+        }
+
+        if saw_present_member {
+            fresh_empty_member
+        } else {
+            None
+        }
+    }
+
     fn should_suppress_excess_property_for_target(&mut self, target: TypeId) -> bool {
         [target, self.evaluate_type_for_assignability(target)]
             .into_iter()
@@ -816,7 +866,17 @@ impl<'a> CheckerState<'a> {
         // For type parameters, tsc displays the constraint type name in the
         // diagnostic (e.g., "can't be used to index type 'Item'" not "'T'").
         let display_object_type =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, object_type)
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+                .and_then(|atom| {
+                    let prop_name = self.ctx.types.resolve_atom_ref(atom);
+                    self.fresh_empty_object_member_for_missing_union(object_type, &prop_name)
+                })
+                .or_else(|| {
+                    tsz_solver::type_queries::get_type_parameter_constraint(
+                        self.ctx.types,
+                        object_type,
+                    )
+                })
                 .unwrap_or(object_type);
         let object_str = self.property_receiver_display_for_node(display_object_type, expr_idx);
         let message = format!(
