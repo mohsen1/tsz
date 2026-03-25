@@ -188,12 +188,24 @@ impl<'a> CheckerState<'a> {
                 if let Some(obj) = self.ctx.arena.get_literal_expr(node) {
                     for &prop_idx in &obj.elements.nodes {
                         self.invalidate_node_type_cache(prop_idx);
-                        if let Some(prop_node) = self.ctx.arena.get(prop_idx)
-                            && let Some(prop) = self.ctx.arena.get_property_assignment(prop_node)
-                        {
-                            // Recurse into the initializer — if it's a function,
-                            // the function branch handles deep clearing.
-                            self.invalidate_expression_for_contextual_retry(prop.initializer);
+                        if let Some(prop_node) = self.ctx.arena.get(prop_idx) {
+                            if let Some(prop) = self.ctx.arena.get_property_assignment(prop_node) {
+                                // Recurse into the initializer — if it's a function,
+                                // the function branch handles deep clearing.
+                                self.invalidate_expression_for_contextual_retry(prop.initializer);
+                            } else if let Some(method) = self.ctx.arena.get_method_decl(prop_node) {
+                                // Method declarations in object literals also need
+                                // body clearing. `this` keyword nodes inside the body
+                                // cache their types from the first evaluation pass;
+                                // when contextual types change (e.g., ThisType<T>
+                                // markers becoming available during overload retry),
+                                // stale `this` types cause false TS2322 errors.
+                                self.invalidate_implicit_any_tracking(prop_idx);
+                                for &param_idx in &method.parameters.nodes {
+                                    self.invalidate_function_param_symbols(param_idx);
+                                }
+                                self.clear_type_cache_recursive(method.body);
+                            }
                         }
                     }
                 }

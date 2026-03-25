@@ -1342,10 +1342,17 @@ impl<'a> CheckerState<'a> {
                     // should not emit TS2339. The type parameters will be inferred from the
                     // object literal, creating a circular dependency that tsc handles by
                     // deferring the check.
+                    // Also handle intersections containing type parameters (e.g.,
+                    // `Data & Readonly<Props> & Instance` from
+                    // `ThisType<Data & Readonly<Props> & Instance>` before inference).
                     if is_this_access
                         && self.ctx.this_type_stack.last().is_some_and(|&top| {
                             access_query::is_this_type(self.ctx.types, top)
                                 || crate::query_boundaries::state::checking::is_type_parameter_like(
+                                    self.ctx.types,
+                                    top,
+                                )
+                                || crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     top,
                                 )

@@ -195,12 +195,23 @@ impl<'a> CheckerState<'a> {
                     let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
                         return false;
                     };
-                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
-                    is_callback_arg
-                        && self
-                            .callback_body_span(arg_idx)
+                    // Object literal arguments with methods have body diagnostics
+                    // that depend on contextual typing (e.g., ThisType<T> markers).
+                    // Filter them like callback body diagnostics so they don't
+                    // persist when a different overload resolves successfully.
+                    let is_context_sensitive_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
+                    if !is_context_sensitive_arg {
+                        return false;
+                    }
+                    if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        // For object literals, filter diagnostics within the entire span
+                        diag.start >= arg_node.pos && diag.start < arg_node.end
+                    } else {
+                        self.callback_body_span(arg_idx)
                             .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
+                    }
                 })
             })
             .cloned()
