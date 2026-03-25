@@ -2973,6 +2973,34 @@ fn test_relation_failure_covers_semantic_families() {
     }
 }
 
+/// Solver failure normalization must preserve the canonical semantic-family
+/// mapping we rely on throughout the checker.
+#[test]
+fn test_relation_failure_preserves_canonical_solver_mapping() {
+    let source = fs::read_to_string("src/query_boundaries/relation_types.rs")
+        .expect("failed to read query_boundaries/relation_types.rs");
+
+    assert!(
+        source.contains("SubtypeFailureReason::NoCommonProperties")
+            && source.contains("=> Self::WeakUnionViolation"),
+        "NoCommonProperties must normalize to WeakUnionViolation"
+    );
+    assert!(
+        source.contains("SubtypeFailureReason::OptionalPropertyRequired { property_name }")
+            && source.contains("Self::PropertyModifierMismatch { property_name }"),
+        "OptionalPropertyRequired must normalize to PropertyModifierMismatch"
+    );
+    assert!(
+        source.contains("SubtypeFailureReason::PropertyTypeMismatch")
+            && source.contains("Self::IncompatiblePropertyValue"),
+        "PropertyTypeMismatch must normalize to IncompatiblePropertyValue"
+    );
+    assert!(
+        source.contains("nested: nested_reason.map(|r| Box::new(Self::from_solver_reason(*r)))"),
+        "nested property/return mismatches must recurse through from_solver_reason"
+    );
+}
+
 /// `RelationRequest` must keep the builder helpers that encode freshness and
 /// spread policy directly into the canonical relation request shape.
 #[test]
