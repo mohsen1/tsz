@@ -436,9 +436,23 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             factory.intersection(ctor_types)
         };
-        let resolved = Some(
-            self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments),
-        );
+        let ctor_type = self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments);
+
+        // Preserve non-constructor static members on call-expression heritage
+        // bases (e.g. mixin-style intersections like `CoreObject.extend(...)`
+        // where the return type is `Statics & { new(): ... }`).
+        // Constructor extraction used only to pick construct signatures and can
+        // drop the `Statics` side, which is still part of the final constructor
+        // value and needed for static member lookups like `.extend`.
+        use crate::query_boundaries::common::construct_signatures_for_type;
+
+        let resolved = if construct_signatures_for_type(self.ctx.types, ctor_type).is_some()
+            && query::intersection_members(self.ctx.types, evaluated_type).is_some()
+        {
+            Some(self.ctx.types.factory().intersection(vec![ctor_type, evaluated_type]))
+        } else {
+            Some(ctor_type)
+        };
         if should_cache {
             self.ctx
                 .base_constructor_expr_cache
