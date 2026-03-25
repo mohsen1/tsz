@@ -1159,6 +1159,21 @@ impl ParserState {
         result
     }
 
+    /// Look ahead for `await using` in a for-statement initializer position.
+    /// In `for (await using of ...)`, `of` is the for-of keyword, not a binding name.
+    /// Scans past `using` and checks the following token excludes `of`/`in`.
+    pub(crate) fn look_ahead_is_await_using_declaration_in_for(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let t1 = self.scanner.scan(); // should be `using`
+        let t2 = self.scanner.scan(); // binding name or `of`/`in`
+        let result = t1 == SyntaxKind::UsingKeyword
+            && t2 != SyntaxKind::OfKeyword
+            && t2 != SyntaxKind::InKeyword
+            && (is_identifier_or_keyword(t2) || t2 == SyntaxKind::OpenBraceToken);
+        self.scanner.restore_state(snapshot);
+        result
+    }
+
     pub(crate) fn look_ahead_is_await_using(&mut self) -> bool {
         look_ahead_is(&mut self.scanner, self.current_token, |token| {
             token == SyntaxKind::UsingKeyword
