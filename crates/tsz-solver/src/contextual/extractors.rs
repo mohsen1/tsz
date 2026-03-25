@@ -628,16 +628,11 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         for prop in &shape.properties {
             if prop.name == self.name_atom {
-                // Return the declared property type without adding `undefined`
-                // for optional properties. In tsc, getTypeOfPropertyOfContextualType
-                // returns the raw declared type — optionality is handled separately
-                // by assignability checks. Adding `undefined` here pollutes
-                // contextual typing for generic calls where the contextual type
-                // flows through return type inference (e.g., a generic wrapper
-                // function used as an optional property value would infer
-                // `handler | undefined` instead of just `handler`, violating
-                // non-nullable constraints like `T extends Function`).
-                return Some(prop.type_id);
+                // Contextual property lookup is a read-side query, so optional
+                // properties expose `T | undefined`. Callers that specifically
+                // need the declared/raw property type should use the dedicated
+                // raw-property query helpers instead of this contextual API.
+                return Some(crate::utils::optional_property_type(self.db, prop));
             }
         }
         // Fall back to index signatures for Object types too

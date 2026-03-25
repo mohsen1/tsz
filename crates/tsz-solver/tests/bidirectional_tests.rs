@@ -103,6 +103,25 @@ fn test_contextual_property_type() {
 }
 
 #[test]
+fn test_contextual_optional_property_type_includes_undefined() {
+    let interner = TypeInterner::new();
+
+    let mut optional = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
+    optional.optional = true;
+    let obj = interner.object(vec![optional]);
+    let ctx = ContextualTypeContext::with_expected(&interner, obj);
+
+    let ty = ctx
+        .get_property_type("x")
+        .expect("expected contextual property type");
+    let members = crate::type_queries::data::get_union_members(&interner, ty)
+        .expect("optional contextual property should include undefined");
+
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(members.contains(&TypeId::UNDEFINED));
+}
+
+#[test]
 fn test_contextual_property_type_specializes_unique_symbol_mapped_keys() {
     let interner = TypeInterner::new();
 
