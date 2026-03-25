@@ -1181,7 +1181,29 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.ctx.types.contextual_property_type(member, prop_name));
                 match member_prop_type {
                     Some(target_type) => {
-                        *lit_type == target_type || self.is_subtype_of(*lit_type, target_type)
+                        if *lit_type == target_type || self.is_subtype_of(*lit_type, target_type) {
+                            return true;
+                        }
+                        // For optional properties (e.g. `disc?: false`), the effective type
+                        // includes `undefined`. contextual_property_type returns the raw
+                        // declared type without `undefined`, so we must check optionality
+                        // explicitly. If the property is optional and the literal is
+                        // `undefined`, it matches (undefined is always valid for optional
+                        // properties).
+                        if *lit_type == TypeId::UNDEFINED {
+                            let prop_name_atom = self.ctx.types.intern_string(prop_name);
+                            let is_optional =
+                                crate::query_boundaries::common::find_property_in_object(
+                                    self.ctx.types,
+                                    resolved_member,
+                                    prop_name_atom,
+                                )
+                                .is_some_and(|p| p.optional);
+                            if is_optional {
+                                return true;
+                            }
+                        }
+                        false
                     }
                     // If the member doesn't have this property, it could still match
                     // (the property might be optional or absent).
