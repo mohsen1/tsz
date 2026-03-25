@@ -200,7 +200,10 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             } else {
-                let required_count = type_params.iter().filter(|param| param.default.is_none()).count();
+                let required_count = type_params
+                    .iter()
+                    .filter(|param| param.default.is_none())
+                    .count();
                 if required_count > 0 {
                     let display_name = Self::format_generic_display_name_with_interner(
                         name,

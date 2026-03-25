@@ -636,8 +636,11 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol_with_libs(sym_id, &lib_binders)
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
-        let display_name =
-            Self::format_generic_display_name_with_interner(&base_name, &type_params, self.ctx.types);
+        let display_name = Self::format_generic_display_name_with_interner(
+            &base_name,
+            &type_params,
+            self.ctx.types,
+        );
         let min_required = self
             .count_required_type_params_from_ast(sym_id)
             .unwrap_or_else(|| type_params.iter().filter(|tp| tp.default.is_none()).count());

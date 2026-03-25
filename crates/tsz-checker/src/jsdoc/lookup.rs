@@ -78,8 +78,7 @@ impl<'a> CheckerState<'a> {
         if let Some(source_file) = self.ctx.arena.source_files.first() {
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
-            if let Some(info) = self.resolve_jsdoc_typedef_info(name, &comments, &source_text)
-            {
+            if let Some(info) = self.resolve_jsdoc_typedef_info(name, &comments, &source_text) {
                 return Some(info);
             }
         }
@@ -111,8 +110,7 @@ impl<'a> CheckerState<'a> {
             checker.ctx.current_file_idx = file_idx;
             self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
-            if let Some(info) = checker.resolve_jsdoc_typedef_info(name, &comments, &source_text)
-            {
+            if let Some(info) = checker.resolve_jsdoc_typedef_info(name, &comments, &source_text) {
                 self.ctx.merge_symbol_file_targets_from(&checker.ctx);
                 return Some(info);
             }
@@ -276,13 +274,14 @@ impl<'a> CheckerState<'a> {
             })
             .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
             .unwrap_or_default();
-        let type_params = if let Some((_, type_params)) = self.resolve_global_jsdoc_typedef_info(base_name) {
-            type_params
-        } else if !symbol_constraints.is_empty() {
-            symbol_constraints
-        } else {
-            Vec::new()
-        };
+        let type_params =
+            if let Some((_, type_params)) = self.resolve_global_jsdoc_typedef_info(base_name) {
+                type_params
+            } else if !symbol_constraints.is_empty() {
+                symbol_constraints
+            } else {
+                Vec::new()
+            };
         if type_params.is_empty() {
             return;
         }
@@ -297,12 +296,19 @@ impl<'a> CheckerState<'a> {
         };
         let got = arg_strs.len();
         let max_expected = type_params.len();
-        let min_required = type_params.iter().filter(|param| param.default.is_none()).count();
+        let min_required = type_params
+            .iter()
+            .filter(|param| param.default.is_none())
+            .count();
         if got < min_required || got > max_expected {
             let message = if min_required < max_expected {
                 format_message(
                     diagnostic_messages::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
-                    &[base_name, &min_required.to_string(), &max_expected.to_string()],
+                    &[
+                        base_name,
+                        &min_required.to_string(),
+                        &max_expected.to_string(),
+                    ],
                 )
             } else {
                 format_message(

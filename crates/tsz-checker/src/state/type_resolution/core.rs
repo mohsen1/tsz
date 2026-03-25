@@ -378,7 +378,8 @@ impl<'a> CheckerState<'a> {
                     && type_param.is_none()
                     && sym_id.is_none()
                 {
-                    if let Some((body_type, type_params)) = self.resolve_global_jsdoc_typedef_info(name)
+                    if let Some((body_type, type_params)) =
+                        self.resolve_global_jsdoc_typedef_info(name)
                     {
                         if let Some(args) = &type_ref.type_arguments
                             && !self.is_inside_type_parameter_declaration(idx)
