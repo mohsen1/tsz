@@ -28,11 +28,67 @@ pub(crate) enum ContextualPropertyPresence {
 }
 
 impl<'a> CheckerState<'a> {
+    fn is_this_type_marker_application(&self, type_id: TypeId) -> bool {
+        let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        crate::query_boundaries::common::is_this_type(self.ctx.types, app.base)
+    }
+
+    pub(crate) fn strip_contextual_this_type_markers(&self, type_id: TypeId) -> TypeId {
+        if self.is_this_type_marker_application(type_id) {
+            return TypeId::UNKNOWN;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
+            let filtered: Vec<_> = members
+                .iter()
+                .copied()
+                .filter(|&member| !self.is_this_type_marker_application(member))
+                .collect();
+            return match filtered.as_slice() {
+                [] => TypeId::UNKNOWN,
+                [single] => *single,
+                _ if filtered.len() == members.len() => type_id,
+                _ => self.ctx.types.factory().intersection(filtered),
+            };
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            let remapped: Vec<_> = members
+                .iter()
+                .copied()
+                .map(|member| self.strip_contextual_this_type_markers(member))
+                .filter(|&member| member != TypeId::UNKNOWN)
+                .collect();
+            return match remapped.as_slice() {
+                [] => TypeId::UNKNOWN,
+                [single] => *single,
+                _ if remapped.len() == members.len()
+                    && remapped
+                        .iter()
+                        .zip(members.iter())
+                        .all(|(left, right)| left == right) =>
+                {
+                    type_id
+                }
+                _ => self.ctx.types.factory().union_preserve_members(remapped),
+            };
+        }
+
+        type_id
+    }
+
     pub(crate) fn named_contextual_property_presence(
         &mut self,
         contextual_type: TypeId,
         property_name: &str,
     ) -> ContextualPropertyPresence {
+        let contextual_type = self.strip_contextual_this_type_markers(contextual_type);
         self.contextual_property_presence(contextual_type, property_name, 6)
     }
 
@@ -41,6 +97,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: TypeId,
         property_name: &str,
     ) -> bool {
+        let contextual_type = self.strip_contextual_this_type_markers(contextual_type);
         !matches!(
             self.contextual_property_presence(contextual_type, property_name, 6),
             ContextualPropertyPresence::Absent
@@ -52,6 +109,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: TypeId,
         property_context_type: Option<TypeId>,
     ) -> Option<TypeId> {
+        let contextual_type = self.strip_contextual_this_type_markers(contextual_type);
         let wildcard_context = self.contextual_object_literal_property_type(contextual_type, "*");
         let callable_fallback = self.fallback_contextual_callable_property_type(contextual_type, 6);
 
@@ -144,9 +202,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
-            || tsz_solver::type_queries::get_mapped_type(self.ctx.types, type_id).is_some()
-            || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id).is_some()
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_mapped_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::type_application(self.ctx.types, type_id).is_some()
         {
             return true;
         }
@@ -546,6 +604,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
+        let contextual_type = self.strip_contextual_this_type_markers(contextual_type);
         let union_member_property_type = |this: &mut Self,
                                           union_type: TypeId,
                                           property_name: &str|

@@ -330,14 +330,24 @@ impl<'a> CheckerState<'a> {
         self.current_file_commonjs_static_member_name(args.nodes[1])
     }
 
-    fn current_file_commonjs_static_member_name(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
+    pub(crate) fn current_file_commonjs_static_member_name(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        Self::static_member_name_in_arena(self.ctx.arena, idx)
+    }
+
+    fn static_member_name_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(idx)?;
         match node.kind {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
-                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
+                arena.get_literal(node).map(|lit| lit.text.clone())
             }
             _ => None,
         }
@@ -782,6 +792,49 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
+    fn infer_getter_return_type_for_file(
+        &mut self,
+        target_file_idx: usize,
+        body_idx: NodeIndex,
+    ) -> TypeId {
+        if target_file_idx == self.ctx.current_file_idx {
+            return self.infer_getter_return_type(body_idx);
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(all_binders) = self.ctx.all_binders.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(arena) = all_arenas.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(binder) = all_binders.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(source_file) = arena.source_files.first() else {
+            return TypeId::ANY;
+        };
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            arena.as_ref(),
+            binder.as_ref(),
+            self.ctx.types,
+            source_file.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.current_file_idx = target_file_idx;
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+        let ty = checker.infer_getter_return_type(body_idx);
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        ty
+    }
+
     fn constant_define_property_name_in_file(
         &self,
         target_file_idx: usize,
@@ -817,7 +870,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn define_property_info_from_descriptor(
+    pub(crate) fn define_property_info_from_descriptor(
         &mut self,
         target_file_idx: usize,
         arena: &tsz_parser::parser::NodeArena,
@@ -856,11 +909,13 @@ impl<'a> CheckerState<'a> {
                     match prop_name.as_str() {
                         "value" => {
                             has_value = true;
-                            value_type = Some(crate::query_boundaries::common::widen_freshness(
+                            let value = self
+                                .infer_commonjs_export_rhs_type(target_file_idx, prop.initializer);
+                            value_type = Some(crate::query_boundaries::common::widen_type(
                                 self.ctx.types,
-                                self.infer_commonjs_export_rhs_type(
-                                    target_file_idx,
-                                    prop.initializer,
+                                crate::query_boundaries::common::widen_freshness(
+                                    self.ctx.types,
+                                    value,
                                 ),
                             ));
                         }
@@ -869,11 +924,84 @@ impl<'a> CheckerState<'a> {
                                 .get(prop.initializer)
                                 .is_some_and(|init| init.kind == SyntaxKind::TrueKeyword as u16);
                         }
+                        "get" => {
+                            let getter_fn = self
+                                .infer_commonjs_export_rhs_type(target_file_idx, prop.initializer);
+                            getter_type = function_shape_for_type(self.ctx.types, getter_fn)
+                                .map(|shape| shape.return_type)
+                                .or(getter_type)
+                                .or(Some(TypeId::ANY));
+                        }
+                        "set" => {
+                            has_setter = true;
+                            if let Some(init_node) = arena.get(prop.initializer)
+                                && let Some(func) = arena.get_function(init_node)
+                                && let Some(&first_param) = func.parameters.nodes.first()
+                                && let Some(binder) = self.ctx.get_binder_for_file(target_file_idx)
+                                && let Some(&param_sym) = binder.node_symbols.get(&first_param.0)
+                            {
+                                setter_type = Some(
+                                    self.infer_symbol_type_for_file(target_file_idx, param_sym),
+                                );
+                            } else {
+                                setter_type.get_or_insert(TypeId::ANY);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = arena.get_method_decl(element_node) else {
+                        continue;
+                    };
+                    let Some(method_name) =
+                        crate::types_domain::queries::core::get_literal_property_name(
+                            arena,
+                            method.name,
+                        )
+                    else {
+                        continue;
+                    };
+                    match method_name.as_str() {
+                        "get" => {
+                            let inferred = if method.type_annotation.is_some() {
+                                self.get_type_from_type_node(method.type_annotation)
+                            } else {
+                                self.infer_getter_return_type_for_file(target_file_idx, method.body)
+                            };
+                            getter_type = Some(inferred);
+                        }
+                        "set" => {
+                            has_setter = true;
+                            let Some(&first_param) = method.parameters.nodes.first() else {
+                                setter_type.get_or_insert(TypeId::ANY);
+                                continue;
+                            };
+                            let Some(binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+                                setter_type.get_or_insert(TypeId::ANY);
+                                continue;
+                            };
+                            let Some(&param_sym) = binder.node_symbols.get(&first_param.0) else {
+                                setter_type.get_or_insert(TypeId::ANY);
+                                continue;
+                            };
+                            setter_type =
+                                Some(self.infer_symbol_type_for_file(target_file_idx, param_sym));
+                        }
                         _ => {}
                     }
                 }
                 syntax_kind_ext::GET_ACCESSOR => {
-                    getter_type.get_or_insert(TypeId::ANY);
+                    let Some(accessor) = arena.get_accessor(element_node) else {
+                        getter_type.get_or_insert(TypeId::ANY);
+                        continue;
+                    };
+                    let inferred = if accessor.type_annotation.is_some() {
+                        self.get_type_from_type_node(accessor.type_annotation)
+                    } else {
+                        self.infer_getter_return_type_for_file(target_file_idx, accessor.body)
+                    };
+                    getter_type = Some(inferred);
                 }
                 syntax_kind_ext::SET_ACCESSOR => {
                     has_setter = true;
@@ -900,14 +1028,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let writable = has_setter || (has_value && writable_true);
+        let precise_setter_type =
+            setter_type.filter(|&ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN);
         let read_type = value_type
             .or(getter_type)
             .or(setter_type)
             .unwrap_or(TypeId::ANY);
         let write_type = if writable {
-            setter_type
-                .or(value_type)
+            precise_setter_type
                 .or(getter_type)
+                .or(value_type)
                 .unwrap_or(read_type)
         } else {
             read_type
@@ -1459,37 +1589,67 @@ impl<'a> CheckerState<'a> {
             for (name, &sym_id) in exports_table.iter() {
                 self.record_cross_file_symbol_if_needed(sym_id, name, module_name);
             }
+            let exports_table_target = exports_table
+                .iter()
+                .find_map(|(_, &sym_id)| self.ctx.resolve_symbol_file_index(sym_id));
 
-            let export_equals_type = exports_table
+            let mut export_equals_type = exports_table
                 .get("export=")
                 .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
-            let mut props: Vec<PropertyInfo> = Vec::new();
-            for (name, &sym_id) in exports_table.iter() {
-                if name == "export="
-                    || self.is_type_only_export_symbol(sym_id)
-                    || self.is_export_from_type_only_wildcard(module_name, name)
-                    || self.export_symbol_has_no_value(sym_id)
-                    || self.is_export_type_only_from_file(module_name, name, source_file_idx)
-                {
-                    continue;
+            let augment_target = source_file_idx
+                .and_then(|src_idx| {
+                    self.ctx
+                        .resolve_import_target_from_file(src_idx, module_name)
+                })
+                .or(target_file_idx)
+                .or(exports_table_target);
+            let surface =
+                augment_target.map(|target_idx| self.resolve_js_export_surface(target_idx));
+            let mut props: Vec<PropertyInfo> = if surface
+                .as_ref()
+                .is_some_and(|s| s.has_commonjs_exports)
+            {
+                let mut named_exports = surface
+                    .as_ref()
+                    .map(|s| s.named_exports.clone())
+                    .unwrap_or_default();
+                for (order, prop) in named_exports.iter_mut().enumerate() {
+                    prop.declaration_order = order as u32;
                 }
+                if export_equals_type.is_none() {
+                    export_equals_type = surface.as_ref().and_then(|s| s.direct_export_type);
+                }
+                named_exports
+            } else {
+                let mut props: Vec<PropertyInfo> = Vec::new();
+                for (name, &sym_id) in exports_table.iter() {
+                    if name == "export="
+                        || self.is_type_only_export_symbol(sym_id)
+                        || self.is_export_from_type_only_wildcard(module_name, name)
+                        || self.export_symbol_has_no_value(sym_id)
+                        || self.is_export_type_only_from_file(module_name, name, source_file_idx)
+                    {
+                        continue;
+                    }
 
-                let mut prop_type = self.get_type_of_symbol(sym_id);
-                prop_type = self.apply_module_augmentations(module_name, name, prop_type);
-                let name_atom = self.ctx.types.intern_string(name);
-                props.push(PropertyInfo {
-                    name: name_atom,
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: props.len() as u32,
-                });
-            }
+                    let mut prop_type = self.get_type_of_symbol(sym_id);
+                    prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+                    let name_atom = self.ctx.types.intern_string(name);
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id: prop_type,
+                        write_type: prop_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: props.len() as u32,
+                    });
+                }
+                props
+            };
 
             if !module_is_non_module_entity
                 && let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name)
@@ -1514,37 +1674,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Use the cached JsExportSurface to merge CommonJS property-assignment
-            // exports (exports.foo = ..., module.exports.foo = ..., Object.defineProperty)
-            // instead of re-scanning the target file AST.
-            let augment_target = source_file_idx
-                .and_then(|src_idx| {
-                    self.ctx
-                        .resolve_import_target_from_file(src_idx, module_name)
-                })
-                .or(target_file_idx);
-            if let Some(target_idx) = augment_target {
-                let surface = self.resolve_js_export_surface(target_idx);
-                for surface_prop in &surface.named_exports {
-                    if let Some(existing) = props.iter_mut().find(|p| p.name == surface_prop.name) {
-                        // Surface has inferred types; upgrade ANY-typed ESM stubs
-                        existing.type_id = surface_prop.type_id;
-                        existing.write_type = surface_prop.write_type;
-                    } else {
-                        let mut prop = surface_prop.clone();
-                        prop.declaration_order = props.len() as u32;
-                        props.push(prop);
-                    }
-                }
-            }
-
             let namespace_type = factory.object(props);
             let display_module_name =
                 self.resolve_namespace_display_module_name(&exports_table, module_name);
             self.ctx
                 .namespace_module_names
                 .insert(namespace_type, display_module_name);
-
             if let Some(export_equals_type) = export_equals_type {
                 if module_is_non_module_entity {
                     return Some(export_equals_type);
