@@ -1395,6 +1395,103 @@ module.exports.f = function () { };
     );
 }
 
+#[test]
+fn test_jsdoc_param_type_uses_instance_side_for_destructured_commonjs_class_expression() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+exports.K = class K {
+    values() {}
+};
+"#,
+        "main.js",
+        r#"
+const { K } = require("./mod1");
+/** @param {K} k */
+function f(k) {
+    k.values();
+}
+"#,
+        "./mod1",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2322 | 2351 | 2741))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected destructured CommonJS class expression JSDoc param to resolve to instance side, got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_param_type_uses_instance_side_for_destructured_commonjs_named_class() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+class K {
+    values() {
+        return new K();
+    }
+}
+exports.K = K;
+"#,
+        "main.js",
+        r#"
+const { K } = require("./mod1");
+/** @param {K} k */
+function f(k) {
+    k.values();
+}
+"#,
+        "./mod1",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2322))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected destructured CommonJS named class JSDoc param to resolve to instance side, got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_param_type_uses_instance_side_for_destructured_nested_commonjs_class() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+var NS = {};
+NS.K = class {
+    values() {
+        return new NS.K();
+    }
+};
+exports.K = NS.K;
+"#,
+        "main.js",
+        r#"
+const { K } = require("./mod1");
+/** @param {K} k */
+function f(k) {
+    k.values();
+}
+"#,
+        "./mod1",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2351 | 2741))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected destructured nested CommonJS class JSDoc param to resolve to instance side, got: {relevant:#?}"
+    );
+}
+
 // --- Surface caching correctness ---
 
 #[test]

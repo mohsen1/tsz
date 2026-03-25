@@ -4,6 +4,7 @@ use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -11,6 +12,28 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{ObjectShape, PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn commonjs_export_rhs_symbol_type(&mut self, rhs_expr: NodeIndex) -> Option<TypeId> {
+        let rhs_node = self.ctx.arena.get(rhs_expr)?;
+        if rhs_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol_without_tracking(rhs_expr)?;
+        let symbol = self.get_symbol_globally(sym_id)?;
+        if symbol.value_declaration.is_some()
+            && let Some(decl) = self.ctx.arena.get(symbol.value_declaration)
+            && let Some(class_data) = self.ctx.arena.get_class(decl)
+        {
+            return Some(self.get_class_constructor_type(symbol.value_declaration, class_data));
+        }
+        if (symbol.flags & symbol_flags::CLASS) == 0 {
+            return None;
+        }
+
+        let symbol_type = self.get_type_of_symbol(sym_id);
+        (symbol_type != TypeId::ERROR && symbol_type != TypeId::UNKNOWN).then_some(symbol_type)
+    }
+
     fn json_value_type(&mut self, value: &JsonValue) -> TypeId {
         let factory = self.ctx.types.factory();
         match value {
@@ -731,6 +754,7 @@ impl<'a> CheckerState<'a> {
         if target_file_idx == self.ctx.current_file_idx {
             let mut ty = self
                 .literal_type_from_initializer(rhs_expr)
+                .or_else(|| self.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| self.get_type_of_node(rhs_expr));
             ty = self.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
             ty = self.augment_commonjs_export_callable_type_with_expandos(
@@ -772,6 +796,7 @@ impl<'a> CheckerState<'a> {
 
         let mut ty = checker
             .literal_type_from_initializer(rhs_expr)
+            .or_else(|| checker.commonjs_export_rhs_symbol_type(rhs_expr))
             .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
         ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
         ty = checker.augment_commonjs_export_callable_type_with_expandos(
