@@ -254,3 +254,13 @@ pub(crate) fn is_mapped_template_callable(
 ) -> bool {
     tsz_solver::type_queries::is_mapped_template_callable(db, mapped_id)
 }
+
+/// Check if a type is a generic type application (`TypeData::Application`).
+///
+/// Used for TS2344 constraint checking: Application types containing type
+/// parameters (e.g., `Merge2<X>` where X has free type params) should defer
+/// constraint checks to instantiation time, since the mapped type semantics
+/// may differ from eagerly-resolved base constraints.
+pub(crate) fn is_application_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_generic_type(db, type_id)
+}
