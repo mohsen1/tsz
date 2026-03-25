@@ -30,8 +30,22 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
                 Some(PropertyAccessResult::simple(TypeId::NEVER))
             }
             IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
-            IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
-                let cause = if kind == IntrinsicKind::Void || kind == IntrinsicKind::Undefined {
+            IntrinsicKind::Void => {
+                // In tsc, accessing a property on `void` produces TS2339
+                // ("Property 'X' does not exist on type 'void'"), NOT TS2532.
+                let prop_atom = self.current_prop_atom.borrow();
+                let atom = prop_atom.unwrap_or_else(|| {
+                    let prop_name = self.current_prop_name.borrow();
+                    self.interner()
+                        .intern_string(prop_name.as_deref().unwrap_or(""))
+                });
+                Some(PropertyAccessResult::PropertyNotFound {
+                    type_id: TypeId::VOID,
+                    property_name: atom,
+                })
+            }
+            IntrinsicKind::Null | IntrinsicKind::Undefined => {
+                let cause = if kind == IntrinsicKind::Undefined {
                     TypeId::UNDEFINED
                 } else {
                     TypeId::NULL
