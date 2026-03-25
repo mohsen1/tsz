@@ -142,6 +142,14 @@ pub(crate) fn get_application_info(
     tsz_solver::type_queries::get_application_info(db, type_id)
 }
 
+/// Evaluate a type to its structural form through the canonical flow boundary.
+///
+/// This covers alias/application expansion for flow-control code that needs the
+/// resolved structure but should not call `tsz_solver::evaluate_type()` directly.
+pub(crate) fn evaluate_type_structure(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::evaluate_type(db, type_id)
+}
+
 /// If `type_id` is a promise-like application type, return the inner type argument.
 /// Used by flow-control assignment to unwrap `await` RHS types.
 pub(crate) fn unwrap_promise_type_argument(
