@@ -950,7 +950,8 @@ impl<'a> CheckerState<'a> {
         let mut heritage_expr_idx: Option<NodeIndex> = None;
         let mut heritage_type_idx: Option<NodeIndex> = None;
         // Track the base class symbol for namespace-merged static type check (TS2417).
-        // Set when the heritage clause resolves to a class with NAMESPACE_MODULE flag.
+        // Set when the heritage clause resolves to a class symbol. The actual TS2417
+        // check only fires when the *derived* class has a merged namespace.
         let mut base_sym_for_ns_static_check: Option<tsz_binder::SymbolId> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
@@ -1035,14 +1036,14 @@ impl<'a> CheckerState<'a> {
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
                         // Track the base symbol for the namespace-merged static check (TS2417).
-                        // Only relevant when the base class has a merged namespace.
-                        if symbol.flags
-                            & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                                | tsz_binder::symbol_flags::VALUE_MODULE)
-                            != 0
-                        {
-                            base_sym_for_ns_static_check = Some(sym_id);
-                        }
+                        // Always store the base symbol here; the check at line ~1731 only
+                        // fires when the *derived* class has a merged namespace (which is the
+                        // condition that can make `typeof Derived` incompatible with
+                        // `typeof Base`). Previously we only stored the symbol when the
+                        // *base* had a namespace, but tsc also reports TS2417 when the
+                        // derived class's namespace introduces conflicting static members
+                        // even if the base class has no namespace at all.
+                        base_sym_for_ns_static_check = Some(sym_id);
                         // Try value_declaration first, then declarations
                         if symbol.value_declaration.is_some() {
                             base_class_idx = Some(symbol.value_declaration);
