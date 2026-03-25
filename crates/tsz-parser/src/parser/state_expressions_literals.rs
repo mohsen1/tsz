@@ -656,6 +656,42 @@ impl ParserState {
 
     /// Parse regex literal: /pattern/flags
     pub(crate) fn parse_regex_literal(&mut self) -> NodeIndex {
+        fn regex_body_end(raw_text: &str) -> Option<usize> {
+            let bytes = raw_text.as_bytes();
+            if bytes.first().copied() != Some(b'/') {
+                return None;
+            }
+
+            let mut i = 1usize;
+            let mut escaped = false;
+            let mut in_character_class = false;
+            while i < bytes.len() {
+                let ch = bytes[i];
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                match ch {
+                    b'\\' => {
+                        escaped = true;
+                        i += 1;
+                    }
+                    b'[' => {
+                        in_character_class = true;
+                        i += 1;
+                    }
+                    b']' => {
+                        in_character_class = false;
+                        i += 1;
+                    }
+                    b'/' if !in_character_class => return Some(i),
+                    _ => i += 1,
+                }
+            }
+            None
+        }
+
         let start_pos = self.token_pos();
 
         // Rescan the / or /= as a regex literal
@@ -695,6 +731,32 @@ impl ParserState {
         let flag_errors: Vec<_> = self.scanner.get_regex_flag_errors().to_vec();
         // NOTE: tsc does not emit TS1125 for invalid unicode escapes inside regex literals.
         // Removed call to report_invalid_regular_expression_escape_errors() to match tsc behavior.
+        let extended_unicode_escape_errors = regex_body_end(&raw_text)
+            .filter(|body_end| {
+                let flags = &raw_text[*body_end + 1..];
+                !flags.contains('u') && !flags.contains('v')
+            })
+            .map(|body_end| {
+                let bytes = raw_text.as_bytes();
+                let mut errors = Vec::new();
+                let mut i = 1usize;
+                while i + 2 < body_end {
+                    if bytes[i] == b'\\' && bytes[i + 1] == b'u' && bytes[i + 2] == b'{' {
+                        let mut j = i + 3;
+                        while j < body_end && bytes[j] != b'}' {
+                            j += 1;
+                        }
+                        if j < body_end {
+                            errors.push((start_pos + i as u32, (j + 1 - i) as u32));
+                            i = j + 1;
+                            continue;
+                        }
+                    }
+                    i += 1;
+                }
+                errors
+            })
+            .unwrap_or_default();
 
         self.parse_expected(SyntaxKind::RegularExpressionLiteral);
         let end_pos = self.token_end();
@@ -724,6 +786,14 @@ impl ParserState {
                 ),
             };
             self.parse_error_at(self.u32_from_usize(error.pos), 1, message, code);
+        }
+        for (pos, len) in extended_unicode_escape_errors {
+            self.parse_error_at(
+                pos,
+                len,
+                tsz_common::diagnostics::diagnostic_messages::UNICODE_ESCAPE_SEQUENCES_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR_THE_UNICO,
+                tsz_common::diagnostics::diagnostic_codes::UNICODE_ESCAPE_SEQUENCES_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR_THE_UNICO,
+            );
         }
 
         self.arena.add_literal(
