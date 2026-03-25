@@ -713,6 +713,46 @@ b.x;
 }
 
 #[test]
+fn test_plain_function_self_alias_prototype_method_preserves_member_types() {
+    let source = r#"
+function Foonly() {
+    var self = this
+    self.x = 1
+    self.m = function() {
+        console.log(self.x)
+    }
+}
+Foonly.prototype.mreal = function() {
+    var self = this
+    self.y = 2
+}
+const foo = new Foonly()
+/** @type {string} */
+var sx = foo.x;
+/** @type {string} */
+var sy = foo.y;
+foo.m()
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for plain-function self-alias constructor/prototype members, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.len() >= 2,
+        "Expected typed plain-function self-alias members to reject assignment to string, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_class_expression_assigned_to_property_preserves_base_instance_members() {
     let source = r#"
 var UI = {}
