@@ -182,6 +182,7 @@ Before target selection, create an attempt scratchpad:
 ```bash
 export ATTEMPT_ID="conformance-$(date +%Y%m%d-%H%M%S)"
 export ATTEMPT_MODE="${CONFORMANCE_MODE:-standalone}"
+export ATTEMPT_STARTED_EPOCH_MS="$(date +%s%3N)"
 mkdir -p /tmp/conformance-attempts
 echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/conformance-attempts/$ATTEMPT_ID.txt
 echo "mode=$ATTEMPT_MODE" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
@@ -350,15 +351,16 @@ For every attempt, record in your working notes:
 - Why this target is single-file / low-surface-area
 - Define explicit pass/fail criteria for this attempt (including what change in `m`/`x` would count as success).
 - Timestamp the attempt and final outcome (`blocked`, `fixed`, `regression`, `handoff`).
-- Use machine-parseable one-line outcomes with key/value pairs: `attempt`, `test`, `outcome`, `m_delta`, `x_delta`, optional `reason`, and optional free-form `notes`.
+- Use machine-parseable one-line outcomes with key/value pairs: `attempt`, `test`, `outcome`, `m_delta`, `x_delta`, `duration_ms`, optional `reason`, and optional free-form `notes`.
 - `m_delta` and `x_delta` are signed integers: negative for regression, positive for gain, zero for no net delta.
+- `duration_ms` must be wall-clock elapsed milliseconds since `ATTEMPT_STARTED_EPOCH_MS` (or `0` if unavailable).
 - Append a one-line final summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt` before moving to a new test.
 - If provided, `reason` should be one of: `multi-crate-touch-required`, `intractable`, `infra`, `cross-cutting`, `regression`, `no-progress`.
-  - Example with reason: `attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=no-progress m_delta=0 x_delta=0 notes=\"no progress after 2 rerolls\"`
+  - Example with reason: `attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=no-progress m_delta=0 x_delta=0 duration_ms=12456 notes=\"no progress after 2 rerolls\"`
 
 ```bash
 # Example attempt summary format
-echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 notes=\"parser+checker+solver touch\"" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 duration_ms=1200 notes=\"parser+checker+solver touch\"" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 ### Architecture review (MANDATORY before writing code)
