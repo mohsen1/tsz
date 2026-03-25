@@ -3067,7 +3067,8 @@ fn test_assignability_checker_has_execute_relation_request() {
         "execute_relation_request must delegate to the query_boundaries::execute_relation helper"
     );
     assert!(
-        source.contains("checker_only_assignability_failure_reason(request.source, request.target)"),
+        source
+            .contains("checker_only_assignability_failure_reason(request.source, request.target)"),
         "execute_relation_request must preserve checker-only post-check downgrades \
          after the canonical boundary returns"
     );
@@ -3209,7 +3210,9 @@ fn test_relation_outcome_has_property_classification() {
     );
     assert!(
         source.contains("let property_classification =")
-            && source.contains("classify_object_properties(db.as_type_database(), request.source, request.target)"),
+            && source.contains(
+                "classify_object_properties(db.as_type_database(), request.source, request.target)"
+            ),
         "execute_relation must always compute canonical property classification on failed relations"
     );
     assert!(
