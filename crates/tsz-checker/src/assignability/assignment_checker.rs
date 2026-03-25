@@ -256,6 +256,14 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
+                    } else {
+                        // Computed property name that couldn't be resolved to a static string
+                        // (e.g., `{ ["x" + ""]: v } = 0`). Check for index signature compatibility.
+                        // TS2537: Type 'X' has no matching index signature for type 'Y'.
+                        self.check_destructuring_computed_key_index_signature(
+                            prop.name,
+                            source_type,
+                        );
                     }
                 } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
                     // Shorthand: { x } or { x = default } — property name is the identifier.
@@ -401,7 +409,145 @@ impl<'a> CheckerState<'a> {
         if let PropertyAccessResult::PropertyNotFound { .. } =
             self.resolve_property_access_with_env(source_type, property_name)
         {
-            self.error_property_not_exist_at(property_name, source_type, error_node);
+            // For computed property names like `["x"]`, TSC points at the inner
+            // expression (`"x"`) rather than the brackets. Resolve the inner node.
+            let resolved_error_node = self
+                .ctx
+                .arena
+                .get(error_node)
+                .and_then(|node| self.ctx.arena.get_computed_property(node))
+                .map_or(error_node, |computed| computed.expression);
+
+            // For primitive types in destructuring assignment, TSC uses the boxed
+            // wrapper type name (e.g., "Number" instead of "number") in the error.
+            if let Some(boxed_name) = self.get_boxed_type_display_name(source_type) {
+                let message =
+                    format!("Property '{property_name}' does not exist on type '{boxed_name}'.");
+                self.error_at_node(
+                    resolved_error_node,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+            } else {
+                self.error_property_not_exist_at(property_name, source_type, resolved_error_node);
+            }
+        }
+    }
+
+    /// TS2537: Check that a computed property key in destructuring assignment has a matching
+    /// index signature on the source type. For example, `({ ["x" + ""]: v } = 0)` should
+    /// error because `Number` has no string index signature.
+    fn check_destructuring_computed_key_index_signature(
+        &mut self,
+        prop_name_idx: NodeIndex,
+        source_type: TypeId,
+    ) {
+        if source_type == TypeId::ANY
+            || source_type == TypeId::ERROR
+            || source_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        // Get the computed property expression
+        let Some(prop_name_node) = self.ctx.arena.get(prop_name_idx) else {
+            return;
+        };
+        let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node) else {
+            return;
+        };
+
+        // Compute the type of the key expression
+        let key_type = self.compute_type_of_node(computed.expression);
+        if key_type == TypeId::ANY || key_type == TypeId::ERROR {
+            return;
+        }
+
+        // Only check for string or number key types
+        let key_is_string = key_type == TypeId::STRING;
+        let key_is_number = key_type == TypeId::NUMBER;
+        if !key_is_string && !key_is_number {
+            return;
+        }
+
+        // Get the apparent type for the source (boxed wrapper for primitives).
+        // For example, `number` -> `Number` interface, `string` -> `String` interface.
+        let apparent_type = self.get_apparent_type_for_index_check(source_type);
+
+        // Check if the apparent type has a matching index signature
+        let has_matching_index = |ty: TypeId| {
+            crate::query_boundaries::state::checking::object_shape(self.ctx.types, ty).is_some_and(
+                |shape| {
+                    if key_is_string {
+                        shape.string_index.is_some()
+                    } else {
+                        shape.number_index.is_some() || shape.string_index.is_some()
+                    }
+                },
+            )
+        };
+
+        let has_index_signature = if let Some(members) =
+            crate::query_boundaries::state::checking::union_members(self.ctx.types, apparent_type)
+        {
+            members.into_iter().all(has_matching_index)
+        } else {
+            has_matching_index(apparent_type)
+        };
+
+        if !has_index_signature {
+            // For the error message, use the boxed type name (e.g., "Number" not "number")
+            // to match TSC's behavior. For primitive source types, use the capitalized name.
+            let object_str = self
+                .get_boxed_type_display_name(source_type)
+                .unwrap_or_else(|| {
+                    let mut formatter = self.ctx.create_type_formatter();
+                    formatter.format(apparent_type).into_owned()
+                });
+            let mut formatter = self.ctx.create_type_formatter();
+            let index_str = formatter.format(key_type);
+            let message = crate::diagnostics::format_message(
+                diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                &[&object_str, &index_str],
+            );
+            self.error_at_node(
+                computed.expression,
+                &message,
+                diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+            );
+        }
+    }
+
+    /// Get the apparent type for index signature checks. For primitive types,
+    /// this returns the boxed wrapper type (e.g., `number` -> `Number`).
+    /// For other types, returns the type as-is.
+    fn get_apparent_type_for_index_check(&self, type_id: TypeId) -> TypeId {
+        use tsz_solver::IntrinsicKind;
+        let kind = match type_id {
+            TypeId::NUMBER => Some(IntrinsicKind::Number),
+            TypeId::STRING => Some(IntrinsicKind::String),
+            TypeId::BOOLEAN => Some(IntrinsicKind::Boolean),
+            TypeId::BIGINT => Some(IntrinsicKind::Bigint),
+            TypeId::SYMBOL => Some(IntrinsicKind::Symbol),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            tsz_solver::TypeDatabase::get_boxed_type(self.ctx.types, kind).unwrap_or(type_id)
+        } else {
+            type_id
+        }
+    }
+
+    /// Get the display name of the boxed wrapper type for a primitive.
+    /// Returns `Some("Number")` for `number`, `Some("String")` for `string`, etc.
+    fn get_boxed_type_display_name(&self, type_id: TypeId) -> Option<String> {
+        match type_id {
+            TypeId::NUMBER => Some("Number".to_string()),
+            TypeId::STRING => Some("String".to_string()),
+            TypeId::BOOLEAN => Some("Boolean".to_string()),
+            TypeId::BIGINT => Some("BigInt".to_string()),
+            TypeId::SYMBOL => Some("Symbol".to_string()),
+            _ => None,
         }
     }
 
