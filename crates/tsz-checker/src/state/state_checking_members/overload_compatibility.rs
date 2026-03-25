@@ -14,7 +14,7 @@ use crate::query_boundaries::assignability::{
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{CallableShape, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn required_parameter_count_for_overload_compatibility(
@@ -28,6 +28,102 @@ impl<'a> CheckerState<'a> {
                 .filter(|param| param.is_required())
                 .count()
         })
+    }
+
+    fn jsdoc_overload_tag_span(
+        &self,
+        comment: &tsz_common::comments::CommentRange,
+        source_text: &str,
+    ) -> Option<(u32, u32)> {
+        let raw_comment = source_text.get(comment.pos as usize..comment.end as usize)?;
+        let offset = raw_comment.find("@overload")?;
+        Some((comment.pos + offset as u32 + 1, "overload".len() as u32))
+    }
+
+    fn jsdoc_constructor_overload_types(
+        &mut self,
+        ctor_idx: NodeIndex,
+    ) -> Vec<(tsz_solver::TypeId, u32, u32)> {
+        use tsz_common::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
+
+        if !self.is_js_file() {
+            return Vec::new();
+        }
+
+        let Some(node) = self.ctx.arena.get(ctor_idx) else {
+            return Vec::new();
+        };
+        let Some(ctor) = self.ctx.arena.get_constructor(node) else {
+            return Vec::new();
+        };
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return Vec::new();
+        };
+
+        let instance_type = if let Some(class_idx) = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx) {
+            let class_node = self.ctx.arena.get(class_idx);
+            if let Some(class) = class_node.and_then(|node| self.ctx.arena.get_class(node)) {
+                self.get_class_instance_type(class_idx, class)
+            } else {
+                TypeId::ANY
+            }
+        } else {
+            TypeId::ANY
+        };
+
+        let base_signature = self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &[]);
+        let leading = get_leading_comments_from_cache(&sf.comments, node.pos, &sf.text);
+        let mut overloads = Vec::new();
+
+        for comment in leading {
+            if !is_jsdoc_comment(&comment, &sf.text) {
+                continue;
+            }
+
+            let jsdoc = get_jsdoc_content(&comment, &sf.text);
+            if !jsdoc.contains("@overload") {
+                continue;
+            }
+
+            let mut signature = base_signature.clone();
+            let jsdoc_params = Self::extract_jsdoc_param_names(&jsdoc);
+            signature.params.truncate(jsdoc_params.len());
+
+            for (i, (param_name, _)) in jsdoc_params.iter().enumerate() {
+                let Some(param) = signature.params.get_mut(i) else {
+                    break;
+                };
+
+                let jsdoc_optional = Self::extract_jsdoc_param_type_string(&jsdoc, param_name)
+                    .is_some_and(|type_expr| type_expr.trim().ends_with('='))
+                    || Self::is_jsdoc_param_optional_by_brackets(&jsdoc, param_name);
+
+                if let Some(jsdoc_type) =
+                    self.resolve_jsdoc_param_type_with_pos(&jsdoc, param_name, Some(comment.pos))
+                {
+                    param.type_id = jsdoc_type;
+                }
+
+                param.optional = param.optional || jsdoc_optional;
+            }
+
+            let overload_type = self.ctx.types.factory().callable(CallableShape {
+                call_signatures: Vec::new(),
+                construct_signatures: vec![signature],
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            });
+
+            let (error_pos, error_len) = self
+                .jsdoc_overload_tag_span(&comment, &sf.text)
+                .unwrap_or((comment.pos, 0));
+            overloads.push((overload_type, error_pos, error_len));
+        }
+
+        overloads
     }
 
     /// Lower a type node with type parameter bindings.
@@ -237,7 +333,12 @@ impl<'a> CheckerState<'a> {
                 _ => false,
             }
         });
-        if !has_overload_decl {
+        let jsdoc_overloads = if has_overload_decl {
+            Vec::new()
+        } else {
+            self.jsdoc_constructor_overload_types(impl_node_idx)
+        };
+        if !has_overload_decl && jsdoc_overloads.is_empty() {
             return;
         }
 
@@ -387,6 +488,23 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                 );
                 // TSC only reports the first incompatible overload per function.
+                break;
+            }
+        }
+
+        if has_overload_decl {
+            return;
+        }
+
+        for (mut overload_type, error_pos, error_len) in jsdoc_overloads {
+            overload_type = self.fix_error_params_in_function(overload_type);
+            if !self.is_implementation_compatible_with_overload(impl_type, overload_type) {
+                self.ctx.error(
+                    error_pos,
+                    error_len,
+                    diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE.to_string(),
+                    diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
+                );
                 break;
             }
         }
