@@ -362,6 +362,45 @@ module.exports.f.self = module.exports.f;
 }
 
 #[test]
+fn test_module_exports_nested_class_property_preserves_instance_member_types() {
+    let diagnostics = check_commonjs_two_files(
+        "b.js",
+        r#"
+module.exports.c = function c() {};
+module.exports.c.Cls = class {
+    constructor() {
+        this.x = 1;
+    }
+};
+"#,
+        "a.ts",
+        r#"
+import b = require("./b.js");
+const inst = new b.c.Cls();
+const s: string = inst.x;
+"#,
+        "./b.js",
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected nested CommonJS class property instance members to stay visible, got: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2322.is_empty(),
+        "Expected nested CommonJS class property instance member to keep number type, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_exports_forward_read_reports_ts2565() {
     let diagnostics = check_commonjs_file(
         "index.js",

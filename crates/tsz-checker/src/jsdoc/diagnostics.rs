@@ -383,7 +383,7 @@ impl<'a> CheckerState<'a> {
         target_file_idx: usize,
         expr_idx: NodeIndex,
     ) -> bool {
-        let ty = self.infer_commonjs_export_rhs_type(target_file_idx, expr_idx);
+        let ty = self.infer_commonjs_export_rhs_type(target_file_idx, expr_idx, None);
         crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, ty)
     }
 

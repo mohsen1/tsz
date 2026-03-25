@@ -255,7 +255,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let rhs_expr = rhs_expr?;
-        let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
+        let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None);
         (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
     }
 
@@ -317,7 +317,7 @@ impl<'a> CheckerState<'a> {
         // Phase 2: Infer types for each RHS (borrows self mutably).
         let mut prototype_props: FxHashMap<String, Vec<(String, TypeId)>> = FxHashMap::default();
         for (ctor_name, member_name, rhs_idx) in pending {
-            let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_idx);
+            let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_idx, None);
             if rhs_type != TypeId::UNDEFINED {
                 prototype_props
                     .entry(ctor_name)
