@@ -337,16 +337,16 @@ impl<'a> InferenceContext<'a> {
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
-        // Filter out TypeParameter contra-candidates: these are typically
-        // leaked original type parameters from contextual typing of overloaded
-        // generic calls. They should not drive inference over concrete covariant
-        // candidates. This matches the intent of has_concrete_contra_candidates.
+        // Filter out only synthetic inference placeholders from contra-candidates.
+        // Real outer type parameters (for example `T` in `Enqueue<T>`) are valid
+        // inference evidence and must be preserved; only transient `__infer_*` /
+        // `__infer_src_*` placeholders should be ignored here.
         let concrete_contra_candidates: Vec<_> = contra_candidates
             .iter()
             .filter(|c| {
-                !matches!(
-                    self.interner.lookup(c.type_id),
-                    Some(TypeData::TypeParameter(_))
+                !crate::type_queries::data::is_bare_infer_placeholder_db(
+                    self.interner,
+                    c.type_id,
                 )
             })
             .cloned()
@@ -1577,17 +1577,15 @@ impl<'a> InferenceContext<'a> {
                     _ => true,
                 });
             }
-            // Filter out TypeParameter contra-candidates: these are typically
-            // leaked original type parameters from contextual typing of overloaded
-            // generic calls. They should not drive inference over concrete covariant
-            // candidates. This matches the intent of has_concrete_contra_candidates.
+            // Filter out only synthetic inference placeholders from contra-candidates.
+            // Real outer type parameters remain meaningful inference evidence.
             let concrete_contra_candidates: Vec<_> = info
                 .contra_candidates
                 .iter()
                 .filter(|c| {
-                    !matches!(
-                        self.interner.lookup(c.type_id),
-                        Some(TypeData::TypeParameter(_))
+                    !crate::type_queries::data::is_bare_infer_placeholder_db(
+                        self.interner,
+                        c.type_id,
                     )
                 })
                 .cloned()
