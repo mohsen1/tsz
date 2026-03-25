@@ -456,14 +456,49 @@ impl<'a> CheckerState<'a> {
     ///
     /// First checks `idx` itself, then walks the parent chain up to 4 levels.
     /// Returns the first JSDoc content found, or `None`.
+    pub(crate) fn effective_jsdoc_pos_for_node(
+        &self,
+        idx: NodeIndex,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) -> Option<u32> {
+        let node = self.ctx.arena.get(idx)?;
+        let mut pos = node.pos as usize;
+        let end = node.end as usize;
+
+        while pos < end {
+            let remaining = source_text.get(pos..end)?;
+            let trimmed = remaining.trim_start_matches(char::is_whitespace);
+            if trimmed.len() != remaining.len() {
+                pos += remaining.len() - trimmed.len();
+                continue;
+            }
+
+            if let Some(comment) = comments
+                .iter()
+                .find(|comment| comment.pos as usize == pos && comment.end as usize <= end)
+            {
+                pos = comment.end as usize;
+                continue;
+            }
+
+            break;
+        }
+
+        Some(pos as u32)
+    }
+
     pub(crate) fn try_jsdoc_with_ancestor_walk(
         &self,
         idx: NodeIndex,
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
     ) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
+        let jsdoc = self.try_leading_jsdoc(
+            comments,
+            self.effective_jsdoc_pos_for_node(idx, comments, source_text)?,
+            source_text,
+        );
         if jsdoc.is_some() {
             return jsdoc;
         }
@@ -474,8 +509,11 @@ impl<'a> CheckerState<'a> {
             if parent.is_none() {
                 break;
             }
-            let parent_node = self.ctx.arena.get(parent)?;
-            let jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
+            let jsdoc = self.try_leading_jsdoc(
+                comments,
+                self.effective_jsdoc_pos_for_node(parent, comments, source_text)?,
+                source_text,
+            );
             if jsdoc.is_some() {
                 return jsdoc;
             }
@@ -494,10 +532,11 @@ impl<'a> CheckerState<'a> {
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
     ) -> Option<(String, u32)> {
-        let node = self.ctx.arena.get(idx)?;
-        if let Some((content, pos)) =
-            self.try_leading_jsdoc_with_pos(comments, node.pos, source_text)
-        {
+        if let Some((content, pos)) = self.try_leading_jsdoc_with_pos(
+            comments,
+            self.effective_jsdoc_pos_for_node(idx, comments, source_text)?,
+            source_text,
+        ) {
             return Some((content, pos));
         }
         let mut current = idx;
@@ -507,10 +546,11 @@ impl<'a> CheckerState<'a> {
             if parent.is_none() {
                 break;
             }
-            let parent_node = self.ctx.arena.get(parent)?;
-            if let Some((content, pos)) =
-                self.try_leading_jsdoc_with_pos(comments, parent_node.pos, source_text)
-            {
+            if let Some((content, pos)) = self.try_leading_jsdoc_with_pos(
+                comments,
+                self.effective_jsdoc_pos_for_node(parent, comments, source_text)?,
+                source_text,
+            ) {
                 return Some((content, pos));
             }
             current = parent;
