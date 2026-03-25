@@ -10241,6 +10241,34 @@ if (ArrayBuffer.isView(obj)) {
 }
 
 #[test]
+fn test_iterable_uses_lib_default_type_arguments_without_ts2314() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &[(
+            "/test.ts",
+            r#"
+function getEither<T>(in1: Iterable<T>, in2: ArrayLike<T>) {
+    return Math.random() > 0.5 ? in1 : in2;
+}
+"#,
+        )],
+        "/test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2314),
+        "Expected Iterable to use its lib default type arguments without TS2314. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_namespace_import_from_umd_module_includes_global_and_module_augmentations() {
     let files = [
         (
@@ -12548,6 +12576,40 @@ const result: A[] = from(inputB, ({ b }): A => ({ a: b }));
     assert!(
         ts2339.is_empty(),
         "Contextual destructuring in Array.from callback should not emit TS2339. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_from_iterable_uses_lib_default_type_arguments_without_ts2314() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &[(
+            "/test.ts",
+            r#"
+interface A { a: string; }
+const inputA: A[] = [];
+
+function getEither<T>(in1: Iterable<T>, in2: ArrayLike<T>) {
+    return Math.random() > 0.5 ? in1 : in2;
+}
+
+const inputARand = getEither(inputA, { length: 0 } as ArrayLike<A>);
+const result: A[] = Array.from(inputARand);
+"#,
+        )],
+        "/test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2314),
+        "Expected Array.from Iterable<T> inputs to use lib default type arguments without TS2314. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
