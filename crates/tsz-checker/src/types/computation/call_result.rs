@@ -291,7 +291,15 @@ impl<'a> CheckerState<'a> {
                 expected_max,
                 actual,
             } => {
-                if !self.ctx.has_parse_errors {
+                // Suppress TS2554/TS2555 for super calls where the parser already
+                // emitted TS2754 ("super may not use type arguments") and stripped
+                // the type arguments. The resulting `super(args)` call may have the
+                // wrong arity because the type-arg stripping changed the resolved
+                // constructor shape. TSC's checker handles TS2754 itself and
+                // short-circuits before argument checking.
+                let suppress_for_super_parse_error =
+                    is_super_call && self.node_span_contains_parse_error(call_idx);
+                if !self.ctx.has_parse_errors && !suppress_for_super_parse_error {
                     if actual < expected_min {
                         let is_iife = self.is_callee_function_expression(callee_expr);
                         if is_iife {
