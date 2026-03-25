@@ -255,6 +255,92 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for malformed JSDoc function types like `function(@foo)`.
+    ///
+    /// TypeScript reports:
+    /// - TS7014 on the whole function type when it lacks a return annotation
+    /// - TS1110 at the `@`
+    /// - TS2304 at the following identifier
+    pub(crate) fn check_malformed_jsdoc_function_type_params(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::is_jsdoc_comment;
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+
+            let comment_text = comment.get_text(source_text);
+
+            for (function_offset, _) in comment_text.match_indices("function(") {
+                let after_function = &comment_text[function_offset + "function(".len()..];
+                let Some(close_paren_offset) = after_function.find(')') else {
+                    continue;
+                };
+
+                let params_text = &after_function[..close_paren_offset];
+                let is_constructor_type = params_text.trim_start().starts_with("new:");
+                let has_return_annotation =
+                    after_function[close_paren_offset + 1..].trim_start().starts_with(':');
+                let function_len = "function(".len() + close_paren_offset + 1;
+                let function_pos = comment.pos + function_offset as u32;
+                let mut reported_missing_return = false;
+                let mut search_offset = 0usize;
+
+                while let Some(at_offset) = params_text[search_offset..].find('@') {
+                    let at_offset = search_offset + at_offset;
+                    let ident_start = at_offset + 1;
+                    let ident = params_text[ident_start..]
+                        .chars()
+                        .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
+                        .collect::<String>();
+
+                    if ident.is_empty() {
+                        search_offset = ident_start;
+                        continue;
+                    }
+
+                    if !reported_missing_return
+                        && !is_constructor_type
+                        && !has_return_annotation
+                        && self.ctx.no_implicit_any()
+                    {
+                        self.ctx.error(
+                            function_pos,
+                            function_len as u32,
+                            diagnostic_messages::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE
+                                .replace("{0}", "any"),
+                            diagnostic_codes::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+                        );
+                        reported_missing_return = true;
+                    }
+
+                    let at_pos =
+                        function_pos + "function(".len() as u32 + at_offset as u32;
+                    self.ctx.error(
+                        at_pos,
+                        1,
+                        diagnostic_messages::TYPE_EXPECTED.to_string(),
+                        diagnostic_codes::TYPE_EXPECTED,
+                    );
+                    self.ctx.error(
+                        at_pos + 1,
+                        ident.len() as u32,
+                        format!("Cannot find name '{ident}'."),
+                        diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+
+                    search_offset = ident_start + ident.len();
+                }
+            }
+        }
+    }
+
     /// TS8039: Check for `@template` tags that follow a `@typedef`, `@callback`,
     /// or `@overload` tag within the same JSDoc comment.
     ///

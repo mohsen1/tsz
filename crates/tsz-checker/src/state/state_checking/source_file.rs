@@ -247,6 +247,9 @@ impl<'a> CheckerState<'a> {
                 // TS1003: Check @property/@member tags for private-name syntax
                 self.check_jsdoc_property_private_names();
 
+                // TS7014/TS1110/TS2304: malformed JSDoc function parameter types
+                self.check_malformed_jsdoc_function_type_params();
+
                 // TS8021: Check for @typedef without type or @property tags
                 self.check_typedef_missing_type();
 

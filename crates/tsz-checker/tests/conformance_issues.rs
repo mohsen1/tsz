@@ -1819,6 +1819,43 @@ const f = null;
 }
 
 #[test]
+fn test_jsdoc_type_function_at_param_reports_ts7014_ts1110_ts2304() {
+    let source = r#"
+// @ts-check
+/**
+ * @type {function(@foo)}
+ */
+let x;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7014),
+        "Expected TS7014 for malformed JSDoc function type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1110),
+        "Expected TS1110 for malformed JSDoc function parameter type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Expected TS2304 for malformed JSDoc function parameter name. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_function_object_type_does_not_suppress_implicit_any_parameter() {
     let source = r#"
 // @ts-check
