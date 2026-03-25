@@ -777,9 +777,7 @@ class C extends UI["TreeElement"] {
         "Expected missing-member diagnostics for unknown `this` property and invalid number member access through element-assigned base class, got: {diagnostics:?}"
     );
     assert!(
-        ts2339
-            .iter()
-            .any(|(_, msg)| msg.contains("doesNotExist")),
+        ts2339.iter().any(|(_, msg)| msg.contains("doesNotExist")),
         "Expected TS2339 for `this.doesNotExist`, got: {diagnostics:?}"
     );
 }

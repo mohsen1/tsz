@@ -108,7 +108,10 @@ struct SemanticDefSnapshot {
 }
 
 fn symbol_name_for_id(binder: &BinderState, sym_id: SymbolId) -> Option<String> {
-    binder.symbols.get(sym_id).map(|sym| sym.escaped_name.clone())
+    binder
+        .symbols
+        .get(sym_id)
+        .map(|sym| sym.escaped_name.clone())
 }
 
 fn semantic_def_snapshot(
@@ -185,8 +188,9 @@ fn symbol_snapshot_by_id(binder: &BinderState, sym_id: SymbolId) -> Option<Symbo
         value_declaration: sym.value_declaration.0,
         value_declaration_span: sym.value_declaration_span,
         first_declaration_span: sym.first_declaration_span,
-        parent_name: (!sym.parent.is_none())
-            .then(|| symbol_name_for_id(binder, sym.parent).unwrap_or_else(|| format!("#{}", sym.parent.0))),
+        parent_name: (!sym.parent.is_none()).then(|| {
+            symbol_name_for_id(binder, sym.parent).unwrap_or_else(|| format!("#{}", sym.parent.0))
+        }),
         exports,
         members,
         is_exported: sym.is_exported,
@@ -217,12 +221,7 @@ fn declaration_arena_file_names_for_symbol(
             .map(|arenas| {
                 arenas
                     .iter()
-                    .filter_map(|arena| {
-                        arena
-                            .source_files
-                            .first()
-                            .map(|sf| sf.file_name.clone())
-                    })
+                    .filter_map(|arena| arena.source_files.first().map(|sf| sf.file_name.clone()))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -860,8 +859,12 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         .collect();
     checker.ctx.set_lib_contexts(lib_contexts);
     checker.ctx.set_actual_lib_file_count(lib_files.len());
-    checker.ctx.set_all_arenas(Arc::new(vec![Arc::clone(&arena)]));
-    checker.ctx.set_all_binders(Arc::new(vec![Arc::clone(&binder)]));
+    checker
+        .ctx
+        .set_all_arenas(Arc::new(vec![Arc::clone(&arena)]));
+    checker
+        .ctx
+        .set_all_binders(Arc::new(vec![Arc::clone(&binder)]));
     checker.ctx.set_current_file_idx(0);
     checker.check_source_file(root);
 
@@ -985,7 +988,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn binder_reconstruction_from_original_fields_preserves_mapped_type_generic_indexed_access_context() {
+fn binder_reconstruction_from_original_fields_preserves_mapped_type_generic_indexed_access_context()
+{
     let source = r#"type Types = {
     first: { a1: true };
     second: { a2: true };
@@ -1177,9 +1181,18 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+    for name in [
+        "Types",
+        "Test",
+        "TypesMap",
+        "P",
+        "TypeHandlers",
+        "typeHandlers",
+        "onSomeEvent",
+    ] {
         let original = symbol_snapshot(&original_binder, name);
         let merged = symbol_snapshot(&merged_binder, name);
         assert_eq!(
@@ -1247,7 +1260,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (idx, node) in arena.nodes.iter().enumerate() {
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -1334,7 +1348,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
@@ -1419,7 +1434,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
@@ -1493,9 +1509,18 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+    for name in [
+        "Types",
+        "Test",
+        "TypesMap",
+        "P",
+        "TypeHandlers",
+        "typeHandlers",
+        "onSomeEvent",
+    ] {
         let original_sym_id = original_binder
             .file_locals
             .get(name)
@@ -1570,9 +1595,18 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+    for name in [
+        "Types",
+        "Test",
+        "TypesMap",
+        "P",
+        "TypeHandlers",
+        "typeHandlers",
+        "onSomeEvent",
+    ] {
         let original_sym_id = original_binder
             .file_locals
             .get(name)
@@ -1601,8 +1635,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn reconstructed_binder_with_fresh_type_interner_preserves_mapped_type_generic_indexed_access_context(
-) {
+fn reconstructed_binder_with_fresh_type_interner_preserves_mapped_type_generic_indexed_access_context()
+ {
     let files = vec![(
         "main.ts".to_string(),
         r#"type Types = {
@@ -1701,8 +1735,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn original_binder_with_merged_program_type_interner_preserves_mapped_type_generic_indexed_access_context(
-) {
+fn original_binder_with_merged_program_type_interner_preserves_mapped_type_generic_indexed_access_context()
+ {
     let source = r#"type Types = {
     first: { a1: true };
     second: { a2: true };

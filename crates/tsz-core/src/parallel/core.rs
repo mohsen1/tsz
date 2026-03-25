@@ -1389,9 +1389,7 @@ impl BoundFile {
 
         // lib_symbol_reverse_remap
         size += self.lib_symbol_reverse_remap.capacity()
-            * (std::mem::size_of::<SymbolId>()
-                + std::mem::size_of::<(usize, SymbolId)>()
-                + 8);
+            * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<(usize, SymbolId)>() + 8);
 
         // semantic_defs (per-file)
         size += self.semantic_defs.capacity()
