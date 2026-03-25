@@ -2430,6 +2430,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.isolated_modules {
         options.printer.preserve_const_enums = true;
         options.printer.no_const_enum_inlining = true;
+        options.checker.isolated_modules = true;
     }
     // verbatimModuleSyntax implies preserveConstEnums (tsc 5.0+): import/export
     // syntax is preserved verbatim, so const enums must be emitted as regular

@@ -148,6 +148,63 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if a const enum symbol is "ambient" — declared with `declare` keyword
+    /// or originating from a `.d.ts` file. Ambient const enums have no runtime
+    /// representation and cannot be accessed under `isolatedModules`.
+    fn is_const_enum_ambient(&self, sym: &tsz_binder::Symbol) -> bool {
+        // If the file itself is a .d.ts, everything in it is ambient.
+        if self.ctx.is_declaration_file() {
+            return true;
+        }
+        // Check if all declarations are in ambient context (e.g., `declare const enum`).
+        if sym.declarations.is_empty() {
+            return false;
+        }
+        for &decl_idx in &sym.declarations {
+            if !self.ctx.arena.is_in_ambient_context(decl_idx) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Check if a node is in a type-only position (e.g., computed property name
+    /// inside a type literal, interface, or type alias). In such positions,
+    /// const enum values are resolved at compile time and don't need runtime access.
+    fn is_in_type_only_position(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            // If we hit a type node or type alias/interface declaration, we're in type context
+            if parent_node.is_type_node()
+                || parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            {
+                return true;
+            }
+            // If we hit a statement, class member, or function-like, we're in value context
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                || parent_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                || parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            {
+                return false;
+            }
+            current = parent;
+        }
+        false
+    }
+
     /// Get type of property access expression.
     #[allow(dead_code)]
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
@@ -324,6 +381,35 @@ impl<'a> CheckerState<'a> {
                     if self.check_tdz_violation(base_sym_id, access.expression, base_name, true) {
                         return TypeId::ERROR;
                     }
+                }
+
+                // TS2748: Cannot access ambient const enums when isolatedModules is enabled.
+                // Under isolatedModules (or verbatimModuleSyntax which implies it),
+                // ambient const enum values cannot be inlined because each file is
+                // transpiled independently without cross-file information.
+                // "Ambient" means declared with `declare` keyword or in a .d.ts file —
+                // such enums have no runtime representation and cannot be inlined.
+                // Skip type-only positions (e.g., computed property names in type
+                // literals) where values are resolved at compile time.
+                if self.ctx.isolated_modules()
+                    && base_symbol.flags & symbol_flags::CONST_ENUM != 0
+                    && self.is_const_enum_ambient(base_symbol)
+                    && !self.is_in_type_only_position(idx)
+                {
+                    let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
+                        "verbatimModuleSyntax"
+                    } else {
+                        "isolatedModules"
+                    };
+                    let msg = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                        &[option_name],
+                    );
+                    self.error_at_node(
+                        idx,
+                        &msg,
+                        crate::diagnostics::diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                    );
                 }
 
                 // Enum members and namespace exports both resolve to the selected member symbol type.
