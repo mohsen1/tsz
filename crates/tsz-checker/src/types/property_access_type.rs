@@ -1109,6 +1109,22 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if !skip_flow_narrowing
+                && !enum_instance_like_access
+                && !hidden_qualified_namespace_member
+                && let Some(obj_node) = self.ctx.arena.get(access.expression)
+                && let Some(obj_ident) = self.ctx.arena.get_identifier(obj_node)
+                && let Some(member_type) =
+                    self.resolve_umd_global_member_by_name(&obj_ident.escaped_text, property_name)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
+
             // Fallback for namespace/export member accesses where type-only namespace
             // classification misses the object form but symbol resolution can still
             // identify `A.B` as a concrete exported value member.

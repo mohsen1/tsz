@@ -10176,6 +10176,58 @@ a2.x + a2.y + a2.z + a2.conflict;
 }
 
 #[test]
+fn test_umd_global_namespace_access_includes_module_and_global_augmentations() {
+    let files = [
+        (
+            "/a.d.ts",
+            r#"
+export as namespace a;
+export const x = 0;
+export const conflict = 0;
+"#,
+        ),
+        (
+            "/b.ts",
+            r#"
+import * as a2 from "./a";
+
+declare global {
+    namespace a {
+        export const y = 0;
+        export const conflict = 0;
+    }
+}
+
+declare module "./a" {
+    export const z = 0;
+    export const conflict = 0;
+}
+
+a.x + a.y + a.z + a.conflict;
+a2.x;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/b.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            allow_umd_global_access: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected bare UMD global namespace access to keep x/y/z/conflict visible without TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_augmentation_global_imported_return_type_keeps_augmented_array_method() {
     if load_lib_files_for_test().is_empty() {
         return;
