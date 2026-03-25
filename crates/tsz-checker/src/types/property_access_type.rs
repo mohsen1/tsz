@@ -556,8 +556,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(property_name) = property_name_for_probe.as_deref() {
                     let evaluated_read = self.evaluate_application_type(read_object_type);
                     let resolved_read = self.resolve_type_for_property_access(evaluated_read);
-                    if self
-                        .union_write_requires_existing_named_member(resolved_read, property_name)
+                    if self.union_write_requires_existing_named_member(resolved_read, property_name)
                     {
                         (read_object_type, false)
                     } else {
