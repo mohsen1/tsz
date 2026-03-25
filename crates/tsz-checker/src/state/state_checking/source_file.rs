@@ -244,6 +244,9 @@ impl<'a> CheckerState<'a> {
                 // TS2300: Check for duplicate @import names across JSDoc comments
                 self.check_jsdoc_duplicate_imports();
 
+                // TS1003: Check @property/@member tags for private-name syntax
+                self.check_jsdoc_property_private_names();
+
                 // TS8021: Check for @typedef without type or @property tags
                 self.check_typedef_missing_type();
 

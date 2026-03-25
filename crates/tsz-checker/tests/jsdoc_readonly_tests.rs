@@ -202,3 +202,22 @@ class B extends A {}
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// `@property {string} #id` in JSDoc should emit TS1003.
+#[test]
+fn test_jsdoc_property_private_name_emits_ts1003() {
+    let source = r#"
+/**
+ * @typedef A
+ * @type {object}
+ * @property {string} #id
+ */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts1003 = diagnostics.iter().filter(|d| d.code == 1003).count();
+    assert!(
+        ts1003 >= 1,
+        "Expected TS1003 for JSDoc private-name property, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
