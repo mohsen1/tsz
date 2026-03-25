@@ -343,29 +343,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 _ => self.expand_type_param(arg_type_for_check),
             };
 
-            // During candidate selection, unconstrained type-parameter-like parameters are
-            // allowed to accept arbitrary non-nullish arguments and are refined later by
-            // inference or instantiation context. However, under `strictNullChecks`, explicit
-            // nullish arguments must still be checked normally so calls like
-            // `new Box<T>(null)` surface the real mismatch.
-            let arg_is_explicitly_nullish = arg_type_for_check.is_nullish()
-                || crate::type_queries::union_contains(
-                    self.interner.as_type_database(),
-                    arg_type_for_check,
-                    TypeId::NULL,
-                )
-                || crate::type_queries::union_contains(
-                    self.interner.as_type_database(),
-                    arg_type_for_check,
-                    TypeId::UNDEFINED,
-                );
-            if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
-                self.interner.lookup(param_type)
-                && info.constraint.is_none()
-                && !arg_is_explicitly_nullish
-            {
-                continue;
-            }
+            // When the parameter type is an unconstrained type parameter, a concrete
+            // argument is NOT assignable to it (T could be anything). However, when the
+            // argument itself is also a type parameter (or the same type parameter),
+            // we let the normal assignability path handle it. This matches tsc which
+            // rejects `foo<U>(42)` but allows `foo<U>(x)` where `x: U`.
+            //
+            // Note: Previously this skipped ALL non-nullish arguments to unconstrained
+            // type-parameter params, which was too lenient and suppressed TS2345 errors
+            // for cases like `function outer<T>() { accept<T>(42); }`.
+            //
+            // Nullish arguments (null/undefined) must still be checked under
+            // strictNullChecks to surface real mismatches like `new Box<T>(null)`.
 
             // When the parameter is optional, implicitly include `undefined`
             // in the parameter type. This ensures `SomeType | undefined` can be
