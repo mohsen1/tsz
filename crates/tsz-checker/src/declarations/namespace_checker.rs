@@ -216,24 +216,31 @@ impl<'a> CheckerState<'a> {
                 // TSC reports "Duplicate identifier" on BOTH the class static member
                 // and the namespace export when they share the same name.
                 // If the conflicting member is inherited (not directly declared),
-                // skip TS2300 — the class checker handles it as TS2417 instead.
+                // skip TS2300 — the class checker handles it as TS2417 instead,
+                // and we must REPLACE the inherited property with the namespace export
+                // so that `typeof Derived` reflects the namespace version.
                 let found_direct = self.report_duplicate_on_class_static_member(sym_id, name);
 
-                if found_direct && let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id)
-                {
-                    let decl_node = export_symbol.value_declaration;
-                    if decl_node != NodeIndex::NONE {
-                        let error_node = self
-                            .get_declaration_name_node(decl_node)
-                            .unwrap_or(decl_node);
-                        self.error_at_node_msg(
-                            error_node,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[name],
-                        );
+                if found_direct {
+                    if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
+                        let decl_node = export_symbol.value_declaration;
+                        if decl_node != NodeIndex::NONE {
+                            let error_node = self
+                                .get_declaration_name_node(decl_node)
+                                .unwrap_or(decl_node);
+                            self.error_at_node_msg(
+                                error_node,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                &[name],
+                            );
+                        }
                     }
+                    continue;
                 }
-                continue;
+                // For inherited (non-direct) duplicates, fall through to replace
+                // the inherited property with the namespace export. This ensures
+                // `typeof D` uses the namespace's version, which is what tsc does
+                // (and what triggers TS2417 when the types are incompatible).
             }
 
             props.insert(
