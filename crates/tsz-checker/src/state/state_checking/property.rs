@@ -34,7 +34,7 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(contextual_type) = contextual_type {
                         let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.clear_type_cache_recursive(prop.initializer);
+                        self.invalidate_initializer_for_context_change(prop.initializer);
                         self.get_type_of_node_with_request(prop.initializer, &request);
                     } else {
                         self.check_for_nested_function_ts7006(prop.initializer);
@@ -52,7 +52,7 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(contextual_type) = contextual_type {
                         let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.clear_type_cache_recursive(elem_idx);
+                        self.invalidate_function_like_for_contextual_retry(elem_idx);
                         self.get_type_of_function_with_request(elem_idx, &request);
                     } else {
                         for (pi, &param_idx) in method.parameters.nodes.iter().enumerate() {
@@ -79,7 +79,7 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(contextual_type) = contextual_type {
                         let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.clear_type_cache_recursive(elem_idx);
+                        self.invalidate_function_like_for_contextual_retry(elem_idx);
                         self.get_type_of_function_with_request(elem_idx, &request);
                     } else {
                         for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
@@ -1332,6 +1332,53 @@ mod tests {
             ts2353[0].message_text.contains("'[k]'") || ts2353[0].message_text.contains("\"[k]\""),
             "TS2353 should mention [k], got: {}",
             ts2353[0].message_text
+        );
+    }
+
+    #[test]
+    fn excess_property_method_contextual_retry_keeps_parameter_types() {
+        let diags = check_source_diagnostics(
+            r#"
+type Nested = { run: (value: string) => string };
+declare function accept(value: { nested: Nested }): void;
+
+accept({
+    nested: {
+        run(value) { return value; },
+        extra: 1,
+    },
+});
+"#,
+        );
+
+        let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+        assert_eq!(
+            ts7006.len(),
+            0,
+            "Expected method contextual retry during excess-property checking to keep parameter context, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn excess_property_accessor_contextual_retry_keeps_setter_parameter_types() {
+        let diags = check_source_diagnostics(
+            r#"
+type Access = { get size(): number; set size(value: number); };
+declare function accept(value: Access): void;
+
+accept({
+    get size() { return 1; },
+    set size(value) { void value; },
+    extra: 1,
+});
+"#,
+        );
+
+        let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+        assert_eq!(
+            ts7006.len(),
+            0,
+            "Expected accessor contextual retry during excess-property checking to keep setter parameter context, got: {diags:?}"
         );
     }
 }

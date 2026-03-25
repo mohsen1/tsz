@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
         let request = crate::context::TypingRequest::with_contextual_type(expected_type);
 
         for branch_idx in [cond.when_true, cond.when_false] {
-            self.clear_type_cache_recursive(branch_idx);
+            self.invalidate_expression_for_contextual_retry(branch_idx);
             let mut branch_type = self.get_type_of_node_with_request(branch_idx, &request);
 
             if unwrap_async_branch_promises {

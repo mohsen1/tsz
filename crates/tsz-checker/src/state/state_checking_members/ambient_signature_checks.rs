@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
                     // Clear cached type to force recomputation with contextual type.
                     // Function expressions may have been typed without contextual info
                     // during build_type_environment, missing parameter type inference.
-                    self.clear_type_cache_recursive(prop.initializer);
+                    self.invalidate_initializer_for_context_change(prop.initializer);
                     request.read().contextual(declared_type)
                 } else {
                     request.read().contextual_opt(None)
@@ -341,10 +341,11 @@ impl<'a> CheckerState<'a> {
             //
             // Build-type-environment may have already cached this initializer before
             // class-member `this` context is available, especially for arrow initializers
-            // that reference `this`. Re-check under member context to avoid stale `any`.
+            // that reference `this`. This path still depends on member-context state
+            // that is not fully request-audited yet, so keep the explicit recursive
+            // clear here until class-property initializer caching is fully migrated.
             self.clear_type_cache_recursive(prop.initializer);
             let request = if let Some(member_type) = contextual_member_type {
-                self.clear_type_cache_recursive(prop.initializer);
                 request.read().contextual(member_type)
             } else {
                 request.read().contextual_opt(None)

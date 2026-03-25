@@ -1273,7 +1273,7 @@ impl<'a> CheckerState<'a> {
                                 )
                             }));
                 if needs_fresh_contextual_check {
-                    self.clear_type_cache_recursive(right_idx);
+                    self.invalidate_expression_for_contextual_retry(right_idx);
                 }
             }
             crate::context::TypingRequest::with_contextual_type(contextual_target)

@@ -505,7 +505,7 @@ impl<'a> CheckerState<'a> {
                         });
                         if member_ctx_type.is_some() {
                             has_contextual_member = true;
-                            self.clear_type_cache_recursive(prop.initializer);
+                            self.invalidate_initializer_for_context_change(prop.initializer);
                         }
                         let prev_sym_cached = current_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());

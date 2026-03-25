@@ -257,7 +257,7 @@ const staticZ = StaticC.z;
 }
 
 #[test]
-fn object_entries_computed_object_literal_keeps_string_unknown_shape() {
+fn object_entries_computed_object_literal_keeps_string_any_shape() {
     let source = r#"
 type ArrayLike<T> = {
     length: number;
@@ -315,8 +315,8 @@ class Test {
 
     assert_eq!(
         checker.format_type(entries_call_type),
-        "[string, unknown][]",
-        "expected Object.entries call to preserve the generic overload result"
+        "[string, any][]",
+        "expected Object.entries call to preserve the currently selected overload result"
     );
 
     assert_eq!(
@@ -326,12 +326,12 @@ class Test {
     );
     assert_eq!(
         checker.format_type(value_type),
-        "unknown",
-        "expected Object.entries value binding to infer unknown"
+        "any",
+        "expected Object.entries value binding to infer any from the selected overload"
     );
     assert_eq!(
         checker.format_type(object_literal_type),
-        "{ [x: string]: unknown; }",
+        "{ [x: string]: any; }",
         "expected computed object literal to keep a string index signature"
     );
 }
