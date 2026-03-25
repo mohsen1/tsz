@@ -898,7 +898,7 @@ impl<'a> CheckerState<'a> {
                 // returning raw interface body with unsubstituted `T` instead of
                 // `FinalizationRegistry<unknown>` with `T=unknown`).
                 // Skip Promise-like types to preserve `await` unwrapping semantics.
-                let return_type = if crate::query_boundaries::common::is_generic_application(
+                if crate::query_boundaries::common::is_generic_application(
                     self.ctx.types,
                     return_type,
                 ) && !self.contains_type_parameters_cached(return_type)
@@ -907,8 +907,7 @@ impl<'a> CheckerState<'a> {
                     self.evaluate_application_type(return_type)
                 } else {
                     return_type
-                };
-                return_type
+                }
             }
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {
                 // In JS/checkJs files, functions with `this.prop = value` assignments
