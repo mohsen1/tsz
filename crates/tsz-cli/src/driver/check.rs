@@ -753,7 +753,10 @@ pub(super) fn collect_diagnostics(
                 }
             }
             checker.ctx.resolved_modules = Some(resolved_modules);
-            checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
+            // TSC suppresses many semantic diagnostics across the whole program when any
+            // file has a real syntax parse error; mirror that behavior using the program-level
+            // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
+            checker.ctx.has_parse_errors = program_has_real_syntax_errors;
             // Exclude codes that are grammar checks in our parser but are NOT in TSC's
             // parseDiagnostics. TSC uses hasParseDiagnostics() to suppress grammar
             // errors like TS1105/TS1108, so we must match exactly which codes count.
@@ -1294,7 +1297,10 @@ pub(super) fn check_file_for_parallel<'a>(
     checker.ctx.set_current_file_idx(file_idx);
     checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
     checker.ctx.resolved_modules = Some(resolved_modules);
-    checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
+    // TSC suppresses many semantic diagnostics across the whole program when any
+    // file has a real syntax parse error; mirror that behavior using the program-level
+    // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
+    checker.ctx.has_parse_errors = program_has_real_syntax_errors;
     // Exclude grammar checks that don't affect AST structure from
     // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
     //   TS1009 - Trailing comma (checker grammar error in TSC)
