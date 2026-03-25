@@ -834,17 +834,9 @@ impl<'a> CheckerState<'a> {
                                 .get(&sym_id)
                                 .and_then(|&pid| self.ctx.binder.get_symbol(pid))
                                 .is_some_and(|p| p.flags & tsz_binder::symbol_flags::ALIAS != 0);
-                            // Suppress TS2456 when the type alias has type
-                            // parameters and the body is a bare self-reference.
-                            // A generic self-reference like `type T<out out> = T`
-                            // goes through instantiation and is not directly
-                            // circular in TSC.
-                            let generic_self_ref = ta.type_parameters.is_some()
-                                && self.is_simple_type_reference(ta.type_node);
                             if name_matches
                                 && !has_parse_error_tp
                                 && !has_import_partner
-                                && !generic_self_ref
                                 && !self.ctx.import_conflict_names.contains(&name)
                             {
                                 self.error_at_node(
