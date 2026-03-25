@@ -2982,6 +2982,32 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
     }
 }
 
+/// The boundary-owned `RelationFlags` wrapper must continue exposing the
+/// checker-safe flag surface for request-sensitive relation policy.
+#[test]
+fn test_relation_flags_surface_covers_checker_policy_bits() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    assert!(
+        source.contains("pub(crate) struct RelationFlags;"),
+        "assignability boundary must define RelationFlags as the checker-safe flag surface"
+    );
+
+    for flag in [
+        "STRICT_NULL_CHECKS",
+        "STRICT_FUNCTION_TYPES",
+        "EXACT_OPTIONAL_PROPERTY_TYPES",
+        "NO_UNCHECKED_INDEXED_ACCESS",
+        "NO_ERASE_GENERICS",
+    ] {
+        assert!(
+            source.contains(flag),
+            "RelationFlags must expose the `{flag}` constant"
+        );
+    }
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]
