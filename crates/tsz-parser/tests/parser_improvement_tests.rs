@@ -2401,3 +2401,22 @@ fn test_jsx_type_arguments_in_js_with_closing_tag_report_ts17002() {
         "Expected TS2657 for the recovered adjacent JSX roots, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_let_array_ambiguity_reports_ts1181_then_statement_recovery() {
+    let source = r#"
+var let: any;
+let[0] = 100;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![1181, 1005, 1128],
+        "Expected TS1181/TS1005/TS1128 recovery for ambiguous `let[` statement, got diagnostics: {diagnostics:?}"
+    );
+}
