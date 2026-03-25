@@ -23,11 +23,7 @@ pub(crate) fn commonjs_direct_export_supports_named_props(
 ) -> bool {
     if matches!(
         direct_export_type,
-        TypeId::ANY
-            | TypeId::UNKNOWN
-            | TypeId::ERROR
-            | TypeId::NEVER
-            | TypeId::OBJECT
+        TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER | TypeId::OBJECT
     ) {
         return true;
     }
@@ -473,7 +469,8 @@ impl<'a> CheckerState<'a> {
 
         let rhs_expr = rhs_expr?;
         let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None);
-        let rhs_type = crate::query_boundaries::common::widen_literal_type(self.ctx.types, rhs_type);
+        let rhs_type =
+            crate::query_boundaries::common::widen_literal_type(self.ctx.types, rhs_type);
         (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
     }
 
