@@ -14,20 +14,33 @@ use crate::query_boundaries::assignability::{
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{CallableShape, TypeId};
+use tsz_solver::{CallableShape, FunctionShape, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn required_parameter_count_for_overload_compatibility(
         &self,
         type_id: tsz_solver::TypeId,
     ) -> Option<usize> {
-        tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).map(|shape| {
-            shape
-                .params
-                .iter()
-                .filter(|param| param.is_required())
-                .count()
-        })
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
+            return Some(
+                shape
+                    .params
+                    .iter()
+                    .filter(|param| param.is_required())
+                    .count(),
+            );
+        }
+
+        tsz_solver::type_queries::get_construct_signatures(self.ctx.types, type_id).and_then(
+            |sigs| {
+                sigs.first().map(|sig| {
+                    sig.params
+                        .iter()
+                        .filter(|param| param.is_required())
+                        .count()
+                })
+            },
+        )
     }
 
     fn jsdoc_overload_tag_span(
@@ -74,8 +87,14 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
+        let class_type_params = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|info| info.class_type_parameters.clone())
+            .unwrap_or_default();
         let base_signature =
-            self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &[]);
+            self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &class_type_params);
         let leading = get_leading_comments_from_cache(&sf.comments, node.pos, &sf.text);
         let mut overloads = Vec::new();
 
@@ -128,6 +147,37 @@ impl<'a> CheckerState<'a> {
         }
 
         overloads
+    }
+
+    fn constructor_type_for_overload_compatibility(
+        &mut self,
+        ctor_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let Some(node) = self.ctx.arena.get(ctor_idx) else {
+            return None;
+        };
+        let Some(ctor) = self.ctx.arena.get_constructor(node) else {
+            return None;
+        };
+
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+        let class_idx = class_info.class_idx;
+        let class_type_params = class_info.class_type_parameters.clone();
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class = self.ctx.arena.get_class(class_node)?;
+        let instance_type = self.get_class_instance_type(class_idx, class);
+        let sig =
+            self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &class_type_params);
+
+        Some(self.ctx.types.factory().function(FunctionShape {
+            type_params: sig.type_params,
+            params: sig.params,
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate,
+            is_constructor: true,
+            is_method: false,
+        }))
     }
 
     /// Lower a type node with type parameter bindings.
@@ -366,8 +416,11 @@ impl<'a> CheckerState<'a> {
         // We then try to get the inferred return type from the full type system, matching tsc's
         // behavior of using the inferred return type for overload compatibility checking.
         let impl_return_override = self.get_impl_return_type_override(impl_node_idx);
-        let mut impl_type =
-            lowering.lower_signature_from_declaration(impl_node_idx, impl_return_override);
+        let mut impl_type = self
+            .constructor_type_for_overload_compatibility(impl_node_idx)
+            .unwrap_or_else(|| {
+                lowering.lower_signature_from_declaration(impl_node_idx, impl_return_override)
+            });
         // If lowering produced a function with ERROR return type, prefer get_type_of_node
         // which resolves type references through the full type environment.
         // Manual lowering cannot resolve interface/class type references that require
@@ -462,8 +515,11 @@ impl<'a> CheckerState<'a> {
             // 6. Get the overload's type using manual lowering
             // For overloads without return type annotations, use VOID (matching tsc behavior).
             let overload_return_override = self.get_overload_return_type_override(decl_idx);
-            let mut overload_type =
-                lowering.lower_signature_from_declaration(decl_idx, overload_return_override);
+            let mut overload_type = self
+                .constructor_type_for_overload_compatibility(decl_idx)
+                .unwrap_or_else(|| {
+                    lowering.lower_signature_from_declaration(decl_idx, overload_return_override)
+                });
             // Same ERROR return fallback for overloads
             let overload_lowered_ret = get_function_return_type(self.ctx.types, overload_type);
             if overload_type == tsz_solver::TypeId::ERROR
@@ -597,6 +653,13 @@ impl<'a> CheckerState<'a> {
         impl_type: tsz_solver::TypeId,
         overload_type: tsz_solver::TypeId,
     ) -> bool {
+        let constructors_only =
+            tsz_solver::type_queries::is_constructor_like_type(self.ctx.types, impl_type)
+                && tsz_solver::type_queries::is_constructor_like_type(
+                    self.ctx.types,
+                    overload_type,
+                );
+
         // Erase type parameters to `any` before comparing, matching TSC's
         // `getErasedSignature` in `isImplementationCompatibleWithOverload`.
         // This ensures positional parameter comparison works when the impl
@@ -622,7 +685,8 @@ impl<'a> CheckerState<'a> {
             (Some(impl_ret), Some(overload_ret)) => {
                 // Bidirectional return type check: either direction must be assignable,
                 // or the overload returns void
-                let return_compatible = overload_ret == tsz_solver::TypeId::VOID
+                let return_compatible = constructors_only
+                    || overload_ret == tsz_solver::TypeId::VOID
                     || self.is_assignable_to_bivariant(overload_ret, impl_ret)
                     || self.is_assignable_to_bivariant(impl_ret, overload_ret);
 
