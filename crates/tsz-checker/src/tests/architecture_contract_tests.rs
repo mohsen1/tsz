@@ -3453,10 +3453,14 @@ fn test_property_classification_exists() {
     for field in [
         "excess_properties",
         "missing_properties",
+        "incompatible_properties",
         "target_has_index_signature",
         "target_is_type_parameter",
         "target_is_empty_object",
         "target_is_global_object_or_function",
+        "all_matching_compatible",
+        "trimmed_source_assignable",
+        "target_has_number_index",
     ] {
         assert!(
             source.contains(field),
