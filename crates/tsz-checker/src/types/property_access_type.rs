@@ -71,6 +71,59 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn union_write_requires_existing_named_member(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> bool {
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        let mut saw_present_member = false;
+        let mut saw_fresh_empty_missing_member = false;
+
+        for member in members {
+            if member.is_nullable() {
+                continue;
+            }
+
+            let evaluated_member = self.evaluate_application_type(member);
+            let resolved_member = self.resolve_type_for_property_access(evaluated_member);
+            match self.resolve_property_access_with_env(resolved_member, property_name) {
+                PropertyAccessResult::Success { .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(_),
+                    ..
+                } => {
+                    saw_present_member = true;
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    if crate::query_boundaries::common::is_empty_object_type(
+                        self.ctx.types,
+                        resolved_member,
+                    ) && crate::query_boundaries::common::is_fresh_object_type(
+                        self.ctx.types,
+                        resolved_member,
+                    ) {
+                        saw_fresh_empty_missing_member = true;
+                    } else {
+                        return false;
+                    }
+                }
+                PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: None,
+                    ..
+                }
+                | PropertyAccessResult::IsUnknown => {}
+            }
+        }
+
+        saw_present_member && saw_fresh_empty_missing_member
+    }
+
     fn recover_property_from_implemented_interfaces(
         &mut self,
         class_idx: NodeIndex,
@@ -500,19 +553,24 @@ impl<'a> CheckerState<'a> {
             if can_use_no_flow {
                 let read_object_type =
                     self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE);
-                let read_has_property =
-                    if let Some(property_name) = property_name_for_probe.as_deref() {
-                        let evaluated_read = self.evaluate_application_type(read_object_type);
-                        let resolved_read = self.resolve_type_for_property_access(evaluated_read);
-                        !matches!(
+                if let Some(property_name) = property_name_for_probe.as_deref() {
+                    let evaluated_read = self.evaluate_application_type(read_object_type);
+                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+                    if self
+                        .union_write_requires_existing_named_member(resolved_read, property_name)
+                    {
+                        (read_object_type, false)
+                    } else {
+                        let read_has_property = !matches!(
                             self.resolve_property_access_with_env(resolved_read, property_name),
                             PropertyAccessResult::PropertyNotFound { .. }
                                 | PropertyAccessResult::IsUnknown
-                        )
-                    } else {
-                        false
-                    };
-                (object_type_no_flow, !read_has_property)
+                        );
+                        (object_type_no_flow, !read_has_property)
+                    }
+                } else {
+                    (object_type_no_flow, false)
+                }
             } else {
                 (
                     self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE),
@@ -1293,6 +1351,19 @@ impl<'a> CheckerState<'a> {
                             ),
                             diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
                         );
+                    }
+                    if skip_flow_narrowing
+                        && self.union_write_requires_existing_named_member(
+                            object_type_for_access,
+                            property_name,
+                        )
+                    {
+                        self.error_property_not_exist_at(
+                            property_name,
+                            object_type_for_access,
+                            access.name_or_argument,
+                        );
+                        return TypeId::ERROR;
                     }
                     // When in a write context (assignment target), use the setter
                     // type if the property has divergent getter/setter types.

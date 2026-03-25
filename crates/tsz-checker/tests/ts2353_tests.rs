@@ -387,7 +387,8 @@ fn logical_or_fresh_empty_object_read_succeeds_write_errors() {
     // tsc allows reads on (options || {}).a because the {} is a fresh object
     // literal: tsc treats it as partial, contributing undefined for properties
     // that exist on other union members. Writes still error because the
-    // property doesn't physically exist on the {} member.
+    // property doesn't physically exist on the {} member, so they must not
+    // silently fall through to assignability against `string | undefined`.
     let source = r#"
 function foo(options?: { a: string, b: number }) {
   let x1 = (options || {}).a;
@@ -398,22 +399,19 @@ function foo(options?: { a: string, b: number }) {
 "#;
 
     let diags = get_diagnostics(source);
-    // Read accesses should NOT report TS2339 — tsc allows property reads
-    // through || when the {} is fresh and other members have the property.
+    let ts2339_count = diags.iter().filter(|d| d.0 == 2339).count();
+    let ts7053_count = diags.iter().filter(|d| d.0 == 7053).count();
     assert!(
-        !diags.iter().any(|d| d.0 == 2339),
-        "Read access through || with fresh empty object should not report TS2339, got: {diags:?}"
+        ts2339_count == 1,
+        "Dot write through || should report exactly one TS2339 for the fresh empty-object branch, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|d| d.0 == 7053),
-        "Element read access through || with fresh empty object should not report TS7053, got: {diags:?}"
+        ts7053_count == 1,
+        "Element write through || should report exactly one TS7053 for the fresh empty-object branch, got: {diags:?}"
     );
-    // Write accesses produce TS2322 (type mismatch since the property type
-    // includes undefined from the empty object member). tsc emits TS2339 for
-    // writes, but both reject the assignment correctly.
     assert!(
-        diags.iter().any(|d| d.0 == 2322),
-        "Write access through || should emit TS2322 (type includes undefined from empty object), got: {diags:?}"
+        !diags.iter().any(|d| d.0 == 2322),
+        "Write through || should not degrade to TS2322 from a synthetic undefined write type, got: {diags:?}"
     );
 }
 
@@ -422,7 +420,8 @@ fn nullish_coalescing_fresh_empty_object_read_succeeds_write_errors() {
     // tsc allows reads on (options ?? {}).a because the {} is a fresh object
     // literal: tsc treats it as partial, contributing undefined for properties
     // that exist on other union members. Writes still error because the
-    // property doesn't physically exist on the {} member.
+    // property doesn't physically exist on the {} member, so the write path
+    // should surface missing-property diagnostics rather than TS2322.
     let source = r#"
 function foo(options?: { a: string, b: number } | null) {
   let x1 = (options ?? {}).a;
@@ -433,22 +432,19 @@ function foo(options?: { a: string, b: number } | null) {
 "#;
 
     let diags = get_diagnostics(source);
-    // Read accesses should NOT report TS2339 — tsc allows property reads
-    // through ?? when the {} is fresh and other members have the property.
+    let ts2339_count = diags.iter().filter(|d| d.0 == 2339).count();
+    let ts7053_count = diags.iter().filter(|d| d.0 == 7053).count();
     assert!(
-        !diags.iter().any(|d| d.0 == 2339),
-        "Read access through ?? with fresh empty object should not report TS2339, got: {diags:?}"
+        ts2339_count == 1,
+        "Dot write through ?? should report exactly one TS2339 for the fresh empty-object branch, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|d| d.0 == 7053),
-        "Element read access through ?? with fresh empty object should not report TS7053, got: {diags:?}"
+        ts7053_count == 1,
+        "Element write through ?? should report exactly one TS7053 for the fresh empty-object branch, got: {diags:?}"
     );
-    // Write accesses produce TS2322 (type mismatch since the property type
-    // includes undefined from the empty object member). This differs from
-    // tsc which emits TS2339 on writes, but both reject the assignment.
     assert!(
-        diags.iter().any(|d| d.0 == 2322),
-        "Write access through ?? should emit TS2322 (type includes undefined from empty object), got: {diags:?}"
+        !diags.iter().any(|d| d.0 == 2322),
+        "Write through ?? should not degrade to TS2322 from a synthetic undefined write type, got: {diags:?}"
     );
 }
 
