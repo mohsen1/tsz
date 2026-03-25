@@ -2940,6 +2940,10 @@ fn test_relation_request_and_outcome_live_in_query_boundaries() {
         boundary_source.contains("pub weak_union_violation: bool"),
         "RelationOutcome must include a `weak_union_violation` field"
     );
+    assert!(
+        boundary_source.contains("pub failure: Option<super::relation_types::RelationFailure>"),
+        "RelationOutcome must include a structured `failure` field"
+    );
 }
 
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
@@ -3168,6 +3172,16 @@ fn test_relation_outcome_has_property_classification() {
         source.contains("suppress_excess_property_failure_if_needed("),
         "execute_relation must centralize excess-property suppression through \
          suppress_excess_property_failure_if_needed"
+    );
+    assert!(
+        source.contains("let property_classification =")
+            && source.contains("classify_object_properties(db.as_type_database(), request.source, request.target)"),
+        "execute_relation must always compute canonical property classification on failed relations"
+    );
+    assert!(
+        source.contains("let (weak_union_violation, failure) = match analysis"),
+        "execute_relation must derive weak-union and structured failure data together \
+         from the same boundary analysis result"
     );
 }
 
