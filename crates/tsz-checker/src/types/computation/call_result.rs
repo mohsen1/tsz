@@ -243,9 +243,25 @@ impl<'a> CheckerState<'a> {
                 if is_super_call {
                     // Emit TS2346 when the super() call target has no signatures
                     // (e.g., when the base class is used with invalid type arguments).
-                    // Suppress the error when the callee type is already an error
-                    // to avoid cascading diagnostics.
-                    if callee_type != TypeId::ERROR {
+                    // Suppress TS2346 when:
+                    // - callee type is ERROR (cascading diagnostic)
+                    // - callee type is NULL (class extends null; TS17005 covers this)
+                    // - callee is a completely empty callable (no sigs, no props) which
+                    //   indicates a forward-reference resolution failure (TS2449 covers this)
+                    let should_suppress = callee_type == TypeId::ERROR
+                        || callee_type == TypeId::NULL
+                        || tsz_solver::type_queries::get_callable_shape_for_type(
+                            self.ctx.types,
+                            callee_type,
+                        )
+                        .is_some_and(|shape| {
+                            shape.call_signatures.is_empty()
+                                && shape.construct_signatures.is_empty()
+                                && shape.properties.is_empty()
+                                && shape.string_index.is_none()
+                                && shape.number_index.is_none()
+                        });
+                    if !should_suppress {
                         self.error_at_node(
                             callee_expr,
                             "Call target does not contain any signatures.",
