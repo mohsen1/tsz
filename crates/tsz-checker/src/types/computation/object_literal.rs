@@ -1919,8 +1919,64 @@ impl<'a> CheckerState<'a> {
                         has_union_spread = true;
                         let mut new_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
 
-                        for member in &members {
-                            let member_props = self.collect_object_spread_properties(*member);
+                        // Collect properties from each union member for TS2783
+                        // and branching.
+                        let all_member_props: Vec<Vec<PropertyInfo>> = members
+                            .iter()
+                            .map(|m| self.collect_object_spread_properties(*m))
+                            .collect();
+
+                        // TS2783: When a property is required (non-optional)
+                        // in ALL members of the union spread, it will always
+                        // overwrite any earlier named property.
+                        if self.ctx.strict_null_checks() && !named_property_nodes.is_empty() {
+                            // Find property names that are required in every member.
+                            let mut always_required: FxHashMap<Atom, bool> = FxHashMap::default();
+                            for (i, member_props) in all_member_props.iter().enumerate() {
+                                if i == 0 {
+                                    for prop in member_props {
+                                        always_required.insert(prop.name, !prop.optional);
+                                    }
+                                } else {
+                                    // Remove names not present in this member
+                                    always_required.retain(|name, required| {
+                                        if let Some(prop) =
+                                            member_props.iter().find(|p| p.name == *name)
+                                        {
+                                            if prop.optional {
+                                                *required = false;
+                                            }
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    });
+                                }
+                            }
+                            for (name, required) in &always_required {
+                                if *required {
+                                    if let Some((prop_node, prop_name)) =
+                                        named_property_nodes.get(name)
+                                    {
+                                        let message = format_message(
+                                            diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                            &[prop_name],
+                                        );
+                                        self.error_at_node(
+                                            *prop_node,
+                                            &message,
+                                            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                        );
+                                    }
+                                }
+                            }
+                            // Clear named-property tracking for overwritten props
+                            for (name, _) in &always_required {
+                                named_property_nodes.remove(name);
+                            }
+                        }
+
+                        for member_props in all_member_props {
                             if union_spread_branches.is_empty() {
                                 // First union spread: fork from the main properties
                                 let mut branch = properties.clone();
