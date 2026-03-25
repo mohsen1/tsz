@@ -1017,14 +1017,15 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
-        let base_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, base_type)
-            .map(|shape| shape.as_ref().clone())
-            .or_else(|| {
-                let widened =
-                    crate::query_boundaries::common::widen_freshness(self.ctx.types, base_type);
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, widened)
-                    .map(|shape| shape.as_ref().clone())
-            });
+        let base_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, base_type)
+                .map(|shape| shape.as_ref().clone())
+                .or_else(|| {
+                    let widened =
+                        crate::query_boundaries::common::widen_freshness(self.ctx.types, base_type);
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, widened)
+                        .map(|shape| shape.as_ref().clone())
+                });
         if let Some(shape) = base_shape {
             let mut merged_props = shape.properties;
             for prop in props {
