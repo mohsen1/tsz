@@ -1300,8 +1300,7 @@ impl<'a> CheckerState<'a> {
         });
         let needs_contextual_signature_instantiation =
             self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
-        let apply_contextual = !expected_is_unresolved
-            && (syntax_needs_contextual || needs_contextual_signature_instantiation);
+        let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
         let expected_context_type =
             self.contextual_type_option_for_call_argument(expected_type, arg_idx, callable_ctx);
         let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {

@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tsz_binder::BinderState;
+use tsz_binder::SymbolId;
+use tsz_binder::state::BinderStateScopeInputs;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
@@ -67,6 +69,168 @@ fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
     tsz::parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SymbolSnapshot {
+    flags: u32,
+    declarations_len: usize,
+    value_declaration: u32,
+    value_declaration_span: Option<(u32, u32)>,
+    first_declaration_span: Option<(u32, u32)>,
+    parent_name: Option<String>,
+    exports: Vec<(String, String)>,
+    members: Vec<(String, String)>,
+    is_exported: bool,
+    is_type_only: bool,
+    import_module: Option<String>,
+    import_name: Option<String>,
+    is_umd_export: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SemanticDefSnapshot {
+    kind: tsz_binder::state::SemanticDefKind,
+    name: String,
+    file_id: u32,
+    span_start: u32,
+    type_param_count: u16,
+    type_param_names: Vec<String>,
+    is_exported: bool,
+    enum_member_names: Vec<String>,
+    is_const: bool,
+    is_abstract: bool,
+    extends_names: Vec<String>,
+    implements_names: Vec<String>,
+    parent_namespace_name: Option<String>,
+    is_global_augmentation: bool,
+    is_declare: bool,
+}
+
+fn symbol_name_for_id(binder: &BinderState, sym_id: SymbolId) -> Option<String> {
+    binder.symbols.get(sym_id).map(|sym| sym.escaped_name.clone())
+}
+
+fn semantic_def_snapshot(
+    binder: &BinderState,
+    sym_id: SymbolId,
+    entry: &tsz_binder::state::SemanticDefEntry,
+) -> SemanticDefSnapshot {
+    SemanticDefSnapshot {
+        kind: entry.kind,
+        name: entry.name.clone(),
+        file_id: entry.file_id,
+        span_start: entry.span_start,
+        type_param_count: entry.type_param_count,
+        type_param_names: entry.type_param_names.clone(),
+        is_exported: entry.is_exported,
+        enum_member_names: entry.enum_member_names.clone(),
+        is_const: entry.is_const,
+        is_abstract: entry.is_abstract,
+        extends_names: entry.extends_names.clone(),
+        implements_names: entry.implements_names.clone(),
+        parent_namespace_name: entry.parent_namespace.and_then(|parent| {
+            if parent == sym_id {
+                Some("<self>".to_string())
+            } else {
+                symbol_name_for_id(binder, parent).or_else(|| Some(format!("#{}", parent.0)))
+            }
+        }),
+        is_global_augmentation: entry.is_global_augmentation,
+        is_declare: entry.is_declare,
+    }
+}
+
+fn symbol_snapshot_by_id(binder: &BinderState, sym_id: SymbolId) -> Option<SymbolSnapshot> {
+    let sym = binder.symbols.get(sym_id)?;
+    let mut exports = sym
+        .exports
+        .as_ref()
+        .map(|table| {
+            table
+                .iter()
+                .map(|(export_name, export_sym_id)| {
+                    (
+                        export_name.clone(),
+                        symbol_name_for_id(binder, *export_sym_id)
+                            .unwrap_or_else(|| format!("#{}", export_sym_id.0)),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    exports.sort();
+
+    let mut members = sym
+        .members
+        .as_ref()
+        .map(|table| {
+            table
+                .iter()
+                .map(|(member_name, member_sym_id)| {
+                    (
+                        member_name.clone(),
+                        symbol_name_for_id(binder, *member_sym_id)
+                            .unwrap_or_else(|| format!("#{}", member_sym_id.0)),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    members.sort();
+
+    Some(SymbolSnapshot {
+        flags: sym.flags,
+        declarations_len: sym.declarations.len(),
+        value_declaration: sym.value_declaration.0,
+        value_declaration_span: sym.value_declaration_span,
+        first_declaration_span: sym.first_declaration_span,
+        parent_name: (!sym.parent.is_none())
+            .then(|| symbol_name_for_id(binder, sym.parent).unwrap_or_else(|| format!("#{}", sym.parent.0))),
+        exports,
+        members,
+        is_exported: sym.is_exported,
+        is_type_only: sym.is_type_only,
+        import_module: sym.import_module.clone(),
+        import_name: sym.import_name.clone(),
+        is_umd_export: sym.is_umd_export,
+    })
+}
+
+fn symbol_snapshot(binder: &BinderState, name: &str) -> Option<SymbolSnapshot> {
+    let sym_id = binder.file_locals.get(name)?;
+    symbol_snapshot_by_id(binder, sym_id)
+}
+
+fn declaration_arena_file_names_for_symbol(
+    binder: &BinderState,
+    sym_id: SymbolId,
+) -> Vec<(u32, Vec<String>)> {
+    let Some(sym) = binder.symbols.get(sym_id) else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    for &decl_idx in &sym.declarations {
+        let mut arena_files = binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .map(|arenas| {
+                arenas
+                    .iter()
+                    .filter_map(|arena| {
+                        arena
+                            .source_files
+                            .first()
+                            .map(|sf| sf.file_name.clone())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        arena_files.sort();
+        result.push((decl_idx.0, arena_files));
+    }
+    result.sort_by_key(|(decl, _)| *decl);
+    result
 }
 
 #[test]
@@ -358,6 +522,1286 @@ createInstance(MenuWorkbenchToolBar, {
         result.diagnostics,
         result.files_read,
         result.file_infos
+    );
+}
+
+#[test]
+fn compile_mapped_type_generic_indexed_access_preserves_context() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.no_implicit_any = Some(true);
+    args.strict_null_checks = Some(true);
+    args.target = Some(crate::args::Target::Es2015);
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let relevant = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected mapped-type generic indexed access repro to avoid TS2344/TS7006, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+fn direct_checker_with_real_default_libs_preserves_mapped_type_generic_indexed_access_context() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.check_source_file(root);
+
+    let relevant = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected direct checker with real default libs to avoid TS2344/TS7006, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn merged_program_parallel_checker_preserves_mapped_type_generic_indexed_access_context() {
+    let files = vec![(
+        "main.ts".to_string(),
+        r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#
+        .to_string(),
+    )];
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
+    let options = CheckerOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let result = tsz::parallel::check_files_parallel(&program, &options, &lib_files);
+
+    let diagnostics: Vec<_> = result
+        .file_results
+        .into_iter()
+        .flat_map(|file| file.diagnostics)
+        .collect();
+
+    let relevant = diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected merged-program parallel checker to avoid TS2344/TS7006, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_checker_with_original_binder_stays_clean_when_all_binders_are_installed() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(&arena, root, &lib_files);
+    let binder = Arc::new(binder);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        binder.as_ref(),
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.ctx.set_all_arenas(Arc::new(vec![Arc::clone(&arena)]));
+    checker.ctx.set_all_binders(Arc::new(vec![Arc::clone(&binder)]));
+    checker.ctx.set_current_file_idx(0);
+    checker.check_source_file(root);
+
+    let relevant = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected original binder to stay clean even with all_binders installed, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn reconstructed_binder_alone_preserves_mapped_type_generic_indexed_access_context() {
+    let files = vec![(
+        "main.ts".to_string(),
+        r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#
+        .to_string(),
+    )];
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
+    let file = &program.files[0];
+    let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let mut checker = CheckerState::new(
+        &file.arena,
+        &binder,
+        &query_cache,
+        file.file_name.clone(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.check_source_file(file.source_file);
+
+    let relevant = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected reconstructed binder to avoid TS2344/TS7006 after rebuild parity fixes, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn binder_reconstruction_from_original_fields_preserves_mapped_type_generic_indexed_access_context() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut original_binder = BinderState::new();
+    original_binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let mut reconstructed = BinderState::from_bound_state_with_scopes_and_augmentations(
+        tsz_binder::BinderOptions::default(),
+        original_binder.symbols.clone(),
+        original_binder.file_locals.clone(),
+        original_binder.node_symbols.clone(),
+        BinderStateScopeInputs {
+            scopes: original_binder.scopes.clone(),
+            node_scope_ids: original_binder.node_scope_ids.clone(),
+            global_augmentations: original_binder.global_augmentations.clone(),
+            module_augmentations: original_binder.module_augmentations.clone(),
+            augmentation_target_modules: original_binder.augmentation_target_modules.clone(),
+            module_exports: original_binder.module_exports.clone(),
+            module_declaration_exports_publicly: original_binder
+                .module_declaration_exports_publicly
+                .clone(),
+            reexports: original_binder.reexports.clone(),
+            wildcard_reexports: original_binder.wildcard_reexports.clone(),
+            wildcard_reexports_type_only: original_binder.wildcard_reexports_type_only.clone(),
+            symbol_arenas: original_binder.symbol_arenas.clone(),
+            declaration_arenas: original_binder.declaration_arenas.clone(),
+            cross_file_node_symbols: original_binder.cross_file_node_symbols.clone(),
+            shorthand_ambient_modules: original_binder.shorthand_ambient_modules.clone(),
+            modules_with_export_equals: original_binder.modules_with_export_equals.clone(),
+            flow_nodes: original_binder.flow_nodes.clone(),
+            node_flow: original_binder.node_flow.clone(),
+            switch_clause_to_switch: original_binder.switch_clause_to_switch.clone(),
+            expando_properties: original_binder.expando_properties.clone(),
+            alias_partners: original_binder.alias_partners.clone(),
+        },
+    );
+    reconstructed.declared_modules = original_binder.declared_modules.clone();
+    reconstructed.is_external_module = original_binder.is_external_module;
+    reconstructed.file_features = original_binder.file_features;
+    reconstructed.lib_binders = original_binder.lib_binders.clone();
+    reconstructed.lib_symbol_ids = original_binder.lib_symbol_ids.clone();
+    reconstructed.lib_symbol_reverse_remap = original_binder.lib_symbol_reverse_remap.clone();
+    reconstructed.semantic_defs = original_binder.semantic_defs.clone();
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        &reconstructed,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.check_source_file(root);
+
+    let relevant = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected reconstruction from original binder fields to stay clean, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn merged_reconstruction_symbol_snapshots_match_original_for_mapped_type_chain() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut original_binder = BinderState::new();
+    original_binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![("main.ts".to_string(), source.to_string())],
+        &lib_paths,
+    );
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+        let original = symbol_snapshot(&original_binder, name);
+        let merged = symbol_snapshot(&merged_binder, name);
+        assert_eq!(
+            merged, original,
+            "symbol snapshot mismatch for {name}\noriginal: {original:#?}\nmerged: {merged:#?}"
+        );
+    }
+}
+
+#[test]
+fn merged_reconstruction_identifier_resolution_matches_original_for_mapped_type_repro() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut original_binder = BinderState::new();
+    original_binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![("main.ts".to_string(), source.to_string())],
+        &lib_paths,
+    );
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    for (idx, node) in arena.nodes.iter().enumerate() {
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            continue;
+        }
+        let node_idx = tsz_parser::NodeIndex(idx as u32);
+        let text = arena
+            .get_identifier_at(node_idx)
+            .map(|ident| ident.escaped_text.clone())
+            .unwrap_or_default();
+
+        let original_resolved = original_binder
+            .resolve_identifier(&arena, node_idx)
+            .and_then(|sym_id| original_binder.symbols.get(sym_id))
+            .map(|sym| (sym.escaped_name.clone(), sym.flags));
+        let merged_resolved = merged_binder
+            .resolve_identifier(&arena, node_idx)
+            .and_then(|sym_id| merged_binder.symbols.get(sym_id))
+            .map(|sym| (sym.escaped_name.clone(), sym.flags));
+
+        assert_eq!(
+            merged_resolved, original_resolved,
+            "identifier resolution mismatch for node {idx} text={text:?} pos={}..{}\noriginal={original_resolved:?}\nmerged={merged_resolved:?}",
+            node.pos, node.end
+        );
+    }
+}
+
+#[test]
+fn merged_reconstruction_node_symbols_match_original_for_mapped_type_repro() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut original_binder = BinderState::new();
+    original_binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![("main.ts".to_string(), source.to_string())],
+        &lib_paths,
+    );
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
+        let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
+            panic!("missing merged node symbol for node {node_idx}");
+        };
+        let original_snapshot = original_binder
+            .symbols
+            .get(original_sym_id)
+            .map(|sym| (sym.escaped_name.clone(), sym.flags));
+        let merged_snapshot = merged_binder
+            .symbols
+            .get(merged_sym_id)
+            .map(|sym| (sym.escaped_name.clone(), sym.flags));
+        assert_eq!(
+            merged_snapshot, original_snapshot,
+            "node symbol mismatch for node {node_idx}\noriginal={original_snapshot:?}\nmerged={merged_snapshot:?}"
+        );
+    }
+
+    assert_eq!(
+        merged_binder.node_symbols.len(),
+        original_binder.node_symbols.len(),
+        "node_symbols cardinality mismatch"
+    );
+}
+
+#[test]
+fn merged_reconstruction_nested_symbol_payloads_match_original_for_mapped_type_repro() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut original_binder = BinderState::new();
+    original_binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![("main.ts".to_string(), source.to_string())],
+        &lib_paths,
+    );
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
+        let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
+            panic!("missing merged node symbol for node {node_idx}");
+        };
+        let original_snapshot = symbol_snapshot_by_id(&original_binder, original_sym_id);
+        let merged_snapshot = symbol_snapshot_by_id(&merged_binder, merged_sym_id);
+        assert_eq!(
+            merged_snapshot, original_snapshot,
+            "nested symbol payload mismatch for node {node_idx}\noriginal={original_snapshot:#?}\nmerged={merged_snapshot:#?}"
+        );
+    }
+}
+
+#[test]
+fn merged_reconstruction_declaration_arenas_match_original_for_mapped_type_chain() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+
+    let mut original_binder = BinderState::new();
+    original_binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![("main.ts".to_string(), source.to_string())],
+        &lib_paths,
+    );
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+        let original_sym_id = original_binder
+            .file_locals
+            .get(name)
+            .expect("original symbol should exist");
+        let merged_sym_id = merged_binder
+            .file_locals
+            .get(name)
+            .expect("merged symbol should exist");
+        assert_eq!(
+            declaration_arena_file_names_for_symbol(&merged_binder, merged_sym_id),
+            declaration_arena_file_names_for_symbol(&original_binder, original_sym_id),
+            "declaration arenas mismatch for {name}"
+        );
+    }
+}
+
+#[test]
+fn merged_reconstruction_semantic_defs_match_original_for_mapped_type_chain() {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut original_binder = BinderState::new();
+    original_binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![("main.ts".to_string(), source.to_string())],
+        &lib_paths,
+    );
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+        let original_sym_id = original_binder
+            .file_locals
+            .get(name)
+            .expect("original symbol should exist");
+        let merged_sym_id = merged_binder
+            .file_locals
+            .get(name)
+            .expect("merged symbol should exist");
+        let original_entry = original_binder
+            .semantic_defs
+            .get(&original_sym_id)
+            .expect("original semantic def should exist");
+        let merged_entry = merged_binder
+            .semantic_defs
+            .get(&merged_sym_id)
+            .expect("merged semantic def should exist");
+
+        let mut expected = semantic_def_snapshot(&original_binder, original_sym_id, original_entry);
+        expected.file_id = 0;
+        assert_eq!(
+            semantic_def_snapshot(&merged_binder, merged_sym_id, merged_entry),
+            expected,
+            "semantic def mismatch for {name}"
+        );
+    }
+}
+
+#[test]
+fn reconstructed_binder_with_fresh_type_interner_preserves_mapped_type_generic_indexed_access_context(
+) {
+    let files = vec![(
+        "main.ts".to_string(),
+        r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#
+        .to_string(),
+    )];
+
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
+    let file = &program.files[0];
+    let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &file.arena,
+        &binder,
+        &types,
+        file.file_name.clone(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.check_source_file(file.source_file);
+
+    let relevant = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected reconstructed binder with fresh TypeInterner to avoid TS2344/TS7006, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn original_binder_with_merged_program_type_interner_preserves_mapped_type_generic_indexed_access_context(
+) {
+    let source = r#"type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+}
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+
+    constructor() {
+        this.entries = {};
+    }
+
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+
+type TypesMap = {
+    [0]: { foo: 'bar'; };
+    [1]: { a: 'b'; };
+};
+
+type P<T extends keyof TypesMap> = { t: T; } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => console.log(p.foo),
+    [1]: (p) => console.log(p.a),
+};
+
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![("main.ts".to_string(), source.to_string())],
+        &lib_paths,
+    );
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (arena, _) = parser.into_parts();
+    let arena = Arc::new(arena);
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(&arena, root, &lib_files);
+
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let mut checker = CheckerState::new(
+        &arena,
+        &binder,
+        &query_cache,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.check_source_file(root);
+
+    let relevant = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                    | diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected original binder with merged-program TypeInterner to avoid TS2344/TS7006, got diagnostics: {:?}",
+        checker.ctx.diagnostics
     );
 }
 
