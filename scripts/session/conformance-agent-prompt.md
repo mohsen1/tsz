@@ -351,8 +351,10 @@ For every attempt, record in your working notes:
 - Define explicit pass/fail criteria for this attempt (including what change in `m`/`x` would count as success).
 - Timestamp the attempt and final outcome (`blocked`, `fixed`, `regression`, `handoff`).
 - Use machine-parseable one-line outcomes with key/value pairs: `attempt`, `test`, `outcome`, `m_delta`, `x_delta`, optional `reason`, and optional free-form `notes`.
+- `m_delta` and `x_delta` are signed integers: negative for regression, positive for gain, zero for no net delta.
 - Append a one-line final summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt` before moving to a new test.
 - If provided, `reason` should be one of: `multi-crate-touch-required`, `intractable`, `infra`, `cross-cutting`, `regression`, `no-progress`.
+  - Example with reason: `attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=no-progress m_delta=0 x_delta=0 notes=\"no progress after 2 rerolls\"`
 
 ```bash
 # Example attempt summary format
@@ -501,6 +503,7 @@ Update conformance baselines in the branch that is actually being integrated. Av
 
 **If a build breaks**: Fix it before doing anything else.
 **If an attempt has no measurable progress after 2 rerolls**: stop and reroll or switch to a simpler target.
+When no-progress is confirmed and you reroll/switch, record it explicitly in the summary line with `reason=no-progress`.
 **If progress is blocked by cross-cutting scope** (e.g., requires parser + checker + solver edits in one go), set `outcome=handoff`, append a handoff summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt`, update campaign checkpoint, and stop attempting local fixes.
 **If run failures are infra-related** (timeouts/IO/CI resource issues), set `outcome=blocked reason=infra` in the attempt log, annotate `notes`, reroll once after capturing environment context, then re-run the same target.
 
