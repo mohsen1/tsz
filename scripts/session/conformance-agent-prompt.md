@@ -301,6 +301,7 @@ from the category you ran, and then append your post-selection status in the sam
 ```bash
 # Example append for the selected category
 echo "selection_logged=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "selection_category=<one-extra|one-missing|close|campaign>" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 echo "selection_status=selected" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
