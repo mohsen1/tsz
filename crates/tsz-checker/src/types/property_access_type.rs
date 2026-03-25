@@ -25,6 +25,45 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn current_file_commonjs_exports_target_is_unshadowed(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+                && !self
+                    .resolve_identifier_symbol_without_tracking(idx)
+                    .is_some_and(|sym_id| {
+                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                            symbol.decl_file_idx == self.ctx.current_file_idx as u32
+                        })
+                    });
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && self.current_file_commonjs_module_identifier_is_unshadowed(access.expression)
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
     pub(crate) fn is_jsdoc_annotated_this_member_declaration(&mut self, idx: NodeIndex) -> bool {
         if !self.is_js_file() {
             return false;
@@ -968,6 +1007,13 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "exports")
         {
             return self.current_file_commonjs_module_exports_namespace_type();
+        }
+
+        if skip_flow_narrowing
+            && self.is_js_file()
+            && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
+        {
+            return TypeId::ANY;
         }
 
         if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {

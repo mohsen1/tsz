@@ -20,12 +20,6 @@ impl<'a> CheckerState<'a> {
 
         let sym_id = self.resolve_identifier_symbol_without_tracking(rhs_expr)?;
         let symbol = self.get_symbol_globally(sym_id)?;
-        if symbol.value_declaration.is_some()
-            && let Some(decl) = self.ctx.arena.get(symbol.value_declaration)
-            && let Some(class_data) = self.ctx.arena.get_class(decl)
-        {
-            return Some(self.get_class_constructor_type(symbol.value_declaration, class_data));
-        }
         if (symbol.flags & symbol_flags::CLASS) == 0 {
             return None;
         }
