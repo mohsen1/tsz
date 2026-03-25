@@ -359,7 +359,38 @@ impl<'a> CheckerState<'a> {
         }
 
         // Don't report errors for any/error types - check BEFORE accessibility
-        // to prevent cascading errors when the object type is already invalid
+        // to prevent cascading errors when the object type is already invalid.
+        // Exception: top-level JS `this[expr] = value` should still report TS7053
+        // when the key is not a simple expando-trackable declaration form.
+        if object_type == TypeId::ANY
+            && skip_flow_narrowing
+            && self.ctx.is_js_file()
+            && is_this_global
+            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && self.ctx.no_implicit_any()
+            && self
+                .expando_element_key_name(access.name_or_argument)
+                .is_none()
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let index_type =
+                self.get_type_of_node_with_request(access.name_or_argument, &read_request);
+            self.ctx.preserve_literal_types = prev_preserve;
+
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                    &[&self.format_type(index_type), "typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+            );
+            return TypeId::ANY;
+        }
+
         if object_type == TypeId::ANY {
             return TypeId::ANY;
         }

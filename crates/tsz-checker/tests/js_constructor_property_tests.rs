@@ -1147,6 +1147,56 @@ class MyClass {
     );
 }
 
+#[test]
+fn test_js_top_level_this_property_assignment_declares_single_hop_properties() {
+    let source = r#"
+this.x = {};
+this.x.y = {};
+this["y"] = {};
+this["y"]["z"] = {};
+
+/** @constructor */
+function F() {
+  this.a = {};
+  this.a.b = {};
+  this["b"] = {};
+  this["b"]["c"] = {};
+}
+
+const f = new F();
+f.a;
+f.b;
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert_eq!(
+        count_code(&diagnostics, 2339),
+        0,
+        "Expected single-hop `this` property declarations to avoid TS2339, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7053),
+        0,
+        "Expected literal `this[...]` declarations to avoid TS7053, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_top_level_this_computed_property_assignment_requires_literal_key() {
+    let source = r#"
+this["a" + "b"] = 0;
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert_eq!(
+        count_code(&diagnostics, 7053),
+        1,
+        "Expected non-literal top-level `this[...]` assignment to report TS7053, got: {diagnostics:?}"
+    );
+}
+
 /// self[symbolKey] = value (this alias) in JS class constructor → no false error
 #[test]
 fn test_js_constructor_element_access_self_alias_no_false_error() {
