@@ -363,6 +363,18 @@ impl<'a> CheckerState<'a> {
         exports_table: &tsz_binder::SymbolTable,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
+        // When the module has `export =`, the default import MUST resolve to
+        // the `export =` target, NOT to a member named "default" that may have
+        // been copied from the target's static exports (e.g. `static default: "foo"`).
+        // Check `export =` first for "default" lookups.
+        if export_name == "default" {
+            if let Some(export_equals_sym_id) = exports_table.get("export=")
+                && binder.get_symbol(export_equals_sym_id).is_some()
+            {
+                return Some(export_equals_sym_id);
+            }
+        }
+
         if let Some(sym_id) = exports_table.get(export_name)
             && binder.get_symbol(sym_id).is_some()
         {
@@ -372,14 +384,9 @@ impl<'a> CheckerState<'a> {
         let export_equals_sym_id = exports_table.get("export=")?;
         let export_equals_symbol = binder.get_symbol(export_equals_sym_id)?;
 
-        // When looking for the "default" export in a module with `export =`,
-        // the `export =` value IS the default export. This mirrors the handling
-        // in `resolve_named_export_via_export_equals` and prevents the
-        // namespace-merge fallback below from picking up unrelated symbols
-        // from other ambient modules that share the same name.
-        if export_name == "default" {
-            return Some(export_equals_sym_id);
-        }
+        // For non-"default" exports, the `export =` target's members are
+        // searched below to support named import compatibility.
+        // (The "default" case was already handled above.)
 
         if let Some(exports) = export_equals_symbol.exports.as_ref()
             && let Some(sym_id) = exports.get(export_name)
@@ -511,6 +518,13 @@ impl<'a> CheckerState<'a> {
 
         // Last resort: check file_locals (for script files or binding edge cases
         // where module_exports wasn't populated).
+        // When looking for "default" and the module has `export =`, prefer the
+        // `export =` target over a static member named "default".
+        if export_name == "default" {
+            if let Some(sym_id) = target_binder.file_locals.get("export=") {
+                return Some((sym_id, file_idx));
+            }
+        }
         if let Some(sym_id) = target_binder.file_locals.get(export_name) {
             return Some((sym_id, file_idx));
         }

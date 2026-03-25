@@ -739,6 +739,14 @@ impl BinderState {
                             && let Some(ref exports) = symbol.exports
                         {
                             for (export_name, &export_sym_id) in exports.iter() {
+                                // Skip "default" and "export=" — the `export =` target
+                                // itself IS the default export. Copying a static member
+                                // named `default` would shadow the `export=` symbol and
+                                // cause default-import resolution to pick up the member
+                                // (e.g. `static default: "foo"`) instead of the class.
+                                if export_name == "default" || export_name == "export=" {
+                                    continue;
+                                }
                                 if self.file_locals.get(export_name).is_none() {
                                     self.file_locals.set(export_name.clone(), export_sym_id);
                                 }
