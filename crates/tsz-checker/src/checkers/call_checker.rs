@@ -756,7 +756,36 @@ impl<'a> CheckerState<'a> {
                     et,
                     self.ctx.compiler_options.no_implicit_any,
                 );
-                if let Some(this_type) = ctx_helper.get_this_type_from_marker() {
+                // First try simple extraction (no alias expansion needed).
+                // If that fails, use the resolver to expand type aliases
+                // (e.g., ConstructorOptions<Data> → ... & ThisType<Instance<Data>>).
+                let this_type = ctx_helper.get_this_type_from_marker().or_else(|| {
+                    let env = self.ctx.type_env.borrow();
+                    ctx_helper.get_this_type_from_marker_with_resolver(&*env)
+                });
+                // If the expected type (which may be an already-evaluated/instantiated
+                // parameter type) doesn't contain ThisType, try the callable's original
+                // parameter type. During generic argument refresh (second pass), the
+                // refreshed contextual types lose ThisType<T> because evaluation strips
+                // empty marker interfaces. The callable's original parameter type still
+                // has it.
+                let this_type = this_type.or_else(|| {
+                    let callable_type = callable_ctx.callable_type?;
+                    let callable_ctx_helper =
+                        ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                    let param_type = callable_ctx_helper
+                        .get_parameter_type_for_call(effective_index, expanded_count)?;
+                    let param_ctx_helper = ContextualTypeContext::with_expected_and_options(
+                        self.ctx.types,
+                        param_type,
+                        self.ctx.compiler_options.no_implicit_any,
+                    );
+                    param_ctx_helper.get_this_type_from_marker().or_else(|| {
+                        let env = self.ctx.type_env.borrow();
+                        param_ctx_helper.get_this_type_from_marker_with_resolver(&*env)
+                    })
+                });
+                if let Some(this_type) = this_type {
                     self.ctx.this_type_stack.push(this_type);
                     true
                 } else {
