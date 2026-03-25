@@ -428,7 +428,11 @@ impl<'a> CheckerState<'a> {
         for (name, entry) in method_overloads {
             let type_id = if entry.signatures.len() == 1 {
                 // Single method: create a Function type
-                let sig = entry.signatures.into_iter().next().unwrap();
+                let sig = entry
+                    .signatures
+                    .into_iter()
+                    .next()
+                    .expect("single signature confirmed by len check");
                 factory.function(tsz_solver::FunctionShape {
                     type_params: sig.type_params,
                     params: sig.params,

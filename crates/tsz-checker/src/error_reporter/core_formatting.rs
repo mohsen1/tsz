@@ -159,8 +159,8 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let members = tsz_solver::type_queries::get_union_members(self.ctx.types, ty)?;
         // Only strip when the union has null or undefined members
-        let has_null = members.iter().any(|&m| m == TypeId::NULL);
-        let has_undefined = members.iter().any(|&m| m == TypeId::UNDEFINED);
+        let has_null = members.contains(&TypeId::NULL);
+        let has_undefined = members.contains(&TypeId::UNDEFINED);
         if !has_null && !has_undefined {
             return None;
         }
@@ -170,13 +170,11 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(other_members) =
             tsz_solver::type_queries::get_union_members(self.ctx.types, other)
-        {
-            if other_members
+            && other_members
                 .iter()
                 .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
-            {
-                return None;
-            }
+        {
+            return None;
         }
         let filtered: Vec<TypeId> = members
             .iter()
