@@ -1040,6 +1040,19 @@ impl<'a> CheckerState<'a> {
         {
             let mut resolved_value_decl = value_decl;
 
+            // When a function-scoped `var` redeclares a parameter (`function f(x: A) { var x: B; }`),
+            // TypeScript keeps the parameter's original value surface for later identifier reads
+            // and reports the mismatch through TS2403 instead of mutating the live symbol type.
+            // Preserve that by preferring the merged parameter declaration for symbol-type reads.
+            if let Some(param_decl) = declarations.iter().copied().find(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+            }) {
+                resolved_value_decl = param_decl;
+            }
+
             // Symbols can point at wrappers (export declarations, variable statements, or
             // declaration lists). Normalize to the concrete VariableDeclaration node.
             if resolved_value_decl.is_some() {

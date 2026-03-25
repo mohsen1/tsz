@@ -77,7 +77,36 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        symbol.declarations.iter().any(|&other| other != decl_idx)
+        let current_pos = self.ctx.arena.get(decl_idx).map_or(u32::MAX, |node| node.pos);
+        let mut saw_current = false;
+        for &other in &symbol.declarations {
+            if other == decl_idx {
+                saw_current = true;
+                break;
+            }
+            if !other.is_some() {
+                continue;
+            }
+            if let Some(other_node) = self.ctx.arena.get(other)
+                && other_node.pos < current_pos
+            {
+                return true;
+            }
+        }
+
+        if saw_current {
+            return false;
+        }
+
+        symbol.declarations.iter().any(|&other| {
+            other != decl_idx
+                && other.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(other)
+                    .is_some_and(|node| node.pos < current_pos)
+        })
     }
 
     fn redeclaration_initializer_request(
@@ -1007,11 +1036,12 @@ impl<'a> CheckerState<'a> {
             let has_recorded_circular_return = !circular_return_sites.is_empty();
 
             // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
-            // Skip this check when the variable already had a type from a prior declaration
-            // (i.e., this is a `var` redeclaration). In that case, `typeof x` resolves to
-            // the previously-established type, not circularly to itself.
-            // This matches tsc behavior where `var p: Point; var p: typeof p;` is valid.
-            let is_redeclaration = self.ctx.var_decl_types.contains_key(&sym_id);
+            // Skip this check when the variable already had a type from a prior value declaration
+            // (including merged parameters). In that case, `typeof x` resolves to the
+            // previously-established type, not circularly to itself.
+            // This matches tsc behavior where `var p: Point; var p: typeof p;` is valid and
+            // where `function f(x: A) { var x: typeof x; }` uses the parameter surface.
+            let is_redeclaration = self.has_prior_value_declaration_for_symbol(decl_idx);
             if var_decl.type_annotation.is_some() && !is_redeclaration {
                 let accessor_circular =
                     self.type_literal_has_circular_accessor_reference(var_decl.type_annotation);
