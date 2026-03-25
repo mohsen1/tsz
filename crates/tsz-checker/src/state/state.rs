@@ -1405,8 +1405,15 @@ impl<'a> CheckerState<'a> {
 
         // CRITICAL: Pre-cache ERROR placeholder to break deep recursion chains
         // This ensures that mid-resolution lookups get cached ERROR immediately
-        // We'll overwrite this with the real result later (line 650)
-        if use_node_cache {
+        // We'll overwrite this with the real result later.
+        // Skip for write-context property accesses to avoid poisoning the read cache.
+        let is_write_context_property_access = skip_flow_narrowing
+            && self.ctx.arena.get(idx).is_some_and(|node| {
+                use tsz_parser::parser::syntax_kind_ext;
+                node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            });
+        if use_node_cache && !is_write_context_property_access {
             self.ctx.node_types.insert(idx.0, TypeId::ERROR);
         } else if let Some(key) = request_cache_key {
             self.cache_request_type(idx, key, TypeId::ERROR);
@@ -1419,8 +1426,15 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_resolution_set.remove(&idx);
 
         // Cache result - identifiers cache their DECLARED type,
-        // but get_type_of_node applies flow narrowing when returning cached identifier types
-        if use_node_cache {
+        // but get_type_of_node applies flow narrowing when returning cached identifier types.
+        //
+        // IMPORTANT: When evaluating a property/element access in write context
+        // (skip_flow_narrowing=true), the result is the WRITE type (setter parameter
+        // type).  Caching this would poison subsequent read accesses which should
+        // use the READ type (getter return type).  Skip the general node_types cache
+        // for write-context property accesses to preserve divergent accessor semantics.
+        // (is_write_context_property_access computed above for the ERROR placeholder)
+        if use_node_cache && !is_write_context_property_access {
             self.ctx.node_types.insert(idx.0, result);
         } else if let Some(key) = request_cache_key {
             self.cache_request_type(idx, key, result);

@@ -1099,7 +1099,18 @@ impl<'a> FlowAnalyzer<'a> {
                             if self.is_logical_assignment(flow.node) {
                                 assigned_type
                             } else if self.is_access_reference(reference) {
-                                query::widen_literal_to_primitive(self.interner, assigned_type)
+                                // For property accesses with divergent get/set types
+                                // (e.g., `get style(): CSSStyleDeclaration; set style(v: string)`),
+                                // the assigned type (setter param) is not assignable to the
+                                // declared read type (getter return).  Skip narrowing in that
+                                // case to preserve the correct read type for subsequent accesses.
+                                let widened =
+                                    query::widen_literal_to_primitive(self.interner, assigned_type);
+                                if self.is_assignable_to(widened, initial_type) {
+                                    widened
+                                } else {
+                                    initial_type
+                                }
                             } else if is_control_flow_typed_any {
                                 // Unannotated mutable locals such as `let x;` evolve from
                                 // their writes rather than staying explicit `any`.
