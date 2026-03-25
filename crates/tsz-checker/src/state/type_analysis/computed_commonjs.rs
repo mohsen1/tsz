@@ -1156,6 +1156,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn literal_define_property_name_in_file(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = arena.get_parenthesized(node)?;
+                self.literal_define_property_name_in_file(arena, paren.expression)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn define_property_info_from_descriptor(
         &mut self,
         target_file_idx: usize,
@@ -1827,11 +1848,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(name) = self.constant_define_property_name_in_file(
-                target_file_idx,
-                &target_arena,
-                name_expr,
-            ) else {
+            let Some(name) = self.literal_define_property_name_in_file(&target_arena, name_expr)
+            else {
                 continue;
             };
             let name_atom = self.ctx.types.intern_string(&name);
