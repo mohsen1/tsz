@@ -1312,6 +1312,10 @@ impl<'a> CheckerState<'a> {
                 let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) else {
                     continue;
                 };
+
+                // TS1497: Check decorator expression grammar
+                self.check_grammar_decorator(decorator.expression);
+
                 let decorator_type = self.compute_type_of_node(decorator.expression);
 
                 // TS1329: Check if the decorator accepts too few arguments for this position.
@@ -1362,6 +1366,9 @@ impl<'a> CheckerState<'a> {
                         }
 
                         if let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) {
+                            // TS1497: Check decorator expression grammar
+                            self.check_grammar_decorator(decorator.expression);
+
                             self.get_type_of_node(decorator.expression);
 
                             // TS1308: Check for await expressions in decorator arguments.
