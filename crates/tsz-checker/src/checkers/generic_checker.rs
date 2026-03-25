@@ -561,6 +561,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
+            let lib_binders = self.get_lib_binders();
+            if let Some(name) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map(|symbol| symbol.escaped_name.clone())
+            {
+                // Mirror the no-explicit-type-args path so lib declarations with
+                // defaulted generics (for example Iterable<T, TReturn = any, TNext = any>)
+                // are validated against their merged parameter list instead of the
+                // pre-primed AST fallback.
+                self.prime_lib_type_params(&name);
+            }
+        }
+
         let type_params = self.get_type_params_for_symbol(sym_id);
         if type_params.is_empty() {
             // Before emitting TS2315, check if this symbol's declaration actually has
@@ -622,8 +638,12 @@ impl<'a> CheckerState<'a> {
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
         let display_name =
             Self::format_generic_display_name_with_interner(&base_name, &type_params, self.ctx.types);
+        let min_required = self
+            .count_required_type_params_from_ast(sym_id)
+            .unwrap_or_else(|| type_params.iter().filter(|tp| tp.default.is_none()).count());
         self.validate_type_reference_type_arguments_against_params(
             &type_params,
+            min_required,
             type_args_list,
             type_arg_error_anchor,
             &display_name,
@@ -633,13 +653,13 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn validate_type_reference_type_arguments_against_params(
         &mut self,
         type_params: &[tsz_solver::TypeParamInfo],
+        min_required: usize,
         type_args_list: &tsz_parser::parser::NodeList,
         type_arg_error_anchor: NodeIndex,
         display_name: &str,
     ) -> bool {
         let got = type_args_list.nodes.len();
         let max_expected = type_params.len();
-        let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
         if got < min_required || got > max_expected {
             if min_required < max_expected {
                 let min_str = min_required.to_string();
