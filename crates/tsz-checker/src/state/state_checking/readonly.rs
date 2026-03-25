@@ -433,7 +433,11 @@ impl<'a> CheckerState<'a> {
 
                 if is_method {
                     self.error_private_method_not_writable(&prop_name, access.name_or_argument);
-                    return true;
+                    // Return false (not true) so that the caller does NOT suppress the
+                    // assignability check. TSC emits both TS2803 (private method not
+                    // writable) AND TS2322 (type mismatch) for private method assignments.
+                    // Returning true would cause suppress_for_readonly to skip TS2322.
+                    return false;
                 }
             }
         }
