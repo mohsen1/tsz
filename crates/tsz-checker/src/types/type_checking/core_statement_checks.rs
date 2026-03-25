@@ -143,7 +143,15 @@ impl<'a> CheckerState<'a> {
             let mut return_type =
                 self.get_type_of_node_with_request(return_data.expression, &request);
             if self.ctx.in_async_context() {
-                return_type = self.unwrap_promise_type(return_type).unwrap_or(return_type);
+                // Use unwrap_async_return_type_for_body which handles unions
+                // by unwrapping Promise from each member individually.
+                // This is needed for cases like:
+                //   async function f(): Promise<T> {
+                //     return cond ? getPromise<T>() : plainValue;
+                //   }
+                // where the conditional expression type is Promise<T> | PlainValue.
+                // Each Promise member must be unwrapped before checking against T.
+                return_type = self.unwrap_async_return_type_for_body(return_type);
             }
             return_type
         } else {
