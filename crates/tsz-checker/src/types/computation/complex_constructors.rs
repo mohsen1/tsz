@@ -278,17 +278,20 @@ impl<'a> CheckerState<'a> {
             {
                 has_prototype_evidence = true;
                 let current_file_idx = self.ctx.current_file_idx;
-                if let Some(name) = self.constant_define_property_name_in_file(
-                    current_file_idx,
-                    self.ctx.arena,
-                    arguments.nodes[1],
-                ) && let Some(mut prop) = self.define_property_info_from_descriptor(
-                    current_file_idx,
-                    self.ctx.arena,
-                    &name,
-                    arguments.nodes[2],
-                    method_bindings.len() as u32,
-                ) {
+                if arguments.nodes.len() >= 3
+                    && let Some(name) = self.constant_define_property_name_in_file(
+                        current_file_idx,
+                        self.ctx.arena,
+                        arguments.nodes[1],
+                    )
+                    && let Some(mut prop) = self.define_property_info_from_descriptor(
+                        current_file_idx,
+                        self.ctx.arena,
+                        &name,
+                        arguments.nodes[2],
+                        method_bindings.len() as u32,
+                    )
+                {
                     prop.parent_id = Some(parent_sym);
                     let name_atom = prop.name;
                     method_bindings.push((name_atom, prop));
