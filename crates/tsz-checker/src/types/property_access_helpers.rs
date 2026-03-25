@@ -507,7 +507,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_current_file_commonjs_export_base_syntax(&self, idx: NodeIndex) -> bool {
-
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };

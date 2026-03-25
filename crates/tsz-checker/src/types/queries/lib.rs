@@ -1562,8 +1562,7 @@ impl<'a> CheckerState<'a> {
         namespace_name: &str,
         property_name: &str,
     ) -> Option<TypeId> {
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(namespace_name)
-        {
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(namespace_name) {
             let is_umd_export = self
                 .get_cross_file_symbol(sym_id)
                 .is_some_and(|symbol| symbol.is_umd_export);
@@ -1574,8 +1573,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(all_binders) = self.ctx.all_binders.clone() {
             for (file_idx, binder) in all_binders.iter().enumerate() {
-                if let Some(sym_id) = binder.file_locals.get(namespace_name)
-                {
+                if let Some(sym_id) = binder.file_locals.get(namespace_name) {
                     self.ctx.register_symbol_file_target(sym_id, file_idx);
                     let is_umd_export = self
                         .get_cross_file_symbol(sym_id)
@@ -1596,7 +1594,14 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         property_name: &str,
     ) -> Option<TypeId> {
-        let (sym_flags, sym_name, direct_member_id, module_export_member_id, import_module, decl_file_idx) = {
+        let (
+            sym_flags,
+            sym_name,
+            direct_member_id,
+            module_export_member_id,
+            import_module,
+            decl_file_idx,
+        ) = {
             let symbol = self.get_cross_file_symbol(sym_id)?;
             if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM | symbol_flags::ALIAS) == 0
             {
@@ -1650,8 +1655,7 @@ impl<'a> CheckerState<'a> {
                 module_specifier,
                 property_name,
                 decl_file_idx,
-            )
-            {
+            ) {
                 return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
             }
 
