@@ -514,7 +514,9 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         "generic indexed access into mapped type should preserve the `keyof TypesMap` constraint, got: {diagnostics:?}"
     );
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "mapped type object literal handlers should contextually type callback params, got: {diagnostics:?}"
     );
 }
@@ -663,6 +665,70 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]]);
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "recursive mapped/conditional generic call should contextually type nested callbacks, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn union_of_overloaded_array_method_aliases_preserves_callback_context() {
+    let source = r#"
+interface Fizz { id: number; fizz: string }
+interface Buzz { id: number; buzz: string }
+interface Arr<T> {
+  filter<S extends T>(pred: (value: T) => value is S): S[];
+  filter(pred: (value: T) => unknown): T[];
+}
+declare const m: Arr<Fizz>["filter"] | Arr<Buzz>["filter"];
+m(item => item.id < 5);
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "union of overloaded array method aliases should contextually type callback params, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn union_of_builtin_array_methods_preserves_callback_context() {
+    let source = r#"
+interface Fizz { id: number; fizz: string }
+interface Buzz { id: number; buzz: string }
+
+([] as Fizz[] | Buzz[]).filter(item => item.id < 5);
+([] as Fizz[] | readonly Buzz[]).filter(item => item.id < 5);
+([] as Fizz[] | Buzz[]).find(item => item);
+([] as Fizz[] | Buzz[]).every(item => item.id < 5);
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "union of built-in array methods should contextually type callback params, got: {diagnostics:?}"
     );
 }
 

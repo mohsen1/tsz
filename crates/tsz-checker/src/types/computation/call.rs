@@ -600,6 +600,7 @@ impl<'a> CheckerState<'a> {
         //   fn(x => {});  // x was typed as any (false positive)
         let callee_type_for_context = self.evaluate_application_type(callee_type_for_resolution);
         let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
+        let callee_type_for_context = self.evaluate_contextual_type(callee_type_for_context);
         // Extract the shape from the same resolved callee type used for contextual typing.
         // Using a less-resolved form here can make Round 2 infer from a pre-instantiation
         // method signature even though callback contextual typing is based on the fully
@@ -609,7 +610,9 @@ impl<'a> CheckerState<'a> {
             callee_type_for_context,
             args.len(),
         )
-        .or_else(|| call_checker::get_call_signature(self.ctx.types, callee_type_for_context, args.len()));
+        .or_else(|| {
+            call_checker::get_call_signature(self.ctx.types, callee_type_for_context, args.len())
+        });
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
