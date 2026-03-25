@@ -11,6 +11,8 @@ You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in
 **Current baseline**: snapshot-specific (do not rely on static percentages). Before each iteration, capture and reuse the latest local snapshot count.
 Failure categories are directional and can overlap; rerun conformance counts when you change strategy or ownership.
 
+Use this prompt as a strict control loop, not a backlog. If an instruction is unclear or conflicts with campaign protocol, campaign protocol wins for that run.
+
 Conformance shorthand used by the query scripts:
 - `m`: expected diagnostic(s) from tsc that tsz is missing (all-missing)
 - `x`: extra diagnostic(s) emitted by tsz but not expected by tsc (false positives)
@@ -175,6 +177,14 @@ scripts/session/campaign-checkpoint.sh <your-campaign> --status || \
 scripts/session/campaign-checkpoint.sh <your-campaign> --status
 ```
 
+Before target selection, create an attempt scratchpad:
+
+```bash
+export ATTEMPT_ID="conformance-$(date +%Y%m%d-%H%M%S)"
+mkdir -p /tmp/conformance-attempts
+echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/conformance-attempts/$ATTEMPT_ID.txt
+```
+
 ### Step 1: Identify targets from the snapshot (zero cost, instant)
 
 ```bash
@@ -273,6 +283,27 @@ When in doubt, use this fallback path:
 2) If second pick also feels broad-surface, switch to a known one-extra/one-missing or close-to-passing single-file candidate.
 If a target requires edits across multiple crates before you’ve validated the first module change, mark it as blocked and reroll.
 
+When writing/reading the random-pick output, preserve command output as evidence:
+
+```bash
+# Record the candidate used for this attempt
+python3 -c "
+import json, random
+with open('scripts/conformance/conformance-detail.json') as f:
+    d = json.load(f)
+candidates = [(t, data) for t, data in d.get('failures', {}).items()
+              if len(data.get('x', [])) == 1 and not data.get('m')]
+if candidates:
+    t, data = random.choice(candidates)
+    print(f'TARGET: {t}')
+    print(f'  extra codes: {data[\"x\"]}')
+else:
+    print('No one-extra targets available')
+" | tee -a /tmp/conformance-attempts/$ATTEMPT_ID.txt
+```
+
+If no candidates exist for your preferred category, escalate immediately to the next category in the priority list.
+
 **Avoid**:
 - Multi-file tests (`@Filename:` directives) — complex module resolution
 - JSDoc/JSX/Salsa tests — broad integration surface (unless specifically targeting that campaign)
@@ -325,6 +356,7 @@ For every attempt, record in your working notes:
 - The exact command/output used to pick the target
 - Why this target is single-file / low-surface-area
 - Define explicit pass/fail criteria for this attempt (including what change in `m`/`x` would count as success).
+- Timestamp the attempt and final outcome (`blocked`, `fixed`, `regression`, `handoff`).
 
 ### Architecture review (MANDATORY before writing code)
 
