@@ -671,27 +671,25 @@ impl<'a> CheckerState<'a> {
             });
 
             // Also check if the expression is a known alias for exports/module.exports
-            let alias_exports =
-                if direct_exports.is_none() && module_exports.is_none() {
-                    arena
-                        .get_identifier_at(left_access.expression)
-                        .and_then(|ident| {
-                            export_aliases
-                                .contains(ident.escaped_text.as_str())
-                                .then(|| {
-                                    arena
-                                        .get_identifier_at(left_access.name_or_argument)
-                                        .map(|name| (name.escaped_text.to_string(), None))
-                                })
-                        })
-                        .flatten()
-                } else {
-                    None
-                };
+            let alias_exports = if direct_exports.is_none() && module_exports.is_none() {
+                arena
+                    .get_identifier_at(left_access.expression)
+                    .and_then(|ident| {
+                        export_aliases
+                            .contains(ident.escaped_text.as_str())
+                            .then(|| {
+                                arena
+                                    .get_identifier_at(left_access.name_or_argument)
+                                    .map(|name| (name.escaped_text.to_string(), None))
+                            })
+                    })
+                    .flatten()
+            } else {
+                None
+            };
 
-            if let Some((name_text, expando_root)) = direct_exports
-                .or(module_exports)
-                .or(alias_exports)
+            if let Some((name_text, expando_root)) =
+                direct_exports.or(module_exports).or(alias_exports)
             {
                 if !pending_props.contains_key(&name_text) {
                     ordered_names.push(name_text.clone());
@@ -874,7 +872,10 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(String, TypeId)> {
         use rustc_hash::FxHashMap;
 
-        if self.collect_expando_properties_for_root(root_name).is_empty() {
+        if self
+            .collect_expando_properties_for_root(root_name)
+            .is_empty()
+        {
             return Vec::new();
         }
 
@@ -912,13 +913,15 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(binary) = arena.get_binary_expr(node)
             && binary.operator_token == SyntaxKind::EqualsToken as u16
-            && let Some(access_key) = Self::commonjs_expando_assignment_access_key(arena, binary.left)
+            && let Some(access_key) =
+                Self::commonjs_expando_assignment_access_key(arena, binary.left)
             && let Some(prop_name) = access_key.strip_prefix(root_name)
             && let Some(prop_name) = prop_name.strip_prefix('.')
             && !prop_name.is_empty()
             && !prop_name.contains('.')
         {
-            let prop_type = self.infer_commonjs_export_rhs_type(target_file_idx, binary.right, None);
+            let prop_type =
+                self.infer_commonjs_export_rhs_type(target_file_idx, binary.right, None);
             props.insert(prop_name.to_string(), prop_type);
         }
 
@@ -939,13 +942,12 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let node = arena.get(idx)?;
         match node.kind {
-            k if k == SyntaxKind::Identifier as u16 => {
-                arena.get_identifier(node).map(|ident| ident.escaped_text.clone())
-            }
+            k if k == SyntaxKind::Identifier as u16 => arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone()),
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = arena.get_access_expr(node)?;
-                let left =
-                    Self::commonjs_expando_assignment_access_key(arena, access.expression)?;
+                let left = Self::commonjs_expando_assignment_access_key(arena, access.expression)?;
                 let right = arena.get_identifier_at(access.name_or_argument)?;
                 Some(format!("{left}.{}", right.escaped_text))
             }
@@ -1247,8 +1249,8 @@ impl<'a> CheckerState<'a> {
                                 .params
                                 .first()
                                 .map(|param| param.type_id)
-                        .or(getter_type)
-                        .or(Some(TypeId::ANY));
+                                .or(getter_type)
+                                .or(Some(TypeId::ANY));
                         }
                         _ => {}
                     }
@@ -1603,7 +1605,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let export_aliases = Self::collect_commonjs_export_aliases_in_arena(&target_arena);
-        let mut pending_props: FxHashMap<String, (NodeIndex, Option<String>)> = FxHashMap::default();
+        let mut pending_props: FxHashMap<String, (NodeIndex, Option<String>)> =
+            FxHashMap::default();
         let mut ordered_names: Vec<String> = Vec::new();
 
         // Collect statements to scan: top-level statements + IIFE body statements.
@@ -1647,8 +1650,11 @@ impl<'a> CheckerState<'a> {
             let Some((rhs_expr, expando_root)) = pending_props.get(&name_text).cloned() else {
                 continue;
             };
-            let rhs_type =
-                self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, expando_root.as_deref());
+            let rhs_type = self.infer_commonjs_export_rhs_type(
+                target_file_idx,
+                rhs_expr,
+                expando_root.as_deref(),
+            );
             if rhs_type == TypeId::UNDEFINED {
                 continue;
             }
