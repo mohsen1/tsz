@@ -25,6 +25,26 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
     ) -> TypeId {
+        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, false)
+    }
+
+    /// Like `apply_type_arguments_to_constructor_type` but strips construct
+    /// signatures when the base class is not generic. This is only correct in
+    /// extends-clause context where `super()` should then emit TS2346.
+    pub(crate) fn apply_type_arguments_to_constructor_type_for_extends(
+        &mut self,
+        ctor_type: TypeId,
+        type_arguments: Option<&NodeList>,
+    ) -> TypeId {
+        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, true)
+    }
+
+    fn apply_type_arguments_to_constructor_type_inner(
+        &mut self,
+        ctor_type: TypeId,
+        type_arguments: Option<&NodeList>,
+        strip_on_non_generic_mismatch: bool,
+    ) -> TypeId {
         use tsz_solver::CallableShape;
 
         let explicit_type_arg_count = type_arguments.map_or(0, |args| args.nodes.len());
@@ -57,8 +77,11 @@ impl<'a> CheckerState<'a> {
             let mut new_members = Vec::with_capacity(members.len());
             let mut any_applied = false;
             for member in &members {
-                let applied =
-                    self.apply_type_arguments_to_constructor_type(*member, type_arguments);
+                let applied = self.apply_type_arguments_to_constructor_type_inner(
+                    *member,
+                    type_arguments,
+                    strip_on_non_generic_mismatch,
+                );
                 if applied != *member {
                     any_applied = true;
                 }
@@ -89,13 +112,15 @@ impl<'a> CheckerState<'a> {
 
         if matching.is_empty() {
             // When type arguments were provided but no construct signature has
-            // type parameters, the base class is not generic.  Return a callable
-            // type with no construct signatures so that `super()` fails with
-            // NotCallable and emits TS2346 ("Call target does not contain any
-            // signatures.").  Without this, the original constructor signatures
-            // are returned unchanged, letting the super() call succeed silently
-            // even though the extends clause already errored with TS2315.
-            if !type_args.is_empty()
+            // type parameters, the base class is not generic.  In extends-clause
+            // context, return a callable with no construct signatures so that
+            // `super()` fails with TS2346 ("Call target does not contain any
+            // signatures.").  For regular `new` expressions, return the original
+            // type unchanged — TS2558 already reports the type-arg count mismatch
+            // and the construct signatures should remain available for argument
+            // checking and return-type inference (avoiding false TS7009).
+            if strip_on_non_generic_mismatch
+                && !type_args.is_empty()
                 && shape
                     .construct_signatures
                     .iter()
@@ -411,8 +436,9 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             factory.intersection(ctor_types)
         };
-        let resolved =
-            Some(self.apply_type_arguments_to_constructor_type(ctor_type, type_arguments));
+        let resolved = Some(
+            self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments),
+        );
         if should_cache {
             self.ctx
                 .base_constructor_expr_cache
