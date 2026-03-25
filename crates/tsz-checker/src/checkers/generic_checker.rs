@@ -616,7 +616,16 @@ impl<'a> CheckerState<'a> {
             .map(|type_ref| type_ref.type_name)
             .unwrap_or(type_ref_idx);
         let max_expected = type_params.len();
-        let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
+        let mut min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
+        // Cross-arena lib type parameters may lose their defaults during resolution
+        // (e.g., `Generator<T = unknown, TReturn = any, TNext = any>` from lib files).
+        // Cross-check with the AST-level required count which directly inspects defaults
+        // in the correct arena, and use the lower value.
+        if min_required > 0 {
+            if let Some(ast_required) = self.count_required_type_params_from_ast(sym_id) {
+                min_required = min_required.min(ast_required);
+            }
+        }
         if got < min_required || got > max_expected {
             let lib_binders = self.get_lib_binders();
             let base_name = self
