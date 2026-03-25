@@ -1585,11 +1585,7 @@ impl<'a> CheckerState<'a> {
         let mut can_have_call = true;
         let mut error_node: Option<NodeIndex> = None;
 
-        loop {
-            let Some(node) = self.ctx.arena.get(current) else {
-                break;
-            };
-
+        while let Some(node) = self.ctx.arena.get(current) {
             // Allow TS syntax: ExpressionWithTypeArguments, NonNullExpression
             if node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
                 if let Some(data) = self.ctx.arena.get_expr_type_args(node) {
