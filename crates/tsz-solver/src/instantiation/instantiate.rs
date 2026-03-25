@@ -627,18 +627,47 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.array(instantiated_elem)
             }
 
-            // Tuple: instantiate all elements
+            // Tuple: instantiate all elements, flattening variadic spreads.
+            // When a rest element `...T` is instantiated and T resolves to a
+            // tuple type `[A, B, C]`, the spread is flattened into individual
+            // elements `A, B, C` (matching tsc's instantiateMappedTupleType
+            // behavior for variadic tuple types).
             TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(*elements);
-                let instantiated: Vec<TupleElement> = elements
-                    .iter()
-                    .map(|e| TupleElement {
-                        type_id: self.instantiate(e.type_id),
-                        name: e.name,
-                        optional: e.optional,
-                        rest: e.rest,
-                    })
-                    .collect();
+                let mut instantiated: Vec<TupleElement> = Vec::with_capacity(elements.len());
+                for e in elements.iter() {
+                    let inst_type = self.instantiate(e.type_id);
+                    if e.rest {
+                        // Check if the instantiated type is a tuple — if so,
+                        // flatten its elements into the parent tuple.
+                        if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
+                        {
+                            let inner = self.interner.tuple_list(inner_elems);
+                            for ie in inner.iter() {
+                                instantiated.push(TupleElement {
+                                    type_id: ie.type_id,
+                                    name: ie.name,
+                                    optional: ie.optional,
+                                    rest: ie.rest,
+                                });
+                            }
+                        } else {
+                            instantiated.push(TupleElement {
+                                type_id: inst_type,
+                                name: e.name,
+                                optional: e.optional,
+                                rest: true,
+                            });
+                        }
+                    } else {
+                        instantiated.push(TupleElement {
+                            type_id: inst_type,
+                            name: e.name,
+                            optional: e.optional,
+                            rest: false,
+                        });
+                    }
+                }
                 self.interner.tuple(instantiated)
             }
 
