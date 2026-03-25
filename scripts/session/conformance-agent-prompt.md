@@ -342,6 +342,10 @@ EOF
 cargo run --bin tsz -- /tmp/test_repro.ts 2>&1
 ```
 
+Before you trust the repro, confirm your filter/file lookup is pointing at the intended single
+target. If `--filter "TESTNAME"` appears to match multiple tests, or the `find ... | head -1`
+lookup is ambiguous, switch to a more specific test name before diagnosing the failure.
+
 If the live repro disagrees with `query-conformance.py` or `conformance-detail.json`, trust the
 live repro first and explain the mismatch in your notes. Snapshot/detail artifacts can lag behind
 recent fixes or partial reruns; do not "fix" a stale diagnostic target without reproducing the
