@@ -2,7 +2,7 @@
 //! assignments that serve as implicit property declarations.
 
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -237,7 +237,7 @@ impl CheckerState<'_> {
         properties: &mut FxHashMap<Atom, PropertyInfo>,
         parent_sym: Option<SymbolId>,
     ) {
-        let stmts: Vec<NodeIndex> = {
+        let top_level_stmts: Vec<NodeIndex> = {
             let Some(body_node) = self.ctx.arena.get(body_idx) else {
                 return;
             };
@@ -246,6 +246,10 @@ impl CheckerState<'_> {
             };
             block.statements.nodes.clone()
         };
+        let mut stmts = Vec::new();
+        for stmt_idx in top_level_stmts {
+            self.collect_nested_js_this_assignment_statements(stmt_idx, &mut stmts);
+        }
         let param_type_map = self.js_class_body_param_type_map(body_idx);
 
         // Check if the enclosing function has a JSDoc @this tag.
@@ -262,6 +266,7 @@ impl CheckerState<'_> {
 
         // Phase 1: Detect `var/let/const alias = this` patterns
         let this_aliases = self.collect_this_aliases(&stmts);
+        let mut constructor_collected_props = FxHashSet::default();
 
         for &stmt_idx in &stmts {
             let Some((prop_name, rhs_idx, is_private, report_idx)) = self
@@ -283,8 +288,13 @@ impl CheckerState<'_> {
 
             let name_atom = self.ctx.types.intern_string(&prop_name);
 
-            // Don't override explicit declarations
-            if properties.contains_key(&name_atom) {
+            // Don't override explicit declarations or properties collected by
+            // earlier scans (e.g. class members/method passes). Within this scan,
+            // allow later concrete assignments to refine earlier `null`/`undefined`
+            // placeholders from branchy constructor code.
+            if properties.contains_key(&name_atom)
+                && !constructor_collected_props.contains(&name_atom)
+            {
                 continue;
             }
 
@@ -451,6 +461,7 @@ impl CheckerState<'_> {
                 continue;
             }
 
+            constructor_collected_props.insert(name_atom);
             properties.insert(
                 name_atom,
                 PropertyInfo {
@@ -513,6 +524,39 @@ impl CheckerState<'_> {
             }
         }
         aliases
+    }
+
+    fn collect_nested_js_this_assignment_statements(
+        &self,
+        stmt_idx: NodeIndex,
+        out: &mut Vec<NodeIndex>,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => out.push(stmt_idx),
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &nested_idx in &block.statements.nodes {
+                        self.collect_nested_js_this_assignment_statements(nested_idx, out);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_nested_js_this_assignment_statements(if_stmt.then_statement, out);
+                    if !if_stmt.else_statement.is_none() {
+                        self.collect_nested_js_this_assignment_statements(
+                            if_stmt.else_statement,
+                            out,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Check if an expression is rooted in `this` — i.e., is `this`,
