@@ -3028,6 +3028,35 @@ fn test_call_arg_diagnostic_uses_canonical_relation_path() {
     );
 }
 
+/// `analyze_assignability_failure` should stay aligned with the canonical
+/// checker gate path and preserve the array/tuple weak-type suppression
+/// that prevents false TS2559 diagnostics.
+#[test]
+fn test_assignability_failure_analysis_stays_on_canonical_gate() {
+    let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
+        .expect("failed to read assignability_diagnostics.rs");
+
+    assert!(
+        source.contains("check_assignable_gate_with_overrides("),
+        "analyze_assignability_failure must use check_assignable_gate_with_overrides \
+         to stay aligned with canonical checker relation semantics"
+    );
+    assert!(
+        source.contains("checker_only_assignability_failure_reason("),
+        "analyze_assignability_failure must preserve checker-only failure downgrades"
+    );
+    assert!(
+        source.contains("target_extends_array_or_tuple("),
+        "analyze_assignability_failure must retain array/tuple weak-type suppression \
+         for NoCommonProperties false positives"
+    );
+    assert!(
+        source.contains("SubtypeFailureReason::NoCommonProperties"),
+        "analyze_assignability_failure must explicitly gate NoCommonProperties \
+         before emitting weak-type diagnostics"
+    );
+}
+
 /// Interface/base property compatibility should route through the canonical
 /// relation boundary instead of re-running local assignability + weak-union logic.
 #[test]
