@@ -8782,6 +8782,49 @@ fn types_entry_resolves_direct_declaration_file_from_type_root() {
 }
 
 #[test]
+fn import_from_type_package_loaded_via_types_does_not_emit_ts2307() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("typings/phaser/types/phaser.d.ts"),
+        "export const a2: number;\n",
+    );
+    write_file(
+        &base.join("typings/phaser/package.json"),
+        r#"{ "name": "phaser", "version": "1.2.3", "types": "types/phaser.d.ts" }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "typeRoots": ["typings"],
+            "types": ["phaser"]
+          },
+          "files": ["a.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), r#"import { a2 } from "phaser";"#);
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2307_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .collect();
+    assert!(
+        ts2307_diags.is_empty(),
+        "Expected type package imports satisfied via types/typeRoots to avoid TS2307, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts2307_emitted_for_commonjs_module() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
