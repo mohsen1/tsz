@@ -1634,7 +1634,33 @@ impl<'a> CheckerState<'a> {
                                     // tsc treats them as establishing type `any` for TS2403.
                                     TypeId::ANY
                                 } else {
-                                    self.get_type_of_node(other_decl)
+                                    let raw = self.get_type_of_node(other_decl);
+                                    // get_type_of_node may return ERROR for parameter nodes since
+                                    // they are not VariableDeclaration nodes. Compute the
+                                    // parameter's declared type from its type annotation and
+                                    // optional modifier so TS2403 can compare correctly.
+                                    if raw == TypeId::ERROR
+                                        && let Some(other_node) = self.ctx.arena.get(other_decl)
+                                        && other_node.kind == syntax_kind_ext::PARAMETER
+                                        && let Some(param) =
+                                            self.ctx.arena.get_parameter(other_node)
+                                    {
+                                        let mut param_type = if param.type_annotation.is_some() {
+                                            self.get_type_from_type_node(param.type_annotation)
+                                        } else {
+                                            TypeId::ANY
+                                        };
+                                        // Optional parameters (?) include undefined in their type
+                                        if param.question_token && param_type != TypeId::ANY {
+                                            param_type = self
+                                                .ctx
+                                                .types
+                                                .union2(param_type, TypeId::UNDEFINED);
+                                        }
+                                        param_type
+                                    } else {
+                                        raw
+                                    }
                                 };
                                 // Check if other declaration is mergeable (namespace, etc.)
                                 let other_node_kind =

@@ -7001,6 +7001,43 @@ fn test_variable_self_reference_no_2403() {
 }
 
 #[test]
+fn test_param_var_redecl_ts2403() {
+    use crate::parser::ParserState;
+
+    // TS2403: var redeclaration of optional parameter with different type
+    // `options?: number` has type `number | undefined`, var declares `number`
+    let source = r#"class C {
+    constructor(options?: number) {
+        var options = (options || 0);
+    }
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2403),
+        "Expected TS2403 for parameter/var type mismatch, got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_symbol_property_access_description() {
     use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 
