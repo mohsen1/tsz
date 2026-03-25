@@ -907,7 +907,15 @@ impl<'a> CheckerState<'a> {
                 let circularity_eligible = flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE)
                     == 0
                     && !decl_has_parse_error;
+                // When the type alias has type parameters and the body is a bare
+                // self-reference (simple type reference without type arguments),
+                // TSC does NOT consider it circular.  The bare `T` in
+                // `type T<out out> = T` refers to the generic type constructor and
+                // goes through instantiation, so it is structurally wrapped.
+                let generic_self_ref =
+                    !params.is_empty() && self.is_simple_type_reference(type_alias.type_node);
                 let is_circular = circularity_eligible
+                    && !generic_self_ref
                     && (self.is_direct_circular_reference(
                         sym_id,
                         alias_type,
