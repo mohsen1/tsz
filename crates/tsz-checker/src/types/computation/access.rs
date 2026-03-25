@@ -1246,14 +1246,16 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .namespace_module_names
                 .contains_key(&object_type_for_access);
+            let is_js_expando_object_write = self.ctx.is_js_file()
+                && tsz_solver::visitor::is_object_like_type(self.ctx.types, object_type_for_access)
+                // JS expando-style element writes only suppress TS7053 when the key is a
+                // simple literal/identifier shape the binder/checker can track. Arbitrary
+                // computed expressions like `this["a" + "b"] = 0` should still report.
+                && self.expando_element_key_name(access.name_or_argument).is_some();
             let is_expando_write = skip_flow_narrowing
                 && !is_namespace_object
                 && (tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
-                    || (self.ctx.is_js_file()
-                        && tsz_solver::visitor::is_object_like_type(
-                            self.ctx.types,
-                            object_type_for_access,
-                        )));
+                    || is_js_expando_object_write);
             // Suppress TS7053 for expando reads with unique symbol keys on function
             // types. When `func[symKey]` where symKey is a const Symbol() variable
             // and `func[symKey] = value` was assigned as an expando property, tsc
