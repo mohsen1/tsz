@@ -118,6 +118,14 @@ impl<'a> CheckerState<'a> {
             // inference result from the call. It must survive call-expression
             // diagnostic rollbacks (round 1 → round 2, return-context re-check).
             || diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+            // TS2304/TS2552/TS2662/TS2663 (cannot find name variants) are semantic
+            // facts about name resolution, not speculative inference results.
+            // If a name is undefined, it is undefined regardless of which
+            // overload is tried.
+            || diag.code == diagnostic_codes::CANNOT_FIND_NAME
+            || diag.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+            || diag.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER
+            || diag.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
             // TS2872/TS2873 (always truthy/falsy) are purely syntactic facts
             // about expression truthiness, not speculative inference results.
             // They must survive call-expression diagnostic rollbacks.
