@@ -168,8 +168,54 @@ impl<'a> CheckerState<'a> {
         if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
             return type_id;
         }
-        if let Some(type_id) = self.resolve_global_jsdoc_typedef_type(name) {
-            return type_id;
+        if let Some((body_type, type_params)) = self.resolve_global_jsdoc_typedef_info(name) {
+            if let Some(args) = &type_ref.type_arguments {
+                let display_name = Self::format_generic_display_name_with_interner(
+                    name,
+                    &type_params,
+                    self.ctx.types,
+                );
+                if !self.is_inside_type_parameter_declaration(type_name_idx)
+                    && self.validate_jsdoc_type_reference_type_arguments_against_params(
+                        &type_params,
+                        args,
+                        type_name_idx,
+                        &display_name,
+                    )
+                {
+                    return TypeId::ERROR;
+                }
+
+                let type_args: Vec<TypeId> = args
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                    .collect();
+                if !type_params.is_empty() && !type_args.is_empty() {
+                    return tsz_solver::instantiate_generic(
+                        self.ctx.types,
+                        body_type,
+                        &type_params,
+                        &type_args,
+                    );
+                }
+            } else {
+                let required_count = type_params.iter().filter(|param| param.default.is_none()).count();
+                if required_count > 0 {
+                    let display_name = Self::format_generic_display_name_with_interner(
+                        name,
+                        &type_params,
+                        self.ctx.types,
+                    );
+                    self.error_generic_type_requires_type_arguments_at(
+                        &display_name,
+                        required_count,
+                        type_name_idx,
+                    );
+                    return TypeId::ERROR;
+                }
+            }
+            return body_type;
         }
         if name == "await" {
             self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);

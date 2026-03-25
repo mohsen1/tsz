@@ -66,3 +66,35 @@ export interface D<T extends F = F> {}
         "Expected no TS2304 for cross-file JSDoc typedef visible from TS file, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn cross_file_generic_jsdoc_typedef_preserves_arity_and_constraints() {
+    let codes = check_types_file_with_jsdoc_global(
+        r#"
+declare var actually: Everything<{ a: number }, undefined, { c: 1, d: 1 }, number, string>;
+"#,
+        r#"
+/**
+ * @template {{ a: number, b: string }} T,U A Comment
+ * @template {{ c: boolean }} V trailing prose should not become params
+ * @template W
+ * @template X That last one had no comment
+ * @typedef {{ t: T, u: U, v: V, w: W, x: X }} Everything
+ */
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !codes.contains(&2304),
+        "Expected generic cross-file JSDoc typedef to stay visible from TS, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2344),
+        "Expected TS2344 from generic JSDoc typedef constraint checking, got codes: {codes:?}"
+    );
+}

@@ -378,7 +378,22 @@ impl<'a> CheckerState<'a> {
             };
             let rest = rest.trim();
             let (constraint, names_str) = if let Some(rest) = rest.strip_prefix('{') {
-                if let Some(close_idx) = rest.find('}') {
+                let mut depth = 1usize;
+                let mut close_idx = None;
+                for (idx, ch) in rest.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                close_idx = Some(idx);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close_idx) = close_idx {
                     (
                         Some(rest[..close_idx].trim().to_string()),
                         rest[close_idx + 1..].trim(),
@@ -389,17 +404,63 @@ impl<'a> CheckerState<'a> {
             } else {
                 (None, rest)
             };
-            for token in names_str.split([',', ' ', '\t']) {
-                let name = token.trim();
-                if name.is_empty() {
-                    continue;
+            let mut cursor = 0usize;
+            let bytes = names_str.as_bytes();
+            let mut parsed_any = false;
+            let mut applied_constraint = false;
+            while cursor < bytes.len() {
+                let mut saw_comma = false;
+                while cursor < bytes.len() {
+                    let ch = bytes[cursor] as char;
+                    if ch == ',' {
+                        saw_comma = true;
+                        cursor += 1;
+                    } else if ch.is_ascii_whitespace() {
+                        cursor += 1;
+                    } else {
+                        break;
+                    }
                 }
-                if name
-                    .chars()
-                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                if cursor >= bytes.len() {
+                    break;
+                }
+
+                let start = cursor;
+                while cursor < bytes.len() {
+                    let ch = bytes[cursor] as char;
+                    if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                        cursor += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if start == cursor {
+                    break;
+                }
+
+                let name = &names_str[start..cursor];
+                let mut lookahead = cursor;
+                while lookahead < bytes.len() && (bytes[lookahead] as char).is_ascii_whitespace() {
+                    lookahead += 1;
+                }
+
+                if parsed_any
+                    && !saw_comma
+                    && lookahead < bytes.len()
+                    && bytes[lookahead] as char != ','
                 {
-                    out.push((name.to_string(), constraint.clone()));
+                    break;
                 }
+
+                let name_constraint = if applied_constraint {
+                    None
+                } else {
+                    constraint.clone()
+                };
+                out.push((name.to_string(), name_constraint));
+                parsed_any = true;
+                applied_constraint = true;
+                cursor = lookahead;
             }
         }
         out
