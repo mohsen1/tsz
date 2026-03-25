@@ -173,7 +173,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// For `import("./module", { assert: { ... } })` type expressions, the second
     /// argument is an options object literal. If it contains an `assert` property,
-    /// emit TS2880 at the attributes value position (matching tsc's ImportAttributes
+    /// emit TS2880 at the attributes value position (matching tsc's `ImportAttributes`
     /// node position for import type nodes).
     fn check_import_type_deprecated_assert(&mut self, call_idx: NodeIndex) {
         // Only emit if deprecation is not suppressed
