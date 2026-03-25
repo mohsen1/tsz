@@ -317,6 +317,63 @@ new mod.Baz();
 }
 
 #[test]
+fn test_require_call_matches_typedef_cross_module2_shape() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+/** @typedef {number} Foo */
+class Foo { }
+
+/** @typedef {number} Bar */
+exports.Bar = class { };
+
+/** @typedef {number} Baz */
+module.exports = {
+    Baz: class { }
+};
+
+/** @typedef {number} Qux */
+var Qux = 2;
+
+/** @typedef {number} Quid */
+exports.Quid = 2;
+
+/** @typedef {number} Quack */
+module.exports = {
+    Quack: 2
+};
+"#,
+        "use.js",
+        r#"
+var mod = require("./mod1.js");
+/** @type {import("./mod1.js").Baz} */
+var b;
+/** @type {mod.Baz} */
+var bb;
+var bbb = new mod.Baz();
+"#,
+        "./mod1.js",
+    );
+
+    let ts18048: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 18048 && message.contains("'mod.Baz'"))
+        .collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'Baz'"))
+        .collect();
+    assert!(
+        !ts18048.is_empty(),
+        "Expected TS18048 for typedefCrossModule2-shaped require() flow, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for typedefCrossModule2-shaped require() flow, got: {ts2339:#?}"
+    );
+}
+
+#[test]
 fn test_module_exports_function() {
     // module.exports = function greet() { return "hi"; }
     let diagnostics = check_commonjs_two_files(
