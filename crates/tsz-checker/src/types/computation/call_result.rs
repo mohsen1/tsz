@@ -291,7 +291,14 @@ impl<'a> CheckerState<'a> {
                 expected_max,
                 actual,
             } => {
-                if !self.ctx.has_parse_errors {
+                // When the parser already reported TS2754 for `super<T>(...)`, the
+                // type arguments were consumed but not attached to the call AST node.
+                // The resulting `super(...)` call then has a mismatched argument count
+                // against the base constructor.  Suppress the cascading TS2554 — tsc
+                // only emits TS2754 in this situation.
+                let suppress_for_super_parse_error =
+                    is_super_call && self.node_contains_any_parse_error(call_idx);
+                if !self.ctx.has_parse_errors && !suppress_for_super_parse_error {
                     if actual < expected_min {
                         let is_iife = self.is_callee_function_expression(callee_expr);
                         if is_iife {

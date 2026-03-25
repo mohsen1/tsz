@@ -503,7 +503,7 @@ impl<'a> CheckerState<'a> {
     /// falls within a node's span. Used for TS2456 suppression where reserved-
     /// word parse errors in type parameter lists should prevent false circularity.
     pub(crate) fn node_contains_any_parse_error(&self, idx: NodeIndex) -> bool {
-        if !self.ctx.has_parse_errors || self.ctx.all_parse_error_positions.is_empty() {
+        if self.ctx.all_parse_error_positions.is_empty() {
             return false;
         }
         let Some(node) = self.ctx.arena.get(idx) else {
