@@ -671,6 +671,19 @@ fn constructor_param_property_no_conflict_with_static() {
     );
 }
 
+#[test]
+fn constructor_overload_param_property_duplicate_ts2300() {
+    let diagnostics = verify_errors(
+        "class Customers { constructor(public names: string); constructor(public names: string, public ages: number) {} }",
+        &[(1, 73, "Duplicate identifier 'names'")],
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert!(
+        ts2300 >= 1,
+        "Expected TS2300 for parameter property duplicated across constructor overloads"
+    );
+}
+
 // ========================================================================
 // TS2451 vs TS2300 disambiguation when block-scoped variables are involved
 // ========================================================================
