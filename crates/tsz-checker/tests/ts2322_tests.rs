@@ -625,6 +625,47 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     );
 }
 
+#[test]
+fn mapped_type_recursive_inference_generic_call_preserves_nested_callback_context() {
+    let source = r#"
+type MorphTuple = [string, "|>", any];
+
+type validateMorph<def extends MorphTuple> = def[1] extends "|>"
+    ? [validateDefinition<def[0]>, "|>", (In: def[0]) => unknown]
+    : def;
+
+type validateDefinition<def> = def extends MorphTuple
+    ? validateMorph<def>
+    : {
+          [k in keyof def]: validateDefinition<def[k]>
+      };
+
+declare function type<def>(def: validateDefinition<def>): def;
+
+const shallow = type(["ark", "|>", (x) => x.length]);
+const objectLiteral = type({ a: ["ark", "|>", (x) => x.length] });
+const nestedTuple = type([["ark", "|>", (x) => x.length]]);
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "recursive mapped/conditional generic call should contextually type nested callbacks, got: {diagnostics:?}"
+    );
+}
+
 // =============================================================================
 // Assignment Expression Tests (TS2322)
 // =============================================================================
