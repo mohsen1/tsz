@@ -2107,7 +2107,63 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                             diagnostic_codes::SUBSTITUTIONS_FOR_PATTERN_SHOULDNT_BE_AN_EMPTY_ARRAY,
                         ));
                     }
-                    serde_json::Value::Array(_) => {} // valid non-empty array
+                    serde_json::Value::Array(arr) => {
+                        // TS5064: Substitution elements must be strings
+                        for (idx, elem) in arr.iter().enumerate() {
+                            if !elem.is_string() {
+                                let type_name = match elem {
+                                    serde_json::Value::Number(_) => "number",
+                                    serde_json::Value::Bool(_) => "boolean",
+                                    serde_json::Value::Null => "null",
+                                    serde_json::Value::Object(_) => "object",
+                                    serde_json::Value::Array(_) => "Array",
+                                    _ => "unknown",
+                                };
+                                let elem_display = match elem {
+                                    serde_json::Value::Number(n) => n.to_string(),
+                                    serde_json::Value::Bool(b) => b.to_string(),
+                                    serde_json::Value::Null => "null".to_string(),
+                                    _ => format!("{elem}"),
+                                };
+                                // Find the position of the element in the source text
+                                let elem_pos = {
+                                    let arr_start = stripped[value_start as usize..]
+                                        .find('[')
+                                        .map_or(value_start as usize, |p| {
+                                            value_start as usize + p + 1
+                                        });
+                                    // Skip past idx elements (separated by commas)
+                                    let mut pos = arr_start;
+                                    let mut found = 0;
+                                    while found < idx && pos < stripped.len() {
+                                        if stripped.as_bytes()[pos] == b',' {
+                                            found += 1;
+                                        }
+                                        pos += 1;
+                                    }
+                                    // Skip whitespace
+                                    while pos < stripped.len()
+                                        && stripped.as_bytes()[pos].is_ascii_whitespace()
+                                    {
+                                        pos += 1;
+                                    }
+                                    pos as u32
+                                };
+                                let msg = format_message(
+                                    diagnostic_messages::SUBSTITUTION_FOR_PATTERN_HAS_INCORRECT_TYPE_EXPECTED_STRING_GOT,
+                                    &[&elem_display, pattern, type_name],
+                                );
+                                diagnostics.push(Diagnostic::error(
+                                    file_path,
+                                    elem_pos,
+                                    estimate_json_value_len(elem),
+                                    msg,
+                                    diagnostic_codes::SUBSTITUTION_FOR_PATTERN_HAS_INCORRECT_TYPE_EXPECTED_STRING_GOT,
+                                ));
+                                bad_patterns.push(pattern.clone());
+                            }
+                        }
+                    }
                     _ => {
                         // TS5063: not an array
                         let value_len = estimate_json_value_len(value);
