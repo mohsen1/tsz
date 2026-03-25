@@ -132,6 +132,60 @@ fn check_commonjs_single_file(file_name: &str, source: &str) -> Vec<(u32, String
         .collect()
 }
 
+fn check_commonjs_file_with_prelude(
+    prelude_name: &str,
+    prelude_source: &str,
+    file_name: &str,
+    source: &str,
+) -> Vec<(u32, String)> {
+    let mut parser_a = ParserState::new(prelude_name.to_string(), prelude_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = ParserState::new(file_name.to_string(), source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let arena_a = Arc::new(parser_a.get_arena().clone());
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
+
+    let binder_a = Arc::new(binder_a);
+    let binder_b = Arc::new(binder_b);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_b.as_ref(),
+        binder_b.as_ref(),
+        &types,
+        file_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: false,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(1);
+
+    checker.check_source_file(root_b);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn format_commonjs_single_file_symbol_type(
     file_name: &str,
     source: &str,
@@ -1287,6 +1341,58 @@ module.exports.name = "test";
 
     // Should parse and check without panics
     let _len = diagnostics.len();
+}
+
+#[test]
+fn test_require_of_primitive_module_exports_does_not_expose_later_properties() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+module.exports = 1;
+module.exports.f = function () { };
+"#,
+        "a.js",
+        r#"
+var mod1 = require("./mod1");
+mod1.toFixed(12);
+mod1.f();
+"#,
+        "./mod1",
+    );
+
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Expected TS2339 in the consumer once primitive module.exports blocks later property merges, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, msg)| msg.contains("type 'number'") && msg.contains("Property 'f'")),
+        "Expected consumer TS2339 to report the widened primitive type, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_primitive_module_exports_assignment_reports_same_file_property_error_with_prelude() {
+    let diagnostics = check_commonjs_file_with_prelude(
+        "requires.d.ts",
+        r#"
+declare var module: { exports: any };
+"#,
+        "mod1.js",
+        r#"
+module.exports = 1;
+module.exports.f = function () { };
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, msg)| {
+            *code == 2339 && msg.contains("Property 'f' does not exist on type 'number'")
+        }),
+        "Expected producer-side TS2339 once primitive module.exports blocks later property merges, got: {diagnostics:#?}"
+    );
 }
 
 // --- Surface caching correctness ---

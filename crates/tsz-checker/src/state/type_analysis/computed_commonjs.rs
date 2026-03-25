@@ -161,6 +161,12 @@ impl<'a> CheckerState<'a> {
         // re-scanning the AST with augment_namespace_props_with_commonjs_exports_for_file.
         let current_file_idx = self.ctx.current_file_idx;
         let surface = self.resolve_js_export_surface(current_file_idx);
+        let can_merge_named_exports = surface.direct_export_type.is_none_or(|direct_export_type| {
+            crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                self.ctx.types,
+                direct_export_type,
+            )
+        });
 
         // Deep-scan the AST for export names that may be nested (in if-blocks, etc.)
         // and not captured by the surface's top-level + IIFE scan.
@@ -172,10 +178,17 @@ impl<'a> CheckerState<'a> {
         }
 
         // Start with the surface's typed named exports and any deep-scan names.
-        let mut props = surface.named_exports;
+        let mut props = if can_merge_named_exports {
+            surface.named_exports
+        } else {
+            Vec::new()
+        };
 
         // Add ANY-typed entries for any deep-scan names not already in the surface
         for name in &export_names {
+            if !can_merge_named_exports {
+                break;
+            }
             let name_atom = self.ctx.types.intern_string(name);
             if props.iter().any(|p| p.name == name_atom) {
                 continue;
@@ -205,10 +218,12 @@ impl<'a> CheckerState<'a> {
             (Some(direct), false) => direct,
             (None, _) => namespace_type,
         };
-        self.ctx.namespace_module_names.insert(
-            type_id,
-            self.current_file_commonjs_module_name(preserve_js_extension),
-        );
+        if has_named_props || surface.direct_export_type.is_none() {
+            self.ctx.namespace_module_names.insert(
+                type_id,
+                self.current_file_commonjs_module_name(preserve_js_extension),
+            );
+        }
         type_id
     }
 
