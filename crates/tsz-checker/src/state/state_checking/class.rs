@@ -959,6 +959,26 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Stage 3 (ES) decorated properties don't require initialization — the
+        // decorator can intercept the property definition and provide an initial
+        // value at runtime. TSC suppresses TS2564 for decorated properties when
+        // using ES decorators (experimentalDecorators is NOT enabled).
+        // With legacy experimentalDecorators, decorators are metadata-only and
+        // don't affect initialization, so TS2564 is still required.
+        if !self.ctx.compiler_options.experimental_decorators {
+            if let Some(ref modifiers) = prop.modifiers {
+                let has_decorator = modifiers.nodes.iter().any(|&mod_idx| {
+                    self.ctx
+                        .arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::DECORATOR)
+                });
+                if has_decorator {
+                    return false;
+                }
+            }
+        }
+
         // Properties with string or numeric literal names are not checked for strict property initialization
         // Example: class C { "b": number; 0: number; }  // These are not checked
         let Some(name_node) = self.ctx.arena.get(prop.name) else {
