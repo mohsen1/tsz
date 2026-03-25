@@ -200,6 +200,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             return TypeId::ANY;
         }
 
+        // TS2523: 'yield' expressions cannot be used in a parameter initializer.
+        // Only emit when there are no nearby parse errors (to avoid cascading diagnostics
+        // after parser recovery, e.g. `function * foo(a = yield => yield) {}`).
+        if self.checker.is_in_default_parameter(idx)
+            && !self.checker.node_has_nearby_parse_error(idx)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.checker.error_at_node(
+                idx,
+                diagnostic_messages::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
+                diagnostic_codes::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
+            );
+        }
+
         // For yield*, tracks the delegated iterator's return type.
         // The yield* expression result is TReturn of the delegated iterator, NOT TNext
         // of the containing generator (which is what regular yield returns).

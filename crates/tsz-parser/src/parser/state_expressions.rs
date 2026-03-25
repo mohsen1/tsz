@@ -1518,15 +1518,8 @@ impl ParserState {
 
                 let start_pos = self.token_pos();
 
-                // Check if 'yield' is used in a parameter default context
-                // TS2523: 'yield' expressions cannot be used in a parameter initializer
-                if self.in_generator_context() && self.in_parameter_default_context() {
-                    self.parse_error_at_current_token(
-                        "'yield' expressions cannot be used in a parameter initializer.",
-                        diagnostic_codes::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
-                    );
-                    // Fall through to parse as yield expression
-                }
+                // Note: TS2523 ('yield' expressions cannot be used in a parameter initializer)
+                // is emitted by the checker, not the parser, matching TSC behavior.
 
                 self.consume_keyword(); // TS1260 check for yield keyword with escapes
 
