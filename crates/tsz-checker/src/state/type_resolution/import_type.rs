@@ -1,6 +1,7 @@
 //! Import type resolution helpers (`import("./module").Foo`).
 
 use crate::state::CheckerState;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -71,6 +72,9 @@ impl<'a> CheckerState<'a> {
         _type_name_idx: NodeIndex,
         _type_ref_idx: NodeIndex,
     ) -> TypeId {
+        // TS2880: Check for deprecated `assert` keyword in import type options
+        self.check_import_type_deprecated_assert(call_idx);
+
         let Some((module_name, specifier_node)) = self.get_import_type_module_specifier(call_idx)
         else {
             return TypeId::ERROR;
@@ -163,5 +167,76 @@ impl<'a> CheckerState<'a> {
         // Relative specifier with no resolution data — we can't confirm it doesn't
         // exist. Return ERROR without emitting TS2307 to avoid false positives.
         TypeId::ERROR
+    }
+
+    /// TS2880: Check for deprecated `assert` keyword in import type options.
+    ///
+    /// For `import("./module", { assert: { ... } })` type expressions, the second
+    /// argument is an options object literal. If it contains an `assert` property,
+    /// emit TS2880 at the attributes value position (matching tsc's ImportAttributes
+    /// node position for import type nodes).
+    fn check_import_type_deprecated_assert(&mut self, call_idx: NodeIndex) {
+        // Only emit if deprecation is not suppressed
+        if self
+            .ctx
+            .capabilities
+            .check_import_assert_deprecated()
+            .is_none()
+        {
+            return;
+        }
+
+        let Some(call_node) = self.ctx.arena.get(call_idx) else {
+            return;
+        };
+        let Some(call_data) = self.ctx.arena.get_call_expr(call_node) else {
+            return;
+        };
+        let args = match call_data.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
+        if args.len() < 2 {
+            return;
+        }
+
+        let options_idx = args[1];
+        let Some(options_node) = self.ctx.arena.get(options_idx) else {
+            return;
+        };
+        if options_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+
+        let children = self.ctx.arena.get_children(options_idx);
+        for child_idx in children {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+            if child_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(child_node) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name(prop.name) else {
+                continue;
+            };
+            if name == "assert" {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                // For import type expressions, tsc positions TS2880 at the attributes
+                // value object (the inner `{ ... }`) to match the ImportAttributes
+                // node position in tsc's AST.
+                let Some(val_node) = self.ctx.arena.get(prop.initializer) else {
+                    continue;
+                };
+                self.error_at_position(
+                    val_node.pos,
+                    6, // length of "assert"
+                    diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                    diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                );
+            }
+        }
     }
 }

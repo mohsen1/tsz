@@ -101,6 +101,9 @@ impl<'a> CheckerState<'a> {
 
         let options_idx = args[1];
 
+        // TS2880: Check for deprecated `assert` keyword in options object
+        self.check_import_options_deprecated_assert(options_idx);
+
         // Resolve ImportAttributes (augmented version including user's `declare global`).
         let Some(import_attributes_type) = self.resolve_lib_type_by_name("ImportAttributes") else {
             return;
@@ -264,6 +267,62 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.types.factory().object(properties)
+    }
+
+    /// TS2880: Check for deprecated `assert` property in an import options object literal.
+    ///
+    /// When `import()` or `import(...)` type expressions use `{ assert: { ... } }` instead
+    /// of `{ with: { ... } }`, emit TS2880 at each `assert` property name position.
+    /// This applies to both dynamic import calls and import type expressions.
+    pub(crate) fn check_import_options_deprecated_assert(&mut self, options_idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Only emit if deprecation is not suppressed
+        if self
+            .ctx
+            .capabilities
+            .check_import_assert_deprecated()
+            .is_none()
+        {
+            return;
+        }
+
+        let Some(options_node) = self.ctx.arena.get(options_idx) else {
+            return;
+        };
+
+        if options_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+
+        let children = self.ctx.arena.get_children(options_idx);
+        for child_idx in children {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+            if child_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(child_node) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name(prop.name) else {
+                continue;
+            };
+            if name == "assert" {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                // Error spans the `assert` property name
+                let Some(name_node) = self.ctx.arena.get(prop.name) else {
+                    continue;
+                };
+                self.error_at_position(
+                    name_node.pos,
+                    name_node.end.saturating_sub(name_node.pos),
+                    diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                    diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                );
+            }
+        }
     }
 
     /// Check dynamic import module specifier for unresolved modules.
