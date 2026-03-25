@@ -808,17 +808,15 @@ impl<'a> CheckerState<'a> {
                         || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
                 });
                 // Also suppress TS2695 when the comma expression is inside a bare
-                // block statement (not a function/method body) and the file has
-                // parse errors.  This matches tsc's behavior: when `{ a, b } = fn()`
-                // is parsed as a block followed by `=`, tsc emits TS2809 for the `=`
-                // and suppresses TS2695 for the comma inside the block because the
-                // parse diagnostic overlaps with the expression's range.  Our
-                // node-level error check misses this because TS2809 is on a sibling
-                // node (`=`), not on the comma binary expression itself.
-                let in_bare_block_with_parse_errors =
-                    self.ctx.has_parse_errors && self.is_inside_bare_block(node_idx);
+                // block statement (not a function/method body).  This matches tsc's
+                // behavior: `{ a, b } = fn()` is parsed as a block followed by `=`,
+                // and the comma inside the block is always a malformed destructuring
+                // pattern, never a legitimate comma operator.  Suppress unconditionally
+                // regardless of parse-error state (has_parse_errors is program-level
+                // and may miss file-local grammar errors like TS2809).
+                let in_bare_block = self.is_inside_bare_block(node_idx);
                 if !node_has_parse_error
-                    && !in_bare_block_with_parse_errors
+                    && !in_bare_block
                     && self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)
