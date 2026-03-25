@@ -1106,49 +1106,9 @@ impl<'a> CheckerState<'a> {
                     self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
                 );
             }
-            if let Some(resolved) = self.resolve_jsdoc_type_from_value_expression(binary.right) {
-                return Some(
-                    self.combine_jsdoc_instance_and_prototype_type(resolved, prototype_type),
-                );
-            }
         }
 
         prototype_type
-    }
-
-    fn resolve_jsdoc_type_from_value_expression(&mut self, expr_idx: NodeIndex) -> Option<TypeId> {
-        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
-
-        if let Some(sym_id) = self
-            .ctx
-            .binder
-            .get_node_symbol(expr_idx)
-            .or_else(|| self.resolve_identifier_symbol(expr_idx))
-            .or_else(|| self.resolve_qualified_symbol(expr_idx))
-        {
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
-                return Some(resolved);
-            }
-        }
-
-        let node = self.ctx.arena.get(expr_idx)?;
-        match node.kind {
-            k if k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-                || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION =>
-            {
-                let constructor_type = self.get_type_of_node(expr_idx);
-                self.synthesize_js_constructor_instance_type(expr_idx, constructor_type, &[])
-            }
-            k if k == tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION
-                || k == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION =>
-            {
-                let sym_id = self.ctx.binder.get_node_symbol(expr_idx)?;
-                let resolved = self.type_reference_symbol_type(sym_id);
-                (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
-            }
-            _ => None,
-        }
     }
 
     fn resolve_jsdoc_prototype_assignment_type(&mut self, name: &str) -> Option<TypeId> {

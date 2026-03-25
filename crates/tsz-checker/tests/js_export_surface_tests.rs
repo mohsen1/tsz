@@ -1492,6 +1492,55 @@ function f(k) {
     );
 }
 
+#[test]
+fn test_commonjs_named_class_export_assignment_keeps_constructor_side() {
+    let diagnostics = check_commonjs_single_file(
+        "mod1.js",
+        r#"
+class K {
+    values() {
+        return new K();
+    }
+}
+exports.K = K;
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339 | 2351 | 2741))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected CommonJS named class export assignment to keep constructor-side typing, got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_commonjs_nested_class_expando_assignment_keeps_constructor_side() {
+    let diagnostics = check_commonjs_single_file(
+        "mod1.js",
+        r#"
+var NS = {};
+NS.K = class {
+    values() {
+        return new NS.K();
+    }
+};
+exports.K = NS.K;
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339 | 2351 | 2741))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected nested CommonJS class expando assignment to keep constructor-side typing, got: {relevant:#?}"
+    );
+}
+
 // --- Surface caching correctness ---
 
 #[test]
