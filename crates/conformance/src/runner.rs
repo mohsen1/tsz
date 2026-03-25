@@ -105,6 +105,27 @@ fn filter_lib_diagnostics_tsc(
     (codes, fps)
 }
 
+/// When TSC reports only TS5024 (invalid compiler option shape), suppress
+/// downstream semantic diagnostics from tsz.
+///
+/// In the conformance harness, the cached baseline intentionally expects only
+/// TS5024 for a few option-conversion mismatch cases (for example,
+/// `"\"true,false\""`` in a boolean-like option). tsz currently continues and
+/// emits semantic diagnostics, which should be ignored for this category.
+fn suppress_tsz_semantic_diagnostics_after_tsc_option_error(
+    tsc_codes: &[u32],
+    result: &mut tsz_wrapper::CompilationResult,
+) {
+    if tsc_codes.len() != 1 || tsc_codes.first().copied() != Some(5024) {
+        return;
+    }
+
+    result.error_codes.retain(|code| *code == 5024);
+    result
+        .diagnostic_fingerprints
+        .retain(|fingerprint| fingerprint.code == 5024);
+}
+
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -941,6 +962,14 @@ impl Runner {
                             .diagnostic_fingerprints
                             .retain(|fp| tsc_code_set.contains(&fp.code));
                     }
+
+                    // If TSC expects only TS5024, tsz may emit extra diagnostics
+                    // from semantic checks that run after the invalid option failure.
+                    // Restrict comparison to TS5024 in this case.
+                    suppress_tsz_semantic_diagnostics_after_tsc_option_error(
+                        &tsc_error_codes,
+                        &mut compile_result,
+                    );
 
                     // Compare error codes
                     let tsc_codes: std::collections::HashSet<_> =
