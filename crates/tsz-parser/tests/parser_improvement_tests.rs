@@ -2356,3 +2356,48 @@ let x = <MyComp<Prop> a={10} b="hi" />; // error, no type arguments in js
         "Expected TS1003 alongside TS2657 for illegal JSX type-argument syntax, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_js_call_type_argument_syntax_prefers_relational_parsing() {
+    let source = r#"
+Foo<number>();
+Foo<number>(1);
+Foo<number>``;
+"#;
+    let mut parser = ParserState::new("a.jsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+    let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
+
+    assert_eq!(
+        ts1109_count, 1,
+        "Expected only the empty-call JS generic syntax case to emit TS1109, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1003_count, 0,
+        "Non-JSX JS generic-call syntax should not leak JSX TS1003 recovery diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsx_type_arguments_in_js_with_closing_tag_report_ts17002() {
+    let source = r#"
+<Foo<number>></Foo>;
+"#;
+    let mut parser = ParserState::new("a.jsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&17002),
+        "Expected TS17002 for the mismatched closing tag after JS JSX type-argument recovery, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&2657),
+        "Expected TS2657 for the recovered adjacent JSX roots, got diagnostics: {diagnostics:?}"
+    );
+}

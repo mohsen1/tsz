@@ -858,6 +858,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1473 // Module declaration names
         | 1479 // This syntax is only allowed when 'allowImportingTsExtensions'
         | 1489 // Duplicate identifier
+        | 17002 // Expected corresponding JSX closing tag for '{0}'
         | 2657 // JSX expressions must have one parent element
         | 17008 // JSX element '{0}' has no corresponding closing tag
     )
@@ -1538,6 +1539,14 @@ mod tests {
         assert!(
             is_ts1xxx_allowed_in_js(2657),
             "TS2657 should be preserved for JS JSX recovery diagnostics"
+        );
+    }
+
+    #[test]
+    fn js_parse_allowlist_keeps_ts17002() {
+        assert!(
+            is_ts1xxx_allowed_in_js(17002),
+            "TS17002 should be preserved for JS JSX closing-tag mismatch diagnostics"
         );
     }
 
