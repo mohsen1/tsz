@@ -3028,6 +3028,28 @@ fn test_relation_request_builders_encode_epc_policy() {
     );
 }
 
+/// The canonical `RelationRequest` constructors must continue encoding the
+/// semantic question directly as a `RelationKind`, rather than relying on
+/// ambient caller-side policy.
+#[test]
+fn test_relation_request_constructors_encode_relation_kind() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    for (ctor, kind) in [
+        ("fn assign", "RelationKind::Assign"),
+        ("fn call_arg", "RelationKind::CallArg"),
+        ("fn return_stmt", "RelationKind::Return"),
+        ("fn satisfies", "RelationKind::Satisfies"),
+        ("fn destructuring", "RelationKind::Destructuring"),
+    ] {
+        assert!(
+            source.contains(ctor) && source.contains(kind),
+            "{ctor} must construct a RelationRequest with {kind}"
+        );
+    }
+}
+
 /// `assignability_checker.rs` must use `execute_relation_request` as the
 /// canonical checker-level entry point for structured relation queries.
 #[test]
