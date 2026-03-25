@@ -136,7 +136,60 @@ impl<'a> CheckerState<'a> {
         if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
             return enum_name;
         }
+
+        // When displaying the TARGET type and the SOURCE is non-nullable,
+        // strip null/undefined from the top-level union to match tsc's behavior.
+        // tsc only shows the non-nullable part of the target since null/undefined
+        // are not relevant to the structural mismatch.
+        if let Some(stripped) = self.strip_nullish_for_assignability_display(ty, other) {
+            return self.format_type_for_assignability_message(stripped);
+        }
+
         self.format_type_for_assignability_message(ty)
+    }
+
+    /// When `ty` is a union containing null/undefined and `other` (the
+    /// counterpart in the assignability check) is non-nullable, strip the
+    /// top-level null/undefined members from `ty`.  This matches tsc which
+    /// shows only the non-nullable part of the target to reduce noise.
+    fn strip_nullish_for_assignability_display(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> Option<TypeId> {
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, ty)?;
+        // Only strip when the union has null or undefined members
+        let has_null = members.iter().any(|&m| m == TypeId::NULL);
+        let has_undefined = members.iter().any(|&m| m == TypeId::UNDEFINED);
+        if !has_null && !has_undefined {
+            return None;
+        }
+        // Only strip when the OTHER type is non-nullable (not a union with null/undefined)
+        if other == TypeId::NULL || other == TypeId::UNDEFINED {
+            return None;
+        }
+        if let Some(other_members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, other)
+        {
+            if other_members
+                .iter()
+                .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
+            {
+                return None;
+            }
+        }
+        let filtered: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&m| m != TypeId::NULL && m != TypeId::UNDEFINED)
+            .collect();
+        if filtered.is_empty() || filtered.len() == members.len() {
+            return None;
+        }
+        if filtered.len() == 1 {
+            return Some(filtered[0]);
+        }
+        Some(self.ctx.types.factory().union(filtered))
     }
 
     fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
