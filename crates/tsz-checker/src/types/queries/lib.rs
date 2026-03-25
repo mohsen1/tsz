@@ -733,6 +733,12 @@ impl<'a> CheckerState<'a> {
         //   var m: typeof M; m.Point  → should resolve namespace export "Point"
         if let NamespaceMemberKind::TypeQuery(sym_ref) = classification {
             let sym_id = SymbolId(sym_ref.0);
+            if self
+                .get_cross_file_symbol(sym_id)
+                .is_some_and(|symbol| symbol.is_umd_export)
+            {
+                return self.resolve_namespace_value_member_from_symbol(sym_id, property_name);
+            }
             let resolved_type = self.get_type_of_symbol(sym_id);
             if resolved_type != object_type
                 && resolved_type != TypeId::ANY
@@ -740,7 +746,7 @@ impl<'a> CheckerState<'a> {
             {
                 return self.resolve_namespace_value_member(resolved_type, property_name);
             }
-            return None;
+            return self.resolve_namespace_value_member_from_symbol(sym_id, property_name);
         }
 
         match classification {
@@ -1486,10 +1492,20 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         source_file_idx: usize,
     ) -> Option<String> {
+        let trimmed = module_specifier.trim().trim_matches('"').trim_matches('\'');
         let target_idx = self
             .ctx
             .resolve_import_target_from_file(source_file_idx, module_specifier)
-            .or_else(|| self.ctx.resolve_import_target(module_specifier))?;
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))
+            .or_else(|| self.ctx.resolve_import_target(trimmed))
+            .or_else(|| {
+                self.ctx.all_arenas.as_ref().and_then(|arenas| {
+                    arenas.iter().enumerate().find_map(|(idx, arena)| {
+                        let file_name = arena.source_files.first()?.file_name.as_str();
+                        (file_name == module_specifier || file_name == trimmed).then_some(idx)
+                    })
+                })
+            })?;
         let target_binder = self.ctx.get_binder_for_file(target_idx)?;
 
         for (name, &sym_id) in target_binder.file_locals.iter() {
@@ -1539,5 +1555,206 @@ impl<'a> CheckerState<'a> {
         }
 
         exports
+    }
+
+    pub(crate) fn resolve_umd_global_member_by_name(
+        &mut self,
+        namespace_name: &str,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(namespace_name)
+        {
+            let is_umd_export = self
+                .get_cross_file_symbol(sym_id)
+                .is_some_and(|symbol| symbol.is_umd_export);
+            if is_umd_export {
+                return self.resolve_namespace_value_member_from_symbol(sym_id, property_name);
+            }
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.clone() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                if let Some(sym_id) = binder.file_locals.get(namespace_name)
+                {
+                    self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    let is_umd_export = self
+                        .get_cross_file_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.is_umd_export);
+                    if is_umd_export {
+                        return self
+                            .resolve_namespace_value_member_from_symbol(sym_id, property_name);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn resolve_namespace_value_member_from_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let (sym_flags, sym_name, direct_member_id, module_export_member_id, import_module, decl_file_idx) = {
+            let symbol = self.get_cross_file_symbol(sym_id)?;
+            if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM | symbol_flags::ALIAS) == 0
+            {
+                return None;
+            }
+
+            let direct_member_id = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(property_name))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(property_name))
+                });
+
+            let module_export_member_id = {
+                let module_name = symbol.escaped_name.as_str();
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(module_name)
+                    .and_then(|exports| exports.get(property_name))
+                    .or_else(|| {
+                        self.resolve_cross_file_namespace_exports(module_name)
+                            .and_then(|exports| exports.get(property_name))
+                    })
+            };
+
+            (
+                symbol.flags,
+                symbol.escaped_name.clone(),
+                direct_member_id,
+                module_export_member_id,
+                symbol.import_module.clone(),
+                symbol.decl_file_idx as usize,
+            )
+        };
+
+        if let Some(member_id) = direct_member_id {
+            return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+        }
+
+        if let Some(member_id) = module_export_member_id {
+            return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+        }
+
+        if let Some(ref module_specifier) = import_module {
+            if let Some(member_id) = self.resolve_module_member_from_specifier(
+                module_specifier,
+                property_name,
+                decl_file_idx,
+            )
+            {
+                return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+            }
+
+            let mut visited_aliases = Vec::new();
+            if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
+                module_specifier,
+                property_name,
+                &mut visited_aliases,
+            ) {
+                return self.get_validated_member_type(reexported_sym, property_name);
+            }
+
+            if self.module_augmentation_introduces_member(module_specifier, property_name) {
+                return Some(TypeId::ANY);
+            }
+
+            if let Some(umd_name) =
+                self.resolve_umd_namespace_name_for_module(module_specifier, decl_file_idx)
+                && let Some(member_id) =
+                    self.resolve_namespace_member_across_binders(&umd_name, property_name)
+            {
+                return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+            }
+        }
+
+        if sym_flags & symbol_flags::ENUM != 0
+            && let Some(member_type) = self.enum_member_type_for_name(sym_id, property_name)
+        {
+            return Some(member_type);
+        }
+
+        if sym_flags & symbol_flags::MODULE != 0
+            && let Some(member_id) =
+                self.resolve_namespace_member_across_binders(sym_name.as_str(), property_name)
+        {
+            return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+        }
+
+        None
+    }
+
+    fn resolve_module_member_from_specifier(
+        &self,
+        module_specifier: &str,
+        property_name: &str,
+        source_file_idx: usize,
+    ) -> Option<tsz_binder::SymbolId> {
+        self.resolve_effective_module_exports_from_file(module_specifier, Some(source_file_idx))
+            .and_then(|exports| exports.get(property_name))
+    }
+
+    fn module_augmentation_introduces_member(
+        &self,
+        module_specifier: &str,
+        property_name: &str,
+    ) -> bool {
+        !self
+            .get_module_augmentation_declarations(module_specifier, property_name)
+            .is_empty()
+    }
+
+    fn resolve_namespace_member_across_binders(
+        &mut self,
+        namespace_name: &str,
+        property_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let lookup_in_binder = |binder: &tsz_binder::BinderState,
+                                file_idx: Option<usize>|
+         -> Option<tsz_binder::SymbolId> {
+            let ns_sym_id = binder.file_locals.get(namespace_name)?;
+            let ns_symbol = binder.get_symbol(ns_sym_id)?;
+            if ns_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
+            {
+                return None;
+            }
+            let member_id = ns_symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(property_name))
+                .or_else(|| {
+                    ns_symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(property_name))
+                })?;
+            if let Some(file_idx) = file_idx {
+                self.ctx.register_symbol_file_target(member_id, file_idx);
+            }
+            Some(member_id)
+        };
+
+        if let Some(member_id) = lookup_in_binder(self.ctx.binder, None) {
+            return Some(member_id);
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.clone() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                if let Some(member_id) = lookup_in_binder(binder, Some(file_idx)) {
+                    return Some(member_id);
+                }
+            }
+        }
+
+        None
     }
 }
