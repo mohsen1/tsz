@@ -2982,6 +2982,31 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
     }
 }
 
+/// The canonical `RelationRequest::new` path must keep request policy defaults
+/// explicit at the boundary instead of relying on ambient caller state.
+#[test]
+fn test_relation_request_new_encodes_default_policy() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    assert!(
+        source.contains("fn new(source: TypeId, target: TypeId, kind: RelationKind) -> Self"),
+        "RelationRequest must keep a canonical new(...) constructor for default policy"
+    );
+    assert!(
+        source.contains("excess_property_mode: ExcessPropertyMode::Skip,"),
+        "RelationRequest::new must default excess_property_mode to Skip"
+    );
+    assert!(
+        source.contains("missing_property_mode: MissingPropertyMode::Report,"),
+        "RelationRequest::new must default missing_property_mode to Report"
+    );
+    assert!(
+        source.contains("source_is_fresh: false,"),
+        "RelationRequest::new must default source_is_fresh to false"
+    );
+}
+
 /// The boundary-owned `RelationFlags` wrapper must continue exposing the
 /// checker-safe flag surface for request-sensitive relation policy.
 #[test]
