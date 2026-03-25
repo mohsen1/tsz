@@ -3323,7 +3323,8 @@ pub const fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
 /// 1. `TSZ_LIB_DIR` environment variable
 /// 2. Relative to the executable
 /// 3. Relative to current working directory
-/// 4. TypeScript/src/lib in the source tree
+/// 4. `TypeScript/src/lib` in the source tree
+///
 /// Cache for `default_lib_dir()` result. The lib directory is determined by
 /// environment variables and filesystem probing that don't change during a
 /// process lifetime.
@@ -3511,17 +3512,16 @@ fn build_lib_map_from_embedded() -> FxHashMap<&'static str, &'static str> {
 /// Without caching, `build_lib_map` was called once per lib being resolved,
 /// each time re-reading the directory and calling `realpath` on every `.d.ts`
 /// file (~110 files). This dominated total compilation time (>90% on macOS).
-static LIB_MAP_CACHE: std::sync::Mutex<Option<(PathBuf, FxHashMap<String, PathBuf>)>> =
-    std::sync::Mutex::new(None);
+type LibMapEntry = (PathBuf, FxHashMap<String, PathBuf>);
+static LIB_MAP_CACHE: std::sync::Mutex<Option<LibMapEntry>> = std::sync::Mutex::new(None);
 
 fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
     // Fast path: return cached map if lib_dir matches
-    if let Ok(guard) = LIB_MAP_CACHE.lock() {
-        if let Some((ref cached_dir, ref cached_map)) = *guard {
-            if cached_dir == lib_dir {
-                return Ok(cached_map.clone());
-            }
-        }
+    if let Ok(guard) = LIB_MAP_CACHE.lock()
+        && let Some((ref cached_dir, ref cached_map)) = *guard
+        && cached_dir == lib_dir
+    {
+        return Ok(cached_map.clone());
     }
 
     let map = build_lib_map_uncached(lib_dir)?;
