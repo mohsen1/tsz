@@ -352,10 +352,11 @@ For every attempt, record in your working notes:
 - Timestamp the attempt and final outcome (`blocked`, `fixed`, `regression`, `handoff`).
 - Use machine-parseable one-line outcomes with key/value pairs: `attempt`, `test`, `outcome`, `m_delta`, `x_delta`, optional `reason`, and optional free-form `notes`.
 - Append a one-line final summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt` before moving to a new test.
+- If provided, `reason` should be one of: `multi-crate-touch-required`, `intractable`, `infra`, `cross-cutting`, `regression`, `no-progress`.
 
 ```bash
 # Example attempt summary format
-echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 notes=parser+checker+solver touch" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
+echo "attempt=$ATTEMPT_ID test=TESTNAME outcome=blocked reason=multi-crate-touch-required m_delta=0 x_delta=0 notes=\"parser+checker+solver touch\"" >> /tmp/conformance-attempts/$ATTEMPT_ID.txt
 ```
 
 ### Architecture review (MANDATORY before writing code)
