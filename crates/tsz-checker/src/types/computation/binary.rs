@@ -1668,10 +1668,7 @@ impl<'a> CheckerState<'a> {
                 let left_any_like = eval_left == TypeId::ANY || eval_left == TypeId::ERROR;
                 let right_any_like = eval_right == TypeId::ANY || eval_right == TypeId::ERROR;
 
-                if (left_any_like || right_any_like)
-                    && left_type != TypeId::ERROR
-                    && right_type != TypeId::ERROR
-                {
+                if left_any_like || right_any_like {
                     if left_any_like
                         && !evaluator.is_arithmetic_operand(eval_right)
                         && !self.is_enum_type(right_type)
