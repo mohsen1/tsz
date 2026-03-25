@@ -868,14 +868,7 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            // tsc displays optional params WITHOUT `| undefined` in diagnostic
-            // error messages: `(x?: number)`. The `?` already implies optionality,
-            // so strip `| undefined` if present.
-            let type_str: String = if p.optional {
-                self.format_stripping_undefined(p.type_id)
-            } else {
-                self.format(p.type_id).into_owned()
-            };
+            let type_str: String = self.format(p.type_id).into_owned();
             rendered.push(format!("{rest}{name}{optional}: {type_str}"));
         }
 
