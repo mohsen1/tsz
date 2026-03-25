@@ -14,6 +14,122 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn is_object_define_property_descriptor_literal(&self, idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
+            return false;
+        };
+        let Some(args) = call.arguments.as_ref() else {
+            return false;
+        };
+        if args.nodes.len() < 3 || args.nodes[2] != idx {
+            return false;
+        }
+
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(callee_access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(object_node) = self.ctx.arena.get(callee_access.expression) else {
+            return false;
+        };
+        if object_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(object_ident) = self.ctx.arena.get_identifier(object_node) else {
+            return false;
+        };
+        if object_ident.escaped_text != "Object" {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(callee_access.name_or_argument) else {
+            return false;
+        };
+        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        name_ident.escaped_text == "defineProperty"
+    }
+
+    fn define_property_descriptor_accessor_type(
+        &mut self,
+        object_literal_idx: NodeIndex,
+        elements: &[NodeIndex],
+        method_name: &str,
+    ) -> Option<TypeId> {
+        if !self.is_object_define_property_descriptor_literal(object_literal_idx) {
+            return None;
+        }
+
+        for &element_idx in elements {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+
+            if let Some(method) = self.ctx.arena.get_method_decl(element_node)
+                && self
+                    .get_property_name_resolved(method.name)
+                    .is_some_and(|name| name == method_name)
+            {
+                let method_type = self.get_type_of_function(element_idx);
+                return crate::query_boundaries::assignability::get_function_return_type(
+                    self.ctx.types,
+                    method_type,
+                );
+            }
+
+            if method_name == "get"
+                && element_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(accessor) = self.ctx.arena.get_accessor(element_node)
+                && self
+                    .get_property_name_resolved(accessor.name)
+                    .is_some_and(|name| name == method_name)
+            {
+                self.get_type_of_function(element_idx);
+                return Some(if accessor.type_annotation.is_none() {
+                    self.infer_getter_return_type(accessor.body)
+                } else {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                });
+            }
+        }
+
+        None
+    }
+
+    fn define_property_descriptor_setter_context_type(
+        &mut self,
+        object_literal_idx: NodeIndex,
+        elements: &[NodeIndex],
+    ) -> Option<TypeId> {
+        let getter_type =
+            self.define_property_descriptor_accessor_type(object_literal_idx, elements, "get")?;
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape::new(
+                    vec![tsz_solver::ParamInfo::unnamed(getter_type)],
+                    TypeId::VOID,
+                )),
+        )
+    }
+
     /// Get the type of an object literal expression.
     ///
     /// Computes the type of object literals like `{ x: 1, y: 2 }` or `{ foo, bar }`.
@@ -998,6 +1114,14 @@ impl<'a> CheckerState<'a> {
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
                     let jsdoc_method_context_type =
                         self.jsdoc_callable_type_annotation_for_node_direct(elem_idx);
+                    let define_property_context_type = (name == "set")
+                        .then(|| {
+                            self.define_property_descriptor_setter_context_type(
+                                idx,
+                                &obj.elements.nodes,
+                            )
+                        })
+                        .flatten();
                     let method_context_type = contextual_type.and_then(|ctx_type| {
                         self.contextual_method_context_type_for_lookup(ctx_type, &name)
                     });
@@ -1005,10 +1129,13 @@ impl<'a> CheckerState<'a> {
                         method_context_type,
                         contextual_receiver_this_type,
                     );
-                    let method_request =
-                        base_request.contextual_opt(self.contextual_type_option_for_expression(
-                            jsdoc_method_context_type.or(method_context_type),
-                        ));
+                    let method_request = base_request.contextual_opt(
+                        self.contextual_type_option_for_expression(
+                            jsdoc_method_context_type
+                                .or(method_context_type)
+                                .or(define_property_context_type),
+                        ),
+                    );
 
                     // If no explicit ThisType marker exists, use the object literal's
                     // contextual type as `this` inside method bodies.

@@ -182,6 +182,15 @@ impl<'a> CheckerState<'a> {
                     e.insert(prop);
                 }
             }
+
+            for (name, prop) in self.collect_define_property_bindings_on_function_prototype(
+                value_decl,
+                func_name_s,
+                sym_id,
+            ) {
+                has_prototype_evidence = true;
+                properties.entry(name).or_insert(prop);
+            }
         }
 
         if properties.is_empty() {
