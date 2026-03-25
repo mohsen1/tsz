@@ -196,7 +196,11 @@ impl<'a> CheckerState<'a> {
         let has_named_props = !props.is_empty();
         let namespace_type = self.ctx.types.factory().object(props);
         let type_id = match (surface.direct_export_type, has_named_props) {
-            (Some(direct), true) => self.ctx.types.factory().intersection2(direct, namespace_type),
+            (Some(direct), true) => self
+                .ctx
+                .types
+                .factory()
+                .intersection2(direct, namespace_type),
             (Some(direct), false) => direct,
             (None, _) => namespace_type,
         };

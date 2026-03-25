@@ -111,9 +111,11 @@ impl<'a> CheckerState<'a> {
             return (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved);
         }
 
-        self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx)).and_then(
-            |module_type| self.instance_type_from_constructor_type(module_type).or(Some(module_type)),
-        )
+        self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
+            .and_then(|module_type| {
+                self.instance_type_from_constructor_type(module_type)
+                    .or(Some(module_type))
+            })
     }
     /// Parse a JSDoc-style `@type` expression into a concrete type.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
