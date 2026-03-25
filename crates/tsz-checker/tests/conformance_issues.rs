@@ -10225,6 +10225,55 @@ let y = x.getA().x;
     );
 }
 
+#[test]
+fn test_umd_global_conflict_prefers_first_namespace_export_surface() {
+    let files = [
+        (
+            "/v1/index.d.ts",
+            r#"
+export as namespace Alpha;
+export var x: string;
+"#,
+        ),
+        (
+            "/v2/index.d.ts",
+            r#"
+export as namespace Alpha;
+export var y: number;
+"#,
+        ),
+        (
+            "/consumer.ts",
+            r#"
+import * as v1 from "./v1";
+import * as v2 from "./v2";
+"#,
+        ),
+        (
+            "/global.ts",
+            r#"
+const p: string = Alpha.x;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/global.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected first UMD namespace export to win for Alpha.x without TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 fn compile_two_global_files_get_diagnostics_with_options(
     a_name: &str,
     a_source: &str,
