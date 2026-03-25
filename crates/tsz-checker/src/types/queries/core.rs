@@ -952,6 +952,48 @@ impl<'a> CheckerState<'a> {
                 self.evaluate_application_type(resolved_prop_name_type);
             let assignability_prop_name_type = self.evaluate_type_for_assignability(prop_name_type);
 
+            // Fallback: when the computed expression is an identifier referencing a
+            // variable initialized with or annotated as `Symbol.xxx`, resolve to the
+            // canonical `[Symbol.xxx]` property name.  This handles patterns like:
+            //   const observable: typeof Symbol.obs = Symbol.obs;
+            //   class C { [observable]() { ... } }
+            // where type-based resolution yields plain `symbol` instead of a unique symbol.
+            if prop_name_type == TypeId::SYMBOL {
+                if let Some(well_known) =
+                    self.resolve_computed_symbol_property_name(computed.expression)
+                {
+                    return Some(well_known);
+                }
+            }
+            // When the computed property type resolves to a unique symbol (e.g.
+            // `typeof Symbol.obs`), map it to the canonical `[Symbol.xxx]` format
+            // that type literals and interfaces use.  Without this, class members
+            // like `[observable]()` (where `const observable = Symbol.obs`) would
+            // be stored as `__unique_N` while the target type uses `[Symbol.obs]`,
+            // causing false TS2345/TS2322 structural mismatches.
+            for candidate in [
+                prop_name_type,
+                evaluated_prop_name_type,
+                resolved_prop_name_type,
+                application_prop_name_type,
+                assignability_prop_name_type,
+            ] {
+                if let Some(sym_ref) =
+                    tsz_solver::visitor::unique_symbol_ref(self.ctx.types, candidate)
+                {
+                    let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        let sym_name = symbol.escaped_name.clone();
+                        if symbol.parent.is_some()
+                            && let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent)
+                            && parent_sym.escaped_name == "Symbol"
+                        {
+                            return Some(format!("[Symbol.{sym_name}]"));
+                        }
+                    }
+                }
+            }
+
             for candidate in [
                 prop_name_type,
                 evaluated_prop_name_type,
@@ -1004,6 +1046,50 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
+    }
+
+    /// For an identifier expression, trace back to the variable's declaration
+    /// and check if the initializer or type annotation references `Symbol.xxx`.
+    /// If so, return the canonical `[Symbol.xxx]` property name.
+    ///
+    /// This handles computed property names like `[observable]` where
+    /// `const observable: typeof Symbol.obs = Symbol.obs`.  The declared type
+    /// resolves to plain `symbol`, but the structural property key must match
+    /// the `[Symbol.obs]` format used by type literals.
+    fn resolve_computed_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        let ident = self.ctx.arena.get_identifier(expr_node)?;
+
+        // Look up the identifier in the binder to find its declaration
+        let sym_id = self.ctx.binder.file_locals.get(&ident.escaped_text)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+
+        // Check initializer first: `= Symbol.obs`
+        if var_decl.initializer.is_some() {
+            if let Some(name) = self.get_symbol_property_name_from_expr(var_decl.initializer) {
+                return Some(name);
+            }
+        }
+
+        // Check type annotation: `typeof Symbol.obs`
+        // The type annotation is a TYPE_QUERY node whose expr_name is `Symbol.obs`.
+        if var_decl.type_annotation.is_some() {
+            let ann_node = self.ctx.arena.get(var_decl.type_annotation)?;
+            if ann_node.kind == syntax_kind_ext::TYPE_QUERY {
+                let type_query = self.ctx.arena.get_type_query(ann_node)?;
+                if let Some(name) = self.get_symbol_property_name_from_expr(type_query.expr_name) {
+                    return Some(name);
+                }
+            }
+        }
+
+        None
     }
 
     pub(crate) fn get_bound_class_name_from_decl(&self, class_idx: NodeIndex) -> Option<String> {
