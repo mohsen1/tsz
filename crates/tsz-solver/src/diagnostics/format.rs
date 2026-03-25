@@ -292,6 +292,14 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Function(_)
         ) && let Some(def_store) = self.def_store
         {
+            if let Some(def_id) = def_store.find_def_for_type(type_id)
+                && let Some(def) = def_store.get(def_id)
+            {
+                let exact_name = self.format_def_name(&def);
+                if exact_name.contains('<') {
+                    return exact_name.into();
+                }
+            }
             if let Some(def_id) = def_store.find_type_alias_by_body(type_id)
                 && let Some(def) = def_store.get(def_id)
             {
