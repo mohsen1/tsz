@@ -665,8 +665,9 @@ impl<'a> CheckerState<'a> {
 
                 let params_text = &after_function[..close_paren_offset];
                 let is_constructor_type = params_text.trim_start().starts_with("new:");
-                let has_return_annotation =
-                    after_function[close_paren_offset + 1..].trim_start().starts_with(':');
+                let has_return_annotation = after_function[close_paren_offset + 1..]
+                    .trim_start()
+                    .starts_with(':');
                 let function_len = "function(".len() + close_paren_offset + 1;
                 let function_pos = comment.pos + function_offset as u32;
                 let mut reported_missing_return = false;
@@ -700,8 +701,7 @@ impl<'a> CheckerState<'a> {
                         reported_missing_return = true;
                     }
 
-                    let at_pos =
-                        function_pos + "function(".len() as u32 + at_offset as u32;
+                    let at_pos = function_pos + "function(".len() as u32 + at_offset as u32;
                     self.ctx.error(
                         at_pos,
                         1,
