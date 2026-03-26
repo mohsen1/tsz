@@ -1,5 +1,6 @@
 //! Core import/export checking implementation.
 
+use crate::diagnostics::format_message;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
@@ -24,7 +25,7 @@ impl<'a> CheckerState<'a> {
     /// the effective module resolution (considering both `module` and `moduleResolution`
     /// options), matching tsc's `getEmitModuleResolutionKind()`.
     pub(crate) fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::query_boundaries::capabilities::is_known_node_module;
 
         // tsc emits TS2591 instead of TS2307 when the unresolved module specifier
@@ -155,6 +156,94 @@ impl<'a> CheckerState<'a> {
         }
 
         !is_module_or_variable
+    }
+
+    pub(crate) fn global_augmentation_namespace_export_cycle_report_node(
+        &self,
+        statements: &[NodeIndex],
+        ident_name: &str,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::node_flags;
+
+        let mut matching_namespace_export = None;
+        let mut matching_global_augmentation = None;
+
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node)
+                    && let Some(export_name_node) = self.ctx.arena.get(export_decl.export_clause)
+                    && let Some(export_name) = self.ctx.arena.get_identifier(export_name_node)
+                    && export_name.escaped_text == ident_name
+                {
+                    matching_namespace_export = Some(stmt_idx);
+                }
+                continue;
+            }
+
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+
+            let Some(module_decl) = self.ctx.arena.get_module(stmt_node) else {
+                continue;
+            };
+            let is_global_augmentation =
+                (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
+                    || self
+                        .ctx
+                        .arena
+                        .get(module_decl.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .is_some_and(|ident| ident.escaped_text == "global");
+            if !is_global_augmentation || !module_decl.body.is_some() {
+                continue;
+            }
+
+            let Some(body_node) = self.ctx.arena.get(module_decl.body) else {
+                continue;
+            };
+            let has_matching_namespace_decl = if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
+                self.ctx
+                    .arena
+                    .get_module_block(body_node)
+                    .and_then(|block| block.statements.as_ref())
+                    .is_some_and(|stmts| {
+                        stmts.nodes.iter().any(|&inner_idx| {
+                            self.ctx
+                                .arena
+                                .get(inner_idx)
+                                .filter(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
+                                .and_then(|node| self.ctx.arena.get_module(node))
+                                .and_then(|module| self.ctx.arena.get(module.name))
+                                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                                .is_some_and(|ident| ident.escaped_text == ident_name)
+                        })
+                    })
+            } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_module(body_node)
+                    .and_then(|module| self.ctx.arena.get(module.name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text == ident_name)
+            } else {
+                false
+            };
+
+            if has_matching_namespace_decl {
+                matching_global_augmentation = Some(stmt_idx);
+            }
+        }
+
+        if matching_namespace_export.is_some() && matching_global_augmentation.is_some() {
+            matching_namespace_export
+        } else {
+            return None;
+        }
     }
 
     /// Check whether a named import can be satisfied via `export =` target members.
@@ -1798,6 +1887,26 @@ impl<'a> CheckerState<'a> {
                                 export_data.expression,
                                 "The expression of an export assignment must be an identifier or qualified name in an ambient context.",
                                 diagnostic_codes::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
+                            );
+                        } else if export_data.is_export_equals
+                            && let Some(ident) = self
+                                .ctx
+                                .arena
+                                .get(export_data.expression)
+                                .and_then(|node| self.ctx.arena.get_identifier(node))
+                            && let Some(report_node) = self
+                                .global_augmentation_namespace_export_cycle_report_node(
+                                    statements,
+                                    ident.escaped_text.as_str(),
+                                )
+                        {
+                            self.error_at_node(
+                                report_node,
+                                &format_message(
+                                    diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                                    &[ident.escaped_text.as_str()],
+                                ),
+                                diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
                             );
                         } else if let Some(expected_type) =
                             self.jsdoc_type_annotation_for_node(stmt_idx)
