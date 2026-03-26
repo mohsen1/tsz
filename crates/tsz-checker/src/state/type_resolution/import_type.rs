@@ -125,7 +125,11 @@ impl<'a> CheckerState<'a> {
             let file_export_equals = self
                 .ctx
                 .resolve_import_target(&module_name)
-                .and_then(|target_idx| self.ctx.get_binder_for_file(target_idx).map(|binder| (target_idx, binder)))
+                .and_then(|target_idx| {
+                    self.ctx
+                        .get_binder_for_file(target_idx)
+                        .map(|binder| (target_idx, binder))
+                })
                 .and_then(|(target_idx, binder)| {
                     let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                     let file_name = target_arena.source_files.first()?.file_name.as_str();
@@ -134,7 +138,8 @@ impl<'a> CheckerState<'a> {
                         .get(file_name)
                         .and_then(|exports| exports.get("export="))
                 });
-            let has_export_equals = ambient_export_equals_sym.is_some() || file_export_equals.is_some();
+            let has_export_equals =
+                ambient_export_equals_sym.is_some() || file_export_equals.is_some();
 
             has_export_equals
                 || self.is_module_export_equals_type_only(&module_name)
@@ -146,8 +151,7 @@ impl<'a> CheckerState<'a> {
                             .get_symbol_with_libs(sym_id, &lib_binders)
                             .is_some_and(|sym| {
                                 sym.is_type_only
-                                    || ((sym.flags & PURE_TYPE) != 0
-                                        && (sym.flags & VALUE) == 0)
+                                    || ((sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0)
                             })
                     };
 

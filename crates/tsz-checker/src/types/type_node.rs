@@ -823,26 +823,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if self.predicate_type_contains_unevaluable_application(predicate_type) {
             return;
         }
-        let predicate_type = if tsz_solver::type_queries::is_type_parameter_like(
-            self.ctx.types,
-            predicate_type,
-        ) {
-            tsz_solver::type_param_info(self.ctx.types, predicate_type)
-                .and_then(|info| info.constraint)
-                .unwrap_or(TypeId::UNKNOWN)
-        } else {
-            predicate_type
-        };
-        let param_type = if tsz_solver::type_queries::is_type_parameter_like(
-            self.ctx.types,
-            param_type,
-        ) {
-            tsz_solver::type_param_info(self.ctx.types, param_type)
-                .and_then(|info| info.constraint)
-                .unwrap_or(TypeId::UNKNOWN)
-        } else {
-            param_type
-        };
+        let predicate_type =
+            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, predicate_type) {
+                tsz_solver::type_param_info(self.ctx.types, predicate_type)
+                    .and_then(|info| info.constraint)
+                    .unwrap_or(TypeId::UNKNOWN)
+            } else {
+                predicate_type
+            };
+        let param_type =
+            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, param_type) {
+                tsz_solver::type_param_info(self.ctx.types, param_type)
+                    .and_then(|info| info.constraint)
+                    .unwrap_or(TypeId::UNKNOWN)
+            } else {
+                param_type
+            };
 
         if !self.ctx.types.is_assignable_to(predicate_type, param_type)
             && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)

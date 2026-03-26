@@ -1522,8 +1522,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if arena.get_named_imports(clause_node).is_none() {
-                if self.declaration_name_matches_string(arena, export_decl.export_clause, import_name)
-                {
+                if self.declaration_name_matches_string(
+                    arena,
+                    export_decl.export_clause,
+                    import_name,
+                ) {
                     direct_export = true;
                 }
                 continue;
