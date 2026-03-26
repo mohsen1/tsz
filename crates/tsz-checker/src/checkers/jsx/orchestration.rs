@@ -315,7 +315,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn instantiate_jsx_function_shape_with_substitution(
+    pub(super) fn instantiate_jsx_function_shape_with_substitution(
         &self,
         func: &tsz_solver::FunctionShape,
         substitution: &crate::query_boundaries::common::TypeSubstitution,
@@ -527,6 +527,7 @@ impl<'a> CheckerState<'a> {
                     None,
                     false, // intrinsic elements never have raw type params
                     display_target,
+                    None,
                     request,
                     children_ctx,
                 );
@@ -630,6 +631,7 @@ impl<'a> CheckerState<'a> {
                     None,
                     false,
                     display_target,
+                    None,
                     request,
                     children_ctx,
                 );
@@ -702,6 +704,7 @@ impl<'a> CheckerState<'a> {
                     Some(resolved_component_type),
                     raw_has_type_params,
                     display_target,
+                    preferred_props_display.as_deref(),
                     request,
                     children_ctx,
                 );

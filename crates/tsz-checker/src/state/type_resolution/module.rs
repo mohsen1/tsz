@@ -664,6 +664,21 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         source_file_idx: Option<usize>,
     ) -> Option<tsz_binder::SymbolTable> {
+        if let Some(source_idx) = source_file_idx
+            && let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file(source_idx, module_specifier)
+            && let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(target_idx)
+        {
+            return Some(exports);
+        }
+
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
+            && let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(target_idx)
+        {
+            return Some(exports);
+        }
+
         for candidate in module_specifier_candidates(module_specifier) {
             // When resolving from a specific source file (cross-file symbol),
             // also try resolving the module specifier from that file's perspective

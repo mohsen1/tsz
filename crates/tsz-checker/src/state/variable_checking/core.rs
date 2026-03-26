@@ -1125,6 +1125,19 @@ impl<'a> CheckerState<'a> {
                         if self.ctx.is_js_file() {
                             final_type =
                                 self.augment_object_type_with_define_properties(name, final_type);
+                            if var_decl.initializer.is_some()
+                                && self
+                                    .direct_commonjs_module_export_assignment_rhs(
+                                        self.ctx.arena,
+                                        var_decl.initializer,
+                                    )
+                                    .is_some()
+                            {
+                                final_type = self.ctx.types.factory().intersection2(
+                                    final_type,
+                                    self.current_file_commonjs_module_exports_namespace_type(),
+                                );
+                            }
                         }
                     }
                     self.cache_symbol_type(sym_id, final_type);

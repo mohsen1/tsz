@@ -759,16 +759,6 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check shared cross-file lib cache first
-        if let Some(ref shared_cache) = self.ctx.shared_lib_type_cache
-            && let Some(entry) = shared_cache.get(name)
-        {
-            let result = *entry;
-            self.ctx
-                .lib_type_resolution_cache
-                .insert(name.to_string(), result);
-            return result;
-        }
-
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
             return *cached;
         }
@@ -966,12 +956,6 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(name.to_string(), Some(ty));
-            // Also insert pre-heritage type into shared cache so parallel threads
-            // can break out of their own resolution early (they get the un-merged
-            // type, which is correct for cycle breaking).
-            if let Some(ref shared_cache) = self.ctx.shared_lib_type_cache {
-                shared_cache.entry(name.to_string()).or_insert(Some(ty));
-            }
             lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
         }
 
@@ -1078,16 +1062,12 @@ impl<'a> CheckerState<'a> {
             .insert(name.to_string(), lib_type_id);
 
         // Store in shared cross-file cache for other parallel file checks.
-        let has_augmentations = self
+        let _has_augmentations = self
             .ctx
             .binder
             .global_augmentations
             .get(name)
             .is_some_and(|v| !v.is_empty());
-        if !has_augmentations && let Some(ref shared_cache) = self.ctx.shared_lib_type_cache {
-            shared_cache.insert(name.to_string(), lib_type_id);
-        }
-
         lib_type_id
     }
 

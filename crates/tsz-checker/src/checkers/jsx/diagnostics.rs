@@ -4,6 +4,7 @@
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::SymbolId;
+use tsz_parser::parser::node::ClassData;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -179,8 +180,34 @@ impl<'a> CheckerState<'a> {
                     props_name,
                 )
             }
+            k if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
+                let class = self.ctx.arena.get_class(decl_node)?;
+                self.get_jsx_component_props_display_text_from_class(class, props_name)
+            }
             _ => None,
         }
+    }
+
+    fn get_jsx_component_props_display_text_from_class(
+        &mut self,
+        class: &ClassData,
+        props_name: &str,
+    ) -> Option<String> {
+        if props_name != "props" {
+            return None;
+        }
+
+        let type_params = class.type_parameters.as_ref()?;
+        let first_param_idx = *type_params.nodes.first()?;
+        let first_param_node = self.ctx.arena.get(first_param_idx)?;
+        let first_param = self.ctx.arena.get_type_parameter(first_param_node)?;
+        if first_param.constraint == NodeIndex(0) {
+            return None;
+        }
+
+        self.format_jsx_props_display_text_from_type_node(first_param.constraint)
     }
 
     fn get_jsx_component_props_display_text_from_type_node(

@@ -123,6 +123,45 @@ let x = <Greet name="world" unknownProp="oops" />;
 }
 
 #[test]
+fn jsx_generic_class_component_uses_constraint_for_props_checking() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class Component<P> {{
+    constructor(props: P);
+    props: P;
+    render(): JSX.Element;
+}}
+
+interface Prop {{
+    a: number;
+    b: string;
+}}
+
+declare class MyComp<P extends Prop> extends Component<P> {{
+    internalProp: P;
+}}
+
+let x1 = <MyComp />;
+let x2 = <MyComp a="hi" />;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for generic class prop mismatch, got: {diags:?}"
+    );
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+        ),
+        "Expected TS2739 for missing constrained props on generic class JSX element, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_sfc_type_mismatch_emits_ts2322() {
     let source = format!(
         r#"

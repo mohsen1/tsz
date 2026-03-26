@@ -711,6 +711,17 @@ impl<'a> CheckerContext<'a> {
         }
 
         let arenas = self.all_arenas.as_ref()?;
+        let normalized_specifier = specifier.replace('\\', "/");
+        let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
+        if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
+            arena.source_files.first().is_some_and(|sf| {
+                let file_name = sf.file_name.replace('\\', "/");
+                file_name == normalized_specifier
+                    || Self::strip_ts_extension(&file_name) == stripped_specifier
+            })
+        }) {
+            return Some(target_idx);
+        }
         let file_names: Vec<String> = arenas
             .iter()
             .filter_map(|arena| arena.source_files.first().map(|sf| sf.file_name.clone()))

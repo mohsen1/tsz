@@ -118,6 +118,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn contextual_lookup_type(&mut self, contextual_type: TypeId) -> TypeId {
+        let contextual_type = self.strip_contextual_this_type_markers(contextual_type);
         self.resolve_type_for_property_access(self.evaluate_contextual_type(contextual_type))
     }
 

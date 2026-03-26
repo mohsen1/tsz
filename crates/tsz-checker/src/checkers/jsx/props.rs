@@ -107,56 +107,101 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env(normalized)
     }
 
+    fn preferred_jsx_missing_props_target(&mut self, props_type: TypeId) -> TypeId {
+        let normalized = self.normalize_jsx_required_props_target(props_type);
+        let members = tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)
+            .or_else(|| tsz_solver::type_queries::get_intersection_members(self.ctx.types, normalized));
+        let Some(members) = members else {
+            return normalized;
+        };
+
+        let mut best = None;
+        let mut best_score = (true, usize::MAX, usize::MAX);
+        for member in members {
+            let resolved_member = self.normalize_jsx_required_props_target(member);
+            let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_member)
+            else {
+                continue;
+            };
+
+            let required_count = shape.properties.iter().filter(|prop| !prop.optional).count();
+            if required_count == 0 {
+                continue;
+            }
+
+            let display = self.format_type(member);
+            let is_anonymous = display.starts_with('{');
+            let property_count = shape.properties.len();
+            let score = (is_anonymous, property_count, required_count);
+            if score < best_score {
+                best = Some(resolved_member);
+                best_score = score;
+            }
+        }
+
+        best.unwrap_or(normalized)
+    }
+
     /// Check that all required properties in the props type are provided. Emits TS2741.
     pub(super) fn check_missing_required_jsx_props(
         &mut self,
         props_type: TypeId,
         provided_attrs: &[(String, TypeId)],
         attributes_idx: NodeIndex,
+        preferred_target_display: Option<&str>,
     ) {
-        let Some(shape) = self.get_normalized_jsx_required_props_shape(props_type) else {
+        let preferred_target = self.preferred_jsx_missing_props_target(props_type);
+        let Some(shape) = self.get_normalized_jsx_required_props_shape(preferred_target) else {
             return;
         };
 
-        for prop in &shape.properties {
-            if prop.optional {
-                continue;
-            }
+        let missing_names: Vec<_> = shape
+            .properties
+            .iter()
+            .filter(|prop| !prop.optional)
+            .filter_map(|prop| {
+                let prop_name = self.ctx.types.resolve_atom(prop.name);
+                (!provided_attrs.iter().any(|(a, _)| a == &prop_name)).then_some(prop.name)
+            })
+            .collect();
 
-            let prop_name = self.ctx.types.resolve_atom(prop.name);
+        if missing_names.is_empty() {
+            return;
+        }
+        let mut missing_names = missing_names;
+        missing_names.sort_by_key(|name| self.ctx.types.resolve_atom_ref(*name).to_string());
 
-            // 'children' is now handled via JsxChildrenContext synthesis in dispatch
-            if provided_attrs.iter().any(|(a, _)| a == &prop_name) {
-                continue;
-            }
+        let source_type = if provided_attrs.is_empty() {
+            "{}".to_string()
+        } else {
+            let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
+                .iter()
+                .map(|(name, type_id)| {
+                    let name_atom = self.ctx.types.intern_string(name);
+                    tsz_solver::PropertyInfo {
+                        name: name_atom,
+                        type_id: *type_id,
+                        write_type: *type_id,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: tsz_solver::Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                    }
+                })
+                .collect();
+            let obj_type = self.ctx.types.factory().object(properties);
+            self.format_type(obj_type)
+        };
+        let target_type = preferred_target_display
+            .filter(|display| !display.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| self.format_type(preferred_target));
 
-            // Build synthetic source type for the error message.
-            let source_type = if provided_attrs.is_empty() {
-                "{}".to_string()
-            } else {
-                let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
-                    .iter()
-                    .map(|(name, type_id)| {
-                        let name_atom = self.ctx.types.intern_string(name);
-                        tsz_solver::PropertyInfo {
-                            name: name_atom,
-                            type_id: *type_id,
-                            write_type: *type_id,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: tsz_solver::Visibility::Public,
-                            parent_id: None,
-                            declaration_order: 0,
-                        }
-                    })
-                    .collect();
-                let obj_type = self.ctx.types.factory().object(properties);
-                self.format_type(obj_type)
-            };
-            let normalized_target = self.normalize_jsx_required_props_target(props_type);
-            let target_type = self.format_jsx_required_props_target(normalized_target);
+        if missing_names.len() == 1 {
+            let prop_name = self.ctx.types.resolve_atom(missing_names[0]);
             let message = format!(
                 "Property '{prop_name}' is missing in type '{source_type}' but required in type '{target_type}'."
             );
@@ -165,6 +210,38 @@ impl<'a> CheckerState<'a> {
                 attributes_idx,
                 &message,
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            );
+            return;
+        }
+
+        let props_joined = missing_names
+            .iter()
+            .take(4)
+            .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        if missing_names.len() > 4 {
+            let more_count = (missing_names.len() - 4).to_string();
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                &[&source_type, &target_type, &props_joined, &more_count],
+            );
+            self.error_at_node(
+                attributes_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+            );
+        } else {
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                &[&source_type, &target_type, &props_joined],
+            );
+            self.error_at_node(
+                attributes_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
             );
         }
     }
@@ -192,26 +269,6 @@ impl<'a> CheckerState<'a> {
     ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
         let resolved_props_type = self.normalize_jsx_required_props_target(props_type);
         tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
-    }
-
-    fn format_jsx_required_props_target(&mut self, type_id: TypeId) -> String {
-        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
-            && let Some(sym_id) = shape.symbol
-            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
-        {
-            let symbol_name = symbol.escaped_name.clone();
-            let type_params = self.get_type_params_for_symbol(sym_id);
-            if !type_params.is_empty() {
-                let params = type_params
-                    .iter()
-                    .map(|param| self.ctx.types.resolve_atom(param.name).to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return format!("{symbol_name}<{params}>");
-            }
-        }
-
-        self.format_type(type_id)
     }
     /// Fallback: check `IntrinsicAttributes` when component props couldn't be extracted.
     pub(super) fn check_jsx_intrinsic_attributes_only(
@@ -263,6 +320,7 @@ impl<'a> CheckerState<'a> {
                 intrinsic_attrs_type,
                 &provided_attrs,
                 tag_name_idx,
+                None,
             );
         }
         if let Some(intrinsic_class_attrs_type) = intrinsic_class_attrs_type {
@@ -270,6 +328,7 @@ impl<'a> CheckerState<'a> {
                 intrinsic_class_attrs_type,
                 &provided_attrs,
                 tag_name_idx,
+                None,
             );
         }
     }
@@ -577,6 +636,7 @@ impl<'a> CheckerState<'a> {
         component_type: Option<TypeId>,
         raw_props_has_type_params: bool,
         display_target: String,
+        preferred_target_display: Option<&str>,
         request: &TypingRequest,
         children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
     ) {
@@ -618,6 +678,7 @@ impl<'a> CheckerState<'a> {
         let mut spread_covers_all = false;
         let mut has_excess_property_error = false;
         let mut needs_special_attr_object_assignability = false;
+        let mut has_prop_type_error = false;
 
         // TS2783: track explicit attr names for spread overwrite detection.
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
@@ -625,6 +686,9 @@ impl<'a> CheckerState<'a> {
 
         // Deferred spread entries: (spread_type, expr_idx, attr_index) for TS2322.
         let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
+        let prefer_named_missing_props_diag = preferred_target_display.is_some_and(|display| {
+            !display.is_empty() && !display.starts_with('{') && !display.contains('&')
+        });
 
         // Check each attribute
         let attr_nodes = &attrs.properties.nodes;
@@ -807,6 +871,7 @@ impl<'a> CheckerState<'a> {
                             &message,
                             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         );
+                        has_prop_type_error = true;
                     }
                     continue;
                 }
@@ -858,12 +923,14 @@ impl<'a> CheckerState<'a> {
                     }
                     // Assignability check — tsc anchors at the attribute NAME.
                     if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
-                        self.check_assignable_or_report_at(
+                        if !self.check_assignable_or_report_at(
                             actual_type,
                             expected_type,
                             value_node_idx,
                             attr_data.name,
-                        );
+                        ) {
+                            has_prop_type_error = true;
+                        }
                     }
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
@@ -1122,6 +1189,8 @@ impl<'a> CheckerState<'a> {
             && !spread_covers_all
             && !skip_prop_checks
             && !display_target.is_empty()
+            && !(prefer_named_missing_props_diag && provided_attrs.is_empty())
+            && !has_prop_type_error
             && component_type.is_some_and(|comp| {
                 tsz_solver::type_queries::get_construct_signatures(self.ctx.types, comp)
                     .is_some_and(|sigs| !sigs.is_empty())
@@ -1146,8 +1215,14 @@ impl<'a> CheckerState<'a> {
             && !has_excess_property_error
             && !spread_covers_all
             && !skip_prop_checks
+            && !has_prop_type_error
         {
-            self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
+            self.check_missing_required_jsx_props(
+                props_type,
+                &provided_attrs,
+                tag_name_idx,
+                preferred_target_display,
+            );
         }
 
         // Also check required IntrinsicAttributes.
@@ -1159,6 +1234,7 @@ impl<'a> CheckerState<'a> {
                 intrinsic_attrs_type,
                 &provided_attrs,
                 tag_name_idx,
+                None,
             );
         }
 
@@ -1172,6 +1248,7 @@ impl<'a> CheckerState<'a> {
                 intrinsic_class_attrs_type,
                 &provided_attrs,
                 tag_name_idx,
+                None,
             );
         }
     }
