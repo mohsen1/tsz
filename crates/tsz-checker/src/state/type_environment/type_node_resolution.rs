@@ -697,7 +697,22 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            let base_type = self.get_type_of_symbol(sym_id);
+            let base_type = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                let has_type_side = (symbol.flags & symbol_flags::TYPE) != 0;
+                let has_value_side = (symbol.flags & symbol_flags::VALUE) != 0;
+                if has_type_side && has_value_side {
+                    let value_type = self.type_of_value_symbol_by_name(name);
+                    if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                        value_type
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    }
+                } else {
+                    self.get_type_of_symbol(sym_id)
+                }
+            } else {
+                self.get_type_of_symbol(sym_id)
+            };
             return self.augment_js_global_value_type_with_expandos(name, sym_id, base_type);
         }
 
