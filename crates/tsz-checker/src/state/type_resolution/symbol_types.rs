@@ -278,6 +278,17 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            let current_flags = self
+                .get_cross_file_symbol(sym_id)
+                .map(|s| s.flags)
+                .unwrap_or(0);
+            if current_flags & symbol_flags::EXPORT_VALUE != 0
+                && let Some(type_id) = self.resolve_default_export_property_type_meaning(sym_id)
+            {
+                self.ctx.leave_recursion();
+                return type_id;
+            }
+
             // Fallback: resolve_alias_symbol may fail for cross-file default imports
             // when the relative module specifier doesn't match the binder's module_exports
             // keys. Use the cross-file resolution infrastructure to find the target
@@ -338,10 +349,7 @@ impl<'a> CheckerState<'a> {
             .map(|lc| std::sync::Arc::clone(&lc.binder))
             .collect();
 
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(target_sym_id, &lib_binders)?;
+        let symbol = self.get_cross_file_symbol(target_sym_id)?;
         let value_decl = symbol.value_declaration;
         if value_decl.is_none() {
             return None;
@@ -397,12 +405,29 @@ impl<'a> CheckerState<'a> {
         }
 
         // For cross-file symbols, use delegation to compute the type in the
-        // correct arena context.  Calling type_reference_symbol_type directly
-        // would use the current file's arena, causing NodeIndex collisions.
-        if file_idx.is_some()
-            && let Some(delegate_type) = self.delegate_cross_arena_interface_type(member_sym_id)
-        {
-            return Some(delegate_type);
+        // correct arena context. Calling type_reference_symbol_type directly
+        // would use the current file's arena, causing NodeIndex collisions and,
+        // for class members, can lose the instance-side type and fall back to
+        // the constructor object type.
+        if file_idx.is_some() {
+            if member_symbol.flags & symbol_flags::CLASS != 0
+                && let Some((instance_type, params)) =
+                    self.delegate_cross_arena_class_instance_type(member_sym_id)
+            {
+                let def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                if !params.is_empty() && self.ctx.get_def_type_params(def_id).is_none() {
+                    self.ctx.insert_def_type_params(def_id, params);
+                }
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(instance_type, def_id);
+                self.ctx
+                    .register_class_instance_in_envs(def_id, instance_type);
+                return Some(instance_type);
+            }
+            if let Some(delegate_type) = self.delegate_cross_arena_interface_type(member_sym_id) {
+                return Some(delegate_type);
+            }
         }
 
         Some(self.type_reference_symbol_type(member_sym_id))
