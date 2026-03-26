@@ -1022,14 +1022,14 @@ impl<'a> CheckerState<'a> {
     /// For JSON files (.json extension), emits TS2732 when `resolveJsonModule` is disabled,
     /// suggesting to enable the flag. This takes precedence over TS1192.
     ///
-    /// Note: TS1192 is suppressed when `allowSyntheticDefaultImports` or
-    /// `esModuleInterop` is enabled, as those flags allow importing modules
-    /// without explicit default exports.
+    /// Note: TS1192 is only suppressed when synthetic default imports are
+    /// enabled for CommonJS-shaped modules. Pure ESM modules still require an
+    /// explicit `default` export.
     pub(crate) fn emit_no_default_export_error(
         &mut self,
         module_specifier: &str,
         decl_node: NodeIndex,
-        is_source_file_import: bool,
+        _is_source_file_import: bool,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -1149,11 +1149,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // For non-source-file imports (.d.ts, .js, .json), allowSyntheticDefaultImports
-        // suppresses TS1192 by synthesizing a default from the namespace object.
-        // For .ts source files, TS1192 always fires — the developer controls the module
-        // and should add an explicit `export default`.
-        if !is_source_file_import && self.ctx.allow_synthetic_default_imports() {
+        if self.ctx.allow_synthetic_default_imports()
+            && self.module_can_use_synthetic_default_import(module_specifier)
+        {
             return;
         }
 
@@ -1194,9 +1192,7 @@ impl<'a> CheckerState<'a> {
         // TS1192: "Module X has no default export"
         // tsc formats the module name as the symbol name (without ./ prefix),
         // wrapped in double quotes, e.g., Module '"server"' has no default export.
-        let display_name = module_specifier
-            .strip_prefix("./")
-            .unwrap_or(module_specifier);
+        let display_name = self.imported_namespace_display_module_name(module_specifier);
         let quoted_name = format!("\"{display_name}\"");
         let message = format_message(
             diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
@@ -1208,6 +1204,46 @@ impl<'a> CheckerState<'a> {
             message,
             diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
         );
+    }
+
+    pub(crate) fn module_can_use_synthetic_default_import(
+        &mut self,
+        module_specifier: &str,
+    ) -> bool {
+        if self.module_has_export_equals(module_specifier)
+            || self.module_has_export_assignment_declaration(module_specifier)
+        {
+            return true;
+        }
+
+        if self
+            .resolve_js_export_surface_for_module(module_specifier, Some(self.ctx.current_file_idx))
+            .is_some_and(|surface| surface.has_commonjs_exports)
+        {
+            return true;
+        }
+
+        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+
+        if file_name.ends_with(".cjs") || file_name.ends_with(".cts") {
+            return true;
+        }
+        if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
+            return false;
+        }
+
+        self.ctx
+            .file_is_esm_map
+            .as_ref()
+            .and_then(|map| map.get(file_name))
+            .is_some_and(|is_esm| !*is_esm)
     }
 
     pub(crate) fn module_has_export_equals(&self, module_specifier: &str) -> bool {
