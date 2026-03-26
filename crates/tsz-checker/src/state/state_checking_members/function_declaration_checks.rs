@@ -261,6 +261,7 @@ impl<'a> CheckerState<'a> {
         if !is_closure
             && self.is_js_file()
             && let Some(ref jsdoc) = self.find_jsdoc_for_function(func_idx)
+            && !jsdoc.contains("@callback")
         {
             self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);
             self.check_jsdoc_param_function_types_missing_return_type(jsdoc, func_idx);

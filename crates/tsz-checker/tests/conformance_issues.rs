@@ -16855,6 +16855,48 @@ const send = handlers => new Promise((resolve, reject) => {
 }
 
 #[test]
+fn test_jsdoc_callback_typedef_attached_near_function_does_not_emit_ts8024() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "mod1.js",
+                r#"
+/** @callback Con - some kind of continuation
+ * @param {object | undefined} error
+ * @return {any} I don't even know what this should return
+ */
+module.exports = C
+function C() {
+    this.p = 1
+}
+"#,
+            ),
+            (
+                "use.js",
+                r#"
+/** @param {import('./mod1').Con} k */
+function f(k) {
+    return k({ ok: true })
+}
+"#,
+            ),
+        ],
+        "use.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 8024),
+        "Did not expect TS8024 for a cross-module JSDoc callback typedef comment near a function value.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_intersection_index_signature_diagnostics_preserve_declared_identifier_annotations() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
