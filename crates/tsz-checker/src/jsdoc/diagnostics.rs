@@ -911,7 +911,7 @@ impl<'a> CheckerState<'a> {
     /// TypeScript reports TS1110 at the first wrapped value line and again at the
     /// closing `}}` line for this malformed comment shape.
     pub(crate) fn check_jsdoc_unwrapped_multiline_typedefs(&mut self) {
-        use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_common::comments::is_jsdoc_comment;
 
         if self.ctx.current_file_idx != 0 {
@@ -977,22 +977,20 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(pos) = first_type_expected {
-                    self.ctx.push_diagnostic(Diagnostic::error(
-                        sf.file_name.clone(),
+                    self.error_at_position(
                         pos,
                         1,
                         diagnostic_messages::TYPE_EXPECTED,
                         diagnostic_codes::TYPE_EXPECTED,
-                    ));
+                    );
                 }
                 if let Some(pos) = closing_type_expected {
-                    self.ctx.push_diagnostic(Diagnostic::error(
-                        sf.file_name.clone(),
+                    self.error_at_position(
                         pos,
                         1,
                         diagnostic_messages::TYPE_EXPECTED,
                         diagnostic_codes::TYPE_EXPECTED,
-                    ));
+                    );
                 }
             }
         }

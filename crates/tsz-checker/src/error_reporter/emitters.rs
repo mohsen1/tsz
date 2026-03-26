@@ -119,6 +119,25 @@ impl<'a> CheckerState<'a> {
         ));
     }
 
+    /// Report an error at a specific position in a different file.
+    /// Used for cross-file diagnostics (e.g., imported global augmentation errors).
+    pub(crate) fn error_at_position_in_file(
+        &mut self,
+        file_name: String,
+        start: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+    ) {
+        self.ctx.diagnostics.push(Diagnostic::error(
+            file_name,
+            start,
+            length,
+            message.to_string(),
+            code,
+        ));
+    }
+
     /// Report TS1109: Expression expected, at a raw source position.
     ///
     /// Used when scanning JSDoc comments for `@import` tags that have empty

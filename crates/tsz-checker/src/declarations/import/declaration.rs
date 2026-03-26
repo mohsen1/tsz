@@ -170,7 +170,9 @@ impl<'a> CheckerState<'a> {
         if self.source_file_has_syntactic_module_indicator(arena, source_file) {
             return;
         }
-        let mut diagnostics = Vec::new();
+        // Collect positions first to avoid borrowing arena and self simultaneously
+        let mut error_positions: Vec<(u32, u32)> = Vec::new();
+        let file_name = source_file.file_name.clone();
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt) = arena.get(stmt_idx) else {
@@ -196,18 +198,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            diagnostics.push(Diagnostic::error(
-                source_file.file_name.clone(),
-                name_node.pos,
-                name_node.end.saturating_sub(name_node.pos),
-                diagnostic_messages::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL
-                    .to_string(),
-                diagnostic_codes::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL,
-            ));
+            error_positions.push((name_node.pos, name_node.end.saturating_sub(name_node.pos)));
         }
 
-        for diagnostic in diagnostics {
-            self.ctx.push_diagnostic(diagnostic);
+        for (start, length) in error_positions {
+            self.error_at_position_in_file(
+                file_name.clone(),
+                start,
+                length,
+                diagnostic_messages::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL,
+                diagnostic_codes::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL,
+            );
         }
     }
 
