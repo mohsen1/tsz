@@ -334,6 +334,31 @@ impl<'a> CheckerState<'a> {
             // For namespace types, override the type display to match TSC's
             // `typeof import("module")` format instead of the literal object shape.
             if let Some(module_name) = self.ctx.namespace_module_names.get(&type_id).cloned() {
+                if let Some(members) =
+                    crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+                    && let Some(display_member) = members.into_iter().find(|&member| {
+                        !self.ctx.namespace_module_names.contains_key(&member)
+                            && !self.commonjs_direct_export_supports_named_exports(member)
+                    })
+                {
+                    let type_str = self.format_type(display_member);
+                    let (code, message) = if let Some(ref suggestion) = suggestion {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                            format!(
+                                "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                            ),
+                        )
+                    } else {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                        )
+                    };
+                    self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+                    return;
+                }
+
                 // Normalize module specifier: TSC displays resolved module names
                 // without the relative path prefix (e.g., "./b" → "b").
                 let display_name = module_name.strip_prefix("./").unwrap_or(&module_name);

@@ -347,6 +347,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let allow_named_props = surface
+            .direct_export_type
+            .is_none_or(|ty| self.commonjs_direct_export_supports_named_exports(ty));
+
         // Start with the surface's typed named exports and any deep-scan names.
         let mut props = if can_merge_named_exports {
             surface.named_exports
@@ -363,18 +367,6 @@ impl<'a> CheckerState<'a> {
             if props.iter().any(|p| p.name == name_atom) {
                 continue;
             }
-            props.push(PropertyInfo {
-                name: name_atom,
-                type_id: TypeId::ANY,
-                write_type: TypeId::ANY,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: props.len() as u32,
-            });
         }
 
         let has_named_props = !props.is_empty();
@@ -973,6 +965,7 @@ impl<'a> CheckerState<'a> {
             ty,
         );
         ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
+        ty = crate::query_boundaries::common::widen_type(checker.ctx.types, ty);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
     }
@@ -2264,10 +2257,14 @@ impl<'a> CheckerState<'a> {
                     if props.iter().any(|p| p.name == name_atom) {
                         continue;
                     }
+
+                    let mut prop_type = self.get_type_of_symbol(sym_id);
+                    prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+                    let name_atom = self.ctx.types.intern_string(name);
                     props.push(PropertyInfo {
                         name: name_atom,
-                        type_id: TypeId::ANY,
-                        write_type: TypeId::ANY,
+                        type_id: prop_type,
+                        write_type: prop_type,
                         optional: false,
                         readonly: false,
                         is_method: false,
@@ -2277,7 +2274,6 @@ impl<'a> CheckerState<'a> {
                         declaration_order: props.len() as u32,
                     });
                 }
-            }
 
             let has_named_props = !props.is_empty();
             let namespace_type = has_named_props.then(|| {

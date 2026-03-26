@@ -249,10 +249,14 @@ impl JsExportSurface {
         checker: &mut CheckerState<'_>,
         display_name: Option<String>,
     ) -> Option<TypeId> {
+        let allow_named_exports = self
+            .direct_export_type
+            .is_none_or(|ty| checker.commonjs_direct_export_supports_named_exports(ty));
         let type_id = self.to_type_id(checker)?;
         // Only tag with display name if we have named exports (namespace-like).
         // A bare direct export (module.exports = X) keeps the raw type display.
         if let Some(name) = display_name
+            && allow_named_exports
             && !self.named_exports.is_empty()
             && self.direct_export_type.is_none_or(|direct_export_type| {
                 commonjs_direct_export_supports_named_props(checker.ctx.types, direct_export_type)
