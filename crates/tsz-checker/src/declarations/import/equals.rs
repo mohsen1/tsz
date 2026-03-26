@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
     /// Emits TS1380 "An import alias cannot reference a declaration that was imported using 'import type'."
     /// Emits TS1379 "An import alias cannot reference a declaration that was exported using 'export type'."
-    fn check_namespace_import(&mut self, _stmt_idx: NodeIndex, module_ref: NodeIndex) {
+    fn check_namespace_import(&mut self, stmt_idx: NodeIndex, module_ref: NodeIndex) {
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
             return;
         };
