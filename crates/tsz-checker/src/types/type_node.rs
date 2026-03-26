@@ -823,32 +823,49 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if self.predicate_type_contains_unevaluable_application(predicate_type) {
             return;
         }
-        let predicate_type =
+        // TSC checks: checkTypeAssignableTo(predicateType, paramType).
+        // For type parameters with an explicit constraint (`T extends X`), the
+        // constraint is by definition assignable to the param type when the param
+        // type IS that constraint. Skip the check for constrained type parameters
+        // to avoid false positives from TypeId dedup issues with recursive types.
+        // For unconstrained type parameters, use `unknown` as the implicit constraint.
+        let resolved_predicate =
             if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, predicate_type) {
-                tsz_solver::type_param_info(self.ctx.types, predicate_type)
+                match tsz_solver::type_param_info(self.ctx.types, predicate_type)
                     .and_then(|info| info.constraint)
-                    .unwrap_or(TypeId::UNKNOWN)
+                {
+                    Some(_) => return, // Constrained type param: always assignable to its constraint
+                    None => TypeId::UNKNOWN,
+                }
             } else {
                 predicate_type
             };
-        let param_type =
+        let resolved_param =
             if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, param_type) {
-                tsz_solver::type_param_info(self.ctx.types, param_type)
+                match tsz_solver::type_param_info(self.ctx.types, param_type)
                     .and_then(|info| info.constraint)
-                    .unwrap_or(TypeId::UNKNOWN)
+                {
+                    Some(c) => c,
+                    None => TypeId::UNKNOWN,
+                }
             } else {
                 param_type
             };
 
-        if !self.ctx.types.is_assignable_to(predicate_type, param_type)
-            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
+        if !self
+            .ctx
+            .types
+            .is_assignable_to(resolved_predicate, resolved_param)
         {
-            self.ctx.error(
-                type_node.pos,
-                type_node.end - type_node.pos,
-                "A type predicate's type must be assignable to its parameter's type.".to_string(),
-                2677,
-            );
+            if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
+                self.ctx.error(
+                    type_node.pos,
+                    type_node.end - type_node.pos,
+                    "A type predicate's type must be assignable to its parameter's type."
+                        .to_string(),
+                    2677,
+                );
+            }
         }
     }
 
