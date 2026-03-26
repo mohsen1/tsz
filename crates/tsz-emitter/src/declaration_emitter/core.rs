@@ -413,7 +413,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Take diagnostics collected during declaration emit (e.g., TS2883).
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
-        std::mem::take(&mut self.diagnostics)
+        Self::normalize_portability_diagnostics(std::mem::take(&mut self.diagnostics))
     }
 
     /// Build a map of imported `SymbolId` -> `ModuleSpecifier` for elision.
@@ -502,6 +502,82 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+    }
+
+    fn normalize_portability_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+        let mut canonical_sites = FxHashSet::default();
+        let mut exact_seen = FxHashSet::default();
+        let mut unique = Vec::new();
+
+        for diagnostic in diagnostics {
+            let exact_key = (
+                diagnostic.code,
+                diagnostic.file.clone(),
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.clone(),
+            );
+            if !exact_seen.insert(exact_key) {
+                continue;
+            }
+
+            if diagnostic.code == 2883
+                && let Some((first, second)) =
+                    Self::parse_ts2883_named_reference_message(&diagnostic.message_text)
+                && !Self::looks_like_module_path(&first)
+                && Self::looks_like_module_path(&second)
+            {
+                canonical_sites.insert((
+                    diagnostic.file.clone(),
+                    diagnostic.start,
+                    diagnostic.length,
+                ));
+            }
+
+            unique.push(diagnostic);
+        }
+
+        unique
+            .into_iter()
+            .filter(|diagnostic| {
+                if diagnostic.code != 2883 {
+                    return true;
+                }
+
+                let Some((first, second)) =
+                    Self::parse_ts2883_named_reference_message(&diagnostic.message_text)
+                else {
+                    return true;
+                };
+
+                if !Self::looks_like_module_path(&first) || Self::looks_like_module_path(&second) {
+                    return true;
+                }
+
+                !canonical_sites.contains(&(
+                    diagnostic.file.clone(),
+                    diagnostic.start,
+                    diagnostic.length,
+                ))
+            })
+            .collect()
+    }
+
+    fn parse_ts2883_named_reference_message(message: &str) -> Option<(String, String)> {
+        let prefix = "cannot be named without a reference to '";
+        let start = message.find(prefix)? + prefix.len();
+        let rest = &message[start..];
+        let (first, tail) = rest.split_once("' from '")?;
+        let (second, _) = tail.split_once('\'')?;
+        Some((first.to_string(), second.to_string()))
+    }
+
+    fn looks_like_module_path(text: &str) -> bool {
+        text.starts_with('.')
+            || text.starts_with('/')
+            || text.contains('/')
+            || text.contains('\\')
+            || text.contains("node_modules")
     }
 
     /// Collect all imported symbols from an `ImportClause`.

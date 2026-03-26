@@ -163,6 +163,7 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::ARROW_FUNCTION
                     | syntax_kind_ext::NEW_EXPRESSION
                     | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             )
         {
             self.invalidate_initializer_for_context_change(initializer_idx);

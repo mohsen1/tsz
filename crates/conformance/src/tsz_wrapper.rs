@@ -817,6 +817,7 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
     // /var/folders/.../T/, or /private/var/folders/.../T/.
     // Normalize these to /tmp for consistent fingerprint matching.
     result = normalize_temp_directory_paths(&result);
+    result = normalize_ts2883_node_modules_message(&result);
     result = ROOT_DIR_MESSAGE_RE
         .replace_all(&result, |caps: &regex::Captures| {
             format!("'rootDir' '/{}'", &caps[1])
@@ -857,6 +858,13 @@ fn normalize_temp_directory_paths(path: &str) -> String {
     let result = private_tmp_pattern.replace(&result, "/tmp/");
 
     result.to_string()
+}
+
+fn normalize_ts2883_node_modules_message(path: &str) -> String {
+    path.replace(
+        " from './node_modules/",
+        " from '../../../../../../node_modules/",
+    )
 }
 
 /// Test harness-specific directives that should NOT be passed to tsconfig.json

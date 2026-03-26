@@ -88,6 +88,71 @@ fn load_typescript_fixture(rel_path: &str) -> Option<String> {
     None
 }
 
+#[test]
+fn declaration_emit_ts2883_prefers_canonical_named_reference_message() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("src/index.ts"),
+        r#"import { SomeType } from "some-dep";
+export const foo = (thing: SomeType) => { return thing; };
+export const bar = (thing: SomeType) => { return thing.arg; };
+"#,
+    );
+    write_file(
+        &base.join("node_modules/some-dep/dist/inner.d.ts"),
+        r#"export declare type Other = { other: string };
+export declare type SomeType = { arg: Other };
+"#,
+    );
+    write_file(
+        &base.join("node_modules/some-dep/dist/index.d.ts"),
+        r#"export type OtherType = import('./inner').Other;
+export type SomeType = import('./inner').SomeType;
+"#,
+    );
+    write_file(
+        &base.join("node_modules/some-dep/package.json"),
+        r#"{
+  "name": "some-dep",
+  "exports": { ".": "./dist/index.js" }
+}"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "nodenext"
+  },
+  "files": ["src/index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    assert!(
+        messages.iter().any(|m| m.contains("reference to 'SomeType' from '../node_modules/some-dep/dist/inner'")),
+        "expected canonical SomeType TS2883, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().all(|m| !m.contains("reference to '../node_modules/some-dep/dist/inner' from 'Other'")),
+        "expected swapped TS2883 to be filtered, got: {messages:#?}"
+    );
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct SymbolSnapshot {
     flags: u32,
