@@ -181,6 +181,9 @@ impl<'a> CheckerState<'a> {
         let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut string_index_types: Vec<TypeId> = Vec::new();
         let mut number_index_types: Vec<TypeId> = Vec::new();
+        // Index signatures inherited from spread sources (kept separate because
+        // they should only be included when the literal has no explicit properties —
+        // tsc drops spread index signatures when explicit properties exist).
         let mut spread_string_index_types: Vec<TypeId> = Vec::new();
         let mut spread_number_index_types: Vec<TypeId> = Vec::new();
         let mut has_spread = false;
@@ -2160,6 +2163,27 @@ impl<'a> CheckerState<'a> {
                             spread_number_index_types.push(value_type);
                         }
 
+                        // Propagate index signatures from spread source.
+                        // When spreading an object with index signatures (e.g.,
+                        // `{ ...roindex }` where `roindex: { readonly [x: string]: number }`),
+                        // the result should inherit the index signatures (with readonly removed).
+                        // These are collected separately and only included in the final type
+                        // when the literal has no explicit (non-spread) properties, matching tsc.
+                        {
+                            use tsz_solver::IndexSignatureResolver;
+                            let resolver = IndexSignatureResolver::new(self.ctx.types);
+                            if let Some(string_index_value) =
+                                resolver.resolve_string_index(resolved_spread)
+                            {
+                                spread_string_index_types.push(string_index_value);
+                            }
+                            if let Some(number_index_value) =
+                                resolver.resolve_number_index(resolved_spread)
+                            {
+                                spread_number_index_types.push(number_index_value);
+                            }
+                        }
+
                         // TS2783: Check if any earlier named properties will be
                         // overwritten by required properties from this spread.
                         // Only when strict null checks are enabled.
@@ -2209,6 +2233,9 @@ impl<'a> CheckerState<'a> {
             // Other element types (e.g., unknown AST node kinds) are silently skipped
         }
 
+        // Merge spread-contributed index signatures only when the object literal
+        // has no explicit (non-spread) properties. In tsc, `{ ...indexedObj, b: 1 }`
+        // drops the index signature, but `{ ...indexedObj }` preserves it.
         if explicit_property_names.is_empty() {
             string_index_types.extend(spread_string_index_types);
             number_index_types.extend(spread_number_index_types);
