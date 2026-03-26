@@ -262,7 +262,7 @@ impl<'a> CheckerState<'a> {
 
         // TS1039: Initializers are not allowed in ambient contexts.
         // A class property with `declare` modifier or in a `declare class` is ambient.
-        if prop.initializer.is_some() && !self.ctx.compiler_options.no_types_and_symbols {
+        if prop.initializer.is_some() {
             let has_declare = self.has_declare_modifier(&prop.modifiers);
             let in_declared_class = self
                 .ctx
