@@ -656,7 +656,9 @@ impl<'a> CheckerState<'a> {
             // check_merged_class_interface_declaration_diagnostics.
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
-                .filter(|(_, flags, is_local, _, _)| *is_local && (flags & symbol_flags::INTERFACE) != 0)
+                .filter(|(_, flags, is_local, _, _)| {
+                    *is_local && (flags & symbol_flags::INTERFACE) != 0
+                })
                 .map(|(decl_idx, _, _, _, _)| *decl_idx)
                 .collect();
             if interface_decls.len() > 1 {

@@ -808,9 +808,8 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             // For classes, use class_instance_type_with_params_from_symbol which
             // returns both the instance type AND the type params used to build it
-            let prefer_interface_type_position =
-                symbol.flags & symbol_flags::CLASS != 0
-                    && symbol.flags & symbol_flags::INTERFACE != 0;
+            let prefer_interface_type_position = symbol.flags & symbol_flags::CLASS != 0
+                && symbol.flags & symbol_flags::INTERFACE != 0;
 
             if symbol.flags & symbol_flags::CLASS != 0
                 && !prefer_interface_type_position

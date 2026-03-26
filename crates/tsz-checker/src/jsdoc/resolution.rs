@@ -284,8 +284,7 @@ impl<'a> CheckerState<'a> {
         }
         if !type_expr.starts_with('[')
             && type_expr.ends_with(']')
-            && let Some((base_str, index_str)) =
-                Self::parse_jsdoc_index_access_segments(type_expr)
+            && let Some((base_str, index_str)) = Self::parse_jsdoc_index_access_segments(type_expr)
         {
             let base_type = self.resolve_jsdoc_type_str(base_str)?;
             let index_type = self.resolve_jsdoc_type_str(index_str)?;

@@ -781,24 +781,29 @@ impl<'a> CheckerState<'a> {
                     PropertyAccessResult::Success { type_id, .. } => {
                         Some(self.strip_implicit_jsx_children_from_props_fallback(type_id))
                     }
-                    _ => first_param_type.and_then(|param_type| {
-                        let param_type = self.evaluate_type_with_env(param_type);
-                        (param_type != TypeId::ANY
-                            && param_type != TypeId::ERROR
-                            && param_type != TypeId::STRING
-                            && param_type != TypeId::NUMBER)
-                            .then_some(param_type)
-                    }).or_else(|| {
-                        let has_managed_props_metadata = matches!(
-                            self.resolve_property_access_with_env(component_type, "defaultProps"),
-                            PropertyAccessResult::Success { .. }
-                        ) || matches!(
-                            self.resolve_property_access_with_env(component_type, "propTypes"),
-                            PropertyAccessResult::Success { .. }
-                        );
-                        has_managed_props_metadata
-                            .then(|| self.ctx.types.factory().object(vec![]))
-                    }),
+                    _ => first_param_type
+                        .and_then(|param_type| {
+                            let param_type = self.evaluate_type_with_env(param_type);
+                            (param_type != TypeId::ANY
+                                && param_type != TypeId::ERROR
+                                && param_type != TypeId::STRING
+                                && param_type != TypeId::NUMBER)
+                                .then_some(param_type)
+                        })
+                        .or_else(|| {
+                            let has_managed_props_metadata = matches!(
+                                self.resolve_property_access_with_env(
+                                    component_type,
+                                    "defaultProps"
+                                ),
+                                PropertyAccessResult::Success { .. }
+                            ) || matches!(
+                                self.resolve_property_access_with_env(component_type, "propTypes"),
+                                PropertyAccessResult::Success { .. }
+                            );
+                            has_managed_props_metadata
+                                .then(|| self.ctx.types.factory().object(vec![]))
+                        }),
                 }
             }
             Some(ref name) if name.is_empty() => {
@@ -853,7 +858,8 @@ impl<'a> CheckerState<'a> {
 
     fn strip_implicit_jsx_children_from_props_fallback(&mut self, props_type: TypeId) -> TypeId {
         let props_type = self.normalize_jsx_required_props_target(props_type);
-        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type) {
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+        {
             let filtered_props: Vec<_> = shape
                 .properties
                 .iter()

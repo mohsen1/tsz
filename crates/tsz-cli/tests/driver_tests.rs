@@ -543,9 +543,9 @@ createInstance(MenuWorkbenchToolBar, {
 
 #[test]
 fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
-    let Some(mut source) =
-        load_typescript_fixture("TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx")
-    else {
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx",
+    ) else {
         return;
     };
     let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
@@ -555,10 +555,7 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
-    source = source.replace(
-        "\"/.lib/react16.d.ts\"",
-        "\"./.lib/react16.d.ts\"",
-    );
+    source = source.replace("\"/.lib/react16.d.ts\"", "\"./.lib/react16.d.ts\"");
 
     write_file(&base.join("test.tsx"), &source);
     write_file(&base.join(".lib/react16.d.ts"), &react16);

@@ -1519,9 +1519,9 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;
     };
-    let Some(source) =
-        load_typescript_fixture("TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx")
-    else {
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx",
+    ) else {
         return;
     };
 

@@ -523,10 +523,8 @@ impl<'a> CheckerState<'a> {
                     let Some(name) = self.get_property_name(prop.name) else {
                         return false;
                     };
-                    let ty = self.collect_jsx_union_resolution_attr_value_type(
-                        prop.initializer,
-                        true,
-                    );
+                    let ty =
+                        self.collect_jsx_union_resolution_attr_value_type(prop.initializer, true);
                     provided.push((name, ty));
                 }
                 syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
@@ -536,8 +534,7 @@ impl<'a> CheckerState<'a> {
                     let Some(name) = self.get_property_name(prop.name) else {
                         return false;
                     };
-                    let ty =
-                        self.collect_jsx_union_resolution_attr_value_type(prop.name, true);
+                    let ty = self.collect_jsx_union_resolution_attr_value_type(prop.name, true);
                     provided.push((name, ty));
                 }
                 syntax_kind_ext::METHOD_DECLARATION
@@ -559,8 +556,7 @@ impl<'a> CheckerState<'a> {
                     let Some(name) = name else {
                         return false;
                     };
-                    let ty =
-                        self.collect_jsx_union_resolution_attr_value_type(elem_idx, true);
+                    let ty = self.collect_jsx_union_resolution_attr_value_type(elem_idx, true);
                     provided.push((name, ty));
                 }
                 syntax_kind_ext::SPREAD_ASSIGNMENT | syntax_kind_ext::SPREAD_ELEMENT => {
@@ -1084,12 +1080,10 @@ impl<'a> CheckerState<'a> {
                     let expected_context_type = self.evaluate_application_type(expected_type);
                     let expected_context_type =
                         self.resolve_type_for_property_access(expected_context_type);
-                    let expected_context_type =
-                        self.resolve_lazy_type(expected_context_type);
+                    let expected_context_type = self.resolve_lazy_type(expected_context_type);
                     let expected_context_type =
                         self.evaluate_application_type(expected_context_type);
-                    let expected_context_type =
-                        self.evaluate_type_with_env(expected_context_type);
+                    let expected_context_type = self.evaluate_type_with_env(expected_context_type);
                     let contextual_expected_type =
                         if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
                             node.kind == syntax_kind_ext::ARROW_FUNCTION

@@ -11,11 +11,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn mapped_constraint_accepts_property_name(
-        &self,
-        constraint: TypeId,
-        prop_name: &str,
-    ) -> bool {
+    fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
         use crate::query_boundaries::{assignability, common, property_access};
 
         if assignability::is_any_type(self.ctx.types, constraint)
@@ -24,21 +20,18 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let is_numeric_name =
-            tsz_solver::utils::canonicalize_numeric_name(prop_name).is_some();
+        let is_numeric_name = tsz_solver::utils::canonicalize_numeric_name(prop_name).is_some();
         if is_numeric_name && property_access::is_number_type(self.ctx.types, constraint) {
             return true;
         }
 
-        common::union_members(self.ctx.types, constraint)
-            .is_some_and(|members| {
-                members.into_iter().any(|member| {
-                    assignability::is_any_type(self.ctx.types, member)
-                        || query::is_string_type(self.ctx.types, member)
-                        || (is_numeric_name
-                            && property_access::is_number_type(self.ctx.types, member))
-                })
+        common::union_members(self.ctx.types, constraint).is_some_and(|members| {
+            members.into_iter().any(|member| {
+                assignability::is_any_type(self.ctx.types, member)
+                    || query::is_string_type(self.ctx.types, member)
+                    || (is_numeric_name && property_access::is_number_type(self.ctx.types, member))
             })
+        })
     }
 
     pub(crate) fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
