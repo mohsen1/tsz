@@ -12,6 +12,7 @@ use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emitter::{NewLineKind, Printer};
 use tsz::parallel::MergedProgram;
 use tsz_common::common::ModuleKind;
+use tsz_common::diagnostics::Diagnostic;
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputFile {
@@ -361,7 +362,7 @@ pub(crate) fn emit_outputs(
                 }
 
                 let mut contents = emitter.emit(file.source_file);
-                emit_diagnostics.extend(emitter.take_diagnostics());
+                emit_diagnostics.extend(normalize_ts2883_diagnostics(emitter.take_diagnostics()));
                 let map_json = map_info
                     .as_ref()
                     .and_then(|_| emitter.generate_source_map_json());
@@ -440,6 +441,72 @@ pub(crate) fn emit_outputs(
     }
 
     Ok((outputs, emit_diagnostics))
+}
+
+fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let mut canonical_sites = FxHashSet::default();
+    let mut exact_seen = FxHashSet::default();
+    let mut unique = Vec::new();
+
+    for diagnostic in diagnostics {
+        let exact_key = (
+            diagnostic.code,
+            diagnostic.file.clone(),
+            diagnostic.start,
+            diagnostic.length,
+            diagnostic.message_text.clone(),
+        );
+        if !exact_seen.insert(exact_key) {
+            continue;
+        }
+
+        if diagnostic.code == 2883
+            && let Some((first, second)) = parse_ts2883_named_reference_message(&diagnostic.message_text)
+            && !looks_like_module_path(&first)
+            && looks_like_module_path(&second)
+        {
+            canonical_sites.insert((diagnostic.file.clone(), diagnostic.start, diagnostic.length));
+        }
+
+        unique.push(diagnostic);
+    }
+
+    unique
+        .into_iter()
+        .filter(|diagnostic| {
+            if diagnostic.code != 2883 {
+                return true;
+            }
+
+            let Some((first, second)) = parse_ts2883_named_reference_message(&diagnostic.message_text)
+            else {
+                return true;
+            };
+
+            if !looks_like_module_path(&first) || looks_like_module_path(&second) {
+                return true;
+            }
+
+            !canonical_sites.contains(&(diagnostic.file.clone(), diagnostic.start, diagnostic.length))
+        })
+        .collect()
+}
+
+fn parse_ts2883_named_reference_message(message: &str) -> Option<(String, String)> {
+    let prefix = "cannot be named without a reference to '";
+    let start = message.find(prefix)? + prefix.len();
+    let rest = &message[start..];
+    let (first, tail) = rest.split_once("' from '")?;
+    let (second, _) = tail.split_once('\'')?;
+    Some((first.to_string(), second.to_string()))
+}
+
+fn looks_like_module_path(text: &str) -> bool {
+    text.starts_with('.')
+        || text.starts_with('/')
+        || text.contains('/')
+        || text.contains('\\')
+        || text.contains("node_modules")
 }
 
 fn map_output_info(output_path: &Path) -> Option<(PathBuf, String, String)> {

@@ -165,7 +165,6 @@ impl<'a> CheckerState<'a> {
         } else {
             self.explicit_object_literal_property_names_for_spread(idx)
         };
-
         // Non-fresh object literals should be exempt from excess-property checks
         // unless they use spread, in which case we still check explicit properties.
         if !is_fresh_source && explicit_property_names.is_none() {
@@ -176,7 +175,6 @@ impl<'a> CheckerState<'a> {
         let Some(source_shape) = query::object_shape(self.ctx.types, source) else {
             return;
         };
-
         let source_props = source_shape.properties.as_slice();
         let effective_target = self.normalized_target_for_excess_properties(target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
@@ -625,21 +623,20 @@ impl<'a> CheckerState<'a> {
                                 })
                             })
                     })
-                    .flatten();
+                    .flatten()
+                    .filter(|&type_id| type_id != TypeId::ANY);
 
                 // Use boundary classification for the excess-property decision,
                 // but honor property-resolution fallbacks for contextual targets
                 // whose structural shape has not materialized the accessible keys yet.
-                // When the dynamic resolution returns `any`, it typically means the
-                // property was resolved through a fallback (e.g., type environment)
-                // rather than being a real named property. Trust the boundary
-                // classification in that case.
-                let is_excess = (dynamic_target_prop_type.is_none()
-                    || dynamic_target_prop_type == Some(tsz_solver::TypeId::ANY))
-                    && classification
-                        .as_ref()
-                        .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
-
+                let boundary_marks_excess = classification
+                    .as_ref()
+                    .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
+                let boundary_excess_is_authoritative = classification
+                    .as_ref()
+                    .is_some_and(|cls| cls.trimmed_source_assignable);
+                let is_excess = boundary_marks_excess
+                    && (boundary_excess_is_authoritative || dynamic_target_prop_type.is_none());
                 if is_excess {
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)

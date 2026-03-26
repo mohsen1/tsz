@@ -227,6 +227,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
                 if let Some(et) = expected_type {
                     let request = crate::context::TypingRequest::with_contextual_type(et);
+                    self.invalidate_expression_for_contextual_retry(clause_idx);
                     let actual_type = self.get_type_of_node_with_request(clause_idx, &request);
                     self.check_assignable_or_report(actual_type, et, clause_idx);
                     if let Some(expr_node) = self.ctx.arena.get(clause_idx)

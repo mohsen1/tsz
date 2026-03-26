@@ -84,6 +84,14 @@ impl<'a> CheckerState<'a> {
             // TS1359: Check for await expressions outside async function
             self.check_await_expression(return_data.expression);
 
+            let contextual_expected_type = if expected_type != TypeId::ANY
+                && expected_type != TypeId::UNKNOWN
+                && !self.type_contains_error(expected_type)
+            {
+                self.contextual_type_for_expression(expected_type)
+            } else {
+                expected_type
+            };
             let should_contextualize =
                 self.ctx
                     .arena
@@ -92,14 +100,14 @@ impl<'a> CheckerState<'a> {
                         expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
                     });
             let request = if should_contextualize
-                && expected_type != TypeId::ANY
-                && !self.type_contains_error(expected_type)
+                && contextual_expected_type != TypeId::ANY
+                && !self.type_contains_error(contextual_expected_type)
             {
                 let use_async_promise_union_context = self.ctx.in_async_context()
-                    && expected_type != TypeId::UNKNOWN
-                    && expected_type != TypeId::NEVER
-                    && !tsz_solver::is_union_type(self.ctx.types, expected_type)
-                    && !self.is_promise_type(expected_type)
+                    && contextual_expected_type != TypeId::UNKNOWN
+                    && contextual_expected_type != TypeId::NEVER
+                    && !tsz_solver::is_union_type(self.ctx.types, contextual_expected_type)
+                    && !self.is_promise_type(contextual_expected_type)
                     && self
                         .ctx
                         .arena
@@ -120,15 +128,15 @@ impl<'a> CheckerState<'a> {
                 // If expected_type is already a union or Promise-like, the transformation
                 // would create nonsensical nested types.
                 let ctx_type = if use_async_promise_union_context {
-                    let promise_like_t = self.get_promise_like_type(expected_type);
-                    let promise_t = self.get_promise_type(expected_type);
-                    let mut members = vec![expected_type, promise_like_t];
+                    let promise_like_t = self.get_promise_like_type(contextual_expected_type);
+                    let promise_t = self.get_promise_type(contextual_expected_type);
+                    let mut members = vec![contextual_expected_type, promise_like_t];
                     if let Some(pt) = promise_t {
                         members.push(pt);
                     }
                     self.ctx.types.factory().union(members)
                 } else {
-                    expected_type
+                    contextual_expected_type
                 };
                 // Targeted invalidation: the return expression will be re-evaluated
                 // with a non-empty request (contextual return type), which bypasses
