@@ -19370,3 +19370,36 @@ wasAbstract.mixinMethod();
         "Should NOT emit TS2314 for the mixinAbstractClasses shape. Got: {ts2314:?}. All: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_exported_arrow_function_expando_assignment_no_false_ts2339() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+export interface Point {
+    readonly x: number;
+    readonly y: number;
+}
+
+export interface Rect<p extends Point> {
+    readonly a: p;
+    readonly b: p;
+}
+
+export const Point = (x: number, y: number): Point => ({ x, y });
+export const Rect = <p extends Point>(a: p, b: p): Rect<p> => ({ a, b });
+
+Point.zero = (): Point => Point(0, 0);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            emit_declarations: true,
+            ..Default::default()
+        },
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected exported arrow-function expando assignment to avoid TS2339. Got: {ts2339:?}. All: {diagnostics:?}"
+    );
+}
