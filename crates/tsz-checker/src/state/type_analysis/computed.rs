@@ -2030,9 +2030,10 @@ impl<'a> CheckerState<'a> {
                             return (TypeId::ERROR, Vec::new());
                         }
 
-                        // For default imports without a default export:
-                        // If allowSyntheticDefaultImports is enabled, return namespace type
-                        if self.ctx.allow_synthetic_default_imports() {
+                        // For default imports without a default export, only
+                        // synthesize a namespace fallback for CommonJS-shaped
+                        // modules. Pure ESM modules must still report TS1192.
+                        if self.module_can_use_synthetic_default_import(module_name) {
                             // Same circular module guard as namespace imports above
                             if self
                                 .ctx
@@ -2068,13 +2069,16 @@ impl<'a> CheckerState<'a> {
                                     });
                                 }
                                 let module_type = factory.object(props);
+                                self.ctx.namespace_module_names.insert(
+                                    module_type,
+                                    self.imported_namespace_display_module_name(module_name),
+                                );
                                 self.ctx.module_namespace_resolution_set.remove(module_name);
                                 return (module_type, Vec::new());
                             }
                             self.ctx.module_namespace_resolution_set.remove(module_name);
                         }
-                        // TS1192: Module '{0}' has no default export.
-                        self.emit_no_default_export_error(module_name, value_decl, false);
+                        return (TypeId::ERROR, Vec::new());
                     } else {
                         // TS2305/TS2614: Module has no exported member.
                         // Before emitting, try a type-level resolution for `export =`

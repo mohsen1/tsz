@@ -473,6 +473,11 @@ impl<'a> CheckerState<'a> {
 
             let factory = self.ctx.types.factory();
             let module_type = factory.object(props);
+            let display_module_name =
+                self.resolve_namespace_display_module_name(&exports_table, module_name);
+            self.ctx
+                .namespace_module_names
+                .insert(module_type, display_module_name);
             return self.create_promise_of(module_type);
         }
 

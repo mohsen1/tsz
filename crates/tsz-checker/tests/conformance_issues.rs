@@ -18465,3 +18465,85 @@ m1.setonlyAccessor = 0;
         "Expected rwAccessors setter writes to be checked against the getter's number type. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_esm_declaration_module_without_default_still_reports_ts1192() {
+    let files = [
+        (
+            "/mod.d.ts",
+            r#"
+export function toString(): string;
+"#,
+        ),
+        (
+            "/index.ts",
+            r#"
+import mdast, { toString } from "./mod";
+mdast;
+mdast.toString();
+"#,
+        ),
+    ];
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new(name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == "/index.ts")
+        .expect("entry file should exist");
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            module: ModuleKind::ESNext,
+            allow_synthetic_default_imports: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(roots[entry_idx]);
+
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 1192 && message.contains("\"mod\"")),
+        "Expected pure ESM declaration modules without a default export to keep TS1192 even with allowSyntheticDefaultImports. Got: {diagnostics:#?}"
+    );
+}
