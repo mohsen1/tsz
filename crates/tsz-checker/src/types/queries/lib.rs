@@ -949,6 +949,8 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(symbol.escaped_name.as_str())
                         .to_string();
 
+                    let import_module = symbol.import_module.clone();
+
                     let direct_member_id = symbol
                         .exports
                         .as_ref()
@@ -976,7 +978,7 @@ impl<'a> CheckerState<'a> {
                         module_name,
                         direct_member_id,
                         module_export_member_id,
-                        symbol.import_module.clone(),
+                        import_module,
                     )
                 };
 

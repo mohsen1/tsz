@@ -17457,9 +17457,7 @@ class D extends A {}
         "Expected two TS2314 diagnostics for malformed @augments tags. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2314
-            .iter()
-            .all(|(_, message)| message.contains("A<T>")),
+        ts2314.iter().all(|(_, message)| message.contains("A<T>")),
         "Expected TS2314 messages to preserve the generic display name. Actual diagnostics: {diagnostics:#?}"
     );
     assert_eq!(
@@ -18819,5 +18817,32 @@ mdast.toString();
             .iter()
             .any(|(code, message)| *code == 1192 && message.contains("\"mod\"")),
         "Expected pure ESM declaration modules without a default export to keep TS1192 even with allowSyntheticDefaultImports. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2344_concrete_type_ref_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface A {
+    a: number;
+}
+
+interface B {
+    b: string;
+}
+
+interface C<T extends A> {
+    x: T;
+}
+
+declare var v1: C<A>;
+declare var v2: C<B>;
+        ",
+    );
+    let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
+    assert_eq!(
+        ts2344_count, 1,
+        "Should emit exactly 1 TS2344 for C<B>. Actual: {diagnostics:?}"
     );
 }
