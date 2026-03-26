@@ -18931,6 +18931,62 @@ foo = new Foo();
 }
 
 #[test]
+fn test_jsdoc_template_function_unused_type_param_emits_ts6133() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+// @target: es2015
+// @allowJs: true
+// @checkJs: true
+// @noEmit: true
+// @noUnusedParameters:true
+
+/** @template T */
+function f() {}
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, msg)| {
+            *code == 6133 && msg.contains("'T' is declared but its value is never read.")
+        }),
+        "Expected TS6133 for unused JSDoc template T. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_template_function_param_type_counts_as_usage() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+// @target: es2015
+// @allowJs: true
+// @checkJs: true
+// @noEmit: true
+// @noUnusedParameters:true
+
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+function f(value) {
+    return value;
+}
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 6133 && msg.contains("'T'")),
+        "Expected no TS6133 when JSDoc template T is used in param/return tags. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_define_property_prototype_descriptor_setter_is_contextualized() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "mod1.js",
