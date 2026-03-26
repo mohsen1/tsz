@@ -249,7 +249,7 @@ impl<'a> CheckerState<'a> {
         self.raw_block_body_callback_mismatch(args, expected_for_index)
     }
 
-    fn collect_non_callback_diagnostics_between(
+    pub(crate) fn collect_non_callback_diagnostics_between(
         &self,
         args: &[NodeIndex],
         from_snap: &crate::context::speculation::DiagnosticSnapshot,
@@ -286,7 +286,7 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    fn preserved_speculative_call_diagnostics(
+    pub(crate) fn preserved_speculative_call_diagnostics(
         &self,
         snap: &crate::context::speculation::DiagnosticSnapshot,
     ) -> Vec<crate::diagnostics::Diagnostic> {
@@ -298,7 +298,7 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    fn extend_unique_diagnostics(
+    pub(crate) fn extend_unique_diagnostics(
         &self,
         dest: &mut Vec<crate::diagnostics::Diagnostic>,
         source: impl IntoIterator<Item = crate::diagnostics::Diagnostic>,
@@ -860,7 +860,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypingRequest::NONE
             };
-
             let arg_snap = self.ctx.snapshot_diagnostics();
             let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
 
@@ -1551,10 +1550,22 @@ impl<'a> CheckerState<'a> {
                 && !contextual_refresh_args.is_empty()
                 && let Some(instantiated_params) = instantiated_params.as_ref()
             {
+                let candidate_first_pass_end = self.ctx.snapshot_diagnostics();
+                let preserved_candidate_arg_diags = self.collect_non_callback_diagnostics_between(
+                    args,
+                    &candidate_snap,
+                    &candidate_first_pass_end,
+                );
                 self.ctx
                     .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                         Self::should_preserve_speculative_call_diagnostic(diag)
                     });
+                if !preserved_candidate_arg_diags.is_empty() {
+                    let mut merged = self.preserved_speculative_call_diagnostics(&candidate_snap);
+                    self.extend_unique_diagnostics(&mut merged, preserved_candidate_arg_diags);
+                    self.ctx
+                        .rollback_and_replace_diagnostics(&candidate_snap, merged);
+                }
                 self.ctx.restore_ts2454_state(&candidate_ts2454_errors);
                 self.ctx.node_types = Default::default();
                 refresh_all_args(self);

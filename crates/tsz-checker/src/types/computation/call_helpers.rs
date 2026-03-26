@@ -1,9 +1,7 @@
 //! Value declaration resolution, TDZ checking, and identifier type computation helpers.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::checkers::call::{
-    expanded_this_type_from_application, is_type_parameter_type,
-};
+use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
@@ -11,7 +9,7 @@ use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::TypeId;
 
 use super::call_inference::should_preserve_contextual_application_shape;
 
@@ -1285,7 +1283,7 @@ impl<'a> CheckerState<'a> {
         result: CallResult,
         sanitized_generic_inference: bool,
         needs_real_type_recheck: bool,
-        shape_this_type: Option<TypeId>,
+        _shape_this_type: Option<TypeId>,
     ) -> (CallResult, bool) {
         if let Some(instantiated_params) = generic_instantiated_params {
             self.propagate_generic_constructor_display_defs(
@@ -1301,13 +1299,6 @@ impl<'a> CheckerState<'a> {
                 instantiated_params,
                 arg_types.len(),
             );
-            let recheck_this_type = self.extract_this_type_from_params(instantiated_params);
-            let recheck_pushed_this = if let Some(tt) = recheck_this_type.or(shape_this_type) {
-                self.ctx.this_type_stack.push(tt);
-                true
-            } else {
-                false
-            };
             let result = if sanitized_generic_inference || needs_real_type_recheck {
                 self.recheck_generic_call_arguments_with_real_types(
                     result,
@@ -1318,9 +1309,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 result
             };
-            if recheck_pushed_this {
-                self.ctx.this_type_stack.pop();
-            }
             let recovered_mismatch = matches!(
                 &result,
                 CallResult::ArgumentTypeMismatch {
@@ -1489,34 +1477,6 @@ impl<'a> CheckerState<'a> {
         };
 
         (result, allow_contextual_mismatch_deferral)
-    }
-
-    pub(crate) fn extract_this_type_from_params(
-        &self,
-        params: &[tsz_solver::ParamInfo],
-    ) -> Option<TypeId> {
-        for param in params {
-            let ctx_helper = ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                param.type_id,
-                self.ctx.compiler_options.no_implicit_any,
-            );
-            if let Some(tt) = ctx_helper.get_this_type_from_marker() {
-                return Some(tt);
-            }
-            {
-                let env = self.ctx.type_env.borrow();
-                if let Some(tt) = expanded_this_type_from_application(
-                    self.ctx.types,
-                    &env,
-                    param.type_id,
-                    self.ctx.compiler_options.no_implicit_any,
-                ) {
-                    return Some(tt);
-                }
-            }
-        }
-        None
     }
 
     pub(crate) fn try_emit_ts2339_for_missing_this_property(
