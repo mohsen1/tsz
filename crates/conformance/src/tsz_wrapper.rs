@@ -271,20 +271,14 @@ pub fn prepare_test_dir(
     } else {
         None
     };
-    // Seed all top-level TypeScript and JavaScript entry extensions.
-    // Multi-file conformance tests often declare sibling `.mjs`/`.cjs`/`.mts`/`.cts`
-    // roots that are not imported by any other file, so they must be discoverable
-    // through `include`, not just import-following.
-    let include = if allow_js || check_js {
-        serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
-            "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-        ])
-    } else {
-        serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
-        ])
-    };
+    // Match TSC's default include patterns exactly. TSC always includes
+    // *.ts, *.tsx, *.js, *.jsx — it does NOT include .cts/.mts/.cjs/.mjs.
+    // Those files are discovered through import-following from .ts entry
+    // points. Tests with only .cts/.mts files (no .ts imports) get TS18003
+    // from TSC, which we must match.
+    let include = serde_json::json!([
+        "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+    ]);
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
