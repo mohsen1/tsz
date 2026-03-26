@@ -632,7 +632,12 @@ impl<'a> CheckerState<'a> {
                 // Use boundary classification for the excess-property decision,
                 // but honor property-resolution fallbacks for contextual targets
                 // whose structural shape has not materialized the accessible keys yet.
-                let is_excess = dynamic_target_prop_type.is_none()
+                // When the dynamic resolution returns `any`, it typically means the
+                // property was resolved through a fallback (e.g., type environment)
+                // rather than being a real named property. Trust the boundary
+                // classification in that case.
+                let is_excess = (dynamic_target_prop_type.is_none()
+                    || dynamic_target_prop_type == Some(tsz_solver::TypeId::ANY))
                     && classification
                         .as_ref()
                         .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
