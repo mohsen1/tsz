@@ -1129,10 +1129,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if this is a JSON file import without resolveJsonModule enabled
-        // TS2732 takes precedence over TS1192 for JSON files
+        // Check if this is a JSON file import.
+        // - Without resolveJsonModule: TS2732 takes precedence over TS1192.
+        // - With resolveJsonModule: JSON modules always have a default export
+        //   (the parsed JSON content), so TS1192 must be suppressed.
         // IMPORTANT: This check must come BEFORE report_unresolved_imports guard
-        // because TS2732 should be emitted even in single-file mode
+        // because TS2732 should be emitted even in single-file mode.
+        if module_specifier.ends_with(".json") && self.ctx.compiler_options.resolve_json_module {
+            return;
+        }
         if module_specifier.ends_with(".json") && !self.ctx.compiler_options.resolve_json_module {
             // Get span from declaration node
             let (start, length) = if decl_node.is_some() {
