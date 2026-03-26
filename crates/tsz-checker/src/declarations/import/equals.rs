@@ -881,9 +881,11 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if left_is_namespace {
-                    if !left_has_value && !self.is_ambient_declaration(stmt_idx) {
-                        self.error_namespace_used_as_value_at(&name, qn.left);
-                    }
+                    // NOTE: Do NOT emit TS2708 here. Import-equals declarations
+                    // (`import x = Namespace.Member`) are designed to alias qualified
+                    // names and work with any namespace, including uninstantiated
+                    // (type-only) ones. TSC does not emit TS2708 in this context.
+
                     // If left is resolved, check if right member exists (TS2694)
                     // Use the existing report_type_query_missing_member which handles this correctly
                     self.report_type_query_missing_member(module_ref);
