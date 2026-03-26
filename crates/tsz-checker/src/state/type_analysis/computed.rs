@@ -87,7 +87,10 @@ impl<'a> CheckerState<'a> {
                 self.resolve_export_value_wrapper_target_symbol(value_decl, &escaped_name)
             && target_sym_id != sym_id
         {
-            return (self.get_type_of_symbol(target_sym_id), Vec::new());
+            let target_type = self
+                .merged_value_type_for_symbol_if_available(target_sym_id)
+                .unwrap_or_else(|| self.get_type_of_symbol(target_sym_id));
+            return (target_type, Vec::new());
         }
         if flags & symbol_flags::EXPORT_VALUE != 0
             && flags & symbol_flags::ALIAS != 0
@@ -1957,7 +1960,14 @@ impl<'a> CheckerState<'a> {
                         self.record_cross_file_symbol_if_needed(alias_id, export_name, module_name);
                         let mut result = self.get_type_of_symbol(alias_id);
                         result = self.apply_module_augmentations(module_name, export_name, result);
-                        self.ctx.symbol_types.insert(export_sym_id, result);
+                        let should_cache_on_export_symbol =
+                            self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
+                                (sym.flags & symbol_flags::TYPE) == 0
+                                    || (sym.flags & symbol_flags::VALUE) == 0
+                            });
+                        if should_cache_on_export_symbol {
+                            self.ctx.symbol_types.insert(export_sym_id, result);
+                        }
                         return (result, Vec::new());
                     }
 
@@ -1989,7 +1999,14 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_symbol(export_sym_id)
                     };
                     result = self.apply_module_augmentations(module_name, export_name, result);
-                    self.ctx.symbol_types.insert(export_sym_id, result);
+                    let should_cache_on_export_symbol =
+                        self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
+                            (sym.flags & symbol_flags::TYPE) == 0
+                                || (sym.flags & symbol_flags::VALUE) == 0
+                        });
+                    if should_cache_on_export_symbol {
+                        self.ctx.symbol_types.insert(export_sym_id, result);
+                    }
                     return (result, Vec::new());
                 }
 

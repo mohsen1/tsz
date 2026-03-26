@@ -647,6 +647,45 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 }
 
 #[test]
+fn compile_default_import_of_merged_interface_and_const_export_is_callable() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"import MyFunction from "./MyComponent";
+
+MyFunction({msg: "Hello World"});
+"#,
+    );
+    write_file(
+        &base.join("MyComponent.ts"),
+        r#"interface MyFunction { msg: string; }
+
+export const MyFunction = ({ msg }: MyFunction) => console.log(msg);
+export default MyFunction;
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.target = Some(crate::args::Target::EsNext);
+    args.module = Some(crate::args::Module::EsNext);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected default import of merged interface+const export to keep callable value type, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_mapped_type_generic_indexed_access_preserves_context() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

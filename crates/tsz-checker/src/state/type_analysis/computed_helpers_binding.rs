@@ -9,6 +9,24 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn merged_value_type_for_symbol_if_available(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let symbol = self.get_symbol_globally(sym_id)?;
+        let has_interface = symbol.flags & symbol_flags::INTERFACE != 0;
+        let has_variable = symbol.flags
+            & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
+            != 0;
+        if !has_interface || !has_variable || symbol.value_declaration.is_none() {
+            return None;
+        }
+
+        let value_type =
+            self.type_of_value_declaration_for_symbol(sym_id, symbol.value_declaration);
+        (!matches!(value_type, TypeId::UNKNOWN | TypeId::ERROR)).then_some(value_type)
+    }
+
     pub(crate) fn imported_namespace_display_module_name(&self, module_name: &str) -> String {
         let resolved_name = self
             .ctx
@@ -618,6 +636,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(ident) = self.ctx.arena.get_identifier(clause_node) {
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(&ident.escaped_text) {
+                return Some(sym_id);
+            }
+
+            if ident.escaped_text != escaped_name
+                && let Some(sym_id) = self.ctx.binder.file_locals.get(&ident.escaped_text)
+            {
+                return Some(sym_id);
+            }
+        }
+
         self.ctx.binder.node_symbols.get(&clause_idx.0).copied()
     }
 
@@ -827,7 +857,10 @@ impl<'a> CheckerState<'a> {
             && let Some(local_sym_id) = self.ctx.binder.file_locals.get(&local_name)
             && local_sym_id != sym_id
         {
-            return Some(self.get_type_of_symbol(local_sym_id));
+            return Some(
+                self.merged_value_type_for_symbol_if_available(local_sym_id)
+                    .unwrap_or_else(|| self.get_type_of_symbol(local_sym_id)),
+            );
         }
 
         let node = self.ctx.arena.get(value_decl)?;
@@ -840,7 +873,10 @@ impl<'a> CheckerState<'a> {
                 .get(&exported_ident.escaped_text)
             && local_sym_id != sym_id
         {
-            return Some(self.get_type_of_symbol(local_sym_id));
+            return Some(
+                self.merged_value_type_for_symbol_if_available(local_sym_id)
+                    .unwrap_or_else(|| self.get_type_of_symbol(local_sym_id)),
+            );
         }
 
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
