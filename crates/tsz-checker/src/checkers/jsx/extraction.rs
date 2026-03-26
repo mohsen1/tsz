@@ -133,6 +133,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    // JSX Component Props Extraction
     /// Extract props type from a JSX component (SFC: first param of call sig;
     /// class: construct sig return -> `JSX.ElementAttributesProperty` member).
     /// Returns `(props_type, raw_has_type_params)` where `raw_has_type_params`
