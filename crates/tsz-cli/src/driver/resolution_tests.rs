@@ -148,6 +148,91 @@ fn test_exports_runtime_targets_substitute_matching_declaration_sidecars() {
 }
 
 #[test]
+fn test_exports_directory_key_does_not_expose_arbitrary_subpaths() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_directory_key");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/inner")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/inner/package.json"),
+        r#"{
+            "name":"inner",
+            "type":"module",
+            "exports":{
+                "./":"./"
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/other.d.ts"),
+        "export interface Thing {}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/index.d.ts"),
+        "export const x: number;\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { Thing } from 'inner/other';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner/other",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved, None,
+        "a bare './' exports entry should not expose arbitrary package subpaths"
+    );
+
+    let resolved_index = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner/index.js",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(
+        resolved_index,
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/inner/index.d.ts"),
+        )),
+        "a bare './' exports entry should still expose explicit file-like subpaths"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_package_root_types_js_is_ignored_for_module_resolution() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_driver_resolution_package_types_js_ignored");
@@ -313,8 +398,8 @@ fn test_collect_module_specifiers_require_has_correct_kind() {
     let specifiers = collect_module_specifiers(&arena, source_file);
     let requires: Vec<_> = specifiers
         .iter()
-        .filter(|(_, _, kind)| *kind == ImportKind::CjsRequire)
-        .map(|(s, _, _)| s.as_str())
+        .filter(|(_, _, kind, _)| *kind == ImportKind::CjsRequire)
+        .map(|(s, _, _, _)| s.as_str())
         .collect();
     assert!(
         requires.contains(&"./data.json"),
@@ -333,7 +418,7 @@ fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
     let specifiers = collect_module_specifiers(&arena, source_file);
     let dynamic_imports: Vec<_> = specifiers
         .iter()
-        .filter(|(_, _, kind)| *kind == ImportKind::DynamicImport)
+        .filter(|(_, _, kind, _)| *kind == ImportKind::DynamicImport)
         .collect();
     assert_eq!(
         dynamic_imports.len(),
@@ -359,8 +444,8 @@ export { bar } from "./re-export";
 
     let static_imports: Vec<_> = specifiers
         .iter()
-        .filter(|(_, _, kind)| *kind == ImportKind::EsmImport)
-        .map(|(s, _, _)| s.as_str())
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmImport)
+        .map(|(s, _, _, _)| s.as_str())
         .collect();
     assert!(
         static_imports.contains(&"./static-import"),
@@ -369,8 +454,8 @@ export { bar } from "./re-export";
 
     let dynamic_imports: Vec<_> = specifiers
         .iter()
-        .filter(|(_, _, kind)| *kind == ImportKind::DynamicImport)
-        .map(|(s, _, _)| s.as_str())
+        .filter(|(_, _, kind, _)| *kind == ImportKind::DynamicImport)
+        .map(|(s, _, _, _)| s.as_str())
         .collect();
     assert!(
         dynamic_imports.contains(&"./dynamic-import"),
@@ -379,12 +464,55 @@ export { bar } from "./re-export";
 
     let re_exports: Vec<_> = specifiers
         .iter()
-        .filter(|(_, _, kind)| *kind == ImportKind::EsmReExport)
-        .map(|(s, _, _)| s.as_str())
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmReExport)
+        .map(|(s, _, _, _)| s.as_str())
         .collect();
     assert!(
         re_exports.contains(&"./re-export"),
         "Should find re-export, got: {re_exports:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_extracts_resolution_mode_override() {
+    use tsz::module_resolver::ImportingModuleKind;
+
+    let text = r#"import type { Foo } from "pkg" with { "resolution-mode": "import" };"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    assert_eq!(
+        specifiers.len(),
+        1,
+        "Expected exactly one import: {specifiers:?}"
+    );
+    assert_eq!(specifiers[0].0, "pkg");
+    assert_eq!(specifiers[0].3, Some(ImportingModuleKind::Esm));
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_import_type_dependencies() {
+    use tsz::module_resolver::ImportKind;
+
+    let text = r#"export type SomeType = import("./inner").SomeType;"#;
+    let file_name = "index.d.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    let import_types: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmImport)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+
+    assert!(
+        import_types.contains(&"./inner"),
+        "Should find import type dependency './inner', got: {specifiers:?}"
     );
 }
 
@@ -847,6 +975,210 @@ fn test_exports_versioned_types_condition_resolves() {
     assert!(
         resolved_path.ends_with("new-types.d.ts"),
         "should resolve to new-types.d.ts (types@>=1), got: {resolved_path:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_self_name_resolution_remaps_declaration_output_to_source() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_self_name_outdir");
+    let package_dir = dir.join("pkg");
+    let src_dir = package_dir.join("src");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&src_dir).unwrap();
+
+    fs::write(
+        package_dir.join("package.json"),
+        r#"{
+            "name":"@this/package",
+            "type":"module",
+            "exports": {
+                ".": {
+                    "default": "./dist/index.js",
+                    "types": "./types/index.d.ts"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("index.ts"),
+        "import * as me from '@this/package';\nme;\n",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_exports: true,
+        root_dir: Some(src_dir.clone()),
+        out_dir: Some(package_dir.join("dist")),
+        declaration_dir: Some(package_dir.join("types")),
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &src_dir.join("index.ts"),
+        "@this/package",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(&src_dir.join("index.ts"))),
+        "self-name package exports should remap output targets back to the source file"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_self_name_resolution_remaps_virtual_absolute_output_paths() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_self_name_virtual_abs");
+    let package_dir = dir.join("pkg");
+    let src_dir = package_dir.join("src");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&src_dir).unwrap();
+
+    fs::write(
+        package_dir.join("package.json"),
+        r#"{
+            "name":"@this/package",
+            "type":"module",
+            "exports": {
+                ".": {
+                    "default": "./dist/index.js",
+                    "types": "./types/index.d.ts"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("index.ts"),
+        "import * as me from '@this/package';\nme;\n",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_exports: true,
+        root_dir: Some(PathBuf::from("/pkg/src")),
+        out_dir: Some(PathBuf::from("/pkg/dist")),
+        declaration_dir: Some(PathBuf::from("/pkg/types")),
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &src_dir.join("index.ts"),
+        "@this/package",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(&src_dir.join("index.ts"))),
+        "virtual absolute rootDir/outDir/declarationDir should remap export targets back to source files"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_self_name_resolution_remaps_virtual_absolute_output_paths_from_package_root() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_self_name_virtual_abs_pkg_root");
+    let package_dir = dir.join("pkg");
+    let src_dir = package_dir.join("src");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&src_dir).unwrap();
+
+    fs::write(
+        package_dir.join("package.json"),
+        r#"{
+            "name":"@this/package",
+            "type":"module",
+            "exports": {
+                ".": {
+                    "default": "./dist/index.js",
+                    "types": "./types/index.d.ts"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("index.ts"),
+        "import * as me from '@this/package';\nme;\n",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_exports: true,
+        root_dir: Some(PathBuf::from("/pkg/src")),
+        out_dir: Some(PathBuf::from("/pkg/dist")),
+        declaration_dir: Some(PathBuf::from("/pkg/types")),
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &src_dir.join("index.ts"),
+        "@this/package",
+        &options,
+        &package_dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(&src_dir.join("index.ts"))),
+        "virtual absolute self-name remap should work when the project base dir is the package root"
     );
 
     let _ = fs::remove_dir_all(&dir);

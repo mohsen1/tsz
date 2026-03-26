@@ -598,13 +598,14 @@ pub(super) fn collect_diagnostics(
 
     // Cache module specifiers per file — collected once, reused in prepare_binders
     // and check_file_for_parallel to avoid 3× redundant AST traversals.
-    let mut cached_module_specifiers: Vec<
-        Vec<(
-            String,
-            tsz::parser::NodeIndex,
-            tsz::module_resolver::ImportKind,
-        )>,
-    > = Vec::with_capacity(program.files.len());
+    type CachedModuleSpecifier = (
+        String,
+        tsz::parser::NodeIndex,
+        tsz::module_resolver::ImportKind,
+        Option<tsz::module_resolver::ImportingModuleKind>,
+    );
+    let mut cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>> =
+        Vec::with_capacity(program.files.len());
 
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
@@ -612,7 +613,9 @@ pub(super) fn collect_diagnostics(
             cached_module_specifiers.push(collect_module_specifiers(&file.arena, file.source_file));
             let file_path = Path::new(&file.file_name);
 
-            for (specifier, specifier_node, import_kind) in &cached_module_specifiers[file_idx] {
+            for (specifier, specifier_node, import_kind, resolution_mode_override) in
+                &cached_module_specifiers[file_idx]
+            {
                 let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
                     Span::new(spec_node.pos, spec_node.end)
                 } else {
@@ -624,6 +627,7 @@ pub(super) fn collect_diagnostics(
                     containing_file: file_path,
                     specifier_span: span,
                     import_kind: *import_kind,
+                    resolution_mode_override: *resolution_mode_override,
                     no_implicit_any: options.checker.no_implicit_any,
                     implied_classic_resolution: options.checker.implied_classic_resolution,
                 };
@@ -855,7 +859,7 @@ pub(super) fn collect_diagnostics(
                     // Bridge raw module specifiers to resolved export tables using
                     // the pre-computed resolved_module_paths map (no FS calls needed).
                     // Uses cached specifiers from build_resolved_module_maps.
-                    for (specifier, _, _) in &cached_module_specifiers[file_idx] {
+                    for (specifier, _, _, _) in &cached_module_specifiers[file_idx] {
                         if let Some(&target_idx) =
                             resolved_module_paths.get(&(file_idx, specifier.clone()))
                         {
@@ -1024,7 +1028,7 @@ pub(super) fn collect_diagnostics(
             let module_specifiers = &cached_module_specifiers[file_idx];
 
             // Bridge multi-file module resolution for ES module imports.
-            for (specifier, _, _) in module_specifiers {
+            for (specifier, _, _, _) in module_specifiers {
                 if let Some(resolved) = resolve_module_specifier(
                     Path::new(&file.file_name),
                     specifier,
@@ -2173,7 +2177,7 @@ let __: B = new B();"#
         resolved_module_paths.insert((1, "./a".to_string()), 0);
 
         let module_specifiers = collect_module_specifiers(&d_bound.arena, d_bound.source_file);
-        for (specifier, _, _) in &module_specifiers {
+        for (specifier, _, _, _) in &module_specifiers {
             if let Some(&target_idx) = resolved_module_paths.get(&(d_idx, specifier.clone())) {
                 propagate_module_export_maps(
                     &mut binder,

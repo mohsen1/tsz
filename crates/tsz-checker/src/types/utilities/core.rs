@@ -121,9 +121,8 @@ impl<'a> CheckerState<'a> {
                 .source_files
                 .first()
                 .map(|sf| sf.file_name.as_str())
-                && let Some((sym_id, _)) = self
-                    .ctx
-                    .binder
+                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+                && let Some((sym_id, _)) = target_binder
                     .resolve_import_with_reexports_type_only(target_file_name, member_name)
             {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);

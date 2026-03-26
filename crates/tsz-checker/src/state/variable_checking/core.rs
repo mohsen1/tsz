@@ -693,6 +693,9 @@ impl<'a> CheckerState<'a> {
                             }
                             let func = checker.ctx.arena.get_function(init_node)?;
                             let body_node = checker.ctx.arena.get(func.body)?;
+                            if body_node.kind == syntax_kind_ext::BLOCK {
+                                return Some(false);
+                            }
                             Some(
                                 checker.ctx.diagnostics[init_snap.diagnostics_len..]
                                     .iter()
@@ -772,6 +775,15 @@ impl<'a> CheckerState<'a> {
                                 if elaborated_elements {
                                     // Elaboration emitted per-element TS2322 errors on the specific
                                     // mismatching array/tuple elements. Skip the generic TS2322.
+                                } else if initializer_is_function
+                                    && !checker.is_assignable_to(checked_init_type, declared_type)
+                                    && checker.try_elaborate_assignment_source_error(
+                                        var_decl.initializer,
+                                        declared_type,
+                                    )
+                                {
+                                    // Function initializer return elaboration emitted the canonical
+                                    // nested TS2322 for a mismatching returned literal/expression.
                                 } else if function_initializer_body_has_error {
                                     // The function initializer already produced the canonical body
                                     // diagnostic (for example on an expression-bodied arrow). Skip

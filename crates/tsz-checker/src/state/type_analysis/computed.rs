@@ -818,9 +818,21 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let (mut alias_type, params) = if has_cross_arena_metadata {
-                    let result = self.lower_cross_arena_type_alias_declaration(
+                    let mut result = self.lower_cross_arena_type_alias_declaration(
                         sym_id, decl_idx, decl_arena, type_alias,
                     );
+                    if (result.0 == TypeId::ANY
+                        || result.0 == TypeId::UNKNOWN
+                        || result.0 == TypeId::ERROR)
+                        && let Some(resolved) = self
+                            .resolve_cross_arena_type_alias_body_with_checker(
+                                decl_arena, sym_id, type_alias,
+                            )
+                        && resolved != TypeId::UNKNOWN
+                        && resolved != TypeId::ERROR
+                    {
+                        result.0 = resolved;
+                    }
                     // When a same-file type alias has cross-arena metadata but the
                     // declaration is in the current arena, resolve TypeQuery references
                     // with flow narrowing. Push type parameters into scope first so
@@ -1846,9 +1858,8 @@ impl<'a> CheckerState<'a> {
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
-                        let preserve_namespace_display =
-                            !(module_is_non_module_entity
-                                && self.ctx.allow_synthetic_default_imports());
+                        let preserve_namespace_display = !(module_is_non_module_entity
+                            && self.ctx.allow_synthetic_default_imports());
                         if preserve_namespace_display {
                             self.ctx.namespace_module_names.insert(
                                 namespace_type,

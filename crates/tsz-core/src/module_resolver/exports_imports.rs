@@ -103,10 +103,7 @@ impl ModuleResolver {
     }
 
     pub(super) fn is_invalid_package_import_specifier(specifier: &str) -> bool {
-        // `#` alone is invalid, but `#/` prefixed specifiers are allowed when
-        // the package.json imports field contains a matching wildcard pattern
-        // (e.g., `"#/*": "./src/*"`). TypeScript resolves these successfully.
-        specifier == "#"
+        specifier == "#" || specifier.starts_with("#/")
     }
 
     /// Resolve an export/import value to a string path

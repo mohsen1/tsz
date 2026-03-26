@@ -4,7 +4,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 
 use super::resolution::{
-    canonicalize_or_owned, implied_resolution_mode_for_file, is_declaration_file,
+    canonicalize_or_owned, canonicalize_with_missing_tail, implied_resolution_mode_for_file,
+    is_declaration_file,
 };
 use crate::config::{JsxEmit, ResolvedCompilerOptions};
 use tsz::declaration_emitter::DeclarationEmitter;
@@ -736,9 +737,9 @@ fn is_windows_absolute_like(path: &Path) -> bool {
 pub(crate) fn normalize_output_dir(base_dir: &Path, dir: Option<PathBuf>) -> Option<PathBuf> {
     dir.map(|dir| {
         if dir.is_absolute() {
-            dir
+            canonicalize_with_missing_tail(&dir)
         } else {
-            base_dir.join(dir)
+            canonicalize_with_missing_tail(&base_dir.join(dir))
         }
     })
 }

@@ -1355,7 +1355,7 @@ impl<'a> CheckerState<'a> {
                 for (export_name, sym_id) in exports.iter() {
                     if let Some(sym) = binder.symbols.get(*sym_id) {
                         let decl_arena = if sym.decl_file_idx == u32::MAX {
-                            &self.ctx.arena
+                            self.ctx.arena
                         } else {
                             self.ctx.get_arena_for_file(sym.decl_file_idx)
                         };
@@ -1380,7 +1380,7 @@ impl<'a> CheckerState<'a> {
             for (export_name, sym_id) in exports.iter() {
                 if let Some(sym) = binder.symbols.get(*sym_id) {
                     let decl_arena = if sym.decl_file_idx == u32::MAX {
-                        &self.ctx.arena
+                        self.ctx.arena
                     } else {
                         self.ctx.get_arena_for_file(sym.decl_file_idx)
                     };
@@ -1522,8 +1522,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if arena.get_named_imports(clause_node).is_none() {
-                if self.declaration_name_matches_string(arena, export_decl.export_clause, import_name)
-                {
+                if self.declaration_name_matches_string(
+                    arena,
+                    export_decl.export_clause,
+                    import_name,
+                ) {
                     direct_export = true;
                 }
                 continue;

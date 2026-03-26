@@ -28,6 +28,11 @@ pub struct ModuleLookupRequest<'a> {
     pub specifier_span: Span,
     /// Import syntax kind (ESM import, dynamic import, CJS require, re-export)
     pub import_kind: ImportKind,
+    /// Optional explicit resolution mode override from import attributes.
+    ///
+    /// When present, this should take precedence over the importing file's
+    /// implied ESM/CJS mode for conditional exports/imports resolution.
+    pub resolution_mode_override: Option<ImportingModuleKind>,
     /// Whether `--noImplicitAny` is enabled (affects TS7016 emission)
     pub no_implicit_any: bool,
     /// Whether classic resolution is implied (for TS2792 vs TS2307)

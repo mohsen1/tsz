@@ -1041,9 +1041,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_type_query_value_symbol_for_emit(&self, expr_name: NodeIndex) -> Option<SymbolId> {
-        let Some(node) = self.ctx.arena.get(expr_name) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(expr_name)?;
 
         if node.kind == SyntaxKind::Identifier as u16 {
             return self.resolve_identifier_symbol_without_tracking(expr_name);
@@ -1053,19 +1051,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(qualified) = self.ctx.arena.get_qualified_name(node) else {
-            return None;
-        };
-        let Some(left_sym_id) = self.resolve_type_query_value_symbol_for_emit(qualified.left)
-        else {
-            return None;
-        };
-        let Some(right_name) = self.ctx.arena.get_identifier_text(qualified.right) else {
-            return None;
-        };
-        let Some(left_symbol) = self.get_symbol_from_any_binder(left_sym_id) else {
-            return None;
-        };
+        let qualified = self.ctx.arena.get_qualified_name(node)?;
+        let left_sym_id = self.resolve_type_query_value_symbol_for_emit(qualified.left)?;
+        let right_name = self.ctx.arena.get_identifier_text(qualified.right)?;
+        let left_symbol = self.get_symbol_from_any_binder(left_sym_id)?;
 
         left_symbol.exports.as_ref().and_then(|exports| {
             exports.iter().find_map(|(name, sym_id)| {
@@ -1225,13 +1214,9 @@ impl<'a> CheckerState<'a> {
             .resolve_alias_symbol(sym_id, &mut Vec::new())
             .unwrap_or(sym_id);
 
-        let Some(symbol) = self.get_symbol_from_any_binder(resolved_sym_id) else {
-            return None;
-        };
+        let symbol = self.get_symbol_from_any_binder(resolved_sym_id)?;
         let type_name = symbol.escaped_name.clone();
-        let Some(source_path) = self.symbol_source_path(resolved_sym_id) else {
-            return None;
-        };
+        let source_path = self.symbol_source_path(resolved_sym_id)?;
 
         let components: Vec<_> = Path::new(&source_path).components().collect();
         let nm_positions: Vec<usize> = components

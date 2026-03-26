@@ -1942,9 +1942,11 @@ mod tests {
             ("__virtual__/a.ts", "export default class { }"),
             ("__virtual__/b.ts", "export { default } from \"./a\";"),
         ]);
-        let mut options = ResolvedCompilerOptions::default();
-        options.import_helpers = true;
-        options.es_module_interop = true;
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            es_module_interop: true,
+            ..Default::default()
+        };
         options.checker.target = tsz_common::ScriptTarget::ES2017;
 
         let diagnostics = detect_missing_tslib_helper_diagnostics(
@@ -1986,8 +1988,10 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
 "#,
             ),
         ]);
-        let mut options = ResolvedCompilerOptions::default();
-        options.import_helpers = true;
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
         options.checker.target = tsz_common::ScriptTarget::ES2015;
 
         let diagnostics = detect_missing_tslib_helper_diagnostics(
@@ -2038,8 +2042,10 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
 "#,
             ),
         ]);
-        let mut options = ResolvedCompilerOptions::default();
-        options.import_helpers = true;
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
         options.checker.target = tsz_common::ScriptTarget::ES2015;
 
         let diagnostics = detect_missing_tslib_helper_diagnostics(

@@ -24,6 +24,8 @@ pub struct CompilationResult {
 pub struct PreparedTest {
     /// Temp directory containing test files and tsconfig.json
     pub temp_dir: tempfile::TempDir,
+    /// Project directory passed to tsc/tsz via `-p` and used as cwd.
+    pub project_dir: std::path::PathBuf,
 }
 
 #[allow(dead_code)]
@@ -95,12 +97,14 @@ pub fn prepare_test_dir(
     // Parse @symlink associations from raw content
     // Format: @filename: /path/to/file followed by @symlink: /link1,/link2
     let symlink_map = parse_symlink_associations(content);
+    let link_map = parse_link_associations(content);
 
     // Detect if any filename uses absolute (virtual root) paths
     // Includes both Unix-style (/foo) and Windows-style (A:/foo) absolute paths
     let has_absolute_filenames = filenames
         .iter()
         .any(|(name, _)| name.starts_with('/') || is_windows_absolute_path(name));
+    let project_dir = determine_project_dir(dir_path, filenames);
 
     // Check if ALL filenames are Windows-style absolute paths (e.g., A:/foo/bar.ts).
     // These represent paths on a separate drive root that cannot exist on Unix.
@@ -198,6 +202,32 @@ pub fn prepare_test_dir(
         }
     }
 
+    // Create path aliases from @link directives. Unlike @symlink metadata, these
+    // need real symlink behavior because package-resolution tests depend on the
+    // link path being preserved separately from the target's real path.
+    for (target_path, link_path) in &link_map {
+        let sanitized_link = link_path
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .to_string();
+        let link_path = dir_path.join(&sanitized_link);
+        let sanitized_target = target_path
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .to_string();
+        let target_path = dir_path.join(&sanitized_target);
+
+        if !target_path.exists() {
+            continue;
+        }
+        if let Some(parent) = link_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let _ = std::fs::remove_file(&link_path);
+        let _ = std::fs::remove_dir(&link_path);
+        create_symlink_path(&target_path, &link_path)?;
+    }
+
     // skipLibCheck: when .lib/ files were copied into the tmpdir (via /.lib/ references),
     // enable skipLibCheck to avoid expensive type-checking of declaration files that tsc
     // never even resolves (tsc emits TS6053 "file not found" for /.lib/ paths).
@@ -209,7 +239,10 @@ pub fn prepare_test_dir(
         || options.contains_key("skipDefaultLibCheck")
         || options.contains_key("skipdefaultlibcheck");
 
-    let tsconfig_path = dir_path.join("tsconfig.json");
+    let tsconfig_path = project_dir.join("tsconfig.json");
+    if let Some(parent) = tsconfig_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
@@ -237,32 +270,70 @@ pub fn prepare_test_dir(
     } else {
         None
     };
-    // Match the cache generator's include patterns exactly.
-    // The tsc cache always uses .ts/.tsx/.js/.jsx (no .cts/.mts/.mjs/.cjs).
-    // Note: tsc discovers .mts/.cts/.mjs/.cjs files via import resolution
-    // (following imports), not via include patterns. Our source discovery
-    // (driver/sources.rs) handles this through import-following.
-    let include = serde_json::json!([
-        "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
-    ]);
+    // Seed all top-level TypeScript and JavaScript entry extensions.
+    // Multi-file conformance tests often declare sibling `.mjs`/`.cjs`/`.mts`/`.cts`
+    // roots that are not imported by any other file, so they must be discoverable
+    // through `include`, not just import-following.
+    let include = if allow_js || check_js {
+        serde_json::json!([
+            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
+            "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+        ])
+    } else {
+        serde_json::json!([
+            "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
+        ])
+    };
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
             // TypeScript 6.0+ defaults all strict-family flags to true.
             // No synthetic non-strict baseline is needed; the compiler
             // handles these defaults correctly via resolve_bool.
-            // Remap virtual absolute typeRoots paths to real tmpdir paths.
-            // Tests use `/types` as a virtual FS root; files are written at
-            // `<tmpdir>/types/...`, so typeRoots must point there.
+            // Remap virtual absolute compiler-option paths to real tmpdir paths.
+            // Tests use `/...` paths in a virtual FS rooted at the harness cwd;
+            // our wrapper writes those files under `<tmpdir>/...`, so options
+            // that point at absolute virtual paths need the same translation.
             if has_absolute_filenames {
+                for key in [
+                    "baseUrl",
+                    "declarationDir",
+                    "mapRoot",
+                    "outDir",
+                    "rootDir",
+                    "sourceRoot",
+                ] {
+                    if let Some(value) = map.get_mut(key) {
+                        if let serde_json::Value::String(value) = value {
+                            if value.starts_with('/') {
+                                *value = dir_path
+                                    .join(value.trim_start_matches('/'))
+                                    .to_string_lossy()
+                                    .into_owned();
+                            }
+                        }
+                    }
+                }
+                if let Some(serde_json::Value::Array(ref mut roots)) = map.get_mut("rootDirs") {
+                    for root in roots.iter_mut() {
+                        if let serde_json::Value::String(s) = root {
+                            if s.starts_with('/') {
+                                *s = dir_path
+                                    .join(s.trim_start_matches('/'))
+                                    .to_string_lossy()
+                                    .into_owned();
+                            }
+                        }
+                    }
+                }
                 if let Some(serde_json::Value::Array(ref mut roots)) = map.get_mut("typeRoots") {
                     for root in roots.iter_mut() {
-                        if let serde_json::Value::String(ref s) = root.clone() {
+                        if let serde_json::Value::String(s) = root {
                             if s.starts_with('/') {
-                                let real_path = dir_path.join(s.trim_start_matches('/'));
-                                *root = serde_json::Value::String(
-                                    real_path.to_string_lossy().into_owned(),
-                                );
+                                *s = dir_path
+                                    .join(s.trim_start_matches('/'))
+                                    .to_string_lossy()
+                                    .into_owned();
                             }
                         }
                     }
@@ -349,7 +420,10 @@ pub fn prepare_test_dir(
         }
     }
 
-    Ok(PreparedTest { temp_dir })
+    Ok(PreparedTest {
+        temp_dir,
+        project_dir,
+    })
 }
 
 /// Prepare a test directory from raw (non-UTF8) bytes.
@@ -375,10 +449,24 @@ pub fn prepare_binary_test_dir(
         .is_some_and(|value| value == "false");
 
     if !has_tsconfig_file {
-        // Match the cache generator's include patterns exactly.
-        let include = serde_json::json!([
-            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
-        ]);
+        let allow_js = options
+            .get("allowJs")
+            .or_else(|| options.get("allowjs"))
+            .is_some_and(|value| value == "true")
+            || options
+                .get("checkJs")
+                .or_else(|| options.get("checkjs"))
+                .is_some_and(|value| value == "true");
+        let include = if allow_js {
+            serde_json::json!([
+                "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
+                "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+            ])
+        } else {
+            serde_json::json!([
+                "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
+            ])
+        };
 
         let compiler_options = convert_options_to_tsconfig(options, &[]);
 
@@ -393,7 +481,53 @@ pub fn prepare_binary_test_dir(
         )?;
     }
 
-    Ok(PreparedTest { temp_dir })
+    Ok(PreparedTest {
+        project_dir: dir_path.to_path_buf(),
+        temp_dir,
+    })
+}
+
+fn determine_project_dir(dir_path: &Path, filenames: &[(String, String)]) -> std::path::PathBuf {
+    let mut top_level_dir: Option<String> = None;
+    let mut saw_package_json = false;
+
+    for (name, _) in filenames {
+        let normalized = name.replace('\\', "/");
+        if !normalized.starts_with('/') {
+            continue;
+        }
+
+        let trimmed = normalized.trim_start_matches('/');
+        let mut parts = trimmed.split('/');
+        let Some(first) = parts.next() else {
+            continue;
+        };
+        let Some(second) = parts.next() else {
+            continue;
+        };
+
+        if first == "node_modules" {
+            continue;
+        }
+
+        match &top_level_dir {
+            Some(existing) if existing != first => return dir_path.to_path_buf(),
+            None => top_level_dir = Some(first.to_string()),
+            _ => {}
+        }
+
+        if second == "package.json" {
+            saw_package_json = true;
+        }
+    }
+
+    if saw_package_json {
+        if let Some(top_level_dir) = top_level_dir {
+            return dir_path.join(top_level_dir);
+        }
+    }
+
+    dir_path.to_path_buf()
 }
 
 /// Parse tsz process output into a CompilationResult.
@@ -625,6 +759,12 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
 /// `/private/var/.../lib.ts` in the error message. We strip the project root prefix
 /// so the message stores portable relative paths (e.g., `File 'lib.ts' not found.`).
 fn normalize_message_paths(message: &str, project_root: &Path) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static ROOT_DIR_MESSAGE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"'rootDir' '([^/][^']*)'").expect("valid rootDir message regex"));
+
     if message.starts_with("Cannot find a tsconfig.json file at the specified directory:") {
         return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
     }
@@ -676,6 +816,11 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
     // /var/folders/.../T/, or /private/var/folders/.../T/.
     // Normalize these to /tmp for consistent fingerprint matching.
     result = normalize_temp_directory_paths(&result);
+    result = ROOT_DIR_MESSAGE_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            format!("'rootDir' '/{}'", &caps[1])
+        })
+        .into_owned();
 
     result
 }
@@ -1211,6 +1356,52 @@ fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
     result
 }
 
+/// Parse standalone `@link: source -> destination` directives from raw test
+/// content. TypeScript's harness treats these as symlinks rooted at the
+/// destination path that point at the source path.
+fn parse_link_associations(content: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed
+            .strip_prefix("// @link:")
+            .or_else(|| trimmed.strip_prefix("// @Link:"))
+            .or_else(|| trimmed.strip_prefix("//@link:"))
+            .or_else(|| trimmed.strip_prefix("//@Link:"))
+        else {
+            continue;
+        };
+        let Some((target, link)) = rest.split_once("->") else {
+            continue;
+        };
+        let target = target.trim();
+        let link = link.trim();
+        if target.is_empty() || link.is_empty() {
+            continue;
+        }
+        result.push((target.to_string(), link.to_string()));
+    }
+
+    result
+}
+
+fn create_symlink_path(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    {
+        if target.is_dir() {
+            std::os::windows::fs::symlink_dir(target, link)
+        } else {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+    }
+}
+
 /// Strip @ directive comments from test file content
 /// Removes lines like `// @strict: true` from the code
 pub fn strip_directive_comments(content: &str) -> String {
@@ -1299,6 +1490,7 @@ fn rewrite_bare_specifiers(
     // Build a map of available file basenames (without extension) to their directories.
     let mut available_files: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
     let mut declared_modules = std::collections::HashSet::new();
+    let mut package_names_by_dir: HashMap<std::path::PathBuf, String> = HashMap::new();
     static DECLARE_MODULE_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r#"declare\s+module\s+['"]([^'"]+)['"]"#).unwrap());
     for (filename, _) in filenames {
@@ -1330,11 +1522,28 @@ fn rewrite_bare_specifiers(
             .or_default()
             .push(parent);
     }
-    for (_, content) in filenames {
+    for (filename, content) in filenames {
         for cap in DECLARE_MODULE_RE.captures_iter(content) {
             declared_modules.insert(cap[1].to_string());
         }
+        if filename.replace('\\', "/").ends_with("package.json") {
+            if let Ok(package_json) = serde_json::from_str::<serde_json::Value>(content) {
+                if let Some(name) = package_json.get("name").and_then(serde_json::Value::as_str) {
+                    let package_dir = std::path::Path::new(&filename.replace('\\', "/"))
+                        .parent()
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_default();
+                    package_names_by_dir.insert(package_dir, name.to_string());
+                }
+            }
+        }
     }
+
+    let nearest_package_name = current_dir.ancestors().find_map(|ancestor| {
+        package_names_by_dir
+            .get(ancestor)
+            .map(std::string::String::as_str)
+    });
 
     // Match: from "module" or from 'module'
     // Captures: (from )(quote)(module)(quote)
@@ -1364,6 +1573,9 @@ fn rewrite_bare_specifiers(
 
         // Check if this matches one of our test files (with or without extension)
         if declared_modules.contains(specifier) {
+            return false;
+        }
+        if nearest_package_name == Some(specifier) {
             return false;
         }
         let candidates = [

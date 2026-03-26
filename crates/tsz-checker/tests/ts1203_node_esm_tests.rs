@@ -9,6 +9,17 @@ use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
 
 fn get_codes(source: &str, module: ModuleKind, file_is_esm: Option<bool>) -> Vec<u32> {
+    get_diagnostics(source, module, file_is_esm)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
+fn get_diagnostics(
+    source: &str,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let options = CheckerOptions {
         module,
         ..CheckerOptions::default()
@@ -34,7 +45,7 @@ fn get_codes(source: &str, module: ModuleKind, file_is_esm: Option<bool>) -> Vec
     checker.ctx.file_is_esm = file_is_esm;
     checker.check_source_file(root);
 
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    checker.ctx.diagnostics.clone()
 }
 
 const EXPORT_ASSIGNMENT_SRC: &str = "const a = {}; export = a;";
@@ -92,5 +103,22 @@ fn ts1203_still_emitted_for_esnext() {
     assert!(
         codes.contains(&1203),
         "TS1203 should fire for ESNext module, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_assignment_identifier_does_not_emit_ts2686_for_umd_definition_site() {
+    let source = r#"
+declare namespace React {
+    export interface Node {}
+}
+export = React;
+export as namespace React;
+"#;
+
+    let diagnostics = get_diagnostics(source, ModuleKind::CommonJS, None);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2686),
+        "TS2686 should not fire on `export = React` in the defining UMD file, got: {diagnostics:?}"
     );
 }
