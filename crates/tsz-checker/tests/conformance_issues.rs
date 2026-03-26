@@ -7332,10 +7332,6 @@ const obj: {field: Rule} = {
         },
     ));
 
-    if diagnostics.is_empty() {
-        return;
-    }
-
     assert!(
         has_error(&diagnostics, 7006),
         "Expected TS7006 when optional callback property comes from a primitive-containing union.\nActual diagnostics: {diagnostics:#?}"
@@ -15780,6 +15776,10 @@ async function* f(): AsyncGenerator<"NOT_FOUND_AUTHOR" | "NOT_FOUND_BOOK", BookW
             .iter()
             .any(|(code, _)| matches!(*code, 2504 | 2769)),
         "Optional callback unions should preserve contextual signatures for generic mappers.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "Delegated `yield* await promise.then(mapper)` should not over-constrain the generic mapper callback.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

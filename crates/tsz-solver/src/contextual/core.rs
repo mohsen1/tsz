@@ -455,6 +455,17 @@ impl<'a> ContextualTypeContext<'a> {
                 .filter_map(|&m| {
                     let ctx = ContextualTypeContext::with_expected(self.interner, m);
                     ctx.get_parameter_type_for_call(index, arg_count)
+                        .or_else(|| {
+                            let evaluated =
+                                crate::evaluation::evaluate::evaluate_type(self.interner, m);
+                            if evaluated != m {
+                                let evaluated_ctx =
+                                    ContextualTypeContext::with_expected(self.interner, evaluated);
+                                evaluated_ctx.get_parameter_type_for_call(index, arg_count)
+                            } else {
+                                None
+                            }
+                        })
                 })
                 .collect();
 
@@ -477,6 +488,12 @@ impl<'a> ContextualTypeContext<'a> {
                     index,
                     arg_count,
                 );
+            }
+
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_parameter_type_for_call(index, arg_count);
             }
 
             let app = self.interner.type_application(app_id);

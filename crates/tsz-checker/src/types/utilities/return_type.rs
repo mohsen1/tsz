@@ -424,12 +424,18 @@ impl<'a> CheckerState<'a> {
         let mut saw_empty = false;
 
         if let Some(block) = self.ctx.arena.get_block(node) {
+            // Infer the function's actual return type from raw block-body return
+            // expressions. Contextual/annotated return checking happens later via
+            // check_return_statement, and feeding the contextual return type back
+            // into inference makes block-bodied callbacks appear to return the
+            // expected type instead of their real body type.
+            let infer_context = None;
             for &stmt_idx in &block.statements.nodes {
                 self.collect_return_types_in_statement(
                     stmt_idx,
                     &mut return_types,
                     &mut saw_empty,
-                    return_context,
+                    infer_context,
                 );
             }
         }

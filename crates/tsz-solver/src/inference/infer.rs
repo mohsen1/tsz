@@ -1178,6 +1178,23 @@ impl<'a> InferenceContext<'a> {
             .any(|c| !matches!(db.lookup(c.type_id), Some(TypeData::TypeParameter(_))))
     }
 
+    /// Check whether an inference variable has any contravariant candidates that are
+    /// usable for resolution. Synthetic inference placeholders like `__infer_*` and
+    /// `__infer_src_*` are excluded, but real outer type parameters (for example `T`
+    /// from `function g<T>(...)`) are preserved because they carry meaningful
+    /// cross-generic evidence.
+    pub fn has_usable_contra_candidates(
+        &mut self,
+        var: InferenceVar,
+        db: &dyn crate::caches::db::TypeDatabase,
+    ) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.contra_candidates.iter().any(|c| {
+            !crate::type_queries::data::is_bare_infer_placeholder_db(db, c.type_id)
+        })
+    }
+
     /// Check whether a variable's inference came exclusively from contravariant positions.
     pub fn has_only_contra_candidates(&mut self, var: InferenceVar) -> bool {
         let root = self.table.find(var);

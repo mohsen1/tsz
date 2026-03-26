@@ -283,10 +283,13 @@ impl<'a> CheckerState<'a> {
                         // Without this, the prescan type has methods typed as `any`,
                         // causing `{ ...this.annotatedMethod() }` to produce `{}`.
                         let method_type = if method.type_annotation.is_some() {
+                            let (type_params, type_param_updates) =
+                                self.push_type_parameters(&method.type_parameters);
                             let return_type = self.get_type_from_type_node(method.type_annotation);
+                            self.pop_type_parameters(type_param_updates);
                             self.ctx.types.factory().callable(CallableShape {
                                 call_signatures: vec![CallSignature {
-                                    type_params: Vec::new(),
+                                    type_params,
                                     params: vec![tsz_solver::ParamInfo {
                                         name: None,
                                         type_id: TypeId::ANY,
@@ -777,13 +780,20 @@ impl<'a> CheckerState<'a> {
                         // correct return type. Without this, `{ ...this.annotatedMethod() }`
                         // would see return type ANY and produce an empty spread result.
                         let return_type = if method.type_annotation.is_some() {
-                            self.get_type_from_type_node(method.type_annotation)
+                            let (_type_params, type_param_updates) =
+                                self.push_type_parameters(&method.type_parameters);
+                            let return_type = self.get_type_from_type_node(method.type_annotation);
+                            self.pop_type_parameters(type_param_updates);
+                            return_type
                         } else {
                             TypeId::ANY
                         };
+                        let (type_params, type_param_updates) =
+                            self.push_type_parameters(&method.type_parameters);
+                        self.pop_type_parameters(type_param_updates);
                         let placeholder = factory.callable(CallableShape {
                             call_signatures: vec![CallSignature {
-                                type_params: Vec::new(),
+                                type_params,
                                 params: vec![tsz_solver::ParamInfo {
                                     name: None,
                                     type_id: TypeId::ANY,

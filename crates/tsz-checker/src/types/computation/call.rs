@@ -613,6 +613,7 @@ impl<'a> CheckerState<'a> {
         //   fn(x => {});  // x was typed as any (false positive)
         let callee_type_for_context = self.evaluate_application_type(callee_type_for_resolution);
         let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
+        let callee_type_for_context = self.evaluate_contextual_type(callee_type_for_context);
         // Extract the shape from the same resolved callee type used for contextual typing.
         // Using a less-resolved form here can make Round 2 infer from a pre-instantiation
         // method signature even though callback contextual typing is based on the fully
@@ -2167,12 +2168,33 @@ impl<'a> CheckerState<'a> {
             needs_real_type_recheck,
             shape_this_type,
         );
+        let forced_block_body_callback_mismatch = self
+            .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
+                ContextualTypeContext::with_expected_and_options(
+                    checker.ctx.types,
+                    callee_type_for_call,
+                    checker.ctx.compiler_options.no_implicit_any,
+                )
+                .get_parameter_type_for_call(index, args.len())
+            })
+            .inspect(|&(index, actual, expected)| {
+                if let CallResult::Success(return_type) = result {
+                    result = CallResult::ArgumentTypeMismatch {
+                        index,
+                        expected,
+                        actual,
+                        fallback_return: return_type,
+                    };
+                }
+            })
+            .is_some();
         if let CallResult::ArgumentTypeMismatch {
             actual,
             expected,
             fallback_return,
             ..
         } = result
+            && !forced_block_body_callback_mismatch
             && fallback_return != TypeId::ERROR
             && self.should_defer_contextual_argument_mismatch(actual, expected)
         {

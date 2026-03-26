@@ -195,6 +195,45 @@ impl<'a> CheckerState<'a> {
         });
     }
 
+    fn raw_block_body_callback_mismatch(
+        &mut self,
+        args: &[NodeIndex],
+        mut expected_for_index: impl FnMut(&mut Self, usize) -> Option<TypeId>,
+    ) -> Option<(usize, TypeId, TypeId)> {
+        args.iter().enumerate().find_map(|(index, &arg_idx)| {
+            let arg_node = self.ctx.arena.get(arg_idx)?;
+            if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return None;
+            }
+            let func = self.ctx.arena.get_function(arg_node)?;
+            let body = self.ctx.arena.get(func.body)?;
+            if body.kind != syntax_kind_ext::BLOCK {
+                return None;
+            }
+            let expected = expected_for_index(self, index)?;
+            if expected == TypeId::ERROR || expected == TypeId::UNKNOWN || expected == TypeId::ANY {
+                return None;
+            }
+            let snap = self.ctx.snapshot_full();
+            self.invalidate_expression_for_contextual_retry(arg_idx);
+            self.ctx.daa_error_nodes.remove(&arg_idx.0);
+            self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
+            let actual = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
+            self.ctx.rollback_full(&snap);
+            (!self.is_assignable_to(actual, expected)).then_some((index, actual, expected))
+        })
+    }
+
+    pub(crate) fn current_block_body_callback_return_mismatch_arg(
+        &mut self,
+        args: &[NodeIndex],
+        expected_for_index: impl FnMut(&mut Self, usize) -> Option<TypeId>,
+    ) -> Option<(usize, TypeId, TypeId)> {
+        self.raw_block_body_callback_mismatch(args, expected_for_index)
+    }
+
     fn collect_non_callback_diagnostics_between(
         &self,
         args: &[NodeIndex],
@@ -1300,6 +1339,20 @@ impl<'a> CheckerState<'a> {
             }
             match result {
                 CallResult::Success(return_type) => {
+                    if self
+                        .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
+                            ContextualTypeContext::with_expected_and_options(
+                                checker.ctx.types,
+                                func_type,
+                                checker.ctx.compiler_options.no_implicit_any,
+                            )
+                            .get_parameter_type_for_call(index, args.len())
+                        })
+                        .is_some()
+                    {
+                        self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                        continue;
+                    }
                     if self.overload_candidate_has_hard_non_callback_arg_errors(
                         args,
                         &overload_snap.diag,
@@ -1527,6 +1580,43 @@ impl<'a> CheckerState<'a> {
 
             match result {
                 CallResult::Success(return_type) => {
+                    if let Some((index, actual, expected)) = self
+                        .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
+                            sig_helper.get_parameter_type_for_call(index, args.len()).or_else(|| {
+                                ContextualTypeContext::with_expected_and_options(
+                                    checker.ctx.types,
+                                    func_type,
+                                    checker.ctx.compiler_options.no_implicit_any,
+                                )
+                                .get_parameter_type_for_call(index, args.len())
+                            })
+                        })
+                    {
+                        all_arg_count_mismatches = false;
+                        type_mismatch_count += 1;
+                        if type_mismatch_count == 1 {
+                            best_type_mismatch = Some((
+                                OverloadResolution {
+                                    arg_types: sig_arg_types.clone(),
+                                    result: CallResult::ArgumentTypeMismatch {
+                                        index,
+                                        expected,
+                                        actual,
+                                        fallback_return: return_type,
+                                    },
+                                },
+                                std::mem::take(&mut self.ctx.node_types),
+                            ));
+                        }
+                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
+                            actual, expected,
+                        ));
+                        self.ctx
+                            .rollback_diagnostics_filtered(&candidate_snap, |diag| {
+                                Self::should_preserve_speculative_call_diagnostic(diag)
+                            });
+                        continue;
+                    }
                     if self
                         .overload_candidate_has_hard_non_callback_arg_errors(args, &candidate_snap)
                     {
