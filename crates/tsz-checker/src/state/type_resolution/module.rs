@@ -1164,14 +1164,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // For non-source-file imports (.d.ts, .js, .json), allowSyntheticDefaultImports
-        // unconditionally suppresses TS1192. For .ts source files, we only suppress
-        // when the module is CommonJS-shaped (has export= or CJS exports).
-        if self.ctx.allow_synthetic_default_imports()
-            && (!is_source_file_import
-                || self.module_can_use_synthetic_default_import(module_specifier))
-        {
-            return;
+        // allowSyntheticDefaultImports suppresses TS1192 for modules that can use
+        // synthetic default imports. For .d.ts files not in the ESM map (no package.json
+        // "type": "module"), this includes plain .d.ts files regardless of module kind.
+        // For ESM .d.ts files (from packages with "type": "module"), TS1192 is still
+        // emitted because ESM requires explicit default exports.
+        if self.ctx.allow_synthetic_default_imports() {
+            if self.module_can_use_synthetic_default_import(module_specifier) {
+                return;
+            }
+            // For non-source-file imports (.d.ts), also suppress when the module is
+            // not positively identified as ESM. Plain .d.ts files without a "type":
+            // "module" package.json are assumed to be CJS-compatible.
+            if !is_source_file_import && !self.module_is_esm(module_specifier) {
+                return;
+            }
         }
 
         // Get span from declaration node
@@ -1263,6 +1270,33 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .and_then(|map| map.get(file_name))
             .is_some_and(|is_esm| !*is_esm)
+    }
+
+    /// Check if the target module is a pure ESM module (from a package with
+    /// `"type": "module"` or using `.mjs`/`.mts` extension).
+    fn module_is_esm(&self, module_specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+
+        if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
+            return true;
+        }
+        if file_name.ends_with(".cjs") || file_name.ends_with(".cts") {
+            return false;
+        }
+
+        self.ctx
+            .file_is_esm_map
+            .as_ref()
+            .and_then(|map| map.get(file_name))
+            .copied()
+            .unwrap_or(false)
     }
 
     pub(crate) fn module_has_export_equals(&self, module_specifier: &str) -> bool {
