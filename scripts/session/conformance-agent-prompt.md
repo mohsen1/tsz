@@ -175,6 +175,19 @@ git log --oneline -20
 scripts/session/campaign-checkpoint.sh <your-campaign> --status || \
   scripts/session/campaign-checkpoint.sh <your-campaign> --init
 scripts/session/campaign-checkpoint.sh <your-campaign> --status
+
+# Keep the branch synchronized with main at least every 10 minutes.
+export CONFORMANCE_MAIN_SYNC_FILE="/tmp/conformance-main-sync-$(git rev-parse --short HEAD).txt"
+now=$(date +%s)
+if [ -f "$CONFORMANCE_MAIN_SYNC_FILE" ]; then
+  last_pull=$(cat "$CONFORMANCE_MAIN_SYNC_FILE")
+else
+  last_pull=0
+fi
+if [ -z "$last_pull" ] || [ $((now - last_pull)) -ge 600 ]; then
+  git fetch origin main && git rebase origin/main
+  echo "$now" > "$CONFORMANCE_MAIN_SYNC_FILE"
+fi
 ```
 
 If `git status` shows unrelated modified files, keep them out of your conformance attempt:
@@ -556,6 +569,7 @@ Update conformance baselines in the branch that is actually being integrated. Av
 **If a build breaks**: Fix it before doing anything else.
 **If an attempt has no measurable progress after 2 rerolls**: stop and reroll or switch to a simpler target.
 When no-progress is confirmed and you reroll/switch, record it explicitly in the summary line with `reason=no-progress`.
+**If any conformance metric regresses after an attempt**: immediately mark `outcome=regression`, do not claim `fixed`, and stop/push only after restoring or improving conformance against the current snapshot.
 **If progress is blocked by cross-cutting scope** (e.g., requires parser + checker + solver edits in one go), set `outcome=handoff`, append a handoff summary to `/tmp/conformance-attempts/$ATTEMPT_ID.txt`, update campaign checkpoint, and stop attempting local fixes.
 **If run failures are infra-related** (timeouts/IO/CI resource issues), set `outcome=blocked reason=infra` in the attempt log, annotate `notes`, reroll once after capturing environment context, then re-run the same target.
 
