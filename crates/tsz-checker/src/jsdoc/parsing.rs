@@ -273,8 +273,8 @@ impl<'a> CheckerState<'a> {
         let tag_pos = tag_pos?;
         let rest = &jsdoc[tag_pos + "@type".len()..];
         // Try braced form first: @type {expression}
-        if let Some(open) = rest.find('{') {
-            let after_open = &rest[open + 1..];
+        let rest_trimmed = rest.trim_start();
+        if let Some(after_open) = rest_trimmed.strip_prefix('{') {
             let mut depth = 1usize;
             let mut end_idx = None;
             for (i, ch) in after_open.char_indices() {

@@ -270,6 +270,22 @@ var x = 42;
     );
 }
 
+/// Braceless JSDoc intersections should contextually re-check object literal initializers.
+#[test]
+fn test_braceless_jsdoc_intersection_object_initializer_reports_ts2322() {
+    let source = r#"
+/** @type ({ type: 'foo' } | { type: 'bar' }) & { prop: number } */
+const obj = { type: "other", prop: 10 };
+"#;
+    let diagnostics = check_js(source);
+    let ts2322 = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322 for incompatible discriminant under braceless JSDoc intersection, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// Broad Function/function tags should still report TS7006 in the full mixed JSDoc file.
 #[test]
 fn test_jsdoc_type_tag_broad_function_full_file_regression() {
