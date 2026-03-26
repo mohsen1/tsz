@@ -936,6 +936,22 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if name == "globalThis"
+            && initializer.is_some()
+            && let Some(init_sym_id) = self.exported_variable_initializer_symbol(initializer)
+            && self.symbol_initializer_references_builtin_global_this(
+                init_sym_id,
+                &mut FxHashSet::default(),
+            )
+        {
+            self.error_at_node_msg(
+                name_idx,
+                crate::diagnostics::diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_PRIVATE_NAME,
+                &[name, "globalThis"],
+            );
+            return;
+        }
+
         if initializer.is_some()
             && let Some(init_sym_id) = self.exported_variable_initializer_symbol(initializer)
             && self.symbol_references_inaccessible_unique_symbol_type(
@@ -1577,6 +1593,144 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn symbol_initializer_references_builtin_global_this(
+        &self,
+        sym_id: SymbolId,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let sym_id = self.resolve_alias_symbol(sym_id, &mut Vec::new()).unwrap_or(sym_id);
+        if !visited.insert(sym_id) {
+            return false;
+        }
+
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+
+        let mut decl_candidates = symbol.declarations.clone();
+        if symbol.value_declaration.is_some() && !decl_candidates.contains(&symbol.value_declaration)
+        {
+            decl_candidates.push(symbol.value_declaration);
+        }
+
+        let owner_file_idx = self.symbol_decl_file_idx(sym_id);
+
+        for decl_idx in decl_candidates {
+            if !decl_idx.is_some() {
+                continue;
+            }
+
+            let mut candidate_arenas: Vec<&tsz_parser::parser::node::NodeArena> = Vec::new();
+            if let Some(owner_binder) = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            {
+                if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+                }
+                if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
+                    candidate_arenas.push(symbol_arena.as_ref());
+                }
+            }
+            if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                candidate_arenas.push(symbol_arena.as_ref());
+            }
+            if candidate_arenas.is_empty() {
+                candidate_arenas.push(self.ctx.arena);
+            }
+
+            for arena in candidate_arenas {
+                let mut variable_decl_idx = decl_idx;
+                let Some(mut node) = arena.get(variable_decl_idx) else {
+                    continue;
+                };
+
+                if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                    let mut parent = arena
+                        .get_extended(variable_decl_idx)
+                        .map_or(NodeIndex::NONE, |info| info.parent);
+                    while !parent.is_none() {
+                        let Some(parent_node) = arena.get(parent) else {
+                            break;
+                        };
+                        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                            variable_decl_idx = parent;
+                            node = parent_node;
+                            break;
+                        }
+                        parent = arena
+                            .get_extended(parent)
+                            .map_or(NodeIndex::NONE, |info| info.parent);
+                    }
+                }
+
+                if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                    continue;
+                }
+
+                let Some(var_decl) = arena.get_variable_declaration(node) else {
+                    continue;
+                };
+                let initializer = var_decl.initializer;
+                if initializer.is_none() {
+                    continue;
+                }
+
+                if arena
+                    .get(initializer)
+                    .and_then(|init_node| arena.get_identifier(init_node))
+                    .is_some_and(|ident| ident.escaped_text == "globalThis")
+                {
+                    let init_sym_id =
+                        self.value_symbol_in_arena(arena, initializer).unwrap_or(SymbolId::NONE);
+                    let init_sym_id = self
+                        .resolve_alias_symbol(init_sym_id, &mut Vec::new())
+                        .unwrap_or(init_sym_id);
+                    if !init_sym_id.is_none()
+                        && self.symbol_decl_file_idx(init_sym_id) != owner_file_idx
+                    {
+                        return true;
+                    }
+                }
+
+                if let Some(next_sym_id) = self.value_symbol_in_arena(arena, initializer)
+                    && self.symbol_initializer_references_builtin_global_this(next_sym_id, visited)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn value_symbol_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let binder = self.ctx.get_binder_for_arena(arena)?;
+        if let Some(sym_id) = binder.get_node_symbol(expr_idx) {
+            return Some(sym_id);
+        }
+
+        let node = arena.get(expr_idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let ident = arena.get_identifier(node)?;
+        binder.file_locals.get(ident.escaped_text.as_str())
+    }
+
+    fn symbol_decl_file_idx(&self, sym_id: SymbolId) -> Option<u32> {
+        self.ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|idx| idx as u32)
+            .or_else(|| self.get_symbol_from_any_binder(sym_id).map(|symbol| symbol.decl_file_idx))
     }
 
     fn symbol_references_inaccessible_unique_symbol_type(
