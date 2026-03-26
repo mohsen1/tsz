@@ -578,6 +578,14 @@ impl<'a> CheckerState<'a> {
         let clause_idx = export_decl.export_clause;
         let clause_node = self.ctx.arena.get(clause_idx)?;
 
+        // `export default C.B` needs the dedicated value-side property access
+        // resolver in `compute_local_export_value_wrapper_type`. Returning the
+        // property-access node symbol directly here can pick up the type-side
+        // merged member (`interface B`) instead of the runtime static property.
+        if clause_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
         if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
             && let Some(var_stmt) = self.ctx.arena.get_variable(clause_node)
         {
@@ -766,7 +774,13 @@ impl<'a> CheckerState<'a> {
             && !self.has_satisfies_jsdoc_comment(expr_idx)
         {
             let snap = self.ctx.snapshot_diagnostics();
-            let wrapped_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+            let wrapped_type = if let Some(val_type) =
+                self.resolve_property_access_value_type(expr_idx)
+            {
+                val_type
+            } else {
+                self.type_of_value_declaration_for_symbol(sym_id, expr_idx)
+            };
 
             // Detect genuine circular self-reference for TS7022.
             //
