@@ -1209,6 +1209,7 @@ impl<'a> CheckerState<'a> {
                     self.maybe_report_unnameable_exported_variable_type(
                         var_decl.name,
                         var_name.as_deref().unwrap_or(""),
+                        var_decl.initializer,
                         final_type,
                     );
                 }

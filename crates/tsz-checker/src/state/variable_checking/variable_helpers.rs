@@ -1,6 +1,7 @@
 //! Variable declaration checking helpers: shadowing, TS2403 type computation,
 //! unnameable type detection, and symbol resolution utilities.
 
+use rustc_hash::FxHashSet;
 use crate::query_boundaries::common::{collect_referenced_types, lazy_def_id};
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
@@ -928,9 +929,50 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name_idx: NodeIndex,
         name: &str,
+        initializer: NodeIndex,
         inferred_type: TypeId,
     ) {
         if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
+            return;
+        }
+
+        if initializer.is_some()
+            && let Some(init_sym_id) = self.exported_variable_initializer_symbol(initializer)
+            && self.symbol_references_inaccessible_unique_symbol_type(
+                init_sym_id,
+                &mut FxHashSet::default(),
+            )
+        {
+            self.error_at_node_msg(
+                name_idx,
+                crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_REFERENCES_AN_INACCESSIBLE_TYPE_A_TYPE_ANNOTATION_IS_NECESS,
+                &[name, "unique symbol"],
+            );
+            return;
+        }
+
+        if self
+            .first_inaccessible_unique_symbol_reference_from_lazy_defs(inferred_type)
+            .is_some()
+        {
+            self.error_at_node_msg(
+                name_idx,
+                crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_REFERENCES_AN_INACCESSIBLE_TYPE_A_TYPE_ANNOTATION_IS_NECESS,
+                &[name, "unique symbol"],
+            );
+            return;
+        }
+
+        let resolved_inferred_type = self.resolve_lazy_type(inferred_type);
+        if self
+            .first_inaccessible_external_unique_symbol_reference(resolved_inferred_type)
+            .is_some()
+        {
+            self.error_at_node_msg(
+                name_idx,
+                crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_REFERENCES_AN_INACCESSIBLE_TYPE_A_TYPE_ANNOTATION_IS_NECESS,
+                &[name, "unique symbol"],
+            );
             return;
         }
 
@@ -1186,6 +1228,54 @@ impl<'a> CheckerState<'a> {
         });
 
         result
+    }
+
+    fn first_inaccessible_external_unique_symbol_reference(
+        &self,
+        inferred_type: TypeId,
+    ) -> Option<SymbolId> {
+        let mut result = None;
+
+        tsz_solver::visitor::walk_referenced_types(self.ctx.types, inferred_type, |type_id| {
+            if result.is_some() {
+                return;
+            }
+
+            let Some(sym_ref) = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, type_id)
+            else {
+                return;
+            };
+
+            let sym_id = SymbolId(sym_ref.0);
+            if self.unique_symbol_type_is_inaccessible(sym_id) {
+                result = Some(sym_id);
+            }
+        });
+
+        result
+    }
+
+    fn first_inaccessible_unique_symbol_reference_from_lazy_defs(
+        &self,
+        inferred_type: TypeId,
+    ) -> Option<SymbolId> {
+        let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
+
+        for &type_id in &referenced_types {
+            let Some(def_id) = lazy_def_id(self.ctx.types, type_id) else {
+                continue;
+            };
+            let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
+                continue;
+            };
+
+            let mut visited = FxHashSet::default();
+            if self.symbol_references_inaccessible_unique_symbol_type(sym_id, &mut visited) {
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     fn first_non_portable_type_reference(&self, inferred_type: TypeId) -> Option<(String, String)> {
@@ -1473,6 +1563,220 @@ impl<'a> CheckerState<'a> {
 
         let module_specifier = self.module_specifier_for_file(file_idx)?;
         Some((reported_name, module_specifier))
+    }
+
+    fn unique_symbol_type_is_inaccessible(&self, sym_id: SymbolId) -> bool {
+        let Some((_, root_sym_id, file_idx)) = self.unique_symbol_report_target(sym_id) else {
+            return false;
+        };
+        if file_idx == u32::MAX || file_idx == self.ctx.current_file_idx as u32 {
+            return false;
+        }
+
+        if !self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .is_some_and(tsz_binder::BinderState::is_external_module)
+        {
+            return false;
+        }
+
+        !self.local_value_name_resolves_to(root_sym_id)
+    }
+
+    fn exported_variable_initializer_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let node = self.ctx.arena.get(expr_idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol_without_tracking(expr_idx);
+        }
+
+        None
+    }
+
+    fn symbol_references_inaccessible_unique_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let sym_id = self.resolve_alias_symbol(sym_id, &mut Vec::new()).unwrap_or(sym_id);
+        if !visited.insert(sym_id) {
+            return false;
+        }
+
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+
+        let mut decl_candidates = symbol.declarations.clone();
+        if symbol.value_declaration.is_some() && !decl_candidates.contains(&symbol.value_declaration)
+        {
+            decl_candidates.push(symbol.value_declaration);
+        }
+
+        for decl_idx in decl_candidates {
+            if !decl_idx.is_some() {
+                continue;
+            }
+
+            let mut candidate_arenas: Vec<&tsz_parser::parser::node::NodeArena> = Vec::new();
+            if let Some(owner_binder) = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            {
+                if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+                }
+                if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
+                    candidate_arenas.push(symbol_arena.as_ref());
+                }
+            }
+            if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                candidate_arenas.push(symbol_arena.as_ref());
+            }
+            candidate_arenas.push(self.ctx.arena);
+
+            for arena in candidate_arenas {
+                if self.node_references_inaccessible_unique_symbol_type(
+                    arena,
+                    decl_idx,
+                    sym_id,
+                    visited,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn node_references_inaccessible_unique_symbol_type(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        node_idx: NodeIndex,
+        owner_sym_id: SymbolId,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR
+            && arena.get_type_operator(node).is_some_and(|op| {
+                op.operator == SyntaxKind::UniqueKeyword as u16
+                    && self.node_is_symbol_type_reference(arena, op.type_node)
+            })
+        {
+            return self.type_symbol_is_inaccessible(owner_sym_id);
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = arena.get_type_ref(node)
+            && let Some(type_sym_id) = self.type_reference_symbol_in_arena(arena, type_ref.type_name)
+            && self.symbol_references_inaccessible_unique_symbol_type(type_sym_id, visited)
+        {
+            return true;
+        }
+
+        arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child| {
+                self.node_references_inaccessible_unique_symbol_type(
+                    arena,
+                    child,
+                    owner_sym_id,
+                    visited,
+                )
+            })
+    }
+
+    fn node_is_symbol_type_reference(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(name_node) = arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "symbol")
+    }
+
+    fn type_reference_symbol_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_name_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let binder = self.ctx.get_binder_for_arena(arena)?;
+        if let Some(sym_id) = binder.get_node_symbol(type_name_idx) {
+            return Some(sym_id);
+        }
+
+        let node = arena.get(type_name_idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let ident = arena.get_identifier(node)?;
+        binder.file_locals.get(ident.escaped_text.as_str())
+    }
+
+    fn type_symbol_is_inaccessible(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+        let file_idx = symbol.decl_file_idx;
+        if file_idx == u32::MAX || file_idx == self.ctx.current_file_idx as u32 {
+            return false;
+        }
+
+        if !self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .is_some_and(tsz_binder::BinderState::is_external_module)
+        {
+            return false;
+        }
+
+        !self.local_name_resolves_to(sym_id)
+    }
+
+    fn local_name_resolves_to(&self, target_sym_id: SymbolId) -> bool {
+        self.ctx
+            .binder
+            .file_locals
+            .iter()
+            .any(|(_, &local_sym_id)| {
+                let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id) else {
+                    return false;
+                };
+                let is_from_current_file = symbol.decl_file_idx == u32::MAX
+                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32;
+                let is_import = symbol.flags & tsz_binder::symbol_flags::ALIAS != 0;
+                if !is_from_current_file && !is_import {
+                    return false;
+                }
+
+                if local_sym_id == target_sym_id {
+                    return true;
+                }
+
+                self.ctx.binder.resolve_import_symbol(local_sym_id) == Some(target_sym_id)
+            })
     }
 
     fn unique_symbol_report_target(&self, sym_id: SymbolId) -> Option<(String, SymbolId, u32)> {
