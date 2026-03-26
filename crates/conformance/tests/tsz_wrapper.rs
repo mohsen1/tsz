@@ -289,15 +289,15 @@ fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
         ),
         (
             "/typings/phaser/package.json".to_string(),
-            r#"{ "name": "phaser", "version": "1.2.3", "types": "types/phaser.d.ts" }"#
-                .to_string(),
+            r#"{ "name": "phaser", "version": "1.2.3", "types": "types/phaser.d.ts" }"#.to_string(),
         ),
-        ("a.ts".to_string(), "import { a2 } from \"phaser\";".to_string()),
+        (
+            "a.ts".to_string(),
+            "import { a2 } from \"phaser\";".to_string(),
+        ),
     ];
-    let options: HashMap<String, String> = HashMap::from([(
-        "noImplicitReferences".to_string(),
-        "true".to_string(),
-    )]);
+    let options: HashMap<String, String> =
+        HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
 
     let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");

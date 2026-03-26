@@ -649,7 +649,8 @@ impl<'a> CheckerState<'a> {
                 .type_params
                 .iter()
                 .map(|param| {
-                    param.default
+                    param
+                        .default
                         .or(param.constraint)
                         .unwrap_or(TypeId::UNKNOWN)
                 })
@@ -757,7 +758,7 @@ impl<'a> CheckerState<'a> {
                     // common React pattern: `new(props: P)`). If no suitable fallback,
                     // emit TS2607.
                     _ => {
-                    // Try first construct param as fallback (React-style: new(props: P))
+                        // Try first construct param as fallback (React-style: new(props: P))
                         if let Some(first_param) = instantiated_sig.params.first() {
                             let param_type = self.evaluate_type_with_env(first_param.type_id);
                             if param_type != TypeId::ANY

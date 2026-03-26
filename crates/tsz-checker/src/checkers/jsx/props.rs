@@ -109,8 +109,10 @@ impl<'a> CheckerState<'a> {
 
     fn preferred_jsx_missing_props_target(&mut self, props_type: TypeId) -> TypeId {
         let normalized = self.normalize_jsx_required_props_target(props_type);
-        let members = tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)
-            .or_else(|| tsz_solver::type_queries::get_intersection_members(self.ctx.types, normalized));
+        let members =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type).or_else(
+                || tsz_solver::type_queries::get_intersection_members(self.ctx.types, normalized),
+            );
         let Some(members) = members else {
             return normalized;
         };
@@ -119,12 +121,17 @@ impl<'a> CheckerState<'a> {
         let mut best_score = (true, usize::MAX, usize::MAX);
         for member in members {
             let resolved_member = self.normalize_jsx_required_props_target(member);
-            let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_member)
+            let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_member)
             else {
                 continue;
             };
 
-            let required_count = shape.properties.iter().filter(|prop| !prop.optional).count();
+            let required_count = shape
+                .properties
+                .iter()
+                .filter(|prop| !prop.optional)
+                .count();
             if required_count == 0 {
                 continue;
             }
