@@ -644,6 +644,7 @@ impl<'a> CheckerState<'a> {
                     args.len(),
                 )
                 .or_else(|| ctx_helper.get_parameter_type_for_call(i, args.len()))
+                .map(|param_type| self.normalize_contextual_call_param_type(param_type))
             })
             .collect();
         // For union callees, skip excess property checking during argument collection.
@@ -879,6 +880,22 @@ impl<'a> CheckerState<'a> {
                             && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
                         {
                             continue;
+                        }
+                        if self
+                            .ctx
+                            .arena
+                            .get_function(arg_node)
+                            .and_then(|func| func.type_parameters.as_ref())
+                            .is_some_and(|params| !params.nodes.is_empty())
+                        {
+                            let raw_arg_type =
+                                self.get_type_of_node_with_request(args[i], &TypingRequest::NONE);
+                            let seeded =
+                                self.sanitize_generic_inference_arg_type(args[i], raw_arg_type);
+                            if seeded != TypeId::UNKNOWN && seeded != TypeId::ERROR {
+                                *arg_type = seeded;
+                                continue;
+                            }
                         }
                         let Some(param_type) =
                             shape.params.get(i).map(|p| p.type_id).or_else(|| {
@@ -1435,7 +1452,7 @@ impl<'a> CheckerState<'a> {
                                 arg_type_display = %self.format_type(arg_type),
                                 "Round 2: recomputed argument type"
                             );
-                            round2_arg_types.push(arg_type);
+                            round2_arg_types.push(arg_type_for_refinement);
                             if i < progressive_arg_types.len() {
                                 progressive_arg_types[i] = arg_type_for_refinement;
                             }
@@ -1643,7 +1660,7 @@ impl<'a> CheckerState<'a> {
                             self.object_literal_noncontextual_function_param_spans(arg_idx)
                         })
                         .collect();
-                    let initial_arg_types = self.collect_call_argument_types_with_context(
+                    let mut initial_arg_types = self.collect_call_argument_types_with_context(
                         args,
                         |i, _arg_count| {
                             if i < single_pass_contextual_types.len() {
@@ -1656,7 +1673,31 @@ impl<'a> CheckerState<'a> {
                         None, // No skipping needed for single-pass
                         callable_ctx,
                     );
-
+                    for (i, arg_type) in initial_arg_types.iter_mut().enumerate() {
+                        let Some(arg_node) = self.ctx.arena.get(args[i]) else {
+                            continue;
+                        };
+                        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                        {
+                            continue;
+                        }
+                        if self
+                            .ctx
+                            .arena
+                            .get_function(arg_node)
+                            .and_then(|func| func.type_parameters.as_ref())
+                            .is_some_and(|params| !params.nodes.is_empty())
+                        {
+                            let raw_arg_type =
+                                self.get_type_of_node_with_request(args[i], &TypingRequest::NONE);
+                            let seeded =
+                                self.sanitize_generic_inference_arg_type(args[i], raw_arg_type);
+                            if seeded != TypeId::UNKNOWN && seeded != TypeId::ERROR {
+                                *arg_type = seeded;
+                            }
+                        }
+                    }
                     let needs_refresh = contextual_type.is_some()
                         && args.iter().enumerate().any(|(i, &arg)| {
                             self.argument_needs_refresh_for_contextual_call(

@@ -215,6 +215,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         false
     }
 
+    fn contains_tuple_like_parameter_target(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+        if crate::type_queries::get_tuple_elements(db, type_id).is_some() {
+            return true;
+        }
+
+        if let Some(members) = crate::type_queries::get_union_members(db, type_id) {
+            return members
+                .iter()
+                .copied()
+                .any(|member| Self::contains_tuple_like_parameter_target(db, member));
+        }
+
+        if let Some(members) = crate::type_queries::get_intersection_members(db, type_id) {
+            return members
+                .iter()
+                .copied()
+                .any(|member| Self::contains_tuple_like_parameter_target(db, member));
+        }
+
+        false
+    }
+
     fn can_apply_contextual_return_substitution(
         &mut self,
         infer_ctx: &mut InferenceContext<'_>,
@@ -1638,7 +1660,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .as_ref()
                 .map(|c| c.lower_bounds.clone())
                 .unwrap_or_default();
-
             trace!(
                 type_param_name = ?self.interner.resolve_atom(tp.name),
                 var = ?var,
@@ -2243,6 +2264,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return inferred;
         }
 
+        if let Some(preferred_tuple_candidate) =
+            self.preferred_specific_tuple_inference_candidate(lower_bounds)
+        {
+            return preferred_tuple_candidate;
+        }
+
         // Direct arguments should stay narrow when there are heterogeneous candidates.
         // Otherwise TypeScript-style checks can get masked by a broad union result.
         if lower_bounds
@@ -2261,6 +2288,55 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Fall back to the first lower-bound candidate so later argument checks
         // drive assignability failures on the mismatch site.
         lower_bounds[0]
+    }
+
+    fn preferred_specific_tuple_inference_candidate(
+        &self,
+        lower_bounds: &[TypeId],
+    ) -> Option<TypeId> {
+        if lower_bounds.len() <= 1
+            || !lower_bounds.iter().all(|&ty| {
+                crate::type_queries::get_tuple_elements(self.interner.as_type_database(), ty)
+                    .is_some()
+            })
+        {
+            return None;
+        }
+
+        let specific_bounds = lower_bounds
+            .iter()
+            .copied()
+            .filter(|&ty| !self.tuple_contains_any_or_unknown(ty))
+            .collect::<Vec<_>>();
+
+        if specific_bounds.len() == 1 {
+            return Some(self.sanitize_tuple_inference_candidate(specific_bounds[0]));
+        }
+
+        None
+    }
+
+    fn tuple_contains_any_or_unknown(&self, ty: TypeId) -> bool {
+        crate::visitor::collect_all_types(self.interner.as_type_database(), ty)
+            .into_iter()
+            .any(TypeId::is_any_or_unknown)
+    }
+
+    fn sanitize_tuple_inference_candidate(&self, ty: TypeId) -> TypeId {
+        let mut substitution = TypeSubstitution::new();
+        for nested in crate::visitor::collect_all_types(self.interner.as_type_database(), ty) {
+            let Some(TypeData::TypeParameter(info)) = self.interner.lookup(nested) else {
+                continue;
+            };
+            let replacement = info.constraint.or(info.default).unwrap_or(TypeId::UNKNOWN);
+            substitution.insert(info.name, replacement);
+        }
+
+        if substitution.is_empty() {
+            ty
+        } else {
+            instantiate_type(self.interner, ty, &substitution)
+        }
     }
 
     fn resolve_return_position_inference_type(
@@ -2809,6 +2885,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         if target_param_types.is_empty() {
+            return source_ty;
+        }
+        if target_param_types.iter().any(|&param_type| {
+            Self::contains_tuple_like_parameter_target(self.interner.as_type_database(), param_type)
+        }) {
             return source_ty;
         }
         let source_type_params_fully_determined_by_params =
