@@ -119,11 +119,28 @@ impl LineMap {
             .unwrap_or(source.len())
             .min(source.len());
         let start = line_start.min(clamped_end);
-        let slice = source.get(start..clamped_end).unwrap_or("");
-        let character = slice
-            .chars()
-            .map(|ch| u32::try_from(ch.len_utf16()).unwrap_or(u32::MAX))
-            .sum();
+        let mut character = 0u32;
+        let mut byte_index = start;
+
+        while byte_index < clamped_end {
+            let Some(rest) = source.get(byte_index..) else {
+                break;
+            };
+            let Some(ch) = rest.chars().next() else {
+                break;
+            };
+            let char_bytes = ch.len_utf8();
+            if byte_index + char_bytes > clamped_end {
+                let intra = clamped_end - byte_index;
+                let extra_units = (intra * ch.len_utf16()) / char_bytes;
+                character = character
+                    .saturating_add(u32::try_from(extra_units).unwrap_or(u32::MAX));
+                break;
+            }
+            character = character
+                .saturating_add(u32::try_from(ch.len_utf16()).unwrap_or(u32::MAX));
+            byte_index += char_bytes;
+        }
 
         Position {
             line: u32::try_from(line).unwrap_or(u32::MAX),

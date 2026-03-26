@@ -235,6 +235,55 @@ const regexes: RegExp[] = [
 }
 
 #[test]
+fn test_regex_character_class_range_order_reports_ts1517() {
+    let source = r#"
+const regexes: RegExp[] = [
+  /[𝘈-𝘡][𝘡-𝘈]/,
+  /[𝘈-𝘡][𝘡-𝘈]/u,
+  /[𝘈-𝘡][𝘡-𝘈]/v,
+
+  /[\u{1D608}-\u{1D621}][\u{1D621}-\u{1D608}]/,
+  /[\u{1D608}-\u{1D621}][\u{1D621}-\u{1D608}]/u,
+  /[\u{1D608}-\u{1D621}][\u{1D621}-\u{1D608}]/v,
+
+  /[\uD835\uDE08-\uD835\uDE21][\uD835\uDE21-\uD835\uDE08]/,
+  /[\uD835\uDE08-\uD835\uDE21][\uD835\uDE21-\uD835\uDE08]/u,
+  /[\uD835\uDE08-\uD835\uDE21][\uD835\uDE21-\uD835\uDE08]/v,
+];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1517_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS)
+        .count();
+
+    assert_eq!(
+        ts1517_count, 11,
+        "Expected exactly eleven TS1517 diagnostics for out-of-order regex ranges, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_regex_character_class_escape_does_not_report_ts1517() {
+    let source = r#"
+/(#?-?\d*\.\d\w*%?)|(@?#?[\w-?]+%?)/g;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Character class escapes like \\w should not trigger TS1517: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_conditional_object_literal_true_branch_is_not_treated_as_missing_arrow() {
     let source = r#"
 var value = (Math.random() ? {} : null);
