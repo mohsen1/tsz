@@ -1160,11 +1160,11 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
             return false;
         };
-        if !self
+        if self
             .ctx
             .arena
             .get(access.expression)
-            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            .is_none_or(|node| node.kind != SyntaxKind::ThisKeyword as u16)
         {
             return false;
         }
@@ -1192,6 +1192,59 @@ impl<'a> CheckerState<'a> {
             ),
             diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
         );
+        true
+    }
+
+    fn error_invalid_commonjs_export_property_assignment(&mut self, target_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if !self.is_js_file() {
+            return false;
+        }
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && target_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+        if !self.is_current_file_commonjs_export_base(access.expression) {
+            return false;
+        }
+
+        let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
+        let Some(direct_export_type) = surface.direct_export_type else {
+            return false;
+        };
+        if crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+            self.ctx.types,
+            direct_export_type,
+        ) {
+            return false;
+        }
+
+        let prop_name = match target_node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.to_string()),
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.current_file_commonjs_static_member_name(access.name_or_argument)
+            }
+            _ => None,
+        };
+        let Some(prop_name) = prop_name else {
+            return false;
+        };
+
+        self.error_property_not_exist_at(&prop_name, direct_export_type, access.name_or_argument);
         true
     }
 
@@ -1431,6 +1484,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
+            return right_type;
+        }
+
+        if !is_const && self.error_invalid_commonjs_export_property_assignment(left_idx) {
             return right_type;
         }
 
