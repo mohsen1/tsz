@@ -844,9 +844,12 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // TS1479: Check if CommonJS file is importing an ES module.
-                    // TSC emits TS1479 for .cts/.cjs (always CJS) and for .ts/.js files
-                    // in CJS packages (via package.json "type" field or default).
-                    let current_is_commonjs = {
+                    // TSC only emits TS1479 for Node16/NodeNext module kinds where the
+                    // CJS/ESM distinction is enforced at runtime. For ESNext, Preserve,
+                    // bundler, and other module kinds, the import interop is handled
+                    // by the bundler/runtime and TS1479 doesn't apply.
+                    let is_node_module_kind = self.ctx.compiler_options.module.is_node_module();
+                    let current_is_commonjs = is_node_module_kind && {
                         let current_file = &self.ctx.file_name;
                         // .cts/.cjs are always CommonJS
                         let is_commonjs_file =
