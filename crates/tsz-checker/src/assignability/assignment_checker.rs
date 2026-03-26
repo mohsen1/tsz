@@ -1265,6 +1265,14 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_node(right_idx);
         }
 
+        if !is_const && self.is_commonjs_module_exports_assignment(left_idx) {
+            // In JS files, `module.exports = X` and `exports = X` are declarations.
+            // The export surface is inferred from the RHS, so using the current
+            // `module.exports` shape as a contextual type for `X` can introduce
+            // false excess-property errors before assignability is even skipped.
+            return self.get_type_of_node(right_idx);
+        }
+
         let contextual_request = if !is_destructuring
             && left_type != TypeId::ANY
             && left_type != TypeId::NEVER
@@ -1371,12 +1379,6 @@ impl<'a> CheckerState<'a> {
         let suppress_for_readonly = is_readonly_target && !is_element_access;
 
         if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
-            return right_type;
-        }
-
-        // In JS files, `module.exports = X` and `exports = X` are declarations.
-        // Skip assignability checking — the type flows from the RHS, not to it.
-        if !is_const && self.is_commonjs_module_exports_assignment(left_idx) {
             return right_type;
         }
 

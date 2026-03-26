@@ -1,5 +1,5 @@
 use crate::context::CheckerOptions;
-use crate::test_utils::check_source;
+use crate::test_utils::{check_js_source_diagnostics, check_source};
 
 fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
@@ -110,6 +110,55 @@ const value: Outer = { inner: { ok: 1, nope: 2 } };
     assert_eq!(
         diag.length, 4,
         "TS2353 should cover only the offending property"
+    );
+}
+
+#[test]
+fn commonjs_module_exports_assignment_does_not_contextually_type_rhs_object_literal() {
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+/** @typedef {{ id: string, label: string, traceEventNames: string[] }} TaskGroup */
+
+/** @type {Object<string, TaskGroup>} */
+const taskNameToGroup = {};
+
+module.exports = {
+    taskNameToGroup,
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2353),
+        "module.exports object literals in JS should not pick up contextual TS2353 diagnostics, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn js_mapped_type_object_literal_accepts_finite_literal_keys() {
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+/** @typedef {'parseHTML'|'styleLayout'} TaskGroupIds */
+
+/**
+ * @type {{[P in TaskGroupIds]: {id: P, label: string}}}
+ */
+const taskGroups = {
+    parseHTML: {
+        id: 'parseHTML',
+        label: 'Parse HTML & CSS'
+    },
+    styleLayout: {
+        id: 'styleLayout',
+        label: 'Style & Layout'
+    },
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2353),
+        "finite mapped-type keys in JS object literals should not be treated as excess properties, got: {diagnostics:?}"
     );
 }
 
