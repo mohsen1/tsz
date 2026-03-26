@@ -342,6 +342,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     request.read().contextual_opt(None)
                 };
+                self.invalidate_expression_for_contextual_retry(element_data.initializer);
                 let init_type =
                     self.get_type_of_node_with_request(element_data.initializer, &request);
                 if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
@@ -1376,7 +1377,6 @@ impl<'a> CheckerState<'a> {
         suppress_missing_property_for_literal_default: bool,
     ) -> Option<TypeId> {
         let (string_keys, number_keys) = self.get_literal_key_union_from_type(key_type)?;
-
         if let Some(members) = query::union_members(self.ctx.types, parent_type)
             && members.len() > 1
         {

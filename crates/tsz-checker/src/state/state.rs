@@ -1445,11 +1445,19 @@ impl<'a> CheckerState<'a> {
             // contextually-inferred result instead of recomputing without context.
             // This prevents generic return type inference from being lost — e.g.,
             // querySelector<E>() returning E=Element instead of E=HTMLElement.
+            //
+            // Closures need the same preservation: a later context-free pass can
+            // otherwise re-enter the same arrow/function expression, infer `any`
+            // parameters, and overwrite a previously-correct contextual signature.
             if let Some(node) = self.ctx.arena.get(idx) {
                 use tsz_parser::parser::syntax_kind_ext;
                 if matches!(
                     node.kind,
-                    syntax_kind_ext::CALL_EXPRESSION | syntax_kind_ext::NON_NULL_EXPRESSION
+                    syntax_kind_ext::CALL_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::NON_NULL_EXPRESSION
+                        | syntax_kind_ext::NEW_EXPRESSION
                 ) {
                     self.ctx.node_types.insert(idx.0, result);
                 }

@@ -12,12 +12,88 @@
 //!   computed property names
 
 use tsz_binder::flow_flags;
+use tsz_parser::parser::flags::node_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 use super::FlowGraphBuilder;
 
 impl<'a> FlowGraphBuilder<'a> {
+    fn is_optional_chain_access(&self, idx: NodeIndex) -> bool {
+        let idx = self.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    access.question_dot_token || self.is_optional_chain_access(access.expression)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                    return true;
+                }
+                if let Some(call) = self.arena.get_call_expr(node) {
+                    self.is_optional_chain_access(call.expression)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn continues_optional_chain(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+
+        let Some(parent_node) = self.arena.get(parent) else {
+            return false;
+        };
+        match parent_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena
+                    .get_access_expr(parent_node)
+                    .is_some_and(|access| {
+                        access.expression == idx && self.is_optional_chain_access(parent)
+                    })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                self.arena.get_call_expr(parent_node).is_some_and(|call| {
+                    call.expression == idx && self.is_optional_chain_access(parent)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn optional_chain_branch_base(&self) -> tsz_binder::FlowNodeId {
+        let current = self.current_flow;
+        let Some(flow) = self.graph.nodes.get(current) else {
+            return current;
+        };
+        if flow.has_any_flags(flow_flags::TRUE_CONDITION)
+            && let Some(&antecedent) = flow.antecedent.first()
+            && antecedent.is_some()
+        {
+            return antecedent;
+        }
+        current
+    }
+
     // =============================================================================
     // Variable Tracking
     // =============================================================================
@@ -272,7 +348,45 @@ impl<'a> FlowGraphBuilder<'a> {
             syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = self.arena.get_call_expr(node) {
                     self.handle_expression_for_assignments(call.expression);
-                    if let Some(args) = &call.arguments {
+                    let after_callee_flow = self.current_flow;
+                    let is_optional_call = (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0;
+
+                    if is_optional_call {
+                        let after_callee_flow = if self.continues_optional_chain(expr_idx)
+                            || self.is_optional_chain_access(call.expression)
+                        {
+                            self.optional_chain_branch_base()
+                        } else {
+                            after_callee_flow
+                        };
+                        let present_condition = self.create_flow_node(
+                            flow_flags::TRUE_CONDITION,
+                            after_callee_flow,
+                            call.expression,
+                        );
+                        self.current_flow = present_condition;
+                        if let Some(args) = &call.arguments {
+                            for &arg in &args.nodes {
+                                if arg.is_some() {
+                                    self.handle_expression_for_assignments(arg);
+                                }
+                            }
+                        }
+
+                        if !self.continues_optional_chain(expr_idx) {
+                            let after_args_flow = self.current_flow;
+                            let short_circuit = self.create_flow_node(
+                                flow_flags::FALSE_CONDITION,
+                                after_callee_flow,
+                                call.expression,
+                            );
+
+                            let merge = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+                            self.add_antecedent(merge, after_args_flow);
+                            self.add_antecedent(merge, short_circuit);
+                            self.current_flow = merge;
+                        }
+                    } else if let Some(args) = &call.arguments {
                         for &arg in &args.nodes {
                             if arg.is_some() {
                                 self.handle_expression_for_assignments(arg);
@@ -291,7 +405,39 @@ impl<'a> FlowGraphBuilder<'a> {
             | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
                     self.handle_expression_for_assignments(access.expression);
-                    if access.name_or_argument.is_some() {
+                    if self.is_optional_chain_access(expr_idx) {
+                        let after_base_flow = if self.continues_optional_chain(expr_idx)
+                            || self.is_optional_chain_access(access.expression)
+                        {
+                            self.optional_chain_branch_base()
+                        } else {
+                            self.current_flow
+                        };
+                        let present_condition = self.create_flow_node(
+                            flow_flags::TRUE_CONDITION,
+                            after_base_flow,
+                            access.expression,
+                        );
+                        self.current_flow = present_condition;
+                        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                            && access.name_or_argument.is_some()
+                        {
+                            self.handle_expression_for_assignments(access.name_or_argument);
+                        }
+                        if !self.continues_optional_chain(expr_idx) {
+                            let after_access_flow = self.current_flow;
+                            let short_circuit = self.create_flow_node(
+                                flow_flags::FALSE_CONDITION,
+                                after_base_flow,
+                                access.expression,
+                            );
+
+                            let merge = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+                            self.add_antecedent(merge, after_access_flow);
+                            self.add_antecedent(merge, short_circuit);
+                            self.current_flow = merge;
+                        }
+                    } else if access.name_or_argument.is_some() {
                         self.handle_expression_for_assignments(access.name_or_argument);
                     }
                 }

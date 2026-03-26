@@ -1,7 +1,9 @@
 //! Value declaration resolution, TDZ checking, and identifier type computation helpers.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::checkers::call::{
+    get_contextual_signature_for_arity, is_type_parameter_type,
+};
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
@@ -1381,6 +1383,31 @@ impl<'a> CheckerState<'a> {
                                     evaluated_param
                                 }
                             });
+                        let reported_expected_param = get_contextual_signature_for_arity(
+                            self.ctx.types,
+                            callee_type_for_call,
+                            args.len(),
+                        )
+                        .and_then(|shape| {
+                            shape
+                                .params
+                                .get(index)
+                                .map(|param| param.type_id)
+                                .or_else(|| {
+                                    let last = shape.params.last()?;
+                                    last.rest.then_some(last.type_id)
+                                })
+                        })
+                        .filter(|raw_expected| {
+                            common::contains_type_parameters(self.ctx.types, *raw_expected)
+                                && common::contains_type_by_id(
+                                    self.ctx.types,
+                                    expected_param,
+                                    TypeId::UNKNOWN,
+                                )
+                                && self.evaluate_type_with_env(*raw_expected) == expected_param
+                        })
+                        .unwrap_or(expected_param);
                         let arg_type = args
                             .get(index)
                             .copied()
@@ -1438,7 +1465,7 @@ impl<'a> CheckerState<'a> {
                         (
                             CallResult::ArgumentTypeMismatch {
                                 index,
-                                expected: expected_param,
+                                expected: reported_expected_param,
                                 actual: arg_type,
                                 fallback_return,
                             },

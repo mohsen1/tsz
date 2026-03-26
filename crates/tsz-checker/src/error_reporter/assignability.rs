@@ -397,6 +397,23 @@ impl<'a> CheckerState<'a> {
         }
         match reason {
             Some(ref failure_reason) => {
+                if std::env::var_os("TSZ_DEBUG_ASSIGNABILITY_MSG").is_some()
+                    && self
+                        .ctx
+                        .file_name
+                        .contains("dependentDestructuredVariables")
+                {
+                    eprintln!(
+                        "assignability-msg file={} source={:?} source_fmt={} target={:?} target_fmt={} reason={:?} anchor={}",
+                        self.ctx.file_name,
+                        source,
+                        self.format_type_diagnostic(source),
+                        target,
+                        self.format_type_diagnostic(target),
+                        failure_reason,
+                        anchor_idx.0
+                    );
+                }
                 // Skip ExcessProperty — handled by check_object_literal_excess_properties (avoids duplicate TS2353/TS2561).
                 if matches!(
                     failure_reason,
@@ -415,6 +432,17 @@ impl<'a> CheckerState<'a> {
                 }
                 let diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
+                if std::env::var_os("TSZ_DEBUG_ASSIGNABILITY_MSG").is_some()
+                    && self
+                        .ctx
+                        .file_name
+                        .contains("dependentDestructuredVariables")
+                {
+                    eprintln!(
+                        "assignability-diag file={} code={} message={}",
+                        self.ctx.file_name, diag.code, diag.message_text
+                    );
+                }
                 self.ctx.push_diagnostic(diag);
             }
             None => {

@@ -30,6 +30,40 @@ impl<'a> CheckerState<'a> {
             .then_some(return_context)
     }
 
+    fn should_preserve_tuple_literals_for_generic_return(
+        &self,
+        expr_idx: NodeIndex,
+        return_context: Option<TypeId>,
+        effective_return_context: Option<TypeId>,
+    ) -> bool {
+        if return_context.is_none() || effective_return_context.is_some() {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                self.ctx
+                    .arena
+                    .get_conditional_expr(node)
+                    .is_some_and(|cond| {
+                        self.ctx
+                            .arena
+                            .get(cond.when_true)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                            && self.ctx.arena.get(cond.when_false).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            })
+                    })
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a function body falls through (doesn't always return).
     ///
     /// This function determines whether a function body might fall through
@@ -638,7 +672,18 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.preserve_literal_types = true;
         }
+        let prev_const_assertion = self.ctx.in_const_assertion;
+        if !prev_const_assertion
+            && self.should_preserve_tuple_literals_for_generic_return(
+                expr_idx,
+                return_context,
+                effective_return_context,
+            )
+        {
+            self.ctx.in_const_assertion = true;
+        }
         let return_type = self.get_type_of_node_with_request(expr_idx, &request);
+        self.ctx.in_const_assertion = prev_const_assertion;
         self.ctx.preserve_literal_types = prev_preserve_literals;
         return_type
     }

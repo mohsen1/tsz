@@ -615,8 +615,28 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // receiver (the type parameter T, not the constraint A).
                     let prev = self.skip_this_binding.get();
                     self.skip_this_binding.set(true);
-                    let result =
+                    let mut result =
                         self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom));
+                    if matches!(
+                        result,
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
+                            ..
+                        }
+                    ) {
+                        let evaluated = self.db.evaluate_type_with_options(
+                            constraint,
+                            self.no_unchecked_indexed_access,
+                        );
+                        if evaluated != constraint {
+                            result = self.resolve_property_access_inner(
+                                evaluated,
+                                prop_name,
+                                Some(prop_atom),
+                            );
+                        }
+                    }
                     self.skip_this_binding.set(prev);
                     result
                 } else {

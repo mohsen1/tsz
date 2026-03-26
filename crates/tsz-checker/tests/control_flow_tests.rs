@@ -89,6 +89,30 @@ fn get_block_expression(arena: &NodeArena, block_idx: NodeIndex, stmt_index: usi
     extract_expression_from_statement(arena, stmt_idx)
 }
 
+fn get_statement_expression(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(stmt_index)
+        .expect("statement");
+    extract_expression_from_statement(arena, stmt_idx)
+}
+
+fn get_method_call_receiver_identifier(
+    arena: &NodeArena,
+    root: NodeIndex,
+    stmt_index: usize,
+) -> NodeIndex {
+    let expr_idx = get_statement_expression(arena, root, stmt_index);
+    let call_node = arena.get(expr_idx).expect("call node");
+    let call = arena.get_call_expr(call_node).expect("call expr");
+    let callee_node = arena.get(call.expression).expect("callee node");
+    let access = arena.get_access_expr(callee_node).expect("callee access");
+    access.expression
+}
+
 /// Test switch statement fallthrough and default clause narrowing.
 ///
 /// NOTE: Currently ignored - switch clause fallthrough narrowing is not fully
@@ -2800,6 +2824,42 @@ function test() {
     assert!(
         has_ts2454,
         "Should have TS2454 error for variable used before assignment"
+    );
+}
+
+#[test]
+fn test_optional_chain_element_assignment_is_not_definite_for_later_use() {
+    let source = r#"
+declare const o: undefined | {
+    [key: string]: any;
+};
+
+let b: number;
+o?.x[b = 1];
+b.toFixed();
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let b_ref = get_method_call_receiver_identifier(arena, root, 3);
+    let flow_at_use = binder.get_node_flow(b_ref).expect("flow for b use");
+    let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
+    assert!(
+        !analyzer.is_definitely_assigned(b_ref, flow_at_use),
+        "b should not be definitely assigned at the later use"
     );
 }
 

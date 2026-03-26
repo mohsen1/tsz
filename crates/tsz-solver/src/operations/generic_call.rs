@@ -6,7 +6,6 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
-use crate::TypeDatabase;
 use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution, instantiate_type};
 use crate::operations::widening;
@@ -14,6 +13,7 @@ use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
     FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
+use crate::{TypeDatabase, contains_type_by_id};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
@@ -2201,12 +2201,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     expected,
                     actual,
                     ..
-                } => CallResult::ArgumentTypeMismatch {
-                    index,
-                    expected,
-                    actual,
-                    fallback_return: return_type,
-                },
+                } => {
+                    let expected = self
+                        .param_type_for_arg_index(&func.params, index, final_args.len())
+                        .filter(|raw_expected| {
+                            crate::type_queries::contains_type_parameters_db(
+                                self.interner,
+                                *raw_expected,
+                            ) && contains_type_by_id(
+                                self.interner.as_type_database(),
+                                expected,
+                                TypeId::UNKNOWN,
+                            )
+                        })
+                        .filter(|raw_expected| {
+                            instantiate_call_type(
+                                self.interner,
+                                *raw_expected,
+                                &final_subst,
+                                actual_this_type,
+                            ) == expected
+                        })
+                        .unwrap_or(expected);
+                    CallResult::ArgumentTypeMismatch {
+                        index,
+                        expected,
+                        actual,
+                        fallback_return: return_type,
+                    }
+                }
                 _ => result,
             };
         }

@@ -212,6 +212,15 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
         }
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+            && let Some(constraint) =
+                crate::query_boundaries::property_access::type_parameter_constraint(
+                    self.ctx.types,
+                    type_id,
+                )
+        {
+            return self.format_type_for_assignability_message(constraint);
+        }
         if self.is_js_file()
             && let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
             && let Some(receiver_node) = self.ctx.arena.get(receiver)

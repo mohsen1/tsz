@@ -587,7 +587,7 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        source_type
+        super::utils::remove_nullish_query(self.db, resolved)
     }
 
     /// Narrows a type by another type using the Visitor pattern.

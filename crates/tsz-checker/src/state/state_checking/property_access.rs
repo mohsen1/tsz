@@ -196,7 +196,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if query::is_mapped_type(self.ctx.types, mapped_candidate_type)
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+                | tsz_solver::operations::property::PropertyAccessResult::IsUnknown
+        ) && query::is_mapped_type(self.ctx.types, mapped_candidate_type)
             && let Some(mapped_property) =
                 self.resolve_mapped_property_with_env(mapped_candidate_type, prop_name)
         {

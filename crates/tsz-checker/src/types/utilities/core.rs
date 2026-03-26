@@ -34,21 +34,13 @@ impl<'a> CheckerState<'a> {
             expected,
         )?;
         let rest_param = shape.params.last().filter(|param| param.rest)?;
+        let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
         if is_rest {
-            return Some(rest_param.type_id);
-        }
-
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, rest_param.type_id)
-            || tsz_solver::type_queries::contains_type_parameters_db(
-                self.ctx.types,
-                rest_param.type_id,
-            )
-        {
-            return None;
+            return Some(rest_param_type);
         }
 
         if let Some(tuple_elements) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rest_param.type_id)
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rest_param_type)
         {
             if let Some(element) = tuple_elements.get(index) {
                 return Some(element.type_id);
@@ -60,7 +52,46 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        tsz_solver::type_queries::get_array_element_type(self.ctx.types, rest_param.type_id)
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, rest_param_type)
+        {
+            let mut element_types = Vec::new();
+            for member in members {
+                let Some(tuple_elements) =
+                    tsz_solver::type_queries::get_tuple_elements(self.ctx.types, member)
+                else {
+                    continue;
+                };
+                if let Some(element) = tuple_elements.get(index) {
+                    element_types.push(element.type_id);
+                    continue;
+                }
+                if let Some(last) = tuple_elements.last()
+                    && last.rest
+                {
+                    element_types.push(last.type_id);
+                }
+            }
+            if !element_types.is_empty() {
+                return Some(self.ctx.types.factory().union(element_types));
+            }
+        }
+
+        tsz_solver::type_queries::get_array_element_type(self.ctx.types, rest_param_type)
+    }
+
+    fn contextual_rest_parameter_source_type(&mut self, rest_param_type: TypeId) -> TypeId {
+        let mut source_type = rest_param_type;
+        if (tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, source_type)
+            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, source_type))
+            && let Some(constraint) =
+                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, source_type)
+            && constraint != TypeId::UNKNOWN
+            && constraint != TypeId::ERROR
+        {
+            source_type = self.evaluate_contextual_type(constraint);
+        }
+        source_type
     }
 
     fn should_skip_contextual_signature_fallback_for_parameter(
@@ -84,16 +115,15 @@ impl<'a> CheckerState<'a> {
         let Some(rest_param) = shape.params.last().filter(|param| param.rest) else {
             return false;
         };
+        let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
         let rest_start = shape.params.len().saturating_sub(1);
         index >= rest_start
             && arg_count.is_some()
-            && (tsz_solver::type_queries::is_type_parameter_like(
-                self.ctx.types,
-                rest_param.type_id,
-            ) || tsz_solver::type_queries::contains_type_parameters_db(
-                self.ctx.types,
-                rest_param.type_id,
-            ))
+            && (tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, rest_param_type)
+                || tsz_solver::type_queries::contains_type_parameters_db(
+                    self.ctx.types,
+                    rest_param_type,
+                ))
     }
 
     pub(crate) fn parameter_symbol_ids(
@@ -675,6 +705,16 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::is_constructor_like_type(db, ty)
         }
 
+        fn is_tuple_like_rest_param(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+            tsz_solver::type_queries::get_tuple_elements(db, ty).is_some()
+                || tsz_solver::type_queries::get_union_members(db, ty).is_some_and(|members| {
+                    !members.is_empty()
+                        && members.iter().all(|member| {
+                            tsz_solver::type_queries::get_tuple_elements(db, *member).is_some()
+                        })
+                })
+        }
+
         if let Some(constraint) =
             tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, expected)
             && constraint != expected
@@ -731,17 +771,35 @@ impl<'a> CheckerState<'a> {
 
         let mut changed = false;
         for param in &mut shape.params {
-            if param.rest
-                && (tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, param.type_id)
+            let resolved = self.resolve_type_query_type(param.type_id);
+            if param.rest {
+                let evaluated_with_env = self.evaluate_type_with_env(resolved);
+                let became_more_concrete = evaluated_with_env != param.type_id
+                    && (is_tuple_like_rest_param(self.ctx.types, evaluated_with_env)
+                        || !tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
+                            evaluated_with_env,
+                        ));
+                if became_more_concrete {
+                    param.type_id = evaluated_with_env;
+                    changed = true;
+                    continue;
+                }
+
+                if is_tuple_like_rest_param(self.ctx.types, param.type_id)
+                    || tsz_solver::type_queries::is_type_parameter_like(
+                        self.ctx.types,
+                        param.type_id,
+                    )
                     || tsz_solver::type_queries::contains_type_parameters_db(
                         self.ctx.types,
                         param.type_id,
-                    ))
-            {
-                continue;
+                    )
+                {
+                    continue;
+                }
             }
 
-            let resolved = self.resolve_type_query_type(param.type_id);
             let evaluated = if should_preserve_contextual_param_type(self.ctx.types, resolved) {
                 resolved
             } else {
@@ -860,7 +918,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let resolved_for_union = self.evaluate_type_for_assignability(param_type);
+            let mut resolved_for_union = self.evaluate_type_with_env(param_type);
+            if query::union_members(self.ctx.types, resolved_for_union).is_none()
+                && let Some(constraint) =
+                    query::type_parameter_constraint(self.ctx.types, resolved_for_union)
+            {
+                resolved_for_union = self.evaluate_type_with_env(constraint);
+            }
             if query::union_members(self.ctx.types, resolved_for_union).is_none() {
                 continue;
             }
@@ -873,6 +937,84 @@ impl<'a> CheckerState<'a> {
                 true,
                 name_node.kind,
             );
+        }
+    }
+
+    pub(crate) fn record_contextual_tuple_parameter_groups(
+        &mut self,
+        params: &[NodeIndex],
+        contextual_type: Option<TypeId>,
+    ) {
+        use crate::context::DestructuredBindingInfo;
+        use crate::query_boundaries::state::checking as state_query;
+
+        let Some(expected) = contextual_type else {
+            return;
+        };
+        let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            expected,
+        ) else {
+            return;
+        };
+        let Some(rest_param) = shape.params.last().filter(|param| param.rest) else {
+            return;
+        };
+
+        let mut source_type = self.evaluate_type_with_env(rest_param.type_id);
+        if state_query::union_members(self.ctx.types, source_type).is_none()
+            && let Some(constraint) =
+                state_query::type_parameter_constraint(self.ctx.types, source_type)
+        {
+            source_type = self.evaluate_type_with_env(constraint);
+        }
+
+        let has_tuple_shape =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source_type).is_some()
+                || state_query::union_members(self.ctx.types, source_type).is_some_and(|members| {
+                    members.iter().all(|&member| {
+                        tsz_solver::type_queries::get_tuple_elements(self.ctx.types, member)
+                            .is_some()
+                    })
+                });
+        if !has_tuple_shape {
+            return;
+        }
+
+        let group_id = self.ctx.next_binding_group_id;
+        self.ctx.next_binding_group_id += 1;
+
+        for (index, &param_idx) in params.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                continue;
+            }
+
+            for sym_id in self
+                .parameter_symbol_ids(param_idx, param.name)
+                .into_iter()
+                .flatten()
+            {
+                self.ctx.destructured_bindings.insert(
+                    sym_id,
+                    DestructuredBindingInfo {
+                        source_type,
+                        property_name: String::new(),
+                        element_index: index as u32,
+                        group_id,
+                        is_const: true,
+                        is_rest: false,
+                    },
+                );
+            }
         }
     }
 

@@ -582,11 +582,21 @@ impl<'a> CheckerState<'a> {
             }
 
             // Regular (non-spread) element
-            let elem_type = if self.ctx.in_destructuring_target {
+            let mut elem_type = if self.ctx.in_destructuring_target {
                 self.destructuring_target_type_from_initializer(elem_idx)
             } else {
                 self.get_type_of_node_with_request(elem_idx, &elem_request)
             };
+
+            if !self.ctx.in_destructuring_target
+                && (self.ctx.in_const_assertion || self.ctx.preserve_literal_types)
+                && let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                && elem_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(elem_node)
+                && binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+            {
+                elem_type = self.get_type_of_node_with_request(binary.right, &elem_request);
+            }
 
             if let Some(ref _expected) = tuple_context {
                 let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {

@@ -801,13 +801,9 @@ impl<'a> FlowAnalyzer<'a> {
         source: DestructuringSource,
         name: NodeIndex,
     ) -> Option<DestructuringSource> {
-        let key = self.property_key_from_name(name).or_else(|| {
-            if source.node.is_some() {
-                self.property_key_from_name_with_rhs_effects(name, source.node)
-            } else {
-                None
-            }
-        })?;
+        let key = self
+            .property_key_from_name_with_available_rhs_effects(name, source.node)
+            .or_else(|| self.property_key_from_name(name))?;
 
         let node = if source.node.is_some() {
             self.lookup_property_in_rhs(source.node, name)
@@ -1266,8 +1262,8 @@ impl<'a> FlowAnalyzer<'a> {
         let rhs = self.skip_parens_and_assertions(rhs);
         let rhs_node = self.arena.get(rhs)?;
         let key = self
-            .property_key_from_name(name)
-            .or_else(|| self.property_key_from_name_with_rhs_effects(name, rhs))?;
+            .property_key_from_name_with_available_rhs_effects(name, rhs)
+            .or_else(|| self.property_key_from_name(name))?;
 
         if rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
             let lit = self.arena.get_literal_expr(rhs_node)?;
@@ -1315,6 +1311,20 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         self.property_key_from_rhs_assignment_to_reference(rhs, key_expr)
+    }
+
+    fn property_key_from_name_with_available_rhs_effects(
+        &self,
+        name: NodeIndex,
+        rhs: NodeIndex,
+    ) -> Option<PropertyKey> {
+        let name = self.skip_parens_and_assertions(name);
+        let name_node = self.arena.get(name)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME || rhs.is_none() {
+            return None;
+        }
+
+        self.property_key_from_name_with_rhs_effects(name, rhs)
     }
 
     fn property_key_from_assignment_like_expr(&self, expr: NodeIndex) -> Option<PropertyKey> {

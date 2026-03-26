@@ -278,6 +278,28 @@ impl<'a> CheckerState<'a> {
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
 
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            let has_undefined = members.contains(&TypeId::UNDEFINED);
+            let has_null = members.contains(&TypeId::NULL);
+            let generic_scaffolding_only = members.iter().all(|&member| {
+                member == TypeId::UNDEFINED
+                    || member == TypeId::NULL
+                    || crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        member,
+                    )
+                    || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, member)
+            });
+            if generic_scaffolding_only {
+                if has_undefined {
+                    return TypeId::UNDEFINED;
+                }
+                if has_null {
+                    return TypeId::NULL;
+                }
+            }
+        }
+
         // For union types, normalize each member individually rather than
         // evaluating the union as a whole. evaluate_type can collapse unions
         // of Application types (e.g., I1<number> | I2<number>) into a single
@@ -1395,6 +1417,22 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if std::env::var_os("TSZ_DEBUG_ASSIGNMENT_SOURCE_FMT").is_some()
+            && self
+                .ctx
+                .file_name
+                .contains("dependentDestructuredVariables")
+        {
+            eprintln!(
+                "assignment-source-enter file={} anchor={} source={:?} source_fmt={} target={:?} target_fmt={}",
+                self.ctx.file_name,
+                anchor_idx.0,
+                source,
+                self.format_type_diagnostic(source),
+                target,
+                self.format_type_diagnostic(target)
+            );
+        }
         if source == TypeId::UNDEFINED
             && self.ctx.arena.get(anchor_idx).is_some_and(|node| {
                 node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
@@ -1411,6 +1449,11 @@ impl<'a> CheckerState<'a> {
             && let Some(display) = self.literal_expression_display(anchor_idx)
         {
             return display;
+        }
+        if self.is_literal_sensitive_assignment_target(target)
+            && tsz_solver::literal_value(self.ctx.types, source).is_some()
+        {
+            return self.format_assignability_type_for_message(source, target);
         }
 
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
@@ -1457,13 +1500,14 @@ impl<'a> CheckerState<'a> {
                         expr_type
                     };
                 let display_type = self.widen_function_like_display_type(display_type);
-                let display_type =
-                    if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
-                        let evaluated = self.evaluate_type_for_assignability(display_type);
-                        crate::query_boundaries::common::widen_type(self.ctx.types, evaluated)
-                    } else {
-                        crate::query_boundaries::common::widen_type(self.ctx.types, display_type)
-                    };
+                let display_type = if self.is_literal_sensitive_assignment_target(target) {
+                    display_type
+                } else if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
+                    let evaluated = self.evaluate_type_for_assignability(display_type);
+                    crate::query_boundaries::common::widen_type(self.ctx.types, evaluated)
+                } else {
+                    crate::query_boundaries::common::widen_type(self.ctx.types, display_type)
+                };
                 return self.format_assignability_type_for_message(display_type, target);
             }
 
@@ -1650,7 +1694,11 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             let display_type = if expr_type != TypeId::ERROR {
-                let widened_expr_type = self.widen_type_for_display(expr_type);
+                let widened_expr_type = if self.is_literal_sensitive_assignment_target(target) {
+                    expr_type
+                } else {
+                    self.widen_type_for_display(expr_type)
+                };
                 if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
                     self.widen_enum_member_type(widened_expr_type)
                 } else {

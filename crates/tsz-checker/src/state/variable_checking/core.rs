@@ -2096,7 +2096,13 @@ impl<'a> CheckerState<'a> {
 
             // Track destructured binding groups for correlated narrowing.
             // Only needed for union source types where narrowing one property affects others.
-            let resolved_for_union = self.resolve_lazy_type(pattern_type);
+            let mut resolved_for_union = self.resolve_lazy_type(pattern_type);
+            if query::union_members(self.ctx.types, resolved_for_union).is_none()
+                && let Some(constraint) =
+                    query::type_parameter_constraint(self.ctx.types, resolved_for_union)
+            {
+                resolved_for_union = self.evaluate_type_for_assignability(constraint);
+            }
             if query::union_members(self.ctx.types, resolved_for_union).is_some() {
                 // Check if this is a const declaration
                 let is_const = if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {

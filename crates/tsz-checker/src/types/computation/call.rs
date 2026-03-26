@@ -1642,9 +1642,13 @@ impl<'a> CheckerState<'a> {
                             Some(self.normalize_contextual_call_param_type(param_type))
                         })
                         .collect();
-                    let initial_arg_snap = contextual_type
-                        .is_some()
-                        .then(|| self.ctx.snapshot_diagnostics());
+                    let needs_refresh = args.iter().enumerate().any(|(i, &arg)| {
+                        self.argument_needs_refresh_for_contextual_call(
+                            arg,
+                            base_contextual_param_types.get(i).copied().flatten(),
+                        )
+                    });
+                    let initial_arg_snap = needs_refresh.then(|| self.ctx.snapshot_diagnostics());
                     let initial_ts2454_snap = initial_arg_snap
                         .as_ref()
                         .map(|_| self.ctx.emitted_ts2454_errors.clone());
@@ -1698,16 +1702,26 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-                    let needs_refresh = contextual_type.is_some()
-                        && args.iter().enumerate().any(|(i, &arg)| {
-                            self.argument_needs_refresh_for_contextual_call(
-                                arg,
-                                base_contextual_param_types.get(i).copied().flatten(),
-                            )
-                        });
                     if !needs_refresh {
                         initial_arg_types
                     } else {
+                        let refreshed_direct_function_arg_spans: Vec<_> = args
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, &arg_idx)| {
+                                self.argument_needs_refresh_for_contextual_call(
+                                    arg_idx,
+                                    base_contextual_param_types.get(i).copied().flatten(),
+                                )
+                                .then(|| self.ctx.arena.get(arg_idx))
+                                .flatten()
+                                .filter(|node| {
+                                    node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                })
+                                .map(|node| (node.pos, node.end))
+                            })
+                            .collect();
                         let return_context_substitution = self
                             .compute_return_context_substitution_from_shape(
                                 &shape,
@@ -1736,7 +1750,9 @@ impl<'a> CheckerState<'a> {
                                             diag.code,
                                             diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
                                                 | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
-                                        )
+                                        ) && !refreshed_direct_function_arg_spans
+                                            .iter()
+                                            .any(|(start, end)| diag.start >= *start && diag.start < *end)
                                 });
                                 if !preserved_initial_arg_diags.is_empty() {
                                     let mut merged =
@@ -1830,7 +1846,9 @@ impl<'a> CheckerState<'a> {
                                             diag.code,
                                             diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
                                                 | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
-                                        )
+                                        ) && !refreshed_direct_function_arg_spans
+                                            .iter()
+                                            .any(|(start, end)| diag.start >= *start && diag.start < *end)
                                 });
                                 if !preserved_initial_arg_diags.is_empty() {
                                     let mut merged =
@@ -2086,7 +2104,7 @@ impl<'a> CheckerState<'a> {
                     _ => true,
                 }
             } else {
-                false
+                true
             }
         } else {
             false

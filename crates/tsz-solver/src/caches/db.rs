@@ -980,7 +980,7 @@ impl QueryDatabase for TypeInterner {
     }
 
     fn remove_nullish(&self, type_id: TypeId) -> TypeId {
-        narrowing::remove_nullish(self, type_id)
+        narrowing::remove_nullish_query(self, type_id)
     }
 
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {

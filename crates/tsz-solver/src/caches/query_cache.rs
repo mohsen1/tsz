@@ -1210,8 +1210,7 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn remove_nullish(&self, type_id: TypeId) -> TypeId {
-        // Delegate to the interner
-        self.interner.remove_nullish(type_id)
+        crate::narrowing::remove_nullish_query(self, type_id)
     }
 
     fn resolve_property_access(

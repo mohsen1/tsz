@@ -571,7 +571,8 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_visited,
             &self.ctx.flow_results,
         )
-        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos);
+        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+        .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         if let Some(class_info) = &self.ctx.enclosing_class
             && let Some(instance_this_type) = class_info.cached_instance_this_type
