@@ -8173,6 +8173,89 @@ fn compile_incremental_creates_tsbuildinfo() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn compile_incremental_reports_ts5033_when_tsbuildinfo_is_not_writable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    let readonly_dir = base.join("readonly");
+    std::fs::create_dir_all(&readonly_dir).expect("create readonly dir");
+    std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o555))
+        .expect("mark readonly dir");
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "incremental": true,
+            "tsBuildInfoFile": "readonly/project.tsbuildinfo"
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/index.ts"), "export const value = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed with diagnostic");
+
+    std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o755))
+        .expect("restore readonly dir permissions");
+
+    let ts5033_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::COULD_NOT_WRITE_FILE)
+        .collect();
+    assert!(
+        ts5033_diags.iter().any(|diag| {
+            diag.message_text.contains("readonly/project.tsbuildinfo")
+                && (diag.message_text.contains("permission denied")
+                    || diag.message_text.contains("read-only file system"))
+        }),
+        "Expected TS5033 for non-writable tsbuildinfo path, got: {result:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn compile_tsbuildinfo_without_incremental_does_not_report_ts5033() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    let readonly_dir = base.join("readonly");
+    std::fs::create_dir_all(&readonly_dir).expect("create readonly dir");
+    std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o555))
+        .expect("mark readonly dir");
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "tsBuildInfoFile": "readonly/project.tsbuildinfo"
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/index.ts"), "export const value = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o755))
+        .expect("restore readonly dir permissions");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::COULD_NOT_WRITE_FILE),
+        "Expected no TS5033 when incremental build info is disabled, got: {result:?}"
+    );
+}
+
 // Tests for @noTypesAndSymbols parsing
 
 use crate::driver::has_no_types_and_symbols_directive;

@@ -631,6 +631,22 @@ fn get_build_info_path(
     Some(default_build_info_path(config_path, out_dir.as_deref()))
 }
 
+fn format_file_write_error_for_diagnostic(path: &Path, err: &anyhow::Error) -> String {
+    if let Some(io_err) = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+    {
+        let quoted_path = path.display().to_string();
+        return match io_err.raw_os_error() {
+            Some(30) => format!("EROFS: read-only file system, open '{quoted_path}'"),
+            Some(13) => format!("EACCES: permission denied, open '{quoted_path}'"),
+            _ => io_err.to_string(),
+        };
+    }
+
+    err.root_cause().to_string()
+}
+
 pub fn compile(args: &CliArgs, cwd: &Path) -> Result<CompilationResult> {
     compile_inner(args, cwd, None, None, None, None)
 }
@@ -1020,8 +1036,9 @@ fn compile_inner(
     // Only create when loading from BuildInfo (not when a cache is provided)
     let mut local_cache: Option<CompilationCache> = None;
 
-    // Load BuildInfo if incremental compilation is enabled and no cache was provided
-    if cache.is_none() && (resolved.incremental || resolved.ts_build_info_file.is_some()) {
+    // Load BuildInfo only when incremental compilation is enabled and no cache was provided.
+    // A standalone `tsBuildInfoFile` path does not activate build info reads/writes.
+    if cache.is_none() && resolved.incremental {
         let tsconfig_path_ref = tsconfig_path.as_deref();
         if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir)
         {
@@ -1496,6 +1513,16 @@ fn compile_inner(
             build_info.latest_changed_dts_file = latest_changed_dts_file;
 
             if let Err(e) = build_info.save(&build_info_path) {
+                let build_info_path_text = build_info_path.display().to_string();
+                let formatted_error =
+                    format_file_write_error_for_diagnostic(&build_info_path, &e);
+                diagnostics.push(Diagnostic::from_code(
+                    diagnostic_codes::COULD_NOT_WRITE_FILE,
+                    "",
+                    0,
+                    0,
+                    &[&build_info_path_text, &formatted_error],
+                ));
                 tracing::warn!(
                     "Failed to save BuildInfo to {}: {}",
                     build_info_path.display(),
