@@ -382,21 +382,24 @@ impl<'a> CheckerState<'a> {
 
         let children_prop_name = self.get_jsx_children_prop_name();
         let provided_attrs = self.collect_jsx_union_resolution_attrs(attributes_idx)?;
-        let provided_attrs: Vec<(String, TypeId)> = provided_attrs
+        let provided_attrs: Vec<(String, Option<TypeId>)> = provided_attrs
             .into_iter()
             .filter_map(|(name, ty)| {
                 if name == children_prop_name {
                     return None;
                 }
-                ty.map(|ty| (name, ty))
+                Some((name, ty))
             })
             .collect();
-        if provided_attrs.is_empty() {
-            return None;
-        }
+        let typed_attrs: Vec<(String, TypeId)> = provided_attrs
+            .into_iter()
+            .filter_map(|(name, ty)| ty.map(|ty| (name, ty)))
+            .collect();
 
-        let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-        let substitution = {
+        let mut substitution = if typed_attrs.is_empty() {
+            crate::query_boundaries::common::TypeSubstitution::new()
+        } else {
+            let attrs_type = self.build_jsx_provided_attrs_object_type(&typed_attrs);
             let env = self.ctx.type_env.borrow();
             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
                 self.ctx.types,
@@ -407,11 +410,31 @@ impl<'a> CheckerState<'a> {
                 None,
             )
         };
+
+        for tp in &function_shape.type_params {
+            if substitution.get(tp.name).is_none()
+                && let Some(replacement) = tp.default.or(tp.constraint)
+            {
+                substitution.insert(tp.name, replacement);
+            }
+        }
+
+        if substitution.is_empty() {
+            return None;
+        }
+
         let instantiated =
             self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
-        let props_type = instantiated.params.first()?.type_id;
-        let props_type = self.resolve_type_for_property_access(props_type);
-        let props_type = self.evaluate_type_with_env(props_type);
+        let raw_props_type = instantiated.params.first()?.type_id;
+        let props_type = if crate::computation::call_inference::should_preserve_contextual_application_shape(
+            self.ctx.types,
+            raw_props_type,
+        ) {
+            raw_props_type
+        } else {
+            let resolved = self.resolve_type_for_property_access(raw_props_type);
+            self.evaluate_type_with_env(resolved)
+        };
         if props_type == TypeId::ANY
             || props_type == TypeId::UNKNOWN
             || props_type == TypeId::ERROR
@@ -813,7 +836,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
-                let attr_request = if gen_ctx && inferred_generic_props.is_none() {
+                let generic_attr_fallback = if gen_ctx {
                     request.read().normal_origin().contextual(TypeId::UNKNOWN)
                 } else {
                     request.read().normal_origin().contextual_opt(None)
@@ -831,7 +854,7 @@ impl<'a> CheckerState<'a> {
                                         .map(|props| {
                                             request.read().normal_origin().contextual(props)
                                         })
-                                        .unwrap_or(attr_request);
+                                        .unwrap_or(generic_attr_fallback);
                                     self.compute_type_of_node_with_request(
                                         spread_data.expression,
                                         &spread_request,
@@ -872,10 +895,10 @@ impl<'a> CheckerState<'a> {
                                                 .normal_origin()
                                                 .contextual(tsz_solver::remove_undefined(self.ctx.types, type_id))
                                         }
-                                        _ => attr_request,
+                                        _ => generic_attr_fallback,
                                     }
                                 } else {
-                                    attr_request
+                                    generic_attr_fallback
                                 };
                                 self.compute_type_of_node_with_request(
                                     attr_value_idx,
