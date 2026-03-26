@@ -221,6 +221,7 @@ impl<'a> CheckerState<'a> {
         // By pushing a partial type onto `this_type_stack`, initializer expressions that
         // reference `this.annotatedProp` can resolve correctly.
         let mut pushed_prescan_this = false;
+        let mut prescan_this_type = None;
         {
             // PERF: Single pass over class members for prescan (was 3 separate loops).
             let mut prescan_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
@@ -398,6 +399,7 @@ impl<'a> CheckerState<'a> {
                     .class_instance_type_cache
                     .insert(class_idx, prescan_type);
                 self.ctx.this_type_stack.push(prescan_type);
+                prescan_this_type = Some(prescan_type);
                 pushed_prescan_this = true;
             }
         }
@@ -439,11 +441,71 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
                     let is_readonly = self.has_readonly_modifier(&prop.modifiers)
                         || self.jsdoc_has_readonly_tag(member_idx);
-                    let type_id = if let Some(declared_type) =
-                        self.effective_class_property_declared_type(member_idx, prop)
+                    let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
+
+                    // In JS/checkJs, arrow-property initializers inherit the class `this`.
+                    // Pre-scan `this.prop = value` writes inside the arrow body so the
+                    // partial instance type already includes those implicit members while
+                    // we type-check the initializer itself.
+                    if self.ctx.is_js_file()
+                        && !prop.initializer.is_none()
+                        && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                        && init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        && let Some(init_func) = self.ctx.arena.get_function(init_node)
+                        && !init_func.body.is_none()
                     {
+                        self.collect_js_constructor_this_properties(
+                            init_func.body,
+                            &mut properties,
+                            current_sym,
+                            true,
+                        );
+                    }
+
+                    let declared_type = self.effective_class_property_declared_type(member_idx, prop);
+
+                    let type_id = if let Some(declared_type) = declared_type {
                         declared_type
                     } else if prop.initializer.is_some() {
+                        let current_property_placeholder = PropertyInfo {
+                            name: name_atom,
+                            type_id: TypeId::ANY,
+                            write_type: TypeId::ANY,
+                            optional: prop.question_token,
+                            readonly: is_readonly,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility,
+                            parent_id: current_sym,
+                            declaration_order: 0,
+                        };
+                        let mut partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+                        if !partial_props.iter().any(|p| p.name == name_atom) {
+                            partial_props.push(current_property_placeholder);
+                        }
+                        let refreshed_this_type = if partial_props.is_empty() {
+                            prescan_this_type
+                        } else {
+                            let own_partial = factory.object_with_index(ObjectShape {
+                                properties: partial_props,
+                                string_index: string_index.clone(),
+                                number_index: number_index.clone(),
+                                symbol: current_sym,
+                                ..ObjectShape::default()
+                            });
+                            Some(if let Some(prescan) = prescan_this_type {
+                                factory.intersection(vec![own_partial, prescan])
+                            } else {
+                                own_partial
+                            })
+                        };
+                        if let Some(partial_this) = refreshed_this_type {
+                            self.ctx.this_type_stack.push(partial_this);
+                            // Property initializers may already have been typed earlier
+                            // during statement checking with a stale provisional `this`.
+                            // Recompute them against the refreshed partial instance type.
+                            self.clear_type_cache_recursive(prop.initializer);
+                        }
                         // If the initializer is exactly `this`, use the polymorphic
                         // ThisType so that `class C<T> { x = this; }` with `c: C<string>`
                         // makes `c.x` resolve to `C<string>`, not the raw class type.
@@ -459,6 +521,9 @@ impl<'a> CheckerState<'a> {
                         } else {
                             self.get_type_of_node(prop.initializer)
                         };
+                        if refreshed_this_type.is_some() {
+                            self.ctx.this_type_stack.pop();
+                        }
                         self.ctx.preserve_literal_types = prev;
                         let init_type = if init_type == TypeId::ANY
                             && self.has_accessor_modifier(&prop.modifiers)
@@ -497,8 +562,6 @@ impl<'a> CheckerState<'a> {
                         TypeId::ANY
                     };
                     self.ctx.node_types.insert(member_idx.0, type_id);
-
-                    let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
 
                     properties.insert(
                         name_atom,
