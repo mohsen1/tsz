@@ -2323,10 +2323,9 @@ impl ParserState {
                 } else {
                     if !self.is_js_file()
                         && self.is_token(SyntaxKind::GreaterThanToken)
-                        && self
-                            .get_source_text()
-                            .get(self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize)
-                            == Some("<")
+                        && self.get_source_text().get(
+                            self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize,
+                        ) == Some("<")
                     {
                         while !self.is_token(SyntaxKind::EndOfFileToken)
                             && !self.scanner.has_preceding_line_break()

@@ -2111,9 +2111,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(name) =
-                self.constant_define_property_name_in_file(target_file_idx, &target_arena, name_expr)
-            else {
+            let Some(name) = self.constant_define_property_name_in_file(
+                target_file_idx,
+                &target_arena,
+                name_expr,
+            ) else {
                 continue;
             };
             let name_atom = self.ctx.types.intern_string(&name);

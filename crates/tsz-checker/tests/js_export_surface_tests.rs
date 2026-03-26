@@ -1785,7 +1785,9 @@ lib.prop;
         .collect();
     let missing: Vec<_> = diagnostics
         .iter()
-        .filter(|(c, msg)| *c == 2339 && (msg.contains("thing") || msg.contains("other") || msg.contains("prop")))
+        .filter(|(c, msg)| {
+            *c == 2339 && (msg.contains("thing") || msg.contains("other") || msg.contains("prop"))
+        })
         .collect();
     assert!(
         thing_missing.is_empty(),
