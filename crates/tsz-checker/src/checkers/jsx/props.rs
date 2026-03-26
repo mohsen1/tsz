@@ -930,10 +930,25 @@ impl<'a> CheckerState<'a> {
                 );
 
                 if !overwritten {
+                    let contextual_expected_type = if self
+                        .ctx
+                        .arena
+                        .get(value_node_idx)
+                        .is_some_and(|node| {
+                            node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                        }) {
+                        self.refine_jsx_callable_contextual_type(expected_type)
+                    } else {
+                        expected_type
+                    };
                     // Set contextual type to preserve narrow literal types.
                     let actual_type = self.compute_type_of_node_with_request(
                         value_node_idx,
-                        &request.read().normal_origin().contextual(expected_type),
+                        &request
+                            .read()
+                            .normal_origin()
+                            .contextual(contextual_expected_type),
                     );
 
                     if let Some(entry) = provided_attrs.last_mut() {
