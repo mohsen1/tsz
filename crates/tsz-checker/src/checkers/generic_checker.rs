@@ -1812,7 +1812,8 @@ impl<'a> CheckerState<'a> {
     /// through its constraint chain. This handles cases like:
     /// `T[M]` where `T extends { [K in keyof T]: () => unknown }` and `M extends keyof T`.
     /// The mapped type template `() => unknown` is callable, so `T[M]` resolves
-    /// to a callable type.
+    /// to a callable type. It also handles callable string/number index
+    /// signatures like `T extends { [key: string]: (...args: any) => void }`.
     fn indexed_access_resolves_to_callable(&mut self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
         let Some((object, _index)) = query::index_access_components(db, type_id) else {
@@ -1837,6 +1838,20 @@ impl<'a> CheckerState<'a> {
             return query::is_callable_type(db2, template_eval)
                 || query::callable_shape_for_type(db2, template_eval).is_some()
                 || query::is_callable_type(db2, template);
+        }
+        for value_type in query::index_signature_value_types(db, object_constraint)
+            .into_iter()
+            .flatten()
+        {
+            let value_eval = self.evaluate_type_for_assignability(value_type);
+            let db2 = self.ctx.types.as_type_database();
+            if query::is_callable_type(db2, value_eval)
+                || query::callable_shape_for_type(db2, value_eval).is_some()
+                || query::is_callable_type(db2, value_type)
+                || query::callable_shape_for_type(db2, value_type).is_some()
+            {
+                return true;
+            }
         }
         false
     }

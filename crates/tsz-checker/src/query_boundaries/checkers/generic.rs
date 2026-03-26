@@ -1,4 +1,4 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::{TypeData, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{callable_shape_for_type, contains_type_parameters};
 
@@ -253,6 +253,27 @@ pub(crate) fn is_mapped_template_callable(
     mapped_id: tsz_solver::MappedTypeId,
 ) -> bool {
     tsz_solver::type_queries::is_mapped_template_callable(db, mapped_id)
+}
+
+/// Extract string/number index signature value types from a type.
+///
+/// Used for TS2344 constraint checking: when an indexed access into a type
+/// parameter is checked against a callable constraint, a callable index
+/// signature on the type parameter's constraint means the indexed value is
+/// callable even if the constraint is not expressed as a mapped type.
+pub(crate) fn index_signature_value_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> [Option<TypeId>; 2] {
+    let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = db.lookup(type_id)
+    else {
+        return [None, None];
+    };
+    let shape = db.object_shape(shape_id);
+    [
+        shape.string_index.as_ref().map(|sig| sig.value_type),
+        shape.number_index.as_ref().map(|sig| sig.value_type),
+    ]
 }
 
 /// Check if a type is a generic type application (`TypeData::Application`).
