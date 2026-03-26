@@ -379,15 +379,14 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
-                // Resolve the symbol's structural body first
-                let _ = self.type_reference_symbol_type(sym_id);
-                // Prime lib type params for lib symbols (e.g., Uint8Array, DataView) so
-                // get_type_params_for_symbol returns their generic params. Without this,
-                // lib types with default type parameters produce bare Lazy(DefId) instead
-                // of Application(Lazy(DefId), [defaults]), causing false TS2322/TS2345.
+                // Prime lib generic metadata before resolving the symbol body so
+                // bare lib references inside type literals keep their default
+                // type arguments instead of caching an uninstantiated Lazy type.
                 if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
                     self.prime_lib_type_params(name);
                 }
+                // Resolve the symbol's structural body first
+                let _ = self.type_reference_symbol_type(sym_id);
                 // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
                 // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
                 // Without this, bare Lazy(DefId) misses the default instantiation and causes false
