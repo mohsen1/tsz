@@ -352,6 +352,21 @@ impl<'a> CheckerState<'a> {
         }
 
         if func_node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION {
+            // For `export function f(...)`, the JSDoc is before `export` but
+            // func_node.pos is at `function`. Check the parent ExportDeclaration.
+            if let Some(ext) = self.ctx.arena.get_extended(func_idx)
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION
+            {
+                for comment in comments.iter().rev() {
+                    if comment.end <= parent_node.pos && is_jsdoc_comment(comment, source_text) {
+                        let between = &source_text[comment.end as usize..parent_node.pos as usize];
+                        if between.trim().is_empty() {
+                            return Some(comment.pos);
+                        }
+                    }
+                }
+            }
             return None;
         }
 
@@ -476,7 +491,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if func_node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION {
-            return self.try_leading_jsdoc(comments, func_node.pos, source_text);
+            if let Some(jsdoc) = self.try_leading_jsdoc(comments, func_node.pos, source_text) {
+                return Some(jsdoc);
+            }
+            // For `export function f(...)`, the JSDoc is before the `export` keyword
+            // but func_node.pos is at `function`. Walk up to the parent
+            // (ExportDeclaration) to find the JSDoc there.
+            if let Some(ext) = self.ctx.arena.get_extended(func_idx)
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION
+            {
+                return self.try_leading_jsdoc(comments, parent_node.pos, source_text);
+            }
+            return None;
         }
 
         // Try leading comments, then walk up the parent chain for
