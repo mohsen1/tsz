@@ -918,7 +918,7 @@ impl<'a> CheckerState<'a> {
             constructor_type,
             &arg_types,
             false,
-            None,
+            contextual_type,
         );
 
         match result {
