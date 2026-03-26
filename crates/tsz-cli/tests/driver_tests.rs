@@ -8675,6 +8675,52 @@ export { _Default, _ImportRelative };
 }
 
 #[test]
+fn import_non_exported_member_alias_reports_ts2460() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs"
+  },
+  "files": ["a.ts", "b.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        r#"declare function foo(): any
+declare function bar(): any;
+export { foo, bar as baz };
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import { foo, bar } from "./a";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2460_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS)
+        .collect();
+    assert!(
+        ts2460_diags.iter().any(|diag| {
+            diag.message_text.contains("\"./a\"")
+                && diag.message_text.contains("'bar'")
+                && diag.message_text.contains("'baz'")
+        }),
+        "Expected TS2460 for renamed export import, got: {result:?}"
+    );
+}
+
+#[test]
 fn lib_replacement_honors_source_reference_subfiles() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
