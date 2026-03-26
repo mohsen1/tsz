@@ -2116,12 +2116,33 @@ impl<'a> CheckerState<'a> {
             needs_real_type_recheck,
             shape_this_type,
         );
+        let forced_block_body_callback_mismatch = self
+            .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
+                ContextualTypeContext::with_expected_and_options(
+                    checker.ctx.types,
+                    callee_type_for_call,
+                    checker.ctx.compiler_options.no_implicit_any,
+                )
+                .get_parameter_type_for_call(index, args.len())
+            })
+            .inspect(|&(index, actual, expected)| {
+                if let CallResult::Success(return_type) = result {
+                    result = CallResult::ArgumentTypeMismatch {
+                        index,
+                        expected,
+                        actual,
+                        fallback_return: return_type,
+                    };
+                }
+            })
+            .is_some();
         if let CallResult::ArgumentTypeMismatch {
             actual,
             expected,
             fallback_return,
             ..
         } = result
+            && !forced_block_body_callback_mismatch
             && fallback_return != TypeId::ERROR
             && self.should_defer_contextual_argument_mismatch(actual, expected)
         {
