@@ -988,8 +988,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn binder_reconstruction_from_original_fields_preserves_mapped_type_generic_indexed_access_context()
-{
+fn binder_reconstruction_from_original_fields_preserves_mapped_type_generic_indexed_access_context() {
     let source = r#"type Types = {
     first: { a1: true };
     second: { a2: true };
@@ -1181,18 +1180,9 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder =
-        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in [
-        "Types",
-        "Test",
-        "TypesMap",
-        "P",
-        "TypeHandlers",
-        "typeHandlers",
-        "onSomeEvent",
-    ] {
+    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
         let original = symbol_snapshot(&original_binder, name);
         let merged = symbol_snapshot(&merged_binder, name);
         assert_eq!(
@@ -1260,8 +1250,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder =
-        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (idx, node) in arena.nodes.iter().enumerate() {
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -1348,8 +1337,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder =
-        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
@@ -1434,8 +1422,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder =
-        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
@@ -1509,18 +1496,9 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder =
-        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in [
-        "Types",
-        "Test",
-        "TypesMap",
-        "P",
-        "TypeHandlers",
-        "typeHandlers",
-        "onSomeEvent",
-    ] {
+    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
         let original_sym_id = original_binder
             .file_locals
             .get(name)
@@ -1595,18 +1573,9 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder =
-        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in [
-        "Types",
-        "Test",
-        "TypesMap",
-        "P",
-        "TypeHandlers",
-        "typeHandlers",
-        "onSomeEvent",
-    ] {
+    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
         let original_sym_id = original_binder
             .file_locals
             .get(name)
@@ -1635,8 +1604,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn reconstructed_binder_with_fresh_type_interner_preserves_mapped_type_generic_indexed_access_context()
- {
+fn reconstructed_binder_with_fresh_type_interner_preserves_mapped_type_generic_indexed_access_context(
+) {
     let files = vec![(
         "main.ts".to_string(),
         r#"type Types = {
@@ -1735,8 +1704,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn original_binder_with_merged_program_type_interner_preserves_mapped_type_generic_indexed_access_context()
- {
+fn original_binder_with_merged_program_type_interner_preserves_mapped_type_generic_indexed_access_context(
+) {
     let source = r#"type Types = {
     first: { a1: true };
     second: { a2: true };
@@ -9565,5 +9534,57 @@ fn phase_timings_are_populated_after_compilation() {
         "total_ms ({}) should be >= sum of phases ({})",
         pt.total_ms,
         sum
+    );
+}
+
+#[test]
+fn compile_reports_outer_ts2345_for_block_body_contextual_callback_return_mismatch() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true,
+            "target": "es2015"
+          },
+          "include": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+interface Collection<T, U> {
+    length: number;
+    add(x: T, y: U): void;
+    remove(x: T, y: U): boolean;
+}
+
+interface Combinators {
+    map<T, U>(c: Collection<T, U>, f: (x: T, y: U) => any): Collection<any, any>;
+    map<T, U, V>(c: Collection<T, U>, f: (x: T, y: U) => V): Collection<T, V>;
+}
+
+declare var _: Combinators;
+declare var c2: Collection<number, string>;
+var r5a = _.map<number, string, Date>(c2, (x, y) => { return x.toFixed() });
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2345),
+        "Expected outer TS2345 for block-body callback return mismatch, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected no inner TS2322 for block-body callback return mismatch, got: {:?}",
+        result.diagnostics
     );
 }
