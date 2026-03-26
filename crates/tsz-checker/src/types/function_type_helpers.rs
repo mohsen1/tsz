@@ -412,6 +412,11 @@ impl<'a> CheckerState<'a> {
         if !is_async || is_generator {
             return;
         }
+        // Only check for Promise constructor availability when targeting pre-ES2015,
+        // where Promise is not a native global.
+        if self.ctx.compiler_options.target.supports_es2015() {
+            return;
+        }
         let should_check_promise_constructor = !is_function_declaration || has_type_annotation;
         let missing_promise = !self.ctx.has_promise_constructor_in_scope();
         if !(should_check_promise_constructor && missing_promise) {
