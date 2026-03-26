@@ -2894,6 +2894,30 @@ fn test_declaration_emit_spread_with_external_unique_symbol_key_simplified_harne
     );
 }
 
+#[test]
+fn test_exported_variable_typeof_block_local_value_emits_ts4025() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        "{\n    var a = \"\";\n}\nexport let b: typeof a;\n",
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 4025),
+        "Expected TS4025 for exported variable annotation using block-local typeof value. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostic_message(&diagnostics, 4025)
+            .is_some_and(|message| message
+                .contains("Exported variable 'b' has or is using private name 'a'")),
+        "Expected TS4025 message to mention exported variable 'b' and private name 'a'. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_paths = [

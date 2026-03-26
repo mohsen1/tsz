@@ -6,6 +6,7 @@ use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -955,6 +956,209 @@ impl<'a> CheckerState<'a> {
             crate::diagnostics::diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED,
             &[name, &referenced_name, &quoted_module],
         );
+    }
+
+    pub(crate) fn maybe_report_private_name_in_exported_variable_type_annotation(
+        &mut self,
+        _name_idx: NodeIndex,
+        name: &str,
+        type_annotation: NodeIndex,
+    ) {
+        if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
+            return;
+        }
+
+        let Some((report_at, private_name)) =
+            self.first_private_value_type_query_name_in_exported_type_annotation(type_annotation)
+        else {
+            return;
+        };
+
+        self.error_at_node_msg(
+            report_at,
+            crate::diagnostics::diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_PRIVATE_NAME,
+            &[name, &private_name],
+        );
+    }
+
+    fn first_private_value_type_query_name_in_exported_type_annotation(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<(NodeIndex, String)> {
+        let mut stack = vec![type_annotation];
+
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::TYPE_QUERY
+                && let Some(type_query) = self.ctx.arena.get_type_query(node)
+                && let Some(root_name) = self.type_query_root_identifier_name(type_query.expr_name)
+                && !root_name.is_empty()
+            {
+                if let Some(sym_id) =
+                    self.resolve_type_query_value_symbol_for_emit(type_query.expr_name)
+                    && self.value_symbol_is_private_for_exported_type_query(sym_id)
+                {
+                    return Some((type_query.expr_name, root_name));
+                }
+
+                if !self.type_query_value_name_is_accessible(type_query.expr_name)
+                    && self.has_inaccessible_current_file_value_name(&root_name)
+                {
+                    return Some((type_query.expr_name, root_name));
+                }
+            }
+
+            stack.extend(self.ctx.arena.get_children(node_idx));
+        }
+
+        None
+    }
+
+    fn type_query_root_identifier_name(&self, expr_name: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(expr_name)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.to_string());
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = self.ctx.arena.get_qualified_name(node)?;
+            return self.type_query_root_identifier_name(qualified.left);
+        }
+
+        None
+    }
+
+    fn type_query_value_name_is_accessible(&self, expr_name: NodeIndex) -> bool {
+        self.resolve_type_query_value_symbol_for_emit(expr_name)
+            .is_some()
+    }
+
+    fn resolve_type_query_value_symbol_for_emit(&self, expr_name: NodeIndex) -> Option<SymbolId> {
+        let Some(node) = self.ctx.arena.get(expr_name) else {
+            return None;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol_without_tracking(expr_name);
+        }
+
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return None;
+        }
+
+        let Some(qualified) = self.ctx.arena.get_qualified_name(node) else {
+            return None;
+        };
+        let Some(left_sym_id) = self.resolve_type_query_value_symbol_for_emit(qualified.left)
+        else {
+            return None;
+        };
+        let Some(right_name) = self.ctx.arena.get_identifier_text(qualified.right) else {
+            return None;
+        };
+        let Some(left_symbol) = self.get_symbol_from_any_binder(left_sym_id) else {
+            return None;
+        };
+
+        left_symbol.exports.as_ref().and_then(|exports| {
+            exports.iter().find_map(|(name, sym_id)| {
+                if name == right_name {
+                    Some(*sym_id)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    fn value_symbol_is_private_for_exported_type_query(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+
+        let mut decls = symbol.declarations.clone();
+        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
+            decls.push(symbol.value_declaration);
+        }
+
+        decls
+            .into_iter()
+            .any(|decl_idx| self.declaration_is_hidden_from_declaration_emit(decl_idx))
+    }
+
+    fn declaration_is_hidden_from_declaration_emit(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+
+        while current.is_some() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent.kind == syntax_kind_ext::SOURCE_FILE
+                || parent.kind == syntax_kind_ext::MODULE_BLOCK
+            {
+                return false;
+            }
+
+            if parent.kind == syntax_kind_ext::BLOCK {
+                let Some(block_ext) = self.ctx.arena.get_extended(parent_idx) else {
+                    return true;
+                };
+                let Some(block_parent) = self.ctx.arena.get(block_ext.parent) else {
+                    return true;
+                };
+
+                return !matches!(
+                    block_parent.kind,
+                    syntax_kind_ext::FUNCTION_DECLARATION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::METHOD_DECLARATION
+                        | syntax_kind_ext::CONSTRUCTOR
+                        | syntax_kind_ext::GET_ACCESSOR
+                        | syntax_kind_ext::SET_ACCESSOR
+                        | syntax_kind_ext::MODULE_DECLARATION
+                        | syntax_kind_ext::MODULE_BLOCK
+                );
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    fn has_inaccessible_current_file_value_name(&self, name: &str) -> bool {
+        if let Some(local_sym_id) = self.ctx.binder.file_locals.get(name) {
+            let is_accessible_value =
+                self.ctx
+                    .binder
+                    .get_symbol(local_sym_id)
+                    .is_some_and(|symbol| {
+                        !symbol.is_type_only && self.local_value_name_resolves_to(local_sym_id)
+                    });
+            if is_accessible_value {
+                return false;
+            }
+        }
+
+        self.ctx.binder.symbols.iter().any(|symbol| {
+            !symbol.is_type_only
+                && symbol.escaped_name == name
+                && (symbol.decl_file_idx == u32::MAX
+                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+        })
     }
 
     fn first_unnameable_external_unique_symbol_reference(
