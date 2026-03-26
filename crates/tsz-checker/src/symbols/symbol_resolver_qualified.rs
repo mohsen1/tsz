@@ -732,20 +732,59 @@ impl<'a> CheckerState<'a> {
             && let Some(decl_node) = self.ctx.arena.get(decl_idx)
             && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             && let Some(import) = self.ctx.arena.get_import_decl(decl_node)
-            && let Some(module_specifier) =
-                self.get_require_module_specifier(import.module_specifier)
         {
-            if self
-                .ctx
-                .module_resolves_to_non_module_entity(&module_specifier)
+            if let Some(module_specifier) = self.get_require_module_specifier(import.module_specifier)
             {
-                return None;
+                if self
+                    .ctx
+                    .module_resolves_to_non_module_entity(&module_specifier)
+                {
+                    return None;
+                }
+                return self.resolve_reexported_member_symbol(
+                    &module_specifier,
+                    member_name,
+                    visited_aliases,
+                );
             }
-            return self.resolve_reexported_member_symbol(
-                &module_specifier,
-                member_name,
-                visited_aliases,
-            );
+
+            let target_sym = self.resolve_qualified_symbol(import.module_specifier)?;
+            let lib_binders = self.get_lib_binders();
+            let target_symbol = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(target_sym, &lib_binders)?;
+
+            if let Some(exports) = target_symbol.exports.as_ref()
+                && let Some(member_sym) = exports.get(member_name)
+            {
+                return Some(
+                    self.resolve_alias_symbol(member_sym, visited_aliases)
+                        .unwrap_or(member_sym),
+                );
+            }
+
+            if let Some(members) = target_symbol.members.as_ref()
+                && let Some(member_sym) = members.get(member_name)
+            {
+                return Some(
+                    self.resolve_alias_symbol(member_sym, visited_aliases)
+                        .unwrap_or(member_sym),
+                );
+            }
+
+            if target_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                != 0
+                && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
+                    target_symbol.escaped_name.as_str(),
+                    member_name,
+                )
+            {
+                return Some(
+                    self.resolve_alias_symbol(member_sym, visited_aliases)
+                        .unwrap_or(member_sym),
+                );
+            }
         }
 
         None
