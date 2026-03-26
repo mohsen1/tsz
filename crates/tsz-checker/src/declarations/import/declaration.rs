@@ -881,8 +881,15 @@ impl<'a> CheckerState<'a> {
                         module_name.starts_with("./") || module_name.starts_with("../");
                     let suppress_for_cjs_relative = is_cjs_file && is_relative_import;
 
+                    // TS1479 only applies under Node16/NodeNext module kinds where
+                    // CJS/ESM interop boundaries exist at runtime. Bundler resolution
+                    // and pure ESM module kinds handle interop transparently.
+                    let module_has_cjs_esm_boundary =
+                        self.ctx.compiler_options.module.is_node_module();
+
                     if current_is_commonjs
                         && target_is_esm
+                        && module_has_cjs_esm_boundary
                         && !is_type_only_import
                         && !suppress_for_cjs_relative
                     {
