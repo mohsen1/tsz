@@ -1524,6 +1524,14 @@ impl<'a> CheckerState<'a> {
         let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) else {
             return;
         };
+        let name = self
+            .heritage_name_text(expr_idx)
+            .unwrap_or_else(|| "<expression>".to_string());
+        if (self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(heritage_sym))
+            || self.ctx.is_known_global_type(&name)
+        {
+            return;
+        }
 
         let type_params = self.type_params_for_heritage_symbol(heritage_sym);
         if type_params.is_empty() {
@@ -1539,9 +1547,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let name = self
-            .heritage_name_text(expr_idx)
-            .unwrap_or_else(|| "<expression>".to_string());
         let (message, code) = if min_required < max_expected {
             (
                 format_message(
