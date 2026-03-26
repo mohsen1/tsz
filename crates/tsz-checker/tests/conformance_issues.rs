@@ -12855,6 +12855,30 @@ const test1: Promise<[one: number, two: string]> = (async () => {
     );
 }
 
+#[test]
+fn test_augmented_error_constructor_subtypes_remain_assignable() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface ErrorConstructor {
+  captureStackTrace(targetObject: Object, constructorOpt?: Function): void;
+}
+
+declare var x: ErrorConstructor;
+x = Error;
+x = RangeError;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Augmented ErrorConstructor subtypes should stay assignable. Got: {diagnostics:#?}"
+    );
+}
+
 /// Test: IIFE with object return type provides contextual typing for nested callbacks.
 #[test]
 fn test_iife_contextual_return_type_object_with_callback() {

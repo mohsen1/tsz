@@ -1097,28 +1097,42 @@ impl<'a> CheckerState<'a> {
             return factory.intersection2(derived, base);
         };
 
-        // Find a structurally mergeable member in the intersection (Callable, Object,
-        // or ObjectWithIndex). Resolve Lazy members first so that interfaces
-        // (e.g., `A` in `A & string[]`) are expanded to their structural form.
-        let mut mergeable_member = None;
-        let mut other_members = Vec::new();
+        // Find the best structurally mergeable member in the intersection.
+        // Prefer callable members over plain object members so interfaces like
+        // `RangeErrorConstructor extends ErrorConstructor` merge against the
+        // callable core first, then re-apply object augmentations such as
+        // `captureStackTrace`.
+        let rank_member = |kind: InterfaceMergeKind| match kind {
+            InterfaceMergeKind::Callable(_) => Some(0_u8),
+            InterfaceMergeKind::ObjectWithIndex(_) => Some(1_u8),
+            InterfaceMergeKind::Object(_) => Some(2_u8),
+            _ => None,
+        };
 
-        for &member in &members {
-            // Once we have a mergeable member, skip resolution/classification
-            // for remaining members — they just pass through as-is.
-            if mergeable_member.is_none() {
-                let resolved_member = self.resolve_type_for_interface_merge(member);
-                let kind = classify_for_interface_merge(self.ctx.types, resolved_member);
-                if kind.is_structurally_mergeable() {
-                    mergeable_member = Some(resolved_member);
-                    continue;
-                }
+        let mut best_mergeable: Option<(usize, TypeId, u8)> = None;
+        let mut resolved_members = Vec::with_capacity(members.len());
+        for (idx, &member) in members.iter().enumerate() {
+            let resolved_member = self.resolve_type_for_interface_merge(member);
+            let kind = classify_for_interface_merge(self.ctx.types, resolved_member);
+            if let Some(rank) = rank_member(kind)
+                && best_mergeable
+                    .as_ref()
+                    .is_none_or(|(_, _, best_rank)| rank < *best_rank)
+            {
+                best_mergeable = Some((idx, resolved_member, rank));
             }
-            // Keep original (unresolved) member for re-wrapping into the
-            // intersection — these are non-mergeable types like `string[]`
-            // that pass through as-is.
-            other_members.push(member);
+            resolved_members.push((member, resolved_member));
         }
+
+        let mergeable_member = best_mergeable.map(|(_, resolved_member, _)| resolved_member);
+        let other_members: Vec<_> = resolved_members
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, (member, _))| {
+                (best_mergeable.as_ref().is_none_or(|(best_idx, _, _)| idx != *best_idx))
+                    .then_some(member)
+            })
+            .collect();
 
         // If we found a mergeable member, structurally merge it with the other side
         if let Some(mergeable_id) = mergeable_member {
