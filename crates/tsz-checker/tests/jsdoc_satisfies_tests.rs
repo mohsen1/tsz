@@ -142,3 +142,24 @@ export default /** @satisfies {Foo} */ ({});
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// JSDoc @param types on exported functions should suppress TS7006.
+/// The JSDoc comment is before `export`, but function pos is at `function`.
+/// Regression test: find_jsdoc_for_function must walk up to ExportDeclaration.
+#[test]
+fn test_jsdoc_param_suppresses_ts7006_exported_function() {
+    let source = r#"
+/**
+ * @param {number} a
+ * @param {number} b
+ */
+export function d(a, b) { return null; }
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts7006: Vec<_> = diagnostics.iter().filter(|d| d.code == 7006).collect();
+    assert!(
+        ts7006.is_empty(),
+        "Expected no TS7006 for exported function with JSDoc @param types, got codes: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
