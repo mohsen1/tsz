@@ -18958,3 +18958,78 @@ type Crashes = number & Mixin;
         "Should NOT emit TS2314 for merged function+type alias 'Mixin'. Got: {ts2314:?}. All: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_no_false_ts2314_for_type_alias_function_type_shared_symbol_shape() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function Mixin<TBase extends {new (...args: any[]): {}}>(Base: TBase) {
+    return class extends Base {
+    };
+}
+
+type Mixin = ReturnTypeOf<typeof Mixin>
+
+type ReturnTypeOf<V> = V extends (...args: any[])=>infer R ? R : never;
+
+type Crashes = number & Mixin;
+"#,
+    );
+    let ts2314: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Should NOT emit TS2314 for the typeAliasFunctionTypeSharedSymbol shape. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2314_for_mixin_abstract_classes_shape() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Mixin {
+    mixinMethod(): void;
+}
+
+function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass): TBaseClass & (abstract new (...args: any) => Mixin) {
+    abstract class MixinClass extends baseClass implements Mixin {
+        mixinMethod() {
+        }
+    }
+    return MixinClass;
+}
+
+class ConcreteBase {
+    baseMethod() {}
+}
+
+abstract class AbstractBase {
+    abstract abstractBaseMethod(): void;
+}
+
+class DerivedFromConcrete extends Mixin(ConcreteBase) {
+}
+
+const wasConcrete = new DerivedFromConcrete();
+wasConcrete.baseMethod();
+wasConcrete.mixinMethod();
+
+class DerivedFromAbstract extends Mixin(AbstractBase) {
+    abstractBaseMethod() {}
+}
+
+const wasAbstract = new DerivedFromAbstract();
+wasAbstract.abstractBaseMethod();
+wasAbstract.mixinMethod();
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            emit_declarations: true,
+            ..Default::default()
+        },
+    );
+    let ts2314: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Should NOT emit TS2314 for the mixinAbstractClasses shape. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}

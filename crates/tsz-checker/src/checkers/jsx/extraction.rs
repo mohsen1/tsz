@@ -133,55 +133,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // JSX Component Props Extraction
-
-    fn apply_jsx_library_managed_attributes(
-        &mut self,
-        component_type: TypeId,
-        props_type: TypeId,
-    ) -> TypeId {
-        let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
-            return props_type;
-        };
-        let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)
-        else {
-            return props_type;
-        };
-        let Some(exports) = symbol.exports.as_ref() else {
-            return props_type;
-        };
-        let Some(lma_sym_id) = exports.get("LibraryManagedAttributes") else {
-            return props_type;
-        };
-
-        let base = self.type_reference_symbol_type(lma_sym_id);
-        if matches!(base, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
-            return props_type;
-        }
-
-        let managed = self
-            .ctx
-            .types
-            .factory()
-            .application(base, vec![component_type, props_type]);
-        let managed = self.evaluate_application_type(managed);
-        let managed = self.evaluate_type_with_env(managed);
-        let managed = self.resolve_type_for_property_access(managed);
-        let managed = self.resolve_lazy_type(managed);
-        let managed = self.evaluate_application_type(managed);
-        let managed = self.evaluate_type_with_env(managed);
-
-        if matches!(managed, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
-            props_type
-        } else {
-            managed
-        }
-    }
-
     /// Extract props type from a JSX component (SFC: first param of call sig;
     /// class: construct sig return -> `JSX.ElementAttributesProperty` member).
     /// Returns `(props_type, raw_has_type_params)` where `raw_has_type_params`
