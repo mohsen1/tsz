@@ -522,6 +522,185 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for JSDoc `@param` tags whose name slot starts with `*`.
+    /// TypeScript reports TS1003 at the `*` token for these malformed names.
+    pub(crate) fn check_jsdoc_param_invalid_names(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::is_jsdoc_comment;
+
+        fn param_tag_len(line: &str) -> Option<usize> {
+            let after_tag = line.strip_prefix("@param")?;
+            let next = after_tag.chars().next().unwrap_or('\0');
+            (next == '\0' || next.is_whitespace() || next == '{').then_some("@param".len())
+        }
+
+        fn skip_curly_type_expr(text: &str) -> Option<usize> {
+            if !text.starts_with('{') {
+                return None;
+            }
+            let mut depth = 0usize;
+            for (idx, ch) in text.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            return Some(idx + 1);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        fn normalize_param_tag_body(raw_body: &str) -> (String, Vec<usize>) {
+            let mut normalized = String::new();
+            let mut mapping = Vec::new();
+            let mut raw_offset = 0usize;
+
+            for (line_idx, segment) in raw_body.split_inclusive('\n').enumerate() {
+                let raw_line = segment.trim_end_matches(['\r', '\n']);
+                let mut content_start = 0usize;
+
+                if line_idx > 0 {
+                    content_start = raw_line.len() - raw_line.trim_start().len();
+                    let after_ws = &raw_line[content_start..];
+                    if let Some(after_star) = after_ws.strip_prefix('*') {
+                        content_start += 1;
+                        content_start += after_star.len() - after_star.trim_start().len();
+                    }
+                }
+
+                if !normalized.is_empty() && content_start < raw_line.len() {
+                    normalized.push(' ');
+                    mapping.push(raw_offset + content_start);
+                }
+
+                for (idx, ch) in raw_line[content_start..].char_indices() {
+                    normalized.push(ch);
+                    mapping.push(raw_offset + content_start + idx);
+                }
+
+                raw_offset += segment.len();
+            }
+
+            (normalized, mapping)
+        }
+
+        fn find_invalid_param_name_offset(raw_body: &str) -> Option<usize> {
+            let (normalized, mapping) = normalize_param_tag_body(raw_body);
+            let mut rest = normalized.as_str();
+            let mut logical_offset = 0usize;
+
+            let trimmed = rest.trim_start();
+            logical_offset += rest.len() - trimmed.len();
+            rest = trimmed;
+
+            if rest.starts_with('{') {
+                let type_len = skip_curly_type_expr(rest)?;
+                logical_offset += type_len;
+                rest = &rest[type_len..];
+
+                let trimmed = rest.trim_start();
+                logical_offset += rest.len() - trimmed.len();
+                rest = trimmed;
+            }
+
+            rest.starts_with('*')
+                .then(|| mapping.get(logical_offset).copied())
+                .flatten()
+        }
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+
+            let comment_text = comment.get_text(source_text);
+            let mut comment_offset = 0usize;
+            let mut current_param_offset = None;
+            let mut current_param_body = String::new();
+
+            for segment in comment_text.split_inclusive('\n') {
+                let raw_line = segment.trim_end_matches(['\r', '\n']);
+                let mut content_start = raw_line.len() - raw_line.trim_start().len();
+                let mut content = &raw_line[content_start..];
+
+                if let Some(after_open) = content.strip_prefix("/**") {
+                    content_start += 3;
+                    let ws_after_open = after_open.len() - after_open.trim_start().len();
+                    content_start += ws_after_open;
+                    content = &raw_line[content_start..];
+                } else if let Some(after_open) = content.strip_prefix("/*") {
+                    content_start += 2;
+                    let ws_after_open = after_open.len() - after_open.trim_start().len();
+                    content_start += ws_after_open;
+                    content = &raw_line[content_start..];
+                }
+
+                if let Some(after_star) = content.strip_prefix('*') {
+                    content_start += 1;
+                    let ws_after_star = after_star.len() - after_star.trim_start().len();
+                    content_start += ws_after_star;
+                    content = &raw_line[content_start..];
+                }
+
+                if let Some(tag_len) = param_tag_len(content) {
+                    if let Some(param_offset) = current_param_offset.take() {
+                        if let Some(invalid_offset) =
+                            find_invalid_param_name_offset(&current_param_body)
+                        {
+                            self.ctx.error(
+                                (comment.pos as usize + param_offset + invalid_offset) as u32,
+                                1,
+                                diagnostic_messages::IDENTIFIER_EXPECTED.to_string(),
+                                diagnostic_codes::IDENTIFIER_EXPECTED,
+                            );
+                        }
+                        current_param_body.clear();
+                    }
+
+                    current_param_offset = Some(comment_offset + content_start + tag_len);
+                    current_param_body.push_str(&segment[content_start + tag_len..]);
+                } else if current_param_offset.is_some() && content.starts_with('@') {
+                    if let Some(param_offset) = current_param_offset.take() {
+                        if let Some(invalid_offset) = find_invalid_param_name_offset(&current_param_body)
+                        {
+                            self.ctx.error(
+                                (comment.pos as usize + param_offset + invalid_offset) as u32,
+                                1,
+                                diagnostic_messages::IDENTIFIER_EXPECTED.to_string(),
+                                diagnostic_codes::IDENTIFIER_EXPECTED,
+                            );
+                        }
+                        current_param_body.clear();
+                    }
+                } else if current_param_offset.is_some() {
+                    current_param_body.push_str(segment);
+                }
+
+                comment_offset += segment.len();
+            }
+
+            if let Some(param_offset) = current_param_offset
+                && let Some(invalid_offset) = find_invalid_param_name_offset(&current_param_body)
+            {
+                self.ctx.error(
+                    (comment.pos as usize + param_offset + invalid_offset) as u32,
+                    1,
+                    diagnostic_messages::IDENTIFIER_EXPECTED.to_string(),
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+        }
+    }
+
     /// Check for JSDoc `@property`/`@prop`/`@member` tags that use private
     /// names like `#id`. TypeScript reports TS1003 at the `#` token because
     /// JSDoc property names must be identifiers, dotted names, or quoted names.

@@ -88,11 +88,7 @@ impl<'a> CheckerState<'a> {
 
         // Track which @param tags we've seen (for positional matching with destructured params)
         let mut param_tag_index = 0usize;
-        for (param_name, _tag_offset) in &jsdoc_params {
-            // Skip empty names (malformed @param tags)
-            if param_name.is_empty() {
-                continue;
-            }
+        for (param_name, tag_offset) in &jsdoc_params {
             // Skip "this" — JSDoc @param {type} this is a this-type annotation
             if param_name == "this" {
                 continue;
@@ -121,7 +117,7 @@ impl<'a> CheckerState<'a> {
                     // Find param_name after an @param tag in the comment text
                     let search_region = &source_text[comment_start..];
                     let mut name_pos = None;
-                    let mut search_from = 0;
+                    let mut search_from = (*tag_offset).min(search_region.len());
                     while let Some(at_param) = search_region[search_from..].find("@param") {
                         let after_param = search_from + at_param + "@param".len();
                         // Find the name after the @param tag (skip {type} if present)
@@ -135,9 +131,14 @@ impl<'a> CheckerState<'a> {
                         search_from = after_param;
                     }
                     if let Some(pos) = name_pos {
+                        let name_len = if param_name.is_empty() {
+                            1
+                        } else {
+                            param_name.len() as u32
+                        };
                         self.ctx.error(
                             pos as u32,
-                            param_name.len() as u32,
+                            name_len,
                             message,
                             diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
                         );
@@ -298,6 +299,15 @@ impl<'a> CheckerState<'a> {
         if rest.starts_with('[') {
             offset += 1;
             rest = &rest[1..];
+        }
+        if name.is_empty() {
+            if let Some(after_star) = rest.strip_prefix('*') {
+                let ws_after_star = after_star.len() - after_star.trim_start().len();
+                if after_star.trim_start().starts_with('*') {
+                    return Some(offset + 1 + ws_after_star);
+                }
+            }
+            return (!rest.is_empty()).then_some(offset);
         }
         // Check if the next word is the name
         if let Some(after_name) = rest.strip_prefix(name) {
@@ -737,11 +747,7 @@ impl<'a> CheckerState<'a> {
     /// - `@param {Type} name` — standard typed param
     pub(crate) fn jsdoc_has_required_param_tag(jsdoc: &str, param_name: &str) -> bool {
         for chunk in jsdoc.split_inclusive('\n') {
-            let trimmed = chunk
-                .trim_end_matches('\n')
-                .trim()
-                .trim_start_matches('*')
-                .trim();
+            let trimmed = chunk.trim_end_matches('\n').trim();
 
             let effective = Self::skip_backtick_quoted(trimmed);
 
@@ -764,11 +770,7 @@ impl<'a> CheckerState<'a> {
         let mut in_param = false;
         let mut param_text = String::new();
         for chunk in jsdoc.split_inclusive('\n') {
-            let trimmed = chunk
-                .trim_end_matches('\n')
-                .trim()
-                .trim_start_matches('*')
-                .trim();
+            let trimmed = chunk.trim_end_matches('\n').trim();
 
             let effective = Self::skip_backtick_quoted(trimmed);
 
@@ -1077,7 +1079,7 @@ impl<'a> CheckerState<'a> {
         let mut result = Vec::new();
 
         for line in jsdoc.lines() {
-            let trimmed = line.trim().trim_start_matches('*').trim();
+            let trimmed = line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
 
             let Some(rest) = effective.strip_prefix("@param") else {
@@ -1159,7 +1161,7 @@ impl<'a> CheckerState<'a> {
     /// Returns `true` for `@param {Type} [name]` or `@param {Type} [name=default]`.
     pub(crate) fn is_jsdoc_param_optional_by_brackets(jsdoc: &str, param_name: &str) -> bool {
         for line in jsdoc.lines() {
-            let trimmed = line.trim().trim_start_matches('*').trim();
+            let trimmed = line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
             if let Some(rest) = effective.strip_prefix("@param") {
                 let rest = rest.trim();
@@ -1203,7 +1205,7 @@ impl<'a> CheckerState<'a> {
         let mut param_offset = 0usize;
 
         for line in jsdoc.lines() {
-            let trimmed = line.trim().trim_start_matches('*').trim();
+            let trimmed = line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
 
             if effective.starts_with('@') {
@@ -1286,6 +1288,17 @@ impl<'a> CheckerState<'a> {
         name = name.split('=').next().unwrap_or(name);
         name = name.trim_end_matches(']');
         name = name.trim_matches('`');
+        if name == "*" {
+            if rest.starts_with('{') {
+                return Some(JsdocParamTagInfo {
+                    name: String::new(),
+                    type_expr,
+                    optional: false,
+                    rest: false,
+                });
+            }
+            return None;
+        }
         let name = Self::decode_unicode_escapes(name.trim_start_matches("..."));
         if name.is_empty() {
             return None;
@@ -1340,7 +1353,7 @@ impl<'a> CheckerState<'a> {
 
         for chunk in jsdoc.split_inclusive('\n') {
             let raw_line = chunk.trim_end_matches('\n').trim_end_matches('\r');
-            let trimmed = raw_line.trim().trim_start_matches('*').trim();
+            let trimmed = raw_line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
 
             if effective.starts_with('@') {
