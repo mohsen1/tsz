@@ -458,7 +458,13 @@ impl<'a> CheckerState<'a> {
                 if name == children_prop_name {
                     return None;
                 }
-                Some((name, ty))
+
+                // Function-valued JSX attrs need contextual typing from the
+                // recovered props type, but we still want the property to
+                // participate in generic inference/defaulting. Use `any` as a
+                // placeholder so inference can proceed without forcing an
+                // eager, context-free function type.
+                Some((name, Some(ty.unwrap_or(TypeId::ANY))))
             })
             .collect();
         let typed_attrs: Vec<(String, TypeId)> = provided_attrs
@@ -513,6 +519,42 @@ impl<'a> CheckerState<'a> {
         Some(props_type)
     }
 
+    fn recover_jsx_component_props_type(
+        &mut self,
+        attributes_idx: NodeIndex,
+        component_type: TypeId,
+        element_idx: Option<NodeIndex>,
+    ) -> Option<(TypeId, bool)> {
+        let normalized_component_type =
+            self.normalize_jsx_component_type_for_resolution(component_type);
+        if let Some((props_type, raw_has_type_params)) =
+            self.get_jsx_props_type_for_component(component_type, element_idx)
+        {
+            if raw_has_type_params
+                && let Some(inferred_props) = self
+                    .infer_jsx_generic_component_props_type(
+                        attributes_idx,
+                        normalized_component_type,
+                    )
+                    .or_else(|| {
+                        self.get_default_instantiated_generic_sfc_props_type(
+                            normalized_component_type,
+                        )
+                    })
+            {
+                return Some((inferred_props, true));
+            }
+
+            return Some((props_type, raw_has_type_params));
+        }
+
+        self.infer_jsx_generic_component_props_type(attributes_idx, normalized_component_type)
+            .or_else(|| {
+                self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+            })
+            .map(|props_type| (props_type, false))
+    }
+
     pub(super) fn infer_jsx_generic_class_component_signature(
         &mut self,
         element_idx: NodeIndex,
@@ -541,12 +583,13 @@ impl<'a> CheckerState<'a> {
         let provided_attrs = self.collect_jsx_union_resolution_attrs(opening.attributes)?;
         let provided_attrs: Vec<(String, TypeId)> = provided_attrs
             .into_iter()
-            .filter_map(|(name, ty)| {
+            .map(|(name, ty)| {
                 if name == children_prop_name {
-                    return None;
+                    return (name, TypeId::ERROR);
                 }
-                ty.map(|ty| (name, ty))
+                (name, ty.unwrap_or(TypeId::ANY))
             })
+            .filter(|(name, ty)| name != &children_prop_name && *ty != TypeId::ERROR)
             .collect();
         if provided_attrs.is_empty() {
             return None;
@@ -832,8 +875,12 @@ impl<'a> CheckerState<'a> {
             // TS2607/TS2608 are emitted within props extraction when applicable.
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if !reported_factory_arity
-                && let Some((props_type, raw_has_type_params)) =
-                    self.get_jsx_props_type_for_component(component_metadata_type, Some(idx))
+                && let Some((props_type, raw_has_type_params)) = self
+                    .recover_jsx_component_props_type(
+                        jsx_opening.attributes,
+                        component_metadata_type,
+                        Some(idx),
+                    )
             {
                 let props_type =
                     self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
@@ -895,19 +942,25 @@ impl<'a> CheckerState<'a> {
 
                 // Evaluate attribute values to trigger nested JSX processing and
                 // definite-assignment checks, even when props type is unknown.
-                // For generic components, set UNKNOWN contextual type to prevent
-                // false TS7006 on callback parameters in JSX attributes.
+                // For generic components, set ANY contextual type to prevent
+                // false TS7006 on callback parameters in JSX attributes when we
+                // cannot recover a concrete props shape.
                 let gen_ctx = self.is_generic_jsx_component(resolved_component_type);
                 let inferred_generic_props = if gen_ctx {
                     self.infer_jsx_generic_component_props_type(
                         jsx_opening.attributes,
                         resolved_component_type,
                     )
+                    .or_else(|| {
+                        self.get_default_instantiated_generic_sfc_props_type(
+                            resolved_component_type,
+                        )
+                    })
                 } else {
                     None
                 };
                 let generic_attr_fallback = if gen_ctx {
-                    request.read().normal_origin().contextual(TypeId::UNKNOWN)
+                    request.read().normal_origin().contextual(TypeId::ANY)
                 } else {
                     request.read().normal_origin().contextual_opt(None)
                 };
@@ -949,6 +1002,17 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     continue;
                                 };
+                                if gen_ctx && inferred_generic_props.is_none() {
+                                    if let Some(value_node) = self.ctx.arena.get(attr_value_idx)
+                                        && matches!(
+                                            value_node.kind,
+                                            syntax_kind_ext::ARROW_FUNCTION
+                                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                                        )
+                                    {
+                                        continue;
+                                    }
+                                }
                                 let attr_request = if let Some(props_type) = inferred_generic_props
                                 {
                                     let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
@@ -1018,6 +1082,35 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     generic_attr_fallback
                                 };
+                                if gen_ctx {
+                                    if let Some(value_node) = self.ctx.arena.get(attr_value_idx)
+                                        && matches!(
+                                            value_node.kind,
+                                            syntax_kind_ext::ARROW_FUNCTION
+                                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                                        )
+                                    {
+                                        let has_function_context = attr_request
+                                            .contextual_type
+                                            .is_some_and(|ctx_type| {
+                                                let ctx_type = self
+                                                    .resolve_type_for_property_access(ctx_type);
+                                                tsz_solver::type_queries::get_function_shape(
+                                                    self.ctx.types,
+                                                    ctx_type,
+                                                )
+                                                .is_some()
+                                                    || tsz_solver::type_queries::get_call_signatures(
+                                                        self.ctx.types,
+                                                        ctx_type,
+                                                    )
+                                                    .is_some_and(|sigs| !sigs.is_empty())
+                                            });
+                                        if !has_function_context {
+                                            continue;
+                                        }
+                                    }
+                                }
                                 self.compute_type_of_node_with_request(
                                     attr_value_idx,
                                     &attr_request,
@@ -1323,18 +1416,18 @@ impl<'a> CheckerState<'a> {
                 && props != TypeId::ERROR
             {
                 props
-            } else if let Some((props, _raw_has_type_params)) =
-                self.get_jsx_props_type_for_component(component_type, None)
+            } else if let Some((props, _raw_has_type_params)) = self
+                .recover_jsx_component_props_type(
+                    jsx_opening.attributes,
+                    component_type,
+                    None,
+                )
             {
                 self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props)
-            } else if let Some(props) = self.infer_jsx_generic_component_props_type(
-                jsx_opening.attributes,
-                resolved_component_type,
-            ) {
-                props
             } else if self.is_generic_jsx_component(resolved_component_type) {
-                // Generic component: return UNKNOWN to prevent false TS7006
-                return Some(TypeId::UNKNOWN);
+                // Generic component: return ANY to avoid false implicit-any
+                // diagnostics for callback and destructuring children.
+                return Some(TypeId::ANY);
             } else {
                 return None;
             }

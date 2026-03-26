@@ -2065,6 +2065,30 @@ const x = <GenComp prop={{"x"}}>{{i => ({{}}) }}</GenComp>;
 }
 
 #[test]
+fn test_jsx_generic_children_recover_inferred_return_type_errors() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface LitProps<T> {{ prop: T, children: (x: this) => T }}
+const ElemLit = <T extends string>(p: LitProps<T>) => <div></div>;
+
+const explicit = <ElemLit prop="x" children={{p => "y"}} />
+const body = <ElemLit prop="x">{{p => "y"}}</ElemLit>
+const mismatched = <ElemLit prop="x">{{() => 12}}</ElemLit>
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_count = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert!(
+        ts2322_count >= 3,
+        "Expected JSX generic children to report three TS2322 mismatches, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_children_intrinsic_element_no_crash() {
     // Intrinsic elements (e.g., <div>) should not crash when extracting
     // children contextual type, even if children type is broad/any.

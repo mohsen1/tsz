@@ -267,6 +267,39 @@ fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
 }
 
 #[test]
+fn jsx_generic_sfc_defaulted_props_contextually_type_function_attributes() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements { a: { onClick?: (e: { currentTarget: HTMLAnchorElement }) => void } }
+        }
+
+        interface HTMLAnchorElement {
+            href: string;
+        }
+
+        type ElementType = "a" | "button";
+        type ComponentPropsWithRef<T extends ElementType> =
+            T extends "a"
+                ? { onClick?: (e: { currentTarget: HTMLAnchorElement }) => void }
+                : { onClick?: (e: { currentTarget: { disabled: boolean } }) => void };
+        type Omit<T, K extends PropertyKey> = Pick<T, Exclude<keyof T, K>>;
+
+        declare function Link<T extends ElementType = ElementType>(
+            props: Omit<ComponentPropsWithRef<ElementType extends T ? "a" : T>, "as">
+        ): JSX.Element;
+
+        <Link onClick={(e) => e.currentTarget.href} />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&7006),
+        "Expected generic JSX SFC defaults to contextually type function attrs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
     let diagnostics = check_jsx_codes(
         r#"

@@ -1176,6 +1176,41 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             );
                             self.checker
                                 .normalize_jsx_spread_child_type(child, spread_type)
+                        } else if let Some(child_node) = self.checker.ctx.arena.get(child)
+                            && child_node.kind == syntax_kind_ext::JSX_EXPRESSION
+                            && let Some(expr_data) =
+                                self.checker.ctx.arena.get_jsx_expression(child_node)
+                            && expr_data.expression.is_some()
+                            && self.checker.ctx.arena.get(expr_data.expression).is_some_and(|expr| {
+                                matches!(
+                                    expr.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                )
+                            })
+                        {
+                            let has_function_context = children_request
+                                .contextual_type
+                                .is_some_and(|ctx_type| {
+                                    let ctx_type =
+                                        self.checker.resolve_type_for_property_access(ctx_type);
+                                    tsz_solver::type_queries::get_function_shape(
+                                        self.checker.ctx.types,
+                                        ctx_type,
+                                    )
+                                    .is_some()
+                                        || tsz_solver::type_queries::get_call_signatures(
+                                            self.checker.ctx.types,
+                                            ctx_type,
+                                        )
+                                        .is_some_and(|sigs| !sigs.is_empty())
+                                });
+                            if has_function_context {
+                                self.checker
+                                    .get_type_of_node_with_request(child, &children_request)
+                            } else {
+                                TypeId::ANY
+                            }
                         } else {
                             self.checker
                                 .get_type_of_node_with_request(child, &children_request)
