@@ -10069,6 +10069,83 @@ var n = F4.staticProp;
 }
 
 #[test]
+fn compile_js_enum_cross_file_export_keeps_nested_jsdoc_namespace_properties() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["enumDef.js", "index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("enumDef.js"),
+        r#"var Host = {};
+Host.UserMetrics = {};
+/** @enum {number} */
+Host.UserMetrics.Action = {
+    WindowDocked: 1,
+    WindowUndocked: 2,
+    ScriptsBreakpointSet: 3,
+    TimelineStarted: 4,
+};
+/**
+ * @typedef {string} Host.UserMetrics.Bargh
+ */
+/**
+ * @typedef {string}
+ */
+Host.UserMetrics.Blah = {
+    x: 12
+}
+"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"var Other = {};
+Other.Cls = class {
+    /**
+     * @param {!Host.UserMetrics.Action} p
+     */
+    method(p) {}
+    usage() {
+        this.method(Host.UserMetrics.Action.WindowDocked);
+    }
+}
+
+/**
+ * @type {Host.UserMetrics.Bargh}
+ */
+var x = "ok";
+
+/**
+ * @type {Host.UserMetrics.Blah}
+ */
+var y = "ok";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected nested JS enum/JSDoc namespace writes to avoid TS2339, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn module_augmentation_method_type_params_and_members_resolve_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
