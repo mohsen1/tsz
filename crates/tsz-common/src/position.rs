@@ -133,12 +133,11 @@ impl LineMap {
             if byte_index + char_bytes > clamped_end {
                 let intra = clamped_end - byte_index;
                 let extra_units = (intra * ch.len_utf16()) / char_bytes;
-                character = character
-                    .saturating_add(u32::try_from(extra_units).unwrap_or(u32::MAX));
+                character =
+                    character.saturating_add(u32::try_from(extra_units).unwrap_or(u32::MAX));
                 break;
             }
-            character = character
-                .saturating_add(u32::try_from(ch.len_utf16()).unwrap_or(u32::MAX));
+            character = character.saturating_add(u32::try_from(ch.len_utf16()).unwrap_or(u32::MAX));
             byte_index += char_bytes;
         }
 

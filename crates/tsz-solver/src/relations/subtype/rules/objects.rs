@@ -68,9 +68,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .map(|info| info.yield_type)
             .or_else(|| self.extract_iterator_like_yield_type(target_return_type));
 
-        source_yield_type.zip(target_yield_type).is_some_and(|(source_yield, target_yield)| {
-            self.check_subtype(source_yield, target_yield).is_true()
-        })
+        source_yield_type
+            .zip(target_yield_type)
+            .is_some_and(|(source_yield, target_yield)| {
+                self.check_subtype(source_yield, target_yield).is_true()
+            })
     }
 
     /// Check private brand compatibility for object subtyping.

@@ -755,7 +755,8 @@ impl ParserState {
                                 return Some((
                                     vec![(
                                         value,
-                                        u32::try_from(start).expect("regex offsets must fit in u32"),
+                                        u32::try_from(start)
+                                            .expect("regex offsets must fit in u32"),
                                     )],
                                     hex_end + 1,
                                 ));
@@ -771,7 +772,8 @@ impl ParserState {
                                 return Some((
                                     vec![(
                                         code_point,
-                                        u32::try_from(start).expect("regex offsets must fit in u32"),
+                                        u32::try_from(start)
+                                            .expect("regex offsets must fit in u32"),
                                     )],
                                     next_index + 6,
                                 ));
@@ -866,23 +868,24 @@ impl ParserState {
                                 tokens.push(ClassToken::OpaqueAtom);
                             } else {
                                 tokens.extend(
-                                    atoms.into_iter()
+                                    atoms
+                                        .into_iter()
                                         .map(|(value, start)| ClassToken::Atom { value, start }),
                                 );
                             }
                             i = next_i;
                         }
 
-                        if let Some(offending_start) = tokens.windows(3).find_map(|window| {
-                            match window {
+                        if let Some(offending_start) =
+                            tokens.windows(3).find_map(|window| match window {
                                 [
                                     ClassToken::Atom { value: left, start },
                                     ClassToken::Hyphen,
                                     ClassToken::Atom { value: right, .. },
                                 ] if left > right => Some(*start),
                                 _ => None,
-                            }
-                        }) {
+                            })
+                        {
                             errors.push((offending_start, 1));
                         }
                     }
