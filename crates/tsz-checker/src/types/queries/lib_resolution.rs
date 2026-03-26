@@ -804,6 +804,40 @@ impl<'a> CheckerState<'a> {
                     fallback_arena,
                     Some(self.ctx.arena),
                 );
+                let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();
+                for (decl_idx, decl_arena) in &decls_with_arenas {
+                    let mut stack = vec![*decl_idx];
+                    while let Some(node_idx) = stack.pop() {
+                        let Some(node) = decl_arena.get(node_idx) else {
+                            continue;
+                        };
+                        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                            && let Some(type_ref) = decl_arena.get_type_ref(node)
+                        {
+                            let has_type_args = type_ref
+                                .type_arguments
+                                .as_ref()
+                                .is_some_and(|args| !args.nodes.is_empty());
+                            if !has_type_args
+                                && let Some(name_node) = decl_arena.get(type_ref.type_name)
+                                && name_node.kind == SyntaxKind::Identifier as u16
+                                && let Some(name) =
+                                    decl_arena.get_identifier_text(type_ref.type_name)
+                            {
+                                self.prime_lib_type_params(name);
+                                if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
+                                    let def_id = self.ctx.get_or_create_def_id(ref_sym_id);
+                                    if let Some(params) = self.ctx.get_def_type_params(def_id)
+                                        && !params.is_empty()
+                                    {
+                                        prewarmed_lazy_type_params.insert(def_id, params);
+                                    }
+                                }
+                            }
+                        }
+                        stack.extend(decl_arena.get_children(node_idx));
+                    }
+                }
 
                 // Resolver triplet: delegates to stable helpers instead of
                 // maintaining per-call caches. The `resolver` closure extracts
@@ -827,8 +861,12 @@ impl<'a> CheckerState<'a> {
                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                 };
 
-                let lazy_type_params_resolver =
-                    |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+                let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
+                    prewarmed_lazy_type_params
+                        .get(&def_id)
+                        .cloned()
+                        .or_else(|| self.ctx.get_def_type_params(def_id))
+                };
 
                 // Create base lowering with the fallback arena and both resolvers
                 let lowering = TypeLowering::with_hybrid_resolver(
