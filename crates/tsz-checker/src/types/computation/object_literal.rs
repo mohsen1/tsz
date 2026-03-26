@@ -2151,13 +2151,11 @@ impl<'a> CheckerState<'a> {
                         let resolved_spread =
                             self.resolve_type_for_property_access(resolved_spread);
                         let idx_resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
-                        if let Some(value_type) =
-                            idx_resolver.resolve_string_index(resolved_spread)
+                        if let Some(value_type) = idx_resolver.resolve_string_index(resolved_spread)
                         {
                             spread_string_index_types.push(value_type);
                         }
-                        if let Some(value_type) =
-                            idx_resolver.resolve_number_index(resolved_spread)
+                        if let Some(value_type) = idx_resolver.resolve_number_index(resolved_spread)
                         {
                             spread_number_index_types.push(value_type);
                         }
