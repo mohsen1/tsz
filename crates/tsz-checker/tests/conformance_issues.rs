@@ -5423,6 +5423,44 @@ export class Test1 {
 }
 
 #[test]
+fn test_instance_member_initializer_cross_file_global_script_name_reports_ts2301() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("classMemberInitializerWithLamdaScoping3_0.ts", "var field1: string;"),
+            (
+                "classMemberInitializerWithLamdaScoping3_1.ts",
+                r"
+declare var console: {
+    log(msg?: any): void;
+};
+export class Test1 {
+    constructor(private field1: string) {
+    }
+    messageHandler = () => {
+        console.log(field1);
+    };
+}
+                ",
+            ),
+        ],
+        "classMemberInitializerWithLamdaScoping3_1.ts",
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2301),
+        "Expected TS2301 for cross-file global script capture in module instance initializer. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2663),
+        "Did not expect TS2663 when a cross-file global script value exists. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_instance_member_initializer_local_shadow_does_not_report_ts2301() {
     let diagnostics = compile_and_get_diagnostics(
         r"
