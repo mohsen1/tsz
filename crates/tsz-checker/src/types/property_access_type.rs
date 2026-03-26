@@ -1562,25 +1562,17 @@ impl<'a> CheckerState<'a> {
                             .enclosing_expression_statement(idx)
                             .and_then(|stmt_idx| {
                                 self.js_statement_declared_type(stmt_idx).or_else(|| {
-                                    let sf = self.source_file_data_for_node(stmt_idx)?;
-                                    let source_text = sf.text.to_string();
-                                    let comments = sf.comments.clone();
-                                    let jsdoc = self.try_jsdoc_with_ancestor_walk(
-                                        stmt_idx,
-                                        &comments,
-                                        &source_text,
-                                    )?;
-                                    self.resolve_jsdoc_type_from_comment(
-                                        &jsdoc,
-                                        self.ctx.arena.get(stmt_idx)?.pos,
-                                    )
+                                    self.jsdoc_type_annotation_for_node_direct(stmt_idx)
                                 })
                             })
-                            .or_else(|| self.jsdoc_type_annotation_for_node(idx))
-                            .or_else(|| self.jsdoc_type_annotation_for_node(access.expression))
+                            .or_else(|| self.jsdoc_type_annotation_for_node_direct(idx))
+                            .or_else(|| {
+                                self.jsdoc_type_annotation_for_node_direct(access.expression)
+                            })
                             .or_else(|| {
                                 let root = self.expression_root(idx);
-                                (root != idx).then(|| self.jsdoc_type_annotation_for_node(root))?
+                                (root != idx)
+                                    .then(|| self.jsdoc_type_annotation_for_node_direct(root))?
                             })
                     {
                         return jsdoc_type;
@@ -1638,6 +1630,10 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
+                    let has_explicit_this_context = is_this_access
+                        && self
+                            .current_this_type()
+                            .is_some_and(|ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN);
 
                     // When `this` type comes from a ThisType<T> marker (e.g., Vue 2
                     // Options API pattern), property access on unresolved type parameters
@@ -1670,7 +1666,7 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ANY;
                     }
 
-                    if self.is_js_file() && is_this_access {
+                    if self.is_js_file() && is_this_access && !has_explicit_this_context {
                         // Allow dynamic property on `this` in loose JS contexts, but
                         // keep checks when `this` is contextually owned by a class/object
                         // member (checkJs should still enforce member-consistent typing).

@@ -398,7 +398,21 @@ impl<'a> CheckerState<'a> {
         &mut self,
         func_idx: NodeIndex,
     ) -> Option<TypeId> {
-        self.jsdoc_callable_type_annotation_for_node(func_idx)
+        if !self.ctx.should_resolve_jsdoc() {
+            return None;
+        }
+
+        let sf = self.source_file_data_for_node(func_idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
+
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let node = self.ctx.arena.get(func_idx)?;
+        let jsdoc = self.get_jsdoc_for_function(func_idx)?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        self.jsdoc_concrete_callable_type_from_expr(type_expr, node.pos, &comments, &source_text)
     }
 
     pub(crate) fn jsdoc_type_tag_references_callback_typedef(

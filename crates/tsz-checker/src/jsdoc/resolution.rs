@@ -466,10 +466,11 @@ impl<'a> CheckerState<'a> {
                             .map(|s| s.trim())
                             .unwrap_or("void");
                         let return_type = self
-                            .jsdoc_type_from_expression(return_type_str)
+                            .resolve_jsdoc_reference(return_type_str)
                             .unwrap_or(TypeId::VOID);
                         use tsz_solver::{FunctionShape, ParamInfo};
                         let mut params = Vec::new();
+                        let mut this_type = None;
                         let mut ok = true;
                         let mut is_constructor = false;
                         let mut constructor_return = None;
@@ -480,13 +481,17 @@ impl<'a> CheckerState<'a> {
                                 if let Some(new_ret) = p.strip_prefix("new:") {
                                     is_constructor = true;
                                     let ret_str = new_ret.trim();
-                                    constructor_return = self.jsdoc_type_from_expression(ret_str);
+                                    constructor_return = self.resolve_jsdoc_reference(ret_str);
                                     arg_index += 1; // TSC skips arg0 for 'new:'
+                                    continue;
+                                }
+                                if let Some(this_param) = p.strip_prefix("this:") {
+                                    this_type = self.resolve_jsdoc_reference(this_param.trim());
                                     continue;
                                 }
                                 let is_rest = p.starts_with("...");
                                 let effective_p = if is_rest { &p[3..] } else { p };
-                                if let Some(p_type) = self.jsdoc_type_from_expression(effective_p) {
+                                if let Some(p_type) = self.resolve_jsdoc_reference(effective_p) {
                                     let type_id = if is_rest {
                                         let factory = self.ctx.types.factory();
                                         factory.array(p_type)
@@ -517,7 +522,7 @@ impl<'a> CheckerState<'a> {
                             let shape = FunctionShape {
                                 type_params: Vec::new(),
                                 params,
-                                this_type: None,
+                                this_type,
                                 return_type: final_return,
                                 type_predicate: None,
                                 is_constructor,
@@ -666,6 +671,7 @@ impl<'a> CheckerState<'a> {
 
         // Parse parameters (before restoring type param scope so T is still in scope)
         let mut params = Vec::new();
+        let mut this_type = None;
         let mut params_ok = true;
         if !params_inner.is_empty() {
             for p in params_inner.split(',') {
@@ -675,7 +681,11 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (None, p)
                 };
-                if let Some(p_type) = self.jsdoc_type_from_expression(t_str) {
+                if let Some(p_type) = self.resolve_jsdoc_reference(t_str) {
+                    if name == Some("this") {
+                        this_type = Some(p_type);
+                        continue;
+                    }
                     let atom = name.map(|n| self.ctx.types.intern_string(n));
                     params.push(ParamInfo {
                         name: atom,
@@ -708,7 +718,7 @@ impl<'a> CheckerState<'a> {
         let shape = FunctionShape {
             type_params: jsdoc_type_params,
             params,
-            this_type: None,
+            this_type,
             return_type,
             type_predicate,
             is_constructor: false,
