@@ -437,6 +437,37 @@ new mod.Baz();
 }
 
 #[test]
+fn test_plain_js_object_expando_write_stays_open_world_in_check_js() {
+    let diagnostics = check_commonjs_single_file(
+        "mod2.js",
+        r#"
+/** @typedef {number} Foo */
+const ns = {};
+ns.Foo = class {};
+module.exports = ns;
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'Foo'"))
+        .collect();
+    let ts2300: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2300)
+        .collect();
+
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for JS object expando write on `ns.Foo`, got: {ts2339:#?}"
+    );
+    assert!(
+        !ts2300.is_empty(),
+        "Expected the duplicate-identifier JSDoc diagnostics to remain, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_require_call_preserves_earlier_direct_export_object_members_as_optional_namespace_props() {
     let diagnostics = check_commonjs_two_files(
         "mod1.js",
