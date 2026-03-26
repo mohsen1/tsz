@@ -835,6 +835,26 @@ impl<'a> CheckerState<'a> {
         if ref_node.kind == syntax_kind_ext::QUALIFIED_NAME
             && let Some(qn) = self.ctx.arena.get_qualified_name(ref_node)
         {
+            let export_parent = self.ctx.arena.get_extended(stmt_idx).and_then(|ext| {
+                let parent = ext.parent;
+                self.ctx.arena.get(parent).and_then(|parent_node| {
+                    (parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION).then_some(parent)
+                })
+            });
+            let file_has_export_equals = self.ctx.arena.source_files.first().is_some_and(|sf| {
+                sf.statements.nodes.iter().any(|&file_stmt_idx| {
+                    self.ctx
+                        .arena
+                        .get(file_stmt_idx)
+                        .and_then(|file_stmt_node| self.ctx.arena.get_export_assignment(file_stmt_node))
+                        .is_some_and(|export_assignment| export_assignment.is_export_equals)
+                })
+            });
+            let emits_export_import_ts2708 = export_parent.is_some()
+                && file_has_export_equals
+                && !self.is_ambient_declaration(stmt_idx)
+                && !export_parent.is_some_and(|parent| self.is_ambient_declaration(parent));
+
             // Check the leftmost part first - this is what determines TS2503 vs TS2694
             let left_name = self.get_leftmost_identifier_name(qn.left);
             if let Some(name) = left_name {
@@ -850,24 +870,40 @@ impl<'a> CheckerState<'a> {
                 // pure type (e.g. a local interface shadowing an outer namespace),
                 // the import-equals should resolve to the outer namespace instead,
                 // so don't emit a misleading TS2694.
-                let left_is_namespace = if let Some(sym_id) = left_resolved {
+                let (left_is_namespace, left_has_value) = if let Some(sym_id) = left_resolved {
                     let lib_binders = self.get_lib_binders();
-                    self.ctx
-                        .binder
-                        .get_symbol_with_libs(sym_id, &lib_binders)
-                        .is_some_and(|symbol| {
-                            (symbol.flags & tsz_binder::symbol_flags::NAMESPACE) != 0
-                        })
+                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    {
+                        let is_namespace =
+                            (symbol.flags & tsz_binder::symbol_flags::NAMESPACE) != 0;
+                        let mut has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                        if has_value
+                            && (symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
+                            && (symbol.flags
+                                & (tsz_binder::symbol_flags::VALUE
+                                    & !tsz_binder::symbol_flags::VALUE_MODULE))
+                                == 0
+                        {
+                            has_value = symbol.declarations.iter().any(|&decl_idx| {
+                                self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                                    decl_node.kind
+                                        != tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                                        || self.is_namespace_declaration_instantiated(decl_idx)
+                                })
+                            });
+                        }
+                        (is_namespace, has_value)
+                    } else {
+                        (false, false)
+                    }
                 } else {
-                    false
+                    (false, false)
                 };
 
                 if left_is_namespace {
-                    // NOTE: Do NOT emit TS2708 here. Import-equals declarations
-                    // (`import x = Namespace.Member`) are designed to alias qualified
-                    // names and work with any namespace, including uninstantiated
-                    // (type-only) ones. TSC does not emit TS2708 in this context.
-
+                    if !left_has_value && emits_export_import_ts2708 {
+                        self.error_namespace_used_as_value_at(&name, qn.left);
+                    }
                     // If left is resolved, check if right member exists (TS2694)
                     // Use the existing report_type_query_missing_member which handles this correctly
                     self.report_type_query_missing_member(module_ref);

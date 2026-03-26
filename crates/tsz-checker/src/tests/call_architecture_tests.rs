@@ -1601,3 +1601,32 @@ f((x) => x.toFixed());
         diags
     );
 }
+
+#[test]
+fn block_body_callback_with_fewer_parameters_does_not_report_ts2769() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Collection<T, U> {
+    length: number;
+    add(x: T, y: U): void;
+    remove(x: T, y: U): boolean;
+}
+interface Combinators {
+    map<T, U, V>(c: Collection<T, U>, f: (x: T, y: U) => V): Collection<T, V>;
+    map<T, U>(c: Collection<T, U>, f: (x: T, y: U) => any): Collection<any, any>;
+}
+declare const c2: Collection<number, string>;
+declare const _: Combinators;
+const rf1 = (x: number) => { return x.toFixed(); };
+_.map(c2, rf1);
+"#,
+    );
+
+    let ts2769: Vec<_> = diags.iter().filter(|d| d.code == 2769).collect();
+    assert_eq!(
+        ts2769.len(),
+        0,
+        "Expected no TS2769 for fewer-parameter block-body callback, got: {:?}",
+        diags
+    );
+}

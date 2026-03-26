@@ -1501,6 +1501,14 @@ impl<'a> CheckerState<'a> {
             let Some(stmt_node) = arena.get(stmt_idx) else {
                 continue;
             };
+            if arena
+                .get_declaration_modifiers(stmt_node)
+                .is_some_and(|mods| arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword))
+                && self.declaration_name_matches_string(arena, stmt_idx, import_name)
+            {
+                direct_export = true;
+                continue;
+            }
             if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                 continue;
             }
@@ -1513,6 +1521,13 @@ impl<'a> CheckerState<'a> {
             let Some(clause_node) = arena.get(export_decl.export_clause) else {
                 continue;
             };
+            if arena.get_named_imports(clause_node).is_none() {
+                if self.declaration_name_matches_string(arena, export_decl.export_clause, import_name)
+                {
+                    direct_export = true;
+                }
+                continue;
+            }
             let Some(named_exports) = arena.get_named_imports(clause_node) else {
                 continue;
             };
