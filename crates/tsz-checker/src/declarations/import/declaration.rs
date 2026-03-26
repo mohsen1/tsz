@@ -4,7 +4,7 @@
 //! Import-equals validation (`import X = require("y")` / `import X = Namespace`)
 //! lives in the sibling `equals` module.
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;

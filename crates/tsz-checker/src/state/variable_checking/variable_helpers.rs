@@ -1646,7 +1646,7 @@ impl<'a> CheckerState<'a> {
             }
 
             for arena in candidate_arenas {
-                let mut variable_decl_idx = decl_idx;
+                let variable_decl_idx = decl_idx;
                 let Some(mut node) = arena.get(variable_decl_idx) else {
                     continue;
                 };
@@ -1660,7 +1660,6 @@ impl<'a> CheckerState<'a> {
                             break;
                         };
                         if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                            variable_decl_idx = parent;
                             node = parent_node;
                             break;
                         }
@@ -2010,7 +2009,7 @@ impl<'a> CheckerState<'a> {
             }
 
             for arena in candidate_arenas {
-                let mut variable_decl_idx = decl_idx;
+                let variable_decl_idx = decl_idx;
                 let Some(mut node) = arena.get(variable_decl_idx) else {
                     continue;
                 };
@@ -2024,7 +2023,6 @@ impl<'a> CheckerState<'a> {
                             break;
                         };
                         if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                            variable_decl_idx = parent;
                             node = parent_node;
                             break;
                         }
