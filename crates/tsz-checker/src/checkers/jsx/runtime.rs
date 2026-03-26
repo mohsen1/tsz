@@ -393,6 +393,8 @@ impl<'a> CheckerState<'a> {
     /// in its exports/members. Returns `None` if no custom factory or the namespace
     /// can't be found.
     pub(crate) fn resolve_jsx_namespace_from_factory(&mut self) -> Option<tsz_binder::SymbolId> {
+        use tsz_binder::symbol_flags;
+
         // Get the effective factory name (pragma overrides config)
         let pragma_factory = self
             .ctx
@@ -408,9 +410,10 @@ impl<'a> CheckerState<'a> {
             }
         })?;
 
-        // Only applies to dotted factories (e.g., "X.jsx", "MyLib.createElement")
-        let dot_pos = factory.find('.')?;
-        let root_name = &factory[..dot_pos];
+        // Factory-scoped JSX namespace resolution uses the factory root symbol.
+        // This applies to both bare identifiers like `jsx` and dotted factories
+        // like `React.createElement`, both of which should probe `<root>.JSX`.
+        let root_name = factory.split('.').next()?;
         if root_name.is_empty() {
             return None;
         }
@@ -424,7 +427,33 @@ impl<'a> CheckerState<'a> {
             .get_symbol_with_libs(root_sym, &lib_binders)?;
 
         // Look for "JSX" in the root entity's exports (namespace members)
-        let exports = root_symbol.exports.as_ref()?;
-        exports.get("JSX")
+        if let Some(exports) = root_symbol.exports.as_ref()
+            && let Some(sym_id) = exports.get("JSX")
+        {
+            return Some(sym_id);
+        }
+
+        // Some binder states keep the namespace merge partner separate from the
+        // value-side factory symbol (`const jsx` + `namespace jsx`).
+        for &candidate_id in self.ctx.binder.get_symbols().find_all_by_name(root_name) {
+            let Some(candidate_symbol) = self.ctx.binder.get_symbol(candidate_id) else {
+                continue;
+            };
+            if (candidate_symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                == 0
+            {
+                continue;
+            }
+            if let Some(exports) = candidate_symbol.exports.as_ref()
+                && let Some(sym_id) = exports.get("JSX")
+            {
+                return Some(sym_id);
+            }
+        }
+
+        self.resolve_namespace_member_from_all_binders(root_name, "JSX")
     }
 }

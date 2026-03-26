@@ -10,6 +10,60 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn apply_jsx_library_managed_attributes(
+        &mut self,
+        component_type: TypeId,
+        props_type: TypeId,
+    ) -> TypeId {
+        let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
+            return props_type;
+        };
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+        else {
+            return props_type;
+        };
+        let Some(exports) = symbol.exports.as_ref() else {
+            return props_type;
+        };
+        let Some(lma_sym_id) = exports.get("LibraryManagedAttributes") else {
+            return props_type;
+        };
+
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(lma_sym_id);
+        if body_type == TypeId::ERROR || body_type == TypeId::ANY {
+            return props_type;
+        }
+
+        let instantiated = if type_params.is_empty() {
+            body_type
+        } else {
+            let args = [component_type, props_type];
+            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &type_params,
+                &args,
+            );
+            crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                body_type,
+                &substitution,
+            )
+        };
+
+        if crate::computation::call_inference::should_preserve_contextual_application_shape(
+            self.ctx.types,
+            instantiated,
+        ) {
+            instantiated
+        } else {
+            self.evaluate_type_with_env(instantiated)
+        }
+    }
+
     // JSX Component Props Extraction
 
     /// Extract props type from a JSX component (SFC: first param of call sig;
@@ -394,6 +448,8 @@ impl<'a> CheckerState<'a> {
 
     /// Extract props type from a Stateless Function Component (first param of call sig).
     fn get_sfc_props_type(&mut self, component_type: TypeId) -> Option<(TypeId, bool)> {
+        use crate::computation::call_inference::should_preserve_contextual_application_shape;
+
         // Check Function type (single signature)
         if let Some(shape) =
             tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
@@ -417,12 +473,17 @@ impl<'a> CheckerState<'a> {
             // The type evaluator may incorrectly merge union members with the same
             // property names into a single object, losing the discriminated union
             // structure needed for correct assignability checking.
-            let evaluated = if tsz_solver::is_union_type(self.ctx.types, props) {
+            let evaluated = if tsz_solver::is_union_type(self.ctx.types, props)
+                || should_preserve_contextual_application_shape(self.ctx.types, props)
+            {
                 props
             } else {
                 self.evaluate_type_with_env(props)
             };
-            return Some((evaluated, raw_has_type_params));
+            let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
+            let managed_raw_has_type_params = raw_has_type_params
+                || tsz_solver::contains_type_parameters(self.ctx.types, managed);
+            return Some((managed, managed_raw_has_type_params));
         }
 
         // Check Callable type (overloaded signatures)
@@ -444,8 +505,15 @@ impl<'a> CheckerState<'a> {
                 .map(|p| p.type_id)
                 .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
             let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, props);
-            let evaluated = self.evaluate_type_with_env(props);
-            return Some((evaluated, raw_has_type_params));
+            let evaluated = if should_preserve_contextual_application_shape(self.ctx.types, props) {
+                props
+            } else {
+                self.evaluate_type_with_env(props)
+            };
+            let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
+            let managed_raw_has_type_params = raw_has_type_params
+                || tsz_solver::contains_type_parameters(self.ctx.types, managed);
+            return Some((managed, managed_raw_has_type_params));
         }
 
         None

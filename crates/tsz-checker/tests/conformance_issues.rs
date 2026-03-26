@@ -1123,6 +1123,43 @@ namespace N1 {
 }
 
 #[test]
+fn test_factory_scoped_jsx_library_managed_attributes_alias_preserves_added_props() {
+    let source = r#"
+// @jsx: react
+// @jsxFactory: jsx
+declare const jsx: any;
+
+namespace jsx {
+    export namespace JSX {
+        export interface Element {}
+        export interface ElementClass {}
+        export interface ElementAttributesProperty {}
+        export interface ElementChildrenAttribute {}
+        export interface IntrinsicAttributes {}
+        export interface IntrinsicClassAttributes<T> {}
+        export type IntrinsicElements = {
+            div: { className: string }
+        };
+
+        export type WithCSSProp<P> = P & { css: string };
+        export type LibraryManagedAttributes<C, P> = WithCSSProp<P>;
+    }
+}
+
+declare const Comp: (p: { className?: string }) => null;
+
+;<Comp css="color:hotpink;" />;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Factory-scoped JSX LibraryManagedAttributes alias should preserve added props, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_create_element_inference_keeps_namespace_local_construct_signature_with_merged_lib_contexts()
  {
     if !lib_files_available() {
