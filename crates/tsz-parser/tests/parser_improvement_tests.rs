@@ -2571,3 +2571,55 @@ fn test_tsx_fragment_errors_actual_conformance_file_has_no_diagnostics() {
         "Expected no parser diagnostics for actual tsxFragmentErrors conformance file, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_trailing_decimal_numeric_literal_recovery_matches_conformance_shape() {
+    let source = "1.toString();\nvar test2 = 2.toString();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+            diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+            diagnostic_codes::EXPECTED,
+            diagnostic_codes::EXPRESSION_EXPECTED,
+        ],
+        "Trailing-decimal recovery should match the numeric literal conformance shape, got diagnostics: {diagnostics:?}"
+    );
+
+    let standalone_identifier_pos = source.find("toString").unwrap();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == diagnostic_codes::EXPECTED
+                && diag.start as usize == standalone_identifier_pos)),
+        "Standalone `1.toString()` should not emit a spurious missing-semicolon diagnostic: {diagnostics:?}"
+    );
+
+    let var_stmt_start = source.find("var test2 = 2.toString();").unwrap();
+    let open_paren_pos = var_stmt_start + "var test2 = 2.toString".len();
+    let close_paren_pos = open_paren_pos + 1;
+
+    let ts1005 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPECTED)
+        .expect("expected TS1005 for the recovered call tail");
+    assert_eq!(
+        ts1005.start as usize, open_paren_pos,
+        "TS1005 should anchor at the opening paren after the recovered identifier tail: {diagnostics:?}"
+    );
+
+    let ts1109 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for the empty recovered call expression");
+    assert_eq!(
+        ts1109.start as usize, close_paren_pos,
+        "TS1109 should anchor at the closing paren after the recovered empty call: {diagnostics:?}"
+    );
+}

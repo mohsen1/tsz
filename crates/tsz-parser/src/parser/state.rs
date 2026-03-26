@@ -1712,6 +1712,22 @@ impl ParserState {
         self.error_token_expected(",");
     }
 
+    pub(crate) fn current_token_has_scanner_diagnostic(&self, code: u32) -> bool {
+        let token_pos = self.token_pos() as usize;
+        self.scanner
+            .get_scanner_diagnostics()
+            .iter()
+            .any(|diag| diag.code == code && diag.pos == token_pos)
+    }
+
+    pub(crate) fn current_token_has_numeric_literal_follow_error(&self) -> bool {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        self.current_token_has_scanner_diagnostic(
+            diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+        )
+    }
+
     /// Check if current token could start a parameter
     pub(crate) fn is_parameter_start(&mut self) -> bool {
         // Parameters can start with modifiers, identifiers, or binding patterns
