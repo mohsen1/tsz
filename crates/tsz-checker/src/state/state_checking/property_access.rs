@@ -11,6 +11,36 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn mapped_constraint_accepts_property_name(
+        &self,
+        constraint: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        use crate::query_boundaries::{assignability, common, property_access};
+
+        if assignability::is_any_type(self.ctx.types, constraint)
+            || query::is_string_type(self.ctx.types, constraint)
+        {
+            return true;
+        }
+
+        let is_numeric_name =
+            tsz_solver::utils::canonicalize_numeric_name(prop_name).is_some();
+        if is_numeric_name && property_access::is_number_type(self.ctx.types, constraint) {
+            return true;
+        }
+
+        common::union_members(self.ctx.types, constraint)
+            .is_some_and(|members| {
+                members.into_iter().any(|member| {
+                    assignability::is_any_type(self.ctx.types, member)
+                        || query::is_string_type(self.ctx.types, member)
+                        || (is_numeric_name
+                            && property_access::is_number_type(self.ctx.types, member))
+                })
+            })
+    }
+
     pub(crate) fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.ctx.arena.get(name_idx)?;
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -395,7 +425,7 @@ impl<'a> CheckerState<'a> {
                             },
                         );
                     }
-                } else {
+                } else if !self.mapped_constraint_accepts_property_name(constraint, prop_name) {
                     self.ctx
                         .narrowing_cache
                         .property_cache
@@ -407,6 +437,10 @@ impl<'a> CheckerState<'a> {
                             property_name: prop_atom,
                         },
                     );
+                } else {
+                    // Broad key spaces like `any` or `keyof any` accept
+                    // arbitrary string/numeric property names even when we
+                    // cannot enumerate a finite literal key set here.
                 }
             }
         }

@@ -282,6 +282,15 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             return Some(factory.array(element_type));
         }
+        if !type_expr.starts_with('[')
+            && type_expr.ends_with(']')
+            && let Some((base_str, index_str)) =
+                Self::parse_jsdoc_index_access_segments(type_expr)
+        {
+            let base_type = self.resolve_jsdoc_type_str(base_str)?;
+            let index_type = self.resolve_jsdoc_type_str(index_str)?;
+            return Some(self.ctx.types.factory().index_access(base_type, index_type));
+        }
         if type_expr.starts_with('[') && type_expr.ends_with(']') {
             return self.parse_jsdoc_tuple_type(type_expr);
         }
@@ -551,6 +560,12 @@ impl<'a> CheckerState<'a> {
                                 return Some(self.judge_evaluate(keyof));
                             }
                         }
+                    }
+                    if !rest.is_empty()
+                        && let Some(operand) = self.resolve_jsdoc_type_str(rest)
+                    {
+                        let keyof = factory.keyof(operand);
+                        return Some(self.judge_evaluate(keyof));
                     }
                 }
                 if let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') {
@@ -1409,6 +1424,44 @@ impl<'a> CheckerState<'a> {
 
         Some(self.ctx.types.factory().tuple(elements))
     }
+
+    fn parse_jsdoc_index_access_segments(type_expr: &str) -> Option<(&str, &str)> {
+        let mut bracket_depth = 0u32;
+        let mut open_idx = None;
+
+        for (idx, ch) in type_expr.char_indices() {
+            match ch {
+                '[' => {
+                    if bracket_depth == 0 {
+                        open_idx = Some(idx);
+                    }
+                    bracket_depth += 1;
+                }
+                ']' => {
+                    if bracket_depth == 0 {
+                        return None;
+                    }
+                    bracket_depth -= 1;
+                    if bracket_depth == 0 {
+                        let open_idx = open_idx?;
+                        if idx + ch.len_utf8() != type_expr.len() {
+                            return None;
+                        }
+                        let base = type_expr[..open_idx].trim();
+                        let index = type_expr[open_idx + 1..idx].trim();
+                        if base.is_empty() || index.is_empty() {
+                            return None;
+                        }
+                        return Some((base, index));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     /// Parse an inline object literal type: `{ propName: Type, ... }`.
     fn parse_jsdoc_object_literal_type(&mut self, type_expr: &str) -> Option<TypeId> {
         if let Some(mapped) = self.parse_jsdoc_mapped_type(type_expr) {
@@ -1506,7 +1559,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let constraint = self.resolve_jsdoc_type_str(constraint_str)?;
+        let constraint = if let Some(rest) = constraint_str.strip_prefix("keyof") {
+            let operand = self.resolve_jsdoc_type_str(rest.trim())?;
+            self.ctx.types.factory().keyof(operand)
+        } else {
+            self.resolve_jsdoc_type_str(constraint_str)?
+        };
         let atom = self.ctx.types.intern_string(type_param_name);
         let type_param = tsz_solver::TypeParamInfo {
             name: atom,

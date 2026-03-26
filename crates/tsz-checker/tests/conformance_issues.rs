@@ -3460,6 +3460,63 @@ function returnAnyObject(obj) {
 }
 
 #[test]
+fn test_jsdoc_mapped_typedef_generic_call_does_not_emit_assignment_errors() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "index.js",
+        r#"
+/**
+ * @typedef {{ [K in keyof B]: { fn: (a: A, b: B) => void; thing: B[K]; } }} Funcs
+ * @template A
+ * @template {Record<string, unknown>} B
+ */
+
+/**
+ * @template A
+ * @template {Record<string, unknown>} B
+ * @param {Funcs<A, B>} fns
+ * @returns {[A, B]}
+ */
+function foo(fns) {
+  return /** @type {any} */ (null);
+}
+
+const result = foo({
+  bar: {
+    fn:
+      /** @param {string} a */
+      (a) => {},
+    thing: "asd",
+  },
+});
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2353),
+        "Did not expect TS2353 for a JSDoc mapped-typedef generic call argument. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 for a JSDoc mapped-typedef generic call argument. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect TS2345 for a JSDoc mapped-typedef generic call argument. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.js",
