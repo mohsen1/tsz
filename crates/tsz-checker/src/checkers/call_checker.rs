@@ -1512,21 +1512,6 @@ impl<'a> CheckerState<'a> {
             let candidate_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
             self.ctx.node_types = Default::default();
             refresh_all_args(self);
-
-            let candidate_callable_ctx = CallableContext::new(func_type);
-            let prev_preserve_literals2 = self.ctx.preserve_literal_types;
-            self.ctx.preserve_literal_types = true;
-            let mut sig_arg_types = self.collect_call_argument_types_with_context(
-                args,
-                |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
-                false,
-                None,
-                candidate_callable_ctx,
-            );
-            self.ctx.preserve_literal_types = prev_preserve_literals2;
-
-            self.ensure_relation_input_ready(func_type);
-
             let resolved_func_type =
                 if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
                     self.ctx
@@ -1537,6 +1522,110 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
+
+            let candidate_callable_ctx = CallableContext::new(func_type);
+            let candidate_param_types: Vec<Option<TypeId>> = (0..args.len())
+                .map(|i| {
+                    sig_helper
+                        .get_parameter_type_for_call(i, args.len())
+                        .map(|param_type| self.normalize_contextual_call_param_type(param_type))
+                })
+                .collect();
+            let candidate_refresh_args: Vec<bool> = args
+                .iter()
+                .enumerate()
+                .map(|(i, &arg_idx)| {
+                    self.argument_needs_refresh_for_contextual_call(
+                        arg_idx,
+                        candidate_param_types.get(i).copied().flatten(),
+                    )
+                })
+                .collect();
+            let should_preinfer_candidate = !sig.type_params.is_empty()
+                && candidate_refresh_args.iter().copied().any(std::convert::identity);
+
+            let prev_preserve_literals2 = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let mut sig_arg_types = if should_preinfer_candidate {
+                let round1_arg_types = self.collect_call_argument_types_with_context(
+                    args,
+                    |i, _arg_count| {
+                        if candidate_refresh_args.get(i).copied().unwrap_or(false) {
+                            None
+                        } else {
+                            candidate_param_types.get(i).copied().flatten()
+                        }
+                    },
+                    false,
+                    Some(&candidate_refresh_args),
+                    candidate_callable_ctx,
+                );
+                let instantiated_params = self
+                    .resolve_call_with_checker_adapter(
+                        resolved_func_type,
+                        &round1_arg_types,
+                        force_bivariant_callbacks,
+                        contextual_type,
+                        actual_this_type,
+                    )
+                    .2;
+
+                if let Some(instantiated_params) = instantiated_params.as_ref() {
+                    self.ctx
+                        .rollback_diagnostics_filtered(&candidate_snap, |diag| {
+                            Self::should_preserve_speculative_call_diagnostic(diag)
+                        });
+                    self.ctx.restore_ts2454_state(&candidate_ts2454_errors);
+                    self.ctx.node_types = Default::default();
+                    refresh_all_args(self);
+
+                    let refreshed_contextual_types = self
+                        .contextual_param_types_from_instantiated_params(
+                            instantiated_params,
+                            args.len(),
+                        )
+                        .into_iter()
+                        .map(|param_type| {
+                            param_type.map(|param_type| {
+                                self.normalize_contextual_call_param_type(param_type)
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |i, _arg_count| {
+                            refreshed_contextual_types
+                                .get(i)
+                                .copied()
+                                .flatten()
+                                .or_else(|| candidate_param_types.get(i).copied().flatten())
+                        },
+                        false,
+                        None,
+                        candidate_callable_ctx,
+                    )
+                } else {
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |i, _arg_count| candidate_param_types.get(i).copied().flatten(),
+                        false,
+                        None,
+                        candidate_callable_ctx,
+                    )
+                }
+            } else {
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |i, _arg_count| candidate_param_types.get(i).copied().flatten(),
+                    false,
+                    None,
+                    candidate_callable_ctx,
+                )
+            };
+            self.ctx.preserve_literal_types = prev_preserve_literals2;
+
+            self.ensure_relation_input_ready(func_type);
+
             let (mut result, _instantiated_predicate, instantiated_params) = self
                 .resolve_call_with_checker_adapter(
                     resolved_func_type,
@@ -1545,7 +1634,6 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                     actual_this_type,
                 );
-
             if !sig.type_params.is_empty()
                 && !contextual_refresh_args.is_empty()
                 && let Some(instantiated_params) = instantiated_params.as_ref()
@@ -1592,7 +1680,6 @@ impl<'a> CheckerState<'a> {
                         contextual_type,
                         actual_this_type,
                     );
-
                 match retry_result {
                     CallResult::Success(_)
                     | CallResult::ArgumentTypeMismatch { .. }
