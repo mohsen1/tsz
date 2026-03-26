@@ -15,7 +15,7 @@
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{CallableShape, ObjectShape, PropertyInfo, TypeId, Visibility};
 
 pub(crate) fn commonjs_direct_export_supports_named_props(
     types: &dyn tsz_solver::TypeDatabase,
@@ -68,6 +68,112 @@ pub struct JsExportSurface {
 }
 
 impl JsExportSurface {
+    fn merge_property_info(
+        checker: &mut CheckerState<'_>,
+        existing: &PropertyInfo,
+        overlay: &PropertyInfo,
+    ) -> PropertyInfo {
+        let factory = checker.ctx.types.factory();
+        PropertyInfo {
+            name: existing.name,
+            type_id: if existing.type_id == overlay.type_id {
+                existing.type_id
+            } else {
+                factory.union(vec![existing.type_id, overlay.type_id])
+            },
+            write_type: if existing.write_type == overlay.write_type {
+                existing.write_type
+            } else {
+                factory.union(vec![existing.write_type, overlay.write_type])
+            },
+            optional: existing.optional && overlay.optional,
+            readonly: existing.readonly && overlay.readonly,
+            is_method: existing.is_method && overlay.is_method,
+            is_class_prototype: existing.is_class_prototype || overlay.is_class_prototype,
+            visibility: existing.visibility,
+            parent_id: existing.parent_id.or(overlay.parent_id),
+            declaration_order: existing.declaration_order.min(overlay.declaration_order),
+        }
+    }
+
+    fn merge_named_exports_into_direct_export_type(
+        &self,
+        checker: &mut CheckerState<'_>,
+        direct_export_type: TypeId,
+    ) -> Option<TypeId> {
+        if self.named_exports.is_empty()
+            || !commonjs_direct_export_supports_named_props(checker.ctx.types, direct_export_type)
+        {
+            return Some(direct_export_type);
+        }
+
+        let mut overlay_by_name: FxHashMap<_, _> = FxHashMap::default();
+        for prop in &self.named_exports {
+            overlay_by_name.insert(prop.name, prop.clone());
+        }
+
+        if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            checker.ctx.types,
+            direct_export_type,
+        ) {
+            let mut merged_shape: CallableShape = shape.as_ref().clone();
+            let mut merged_props = Vec::new();
+            for existing in &shape.properties {
+                if let Some(overlay) = overlay_by_name.remove(&existing.name) {
+                    merged_props.push(Self::merge_property_info(checker, existing, &overlay));
+                } else {
+                    merged_props.push(existing.clone());
+                }
+            }
+            merged_props.extend(overlay_by_name.into_values());
+            for (idx, prop) in merged_props.iter_mut().enumerate() {
+                prop.declaration_order = idx as u32;
+            }
+            merged_shape.properties = merged_props;
+            return Some(checker.ctx.types.factory().callable(merged_shape));
+        }
+
+        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+            checker.ctx.types,
+            direct_export_type,
+        ) {
+            let mut merged_props = Vec::new();
+            for existing in &shape.properties {
+                if let Some(overlay) = overlay_by_name.remove(&existing.name) {
+                    merged_props.push(Self::merge_property_info(checker, existing, &overlay));
+                } else {
+                    merged_props.push(existing.clone());
+                }
+            }
+            merged_props.extend(overlay_by_name.into_values());
+            for (idx, prop) in merged_props.iter_mut().enumerate() {
+                prop.declaration_order = idx as u32;
+            }
+
+            let merged_shape = ObjectShape {
+                flags: shape.flags,
+                properties: merged_props,
+                string_index: shape.string_index.clone(),
+                number_index: shape.number_index.clone(),
+                symbol: shape.symbol,
+            };
+
+            return Some(
+                if shape.string_index.is_some() || shape.number_index.is_some() {
+                    checker.ctx.types.factory().object_with_index(merged_shape)
+                } else {
+                    checker.ctx.types.factory().object_with_flags_and_symbol(
+                        merged_shape.properties,
+                        merged_shape.flags,
+                        merged_shape.symbol,
+                    )
+                },
+            );
+        }
+
+        None
+    }
+
     pub const fn empty() -> Self {
         Self {
             direct_export_type: None,
@@ -122,7 +228,10 @@ impl JsExportSurface {
         };
 
         match (self.direct_export_type, namespace_type) {
-            (Some(dt), Some(ns)) => Some(factory.intersection2(dt, ns)),
+            (Some(dt), Some(ns)) => Some(
+                self.merge_named_exports_into_direct_export_type(checker, dt)
+                    .unwrap_or_else(|| factory.intersection2(dt, ns)),
+            ),
             (Some(dt), None) => Some(dt),
             (None, Some(ns)) => Some(ns),
             (None, None) => None,
@@ -403,6 +512,7 @@ impl<'a> CheckerState<'a> {
     /// Compute the JS export surface from scratch (uncached).
     fn compute_js_export_surface(&mut self, target_file_idx: usize) -> JsExportSurface {
         let mut surface = JsExportSurface::empty();
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
 
         let last_direct_export =
             self.last_direct_module_export_assignment_for_file(target_file_idx);
@@ -410,7 +520,10 @@ impl<'a> CheckerState<'a> {
         // 1. Collect direct `module.exports = X` assignment
         surface.direct_export_type = last_direct_export
             .map(|(_, rhs_expr)| {
-                self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None)
+                let expando_root = target_arena
+                    .get_identifier_at(rhs_expr)
+                    .map(|ident| ident.escaped_text.as_str());
+                self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, expando_root)
             })
             .filter(|&rhs_type| rhs_type != TypeId::UNDEFINED);
 
@@ -474,7 +587,7 @@ impl<'a> CheckerState<'a> {
         (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
     }
 
-    fn direct_commonjs_module_export_rhs_from_variable_statement(
+    pub(crate) fn direct_commonjs_module_export_rhs_from_variable_statement(
         &self,
         arena: &tsz_parser::parser::NodeArena,
         stmt_idx: tsz_parser::parser::NodeIndex,

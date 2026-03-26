@@ -1199,6 +1199,20 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.is_js_file() {
+            if let Some(sym_id) = self.ctx.binder.file_locals.get("require")
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.decl_file_idx == self.ctx.current_file_idx as u32
+                && symbol
+                    .declarations
+                    .iter()
+                    .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_some())
+            {
+                return false;
+            }
+            return true;
+        }
+
         let resolved_symbol = self
             .ctx
             .binder

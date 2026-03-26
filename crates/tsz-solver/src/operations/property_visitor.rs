@@ -757,6 +757,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
             });
         }
 
+        // Non-null union members must agree that the property exists.
+        // If some constituents succeed but another non-null constituent reports
+        // PropertyNotFound, the overall union should still be a missing-property
+        // error rather than silently exposing the property from the successful
+        // members only.
+        if has_not_found_member && !valid_results.is_empty() && nullable_causes.is_empty() {
+            return Some(PropertyAccessResult::PropertyNotFound {
+                type_id: obj_type_for_error(),
+                property_name: prop_atom,
+            });
+        }
+
         // If there are nullable causes, return PossiblyNullOrUndefined
         if !nullable_causes.is_empty() {
             let cause = if nullable_causes.len() == 1 {
