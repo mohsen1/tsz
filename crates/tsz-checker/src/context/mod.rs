@@ -14,6 +14,7 @@
 
 mod compiler_options;
 pub(crate) use compiler_options::is_declaration_file_name;
+pub(crate) use compiler_options::{is_js_file_name, should_resolve_jsdoc_for_file};
 mod constructors;
 mod core;
 mod def_mapping;

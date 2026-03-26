@@ -1860,18 +1860,24 @@ impl<'a> CheckerState<'a> {
                                 let Some(other_arena) = all_arenas.get(file_idx) else {
                                     continue;
                                 };
-                                // Skip non-checked JS files — tsc doesn't type-check
-                                // JS files without checkJs, so they don't participate
-                                // in cross-file TS2403. When checkJs is enabled, JS
-                                // files are type-checked and DO participate.
-                                let other_is_unchecked_js = !compiler_options.check_js
-                                    && other_arena.source_files.first().is_some_and(|sf| {
-                                        sf.file_name.ends_with(".js")
-                                            || sf.file_name.ends_with(".jsx")
-                                            || sf.file_name.ends_with(".mjs")
-                                            || sf.file_name.ends_with(".cjs")
-                                    });
-                                if other_is_unchecked_js {
+                                let other_file_name = other_arena
+                                    .source_files
+                                    .first()
+                                    .map(|sf| sf.file_name.clone())
+                                    .unwrap_or_else(|| format!("cross-file-{file_idx}"));
+                                let other_source_text = other_arena
+                                    .source_files
+                                    .first()
+                                    .map(|sf| sf.text.as_ref())
+                                    .unwrap_or("");
+                                let other_is_non_checked_js =
+                                    crate::context::is_js_file_name(&other_file_name)
+                                        && !crate::context::should_resolve_jsdoc_for_file(
+                                            &other_file_name,
+                                            other_source_text,
+                                            &compiler_options,
+                                        );
+                                if other_is_non_checked_js {
                                     continue;
                                 }
                                 let Some(other_sym) = other_binder.get_symbol(other_sym_id) else {
@@ -1893,16 +1899,18 @@ impl<'a> CheckerState<'a> {
                                     let decl_name_matches = other_arena
                                         .get(other_decl)
                                         .and_then(|n| {
-                                            other_arena.get_variable_declaration(n).and_then(|vd| {
-                                                other_arena
-                                                    .get(vd.name)
-                                                    .and_then(|name_node| {
-                                                        other_arena.get_identifier(name_node)
-                                                    })
-                                                    .map(|id| {
-                                                        other_arena.resolve_identifier_text(id)
-                                                    })
-                                            })
+                                            other_arena.get_variable_declaration(n).and_then(
+                                                |vd| {
+                                                    other_arena
+                                                        .get(vd.name)
+                                                        .and_then(|name_node| {
+                                                            other_arena.get_identifier(name_node)
+                                                        })
+                                                        .map(|id| {
+                                                            other_arena.resolve_identifier_text(id)
+                                                        })
+                                                },
+                                            )
                                         })
                                         .is_some_and(|n| n == name_str.as_str());
                                     if !decl_name_matches {
@@ -1939,7 +1947,8 @@ impl<'a> CheckerState<'a> {
                                         .get(other_decl)
                                         .and_then(|n| other_arena.get_variable_declaration(n))
                                         .is_some_and(|d| {
-                                            d.type_annotation.is_none() && d.initializer.is_none()
+                                            d.type_annotation.is_none()
+                                                && d.initializer.is_none()
                                         });
                                     if other_is_bare {
                                         continue;
@@ -1952,7 +1961,7 @@ impl<'a> CheckerState<'a> {
                                         other_arena,
                                         other_binder,
                                         types,
-                                        format!("cross-file-{file_idx}"),
+                                        other_file_name.clone(),
                                         compiler_options.clone(),
                                         definition_store.clone(),
                                     );
