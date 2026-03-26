@@ -186,6 +186,105 @@ fn check_commonjs_file_with_prelude(
         .collect()
 }
 
+fn check_commonjs_three_files_with_prelude(
+    prelude_name: &str,
+    prelude_source: &str,
+    producer_name: &str,
+    producer_source: &str,
+    consumer_name: &str,
+    consumer_source: &str,
+    module_specifier: &str,
+) -> Vec<(u32, String)> {
+    let mut parser_a = ParserState::new(prelude_name.to_string(), prelude_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = ParserState::new(producer_name.to_string(), producer_source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let mut parser_c = ParserState::new(consumer_name.to_string(), consumer_source.to_string());
+    let root_c = parser_c.parse_source_file();
+    let mut binder_c = BinderState::new();
+    binder_c.bind_source_file(parser_c.get_arena(), root_c);
+
+    let arena_a = Arc::new(parser_a.get_arena().clone());
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+    let arena_c = Arc::new(parser_c.get_arena().clone());
+    let all_arenas = Arc::new(vec![
+        Arc::clone(&arena_a),
+        Arc::clone(&arena_b),
+        Arc::clone(&arena_c),
+    ]);
+
+    let file_b_exports = binder_b.module_exports.get(producer_name).cloned();
+    if let Some(exports) = &file_b_exports {
+        binder_c
+            .module_exports
+            .insert(module_specifier.to_string(), exports.clone());
+    }
+
+    let mut cross_file_targets = FxHashMap::default();
+    if let Some(exports) = &file_b_exports {
+        for (_name, &sym_id) in exports.iter() {
+            cross_file_targets.insert(sym_id, 1usize);
+        }
+    }
+
+    let binder_a = Arc::new(binder_a);
+    let binder_b = Arc::new(binder_b);
+    let binder_c = Arc::new(binder_c);
+    let all_binders = Arc::new(vec![
+        Arc::clone(&binder_a),
+        Arc::clone(&binder_b),
+        Arc::clone(&binder_c),
+    ]);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_c.as_ref(),
+        binder_c.as_ref(),
+        &types,
+        consumer_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: false,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(2);
+    for (sym_id, file_idx) in &cross_file_targets {
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
+    }
+
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    resolved_module_paths.insert((2, module_specifier.to_string()), 1);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    resolved_modules.insert(module_specifier.to_string());
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(root_c);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn format_commonjs_single_file_symbol_type(
     file_name: &str,
     source: &str,
@@ -1756,6 +1855,149 @@ x.zipStr = 12;
     assert!(
         !ts2540.is_empty(),
         "Expected TS2540 for readonly defineProperty member assignment, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_commonjs_direct_export_property_overlap_is_union_typed_cross_file() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+module.exports.bothBefore = "string";
+A.justExport = 4;
+A.bothBefore = 2;
+A.bothAfter = 3;
+module.exports = A;
+function A() {
+    this.p = 1;
+}
+module.exports.bothAfter = "string";
+module.exports.justProperty = "string";
+"#,
+        "consumer.ts",
+        r#"
+import mod1 = require("./mod1");
+declare function takesNumber(value: number): void;
+takesNumber(mod1.justExport);
+takesNumber(mod1.bothBefore);
+takesNumber(mod1.bothAfter);
+"#,
+        "./mod1",
+    );
+
+    let number_mismatch_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        number_mismatch_errors.len() >= 2,
+        "Expected overlapping CommonJS exports to stay union-typed and reject number-only consumers, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_commonjs_direct_export_property_overlap_reports_ts2323_in_js_file() {
+    let diagnostics = check_commonjs_single_file(
+        "mod1.js",
+        r#"
+module.exports.bothBefore = "string";
+A.justExport = 4;
+A.bothBefore = 2;
+A.bothAfter = 3;
+module.exports = A;
+function A() {
+    this.p = 1;
+}
+module.exports.bothAfter = "string";
+module.exports.justProperty = "string";
+"#,
+    );
+
+    let ts2323: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2323)
+        .collect();
+    assert_eq!(
+        ts2323.len(),
+        4,
+        "Expected TS2323 on overlapping CommonJS exported property declarations, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_commonjs_direct_export_property_overlap_rejects_number_only_js_require_consumers() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+module.exports.bothBefore = "string";
+A.justExport = 4;
+A.bothBefore = 2;
+A.bothAfter = 3;
+module.exports = A;
+function A() {
+    this.p = 1;
+}
+module.exports.bothAfter = "string";
+"#,
+        "consumer.js",
+        r#"
+/** @param {number} value */
+function takesNumber(value) {}
+var mod1 = require("./mod1");
+takesNumber(mod1.justExport);
+takesNumber(mod1.bothBefore);
+takesNumber(mod1.bothAfter);
+"#,
+        "./mod1",
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        ts2345.len() >= 2,
+        "Expected JS require() consumer to see overlapping CommonJS exports as non-number-only, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_commonjs_overlap_js_require_with_declared_require_prelude() {
+    let diagnostics = check_commonjs_three_files_with_prelude(
+        "requires.d.ts",
+        r#"
+declare var module: { exports: any };
+declare function require(name: string): any;
+"#,
+        "mod1.js",
+        r#"
+module.exports.bothBefore = "string";
+A.justExport = 4;
+A.bothBefore = 2;
+A.bothAfter = 3;
+module.exports = A;
+function A() {
+    this.p = 1;
+}
+module.exports.bothAfter = "string";
+"#,
+        "a.js",
+        r#"
+/// <reference path="./requires.d.ts" />
+var mod1 = require("./mod1");
+mod1.bothBefore.toFixed();
+mod1.bothAfter.toFixed();
+"#,
+        "./mod1",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| *code == 2339 && msg.contains("toFixed"))
+        .collect();
+    assert!(
+        ts2339.len() >= 2,
+        "Expected prelude-declared JS require() to preserve CommonJS overlap diagnostics, got: {diagnostics:#?}"
     );
 }
 

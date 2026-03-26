@@ -118,9 +118,9 @@ impl<'a> CheckerState<'a> {
             && let Some(first_arg) = args.nodes.first().copied()
             && let Some(module_specifier) = self.get_require_module_specifier(first_arg)
         {
-            if let Some(module_type) =
-                self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
-            {
+            let module_type =
+                self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx));
+            if let Some(module_type) = module_type {
                 return module_type;
             }
             self.emit_module_not_found_error(&module_specifier, first_arg);

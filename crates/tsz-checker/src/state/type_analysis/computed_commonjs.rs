@@ -47,6 +47,140 @@ impl<'a> CheckerState<'a> {
         (symbol_type != TypeId::ERROR && symbol_type != TypeId::UNKNOWN).then_some(symbol_type)
     }
 
+    pub(crate) fn check_commonjs_export_property_redeclarations(&mut self) {
+        if !self.is_js_file() {
+            return;
+        }
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+
+        let mut rhs_expr = None;
+        for (stmt_ordinal, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            let candidate = if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                self.ctx
+                    .arena
+                    .get_expression_statement(stmt_node)
+                    .and_then(|stmt| {
+                        self.direct_commonjs_module_export_assignment_rhs(
+                            self.ctx.arena,
+                            stmt.expression,
+                        )
+                    })
+            } else if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                self.direct_commonjs_module_export_rhs_from_variable_statement(
+                    self.ctx.arena,
+                    stmt_idx,
+                )
+            } else {
+                None
+            };
+            if let Some(found_rhs) = candidate {
+                let _ = stmt_ordinal;
+                rhs_expr = Some(found_rhs);
+            }
+        }
+        let Some(rhs_expr) = rhs_expr else {
+            return;
+        };
+
+        let direct_export_root = self
+            .ctx
+            .arena
+            .get(rhs_expr)
+            .filter(|node| node.kind == SyntaxKind::Identifier as u16)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.clone());
+        let Some(direct_export_root) = direct_export_root else {
+            return;
+        };
+
+        let mut explicit_exports: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+        let mut root_exports: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            let Some(left_node) = self.ctx.arena.get(binary.left) else {
+                continue;
+            };
+            if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && left_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                continue;
+            }
+            let Some(access) = self.ctx.arena.get_access_expr(left_node) else {
+                continue;
+            };
+            let Some(member_name) =
+                Self::commonjs_static_member_name_in_arena(self.ctx.arena, access.name_or_argument)
+            else {
+                continue;
+            };
+
+            if self.is_current_file_commonjs_export_base(access.expression) {
+                explicit_exports
+                    .entry(member_name)
+                    .or_default()
+                    .push(binary.left);
+                continue;
+            }
+
+            if self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == direct_export_root)
+            {
+                root_exports
+                    .entry(member_name)
+                    .or_default()
+                    .push(binary.left);
+            }
+        }
+
+        for (name, export_nodes) in explicit_exports {
+            let Some(root_nodes) = root_exports.get(&name) else {
+                continue;
+            };
+            let message = format!("Cannot redeclare exported variable '{}'.", name);
+            let mut seen = FxHashSet::default();
+            for &node in export_nodes.iter().chain(root_nodes.iter()) {
+                if seen.insert(node) {
+                    self.error_at_node(
+                        node,
+                        &message,
+                        crate::diagnostics::diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                    );
+                }
+            }
+        }
+    }
+
     fn json_value_type(&mut self, value: &JsonValue) -> TypeId {
         let factory = self.ctx.types.factory();
         match value {
@@ -881,6 +1015,7 @@ impl<'a> CheckerState<'a> {
         let mut changed = false;
 
         for (prop_name, prop_type) in expando_props {
+            let prop_type = tsz_solver::widen_literal_type(self.ctx.types, prop_type);
             let prop_atom = self.ctx.types.intern_string(&prop_name);
             if properties.contains_key(&prop_atom) {
                 continue;
@@ -982,8 +1117,18 @@ impl<'a> CheckerState<'a> {
         let mut changed = false;
 
         for (prop_name, prop_type) in expando_props {
+            let prop_type = tsz_solver::widen_literal_type(self.ctx.types, prop_type);
             let prop_atom = self.ctx.types.intern_string(&prop_name);
-            if properties.contains_key(&prop_atom) {
+            if let Some(existing) = properties.get_mut(&prop_atom) {
+                let existing_is_placeholder = matches!(
+                    existing.type_id,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                );
+                if existing_is_placeholder && !matches!(prop_type, TypeId::ANY | TypeId::UNKNOWN) {
+                    existing.type_id = prop_type;
+                    existing.write_type = prop_type;
+                    changed = true;
+                }
                 continue;
             }
             properties.insert(
@@ -2058,6 +2203,12 @@ impl<'a> CheckerState<'a> {
                 .or(exports_table_target);
             let surface =
                 augment_target.map(|target_idx| self.resolve_js_export_surface(target_idx));
+            if let Some(surface) = surface.as_ref()
+                && surface.has_commonjs_exports
+            {
+                let display_name = self.imported_namespace_display_module_name(module_name);
+                return surface.to_type_id_with_display_name(self, Some(display_name));
+            }
             let mut props: Vec<PropertyInfo> = if surface
                 .as_ref()
                 .is_some_and(|s| s.has_commonjs_exports)
