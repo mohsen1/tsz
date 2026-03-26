@@ -421,11 +421,10 @@ fn extract_declared_function_parameter_count(source: &str, helper_name: &str) ->
                             ']' => bracket_depth = bracket_depth.saturating_sub(1),
                             '{' => brace_depth += 1,
                             '}' => brace_depth = brace_depth.saturating_sub(1),
-                            ','
-                                if angle_depth == 0
-                                    && paren_depth == 0
-                                    && bracket_depth == 0
-                                    && brace_depth == 0 =>
+                            ',' if angle_depth == 0
+                                && paren_depth == 0
+                                && bracket_depth == 0
+                                && brace_depth == 0 =>
                             {
                                 count += 1;
                             }
@@ -568,50 +567,50 @@ fn required_tslib_helpers(
 
         if needs_private_lowering
             && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = file.arena.get_access_expr(node)
-                && file
-                    .arena
-                    .get(access.name_or_argument)
-                    .is_some_and(|name| name.kind == SyntaxKind::PrivateIdentifier as u16)
+            && let Some(access) = file.arena.get_access_expr(node)
+            && file
+                .arena
+                .get(access.name_or_argument)
+                .is_some_and(|name| name.kind == SyntaxKind::PrivateIdentifier as u16)
+        {
+            let span = (node.pos, node.end.saturating_sub(node.pos));
+            let parent_idx = file
+                .arena
+                .get_extended(node_idx)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+            let parent_node = if parent_idx != NodeIndex::NONE {
+                file.arena.get(parent_idx)
+            } else {
+                None
+            };
+
+            let mut is_plain_assignment_lhs = false;
+            let mut is_read_modify_write = false;
+            if let Some(parent_node) = parent_node
+                && parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = file.arena.get_binary_expr(parent_node)
+                && binary.left == node_idx
             {
-                let span = (node.pos, node.end.saturating_sub(node.pos));
-                let parent_idx = file
-                    .arena
-                    .get_extended(node_idx)
-                    .map(|ext| ext.parent)
-                    .unwrap_or(NodeIndex::NONE);
-                let parent_node = if parent_idx != NodeIndex::NONE {
-                    file.arena.get(parent_idx)
-                } else {
-                    None
-                };
-
-                let mut is_plain_assignment_lhs = false;
-                let mut is_read_modify_write = false;
-                if let Some(parent_node) = parent_node
-                    && parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                    && let Some(binary) = file.arena.get_binary_expr(parent_node)
-                    && binary.left == node_idx
-                {
-                    is_plain_assignment_lhs = binary.operator_token == SyntaxKind::EqualsToken as u16;
-                    is_read_modify_write = !is_plain_assignment_lhs;
-                }
-
-                if is_read_modify_write {
-                    first_private_get.get_or_insert(span);
-                    first_private_set.get_or_insert(span);
-                } else if is_plain_assignment_lhs {
-                    first_private_set.get_or_insert(span);
-                } else if parent_node.is_some_and(|parent| {
-                    parent.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                        || parent.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
-                }) {
-                    first_private_get.get_or_insert(span);
-                    first_private_set.get_or_insert(span);
-                } else {
-                    first_private_get.get_or_insert(span);
-                }
+                is_plain_assignment_lhs = binary.operator_token == SyntaxKind::EqualsToken as u16;
+                is_read_modify_write = !is_plain_assignment_lhs;
             }
+
+            if is_read_modify_write {
+                first_private_get.get_or_insert(span);
+                first_private_set.get_or_insert(span);
+            } else if is_plain_assignment_lhs {
+                first_private_set.get_or_insert(span);
+            } else if parent_node.is_some_and(|parent| {
+                parent.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || parent.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+            }) {
+                first_private_get.get_or_insert(span);
+                first_private_set.get_or_insert(span);
+            } else {
+                first_private_get.get_or_insert(span);
+            }
+        }
 
         if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
             saw_await = Some((node.pos, node.end.saturating_sub(node.pos)));

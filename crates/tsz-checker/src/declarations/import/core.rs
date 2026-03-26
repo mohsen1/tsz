@@ -3,8 +3,8 @@
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
-use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 
 // =============================================================================
@@ -1343,8 +1343,7 @@ impl<'a> CheckerState<'a> {
             };
 
         if let Some(arena) = target_arena
-            && let Some(renamed_as) =
-                self.local_named_export_alias_for_import(arena, import_name)
+            && let Some(renamed_as) = self.local_named_export_alias_for_import(arena, import_name)
         {
             return Some((true, Some(renamed_as)));
         }

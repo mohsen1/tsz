@@ -1468,8 +1468,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let display_name =
-            Self::format_generic_display_name_with_interner(&base_name, &type_params, self.ctx.types);
+        let display_name = Self::format_generic_display_name_with_interner(
+            &base_name,
+            &type_params,
+            self.ctx.types,
+        );
         let (message, code) = if min_required < max_expected {
             (
                 format_message(
@@ -1548,8 +1551,11 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_PROVIDE_THESE_WITH_AN_EXTENDS_TAG_2,
             )
         } else {
-            let display_name =
-                Self::format_generic_display_name_with_interner(&name, &type_params, self.ctx.types);
+            let display_name = Self::format_generic_display_name_with_interner(
+                &name,
+                &type_params,
+                self.ctx.types,
+            );
             (
                 format_message(
                     diagnostic_messages::EXPECTED_TYPE_ARGUMENTS_PROVIDE_THESE_WITH_AN_EXTENDS_TAG,
@@ -1626,11 +1632,10 @@ impl<'a> CheckerState<'a> {
                         ']' => bracket_depth = bracket_depth.saturating_sub(1),
                         '{' => brace_depth += 1,
                         '}' => brace_depth = brace_depth.saturating_sub(1),
-                        '*'
-                            if angle_depth == 0
-                                && paren_depth == 0
-                                && bracket_depth == 0
-                                && brace_depth == 0 =>
+                        '*' if angle_depth == 0
+                            && paren_depth == 0
+                            && bracket_depth == 0
+                            && brace_depth == 0 =>
                         {
                             end = idx;
                             break;
@@ -1671,33 +1676,28 @@ impl<'a> CheckerState<'a> {
             return type_params;
         }
 
-        let Some(sym_id) = self
-            .ctx
-            .binder
-            .file_locals
-            .get(base_name)
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .get_symbols()
-                    .find_all_by_name(base_name)
-                    .iter()
-                    .copied()
-                    .find(|&candidate| {
-                        let mut visited_aliases = Vec::new();
-                        let resolved =
-                            self.resolve_alias_symbol(candidate, &mut visited_aliases).unwrap_or(candidate);
-                        self.ctx.binder.get_symbol(resolved).is_some_and(|symbol| {
-                            (symbol.flags
-                                & (symbol_flags::TYPE_ALIAS
-                                    | symbol_flags::CLASS
-                                    | symbol_flags::INTERFACE
-                                    | symbol_flags::ENUM))
-                                != 0
-                        })
+        let Some(sym_id) = self.ctx.binder.file_locals.get(base_name).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbols()
+                .find_all_by_name(base_name)
+                .iter()
+                .copied()
+                .find(|&candidate| {
+                    let mut visited_aliases = Vec::new();
+                    let resolved = self
+                        .resolve_alias_symbol(candidate, &mut visited_aliases)
+                        .unwrap_or(candidate);
+                    self.ctx.binder.get_symbol(resolved).is_some_and(|symbol| {
+                        (symbol.flags
+                            & (symbol_flags::TYPE_ALIAS
+                                | symbol_flags::CLASS
+                                | symbol_flags::INTERFACE
+                                | symbol_flags::ENUM))
+                            != 0
                     })
-            })
-        else {
+                })
+        }) else {
             return Vec::new();
         };
 
@@ -1736,11 +1736,10 @@ impl<'a> CheckerState<'a> {
                 ']' => bracket_depth = bracket_depth.saturating_sub(1),
                 '{' => brace_depth += 1,
                 '}' => brace_depth = brace_depth.saturating_sub(1),
-                ','
-                    if angle_depth == 0
-                        && paren_depth == 0
-                        && bracket_depth == 0
-                        && brace_depth == 0 =>
+                ',' if angle_depth == 0
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0 =>
                 {
                     let part = type_args[start..idx].trim();
                     if !part.is_empty() {
