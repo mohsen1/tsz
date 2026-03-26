@@ -655,7 +655,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
 }
 
 #[test]
-fn test_prepare_test_dir_includes_module_js_entry_extensions() {
+fn test_prepare_test_dir_matches_tsc_default_include_patterns() {
     let filenames = vec![
         ("/index.js".to_string(), "export {};".to_string()),
         ("/index.mjs".to_string(), "export {};".to_string()),
@@ -673,10 +673,17 @@ fn test_prepare_test_dir_includes_module_js_entry_extensions() {
     let include = parsed["include"].as_array().expect("include array");
     let include_values: Vec<_> = include.iter().filter_map(|v| v.as_str()).collect();
 
-    assert!(include_values.contains(&"*.mjs"));
-    assert!(include_values.contains(&"*.cjs"));
-    assert!(include_values.contains(&"**/*.mjs"));
-    assert!(include_values.contains(&"**/*.cjs"));
+    // Match TSC's default include patterns: *.ts, *.tsx, *.js, *.jsx
+    // TSC does NOT include .mjs/.cjs/.mts/.cts — those are discovered through
+    // import-following, not include patterns.
+    assert!(include_values.contains(&"*.ts"));
+    assert!(include_values.contains(&"*.tsx"));
+    assert!(include_values.contains(&"*.js"));
+    assert!(include_values.contains(&"*.jsx"));
+    assert!(!include_values.contains(&"*.mjs"));
+    assert!(!include_values.contains(&"*.cjs"));
+    assert!(!include_values.contains(&"*.mts"));
+    assert!(!include_values.contains(&"*.cts"));
 }
 
 #[test]

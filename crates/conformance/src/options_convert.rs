@@ -236,11 +236,8 @@ mod tests {
         let opts = directives_to_check_options(&directives);
         let map = opts.as_object().unwrap();
         assert!(!map.contains_key("unknownoption"));
-        assert_eq!(
-            map.get("strictPropertyInitialization"),
-            Some(&Value::Bool(true))
-        );
-        assert_eq!(map.get("strictNullChecks"), Some(&Value::Bool(true)));
+        // With only unknown options, opts is empty so strict defaults aren't injected
+        assert!(map.is_empty());
     }
 
     #[test]
