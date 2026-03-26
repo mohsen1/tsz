@@ -676,11 +676,15 @@ impl<'a> CheckerState<'a> {
             // TS2786: component return type must be valid JSX element
             self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
 
+            let reported_factory_arity =
+                self.check_jsx_sfc_factory_arity(resolved_component_type, tag_name_idx);
+
             // Extract props type from the component and check attributes.
             // TS2607/TS2608 are emitted within props extraction when applicable.
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
-            if let Some((props_type, raw_has_type_params)) =
-                self.get_jsx_props_type_for_component(resolved_component_type, Some(idx))
+            if !reported_factory_arity
+                && let Some((props_type, raw_has_type_params)) =
+                    self.get_jsx_props_type_for_component(resolved_component_type, Some(idx))
             {
                 let props_type =
                     self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
