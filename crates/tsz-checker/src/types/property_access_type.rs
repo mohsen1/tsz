@@ -1348,7 +1348,6 @@ impl<'a> CheckerState<'a> {
             // primitive types, and other lib-registered types are available.
             let result =
                 self.resolve_property_access_with_env(object_type_for_access, property_name);
-
             match result {
                 PropertyAccessResult::Success {
                     type_id: mut prop_type,
@@ -1648,7 +1647,14 @@ impl<'a> CheckerState<'a> {
                     // Also handle intersections containing type parameters (e.g.,
                     // `Data & Readonly<Props> & Instance` from
                     // `ThisType<Data & Readonly<Props> & Instance>` before inference).
+                    let this_owner_is_object_literal = self
+                        .this_has_contextual_owner(access.expression)
+                        .and_then(|owner_idx| self.ctx.arena.get(owner_idx))
+                        .is_some_and(|owner_node| {
+                            owner_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        });
                     if is_this_access
+                        && this_owner_is_object_literal
                         && self.ctx.this_type_stack.last().is_some_and(|&top| {
                             access_query::is_this_type(self.ctx.types, top)
                                 || crate::query_boundaries::state::checking::is_type_parameter_like(

@@ -1261,9 +1261,17 @@ impl<'a> CheckerState<'a> {
                         .2;
 
                     if let Some(snap) = &round1_diag_snap {
+                        let round1_end = self.ctx.snapshot_diagnostics();
+                        let preserved_round1_arg_diags =
+                            self.collect_non_callback_diagnostics_between(args, snap, &round1_end);
                         self.ctx.rollback_diagnostics_filtered(snap, |diag| {
                             Self::should_preserve_speculative_call_diagnostic(diag)
                         });
+                        if !preserved_round1_arg_diags.is_empty() {
+                            let mut merged = self.preserved_speculative_call_diagnostics(snap);
+                            self.extend_unique_diagnostics(&mut merged, preserved_round1_arg_diags);
+                            self.ctx.rollback_and_replace_diagnostics(snap, merged);
+                        }
                     }
                     if let Some(ts2454_snap) = &round1_ts2454_snap {
                         self.ctx.restore_ts2454_state(ts2454_snap);
@@ -1587,31 +1595,6 @@ impl<'a> CheckerState<'a> {
                         )
                     }
                 } else {
-                    // Extract ThisType<T> marker from raw parameter types.
-                    // In the single-pass path, no inference substitution is available,
-                    // so we push the raw (uninstantiated) ThisType marker.
-                    // This allows property access on `this` in object literal methods
-                    // to suppress false TS2339 errors.
-                    if !pushed_this_type_from_shape {
-                        let env = self.ctx.type_env.borrow();
-                        for param in &shape.params {
-                            let ctx_helper2 = ContextualTypeContext::with_expected_and_options(
-                                self.ctx.types,
-                                param.type_id,
-                                self.ctx.compiler_options.no_implicit_any,
-                            );
-                            let this_type = ctx_helper2.get_this_type_from_marker().or_else(|| {
-                                ctx_helper2.get_this_type_from_marker_with_resolver(&*env)
-                            });
-                            if let Some(this_type) = this_type {
-                                self.ctx.this_type_stack.push(this_type);
-                                pushed_this_type_from_shape = true;
-                                break;
-                            }
-                        }
-                        drop(env);
-                    }
-
                     // Single-pass generic calls still erase type params from empty-array
                     // contextual types so `[]` does not feed raw `T[]` back into inference.
                     let type_param_eraser = {
@@ -1691,6 +1674,13 @@ impl<'a> CheckerState<'a> {
                             );
                         if !return_context_substitution.is_empty() {
                             if let Some(snap) = &initial_arg_snap {
+                                let initial_arg_end = self.ctx.snapshot_diagnostics();
+                                let preserved_initial_arg_diags = self
+                                    .collect_non_callback_diagnostics_between(
+                                        args,
+                                        snap,
+                                        &initial_arg_end,
+                                    );
                                 self.ctx.rollback_diagnostics_filtered(snap, |diag| {
                                     Self::should_preserve_speculative_call_diagnostic(diag)
                                         || matches!(
@@ -1707,6 +1697,15 @@ impl<'a> CheckerState<'a> {
                                                 | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
                                         )
                                 });
+                                if !preserved_initial_arg_diags.is_empty() {
+                                    let mut merged =
+                                        self.preserved_speculative_call_diagnostics(snap);
+                                    self.extend_unique_diagnostics(
+                                        &mut merged,
+                                        preserved_initial_arg_diags,
+                                    );
+                                    self.ctx.rollback_and_replace_diagnostics(snap, merged);
+                                }
                             }
                             if let Some(ts2454_snap) = &initial_ts2454_snap {
                                 self.ctx.restore_ts2454_state(ts2454_snap);
@@ -1769,6 +1768,13 @@ impl<'a> CheckerState<'a> {
                             .2
                         {
                             if let Some(snap) = &initial_arg_snap {
+                                let initial_arg_end = self.ctx.snapshot_diagnostics();
+                                let preserved_initial_arg_diags = self
+                                    .collect_non_callback_diagnostics_between(
+                                        args,
+                                        snap,
+                                        &initial_arg_end,
+                                    );
                                 self.ctx.rollback_diagnostics_filtered(snap, |diag| {
                                     Self::should_preserve_speculative_call_diagnostic(diag)
                                         || matches!(
@@ -1785,6 +1791,15 @@ impl<'a> CheckerState<'a> {
                                                 | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
                                         )
                                 });
+                                if !preserved_initial_arg_diags.is_empty() {
+                                    let mut merged =
+                                        self.preserved_speculative_call_diagnostics(snap);
+                                    self.extend_unique_diagnostics(
+                                        &mut merged,
+                                        preserved_initial_arg_diags,
+                                    );
+                                    self.ctx.rollback_and_replace_diagnostics(snap, merged);
+                                }
                             }
                             if let Some(ts2454_snap) = &initial_ts2454_snap {
                                 self.ctx.restore_ts2454_state(ts2454_snap);
@@ -2057,13 +2072,6 @@ impl<'a> CheckerState<'a> {
                         .map(|param_type| self.normalize_contextual_call_param_type(param_type))
                 })
                 .collect::<Vec<_>>();
-            // Re-push ThisType for the retry so object literal methods see the right `this`.
-            let retry_pushed_this = if let Some(tt) = shape_this_type {
-                self.ctx.this_type_stack.push(tt);
-                true
-            } else {
-                false
-            };
             arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, _arg_count| {
@@ -2077,9 +2085,6 @@ impl<'a> CheckerState<'a> {
                 None,
                 callable_ctx,
             );
-            if retry_pushed_this {
-                self.ctx.this_type_stack.pop();
-            }
 
             let (retry_generic_arg_types, retry_sanitized) =
                 self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types);
@@ -2105,22 +2110,12 @@ impl<'a> CheckerState<'a> {
             };
             result = if retry_sanitized || needs_real_type_recheck {
                 if let Some(instantiated_params) = retry.2.as_ref() {
-                    // Push ThisType for recheck so object literal methods see the right `this`.
-                    let recheck_pushed = if let Some(tt) = shape_this_type {
-                        self.ctx.this_type_stack.push(tt);
-                        true
-                    } else {
-                        false
-                    };
                     let r = self.recheck_generic_call_arguments_with_real_types(
                         retry.0.clone(),
                         instantiated_params,
                         args,
                         &arg_types,
                     );
-                    if recheck_pushed {
-                        self.ctx.this_type_stack.pop();
-                    }
                     r
                 } else {
                     retry.0

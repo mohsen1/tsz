@@ -104,3 +104,64 @@ var x = function () {
         "Expected the checked-JS write error to use the merged TS declaration type. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn checked_js_define_property_call_still_reports_missing_class_member() {
+    let diagnostics = check_entry(
+        &[
+            (
+                "helper.d.ts",
+                r#"
+type PropertyKey = string | number | symbol;
+interface ThisType<T> {}
+interface PropertyDescriptor {
+    configurable?: boolean;
+    enumerable?: boolean;
+    value?: any;
+    writable?: boolean;
+    get?(): any;
+    set?(v: any): void;
+}
+declare const helper: {
+    defineProperty<T>(o: T, p: PropertyKey, attributes: PropertyDescriptor & ThisType<any>): T;
+};
+"#,
+            ),
+            (
+                "a.js",
+                r#"
+class C {
+    constructor() {
+        helper.defineProperty(this, "_prop", { value: {} });
+        helper.defineProperty(this._prop, "num", { value: 12 });
+    }
+}
+"#,
+            ),
+        ],
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339 for the second defineProperty target access. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339[0]
+            .1
+            .contains("Property '_prop' does not exist on type 'C'."),
+        "Expected the checked-JS defineProperty call to keep reporting the missing class member. Actual diagnostics: {diagnostics:#?}"
+    );
+}
