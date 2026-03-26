@@ -2256,7 +2256,8 @@ impl<'a> CheckerState<'a> {
                     props.push(PropertyInfo {
                         name: name_atom,
                         // Cross-file augmentation declarations may live in a different
-                        // arena; use `any` here to preserve namespace member visibility.
+                        // arena; preserve member visibility even when we can't
+                        // resolve a stable runtime type here.
                         type_id: TypeId::ANY,
                         write_type: TypeId::ANY,
                         optional: false,
