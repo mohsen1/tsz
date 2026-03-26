@@ -794,6 +794,55 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve a property access on a `typeof Namespace` type by looking up the
+    /// namespace symbol's exports directly.
+    ///
+    /// When a variable is typed as `typeof M` (where M is a namespace), the general
+    /// property access pipeline may not find the property because it doesn't resolve
+    /// the TypeQuery/Lazy type to an object with the namespace's exports. This helper
+    /// extracts the namespace symbol from the TypeQuery or Lazy type and checks its
+    /// exports table directly.
+    pub(crate) fn resolve_namespace_typeof_member(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+
+        let sym_id = match classify_namespace_member(self.ctx.types, object_type) {
+            NamespaceMemberKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            _ => return None,
+        };
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let exports = symbol.exports.as_ref()?;
+        let member_sym_id = exports.get(property_name)?;
+        let member_sym = self.ctx.binder.get_symbol(member_sym_id)?;
+
+        // Only resolve value-side members. Type-only members (interfaces,
+        // type aliases) should fall through to TS2693/TS2339 handling.
+        if member_sym.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) == 0 {
+            return None;
+        }
+
+        // For merged interface+variable symbols, prefer the value declaration's type.
+        let member_type = if member_sym.flags & symbol_flags::INTERFACE != 0
+            && member_sym.flags & symbol_flags::VARIABLE != 0
+            && member_sym.value_declaration.is_some()
+        {
+            self.type_of_value_declaration_for_symbol(member_sym_id, member_sym.value_declaration)
+        } else {
+            self.get_type_of_symbol(member_sym_id)
+        };
+
+        if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
+            Some(member_type)
+        } else {
+            None
+        }
+    }
+
     /// Returns the name of an uninstantiated namespace if `expr_idx` resolves to one.
     ///
     /// Used to emit TS2708 instead of TS2339 when a property access targets an

@@ -1465,6 +1465,20 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if self.is_namespace_value_type(object_type) && !enum_instance_like_access {
+                // When the object type is a TypeQuery (typeof M) for a namespace,
+                // try to resolve the property from the namespace symbol's exports.
+                // This handles `var m: typeof M; m.Point` where `m` is a variable
+                // typed as `typeof Namespace`.
+                if let Some(ns_member_type) =
+                    self.resolve_namespace_typeof_member(object_type, property_name)
+                {
+                    return self.finalize_property_access_result(
+                        idx,
+                        ns_member_type,
+                        skip_flow_narrowing,
+                        false,
+                    );
+                }
                 if self.is_js_file()
                     && property_name == "prototype"
                     && self.property_access_is_direct_write_target(idx)
