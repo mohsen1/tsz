@@ -1725,6 +1725,28 @@ impl<'a> CheckerState<'a> {
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)
                     {
+                        if self.is_js_file()
+                            && self.is_current_file_commonjs_export_base(access.expression)
+                        {
+                            let export_namespace_type =
+                                self.current_file_commonjs_module_exports_namespace_type();
+                            if let PropertyAccessResult::Success {
+                                type_id,
+                                write_type,
+                                ..
+                            } = self.resolve_property_access_with_env(
+                                export_namespace_type,
+                                property_name,
+                            ) {
+                                return self.finalize_property_access_result(
+                                    idx,
+                                    effective_write_result(type_id, write_type),
+                                    skip_flow_narrowing,
+                                    false,
+                                );
+                            }
+                        }
+
                         // Property access expressions are VALUE context - always emit TS2339.
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.

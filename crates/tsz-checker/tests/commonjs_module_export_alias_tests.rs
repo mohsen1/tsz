@@ -270,6 +270,68 @@ b.func10;
 }
 
 #[test]
+fn test_module_exports_chain_assignment_alias_keeps_same_file_reads_in_sync() {
+    let diagnostics = check_commonjs_file(
+        "npmlog.js",
+        r#"
+class EE {
+    /** @param {string} s */
+    on(s) { }
+}
+var npmlog = module.exports = new EE();
+
+npmlog.on("hi");
+module.exports.on("hi");
+
+npmlog.x = 1;
+module.exports.y = 2;
+npmlog.y;
+module.exports.x;
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for same-file reads across module.exports alias chain assignment, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_module_exports_chain_assignment_alias_keeps_consumer_surface_in_sync() {
+    let diagnostics = check_commonjs_two_files(
+        "npmlog.js",
+        r#"
+class EE {
+    /** @param {string} s */
+    on(s) { }
+}
+var npmlog = module.exports = new EE();
+npmlog.x = 1;
+"#,
+        "use.js",
+        r#"
+var npmlog = require("./npmlog");
+npmlog.x;
+npmlog.on;
+"#,
+        "./npmlog",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for consumer reads through module.exports chain assignment alias, got: {ts2339:#?}"
+    );
+}
+
+#[test]
 fn test_exports_reassignment_then_property_assignment() {
     let diagnostics = check_commonjs_two_files(
         "b.js",
