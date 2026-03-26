@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
     /// Emits TS1380 "An import alias cannot reference a declaration that was imported using 'import type'."
     /// Emits TS1379 "An import alias cannot reference a declaration that was exported using 'export type'."
-    fn check_namespace_import(&mut self, _stmt_idx: NodeIndex, module_ref: NodeIndex) {
+    fn check_namespace_import(&mut self, stmt_idx: NodeIndex, module_ref: NodeIndex) {
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
             return;
         };
@@ -850,17 +850,40 @@ impl<'a> CheckerState<'a> {
                 // pure type (e.g. a local interface shadowing an outer namespace),
                 // the import-equals should resolve to the outer namespace instead,
                 // so don't emit a misleading TS2694.
-                let left_is_namespace = if let Some(sym_id) = left_resolved {
+                let (left_is_namespace, left_has_value) = if let Some(sym_id) = left_resolved {
                     let lib_binders = self.get_lib_binders();
-                    self.ctx
-                        .binder
-                        .get_symbol_with_libs(sym_id, &lib_binders)
-                        .is_some_and(|s| (s.flags & tsz_binder::symbol_flags::NAMESPACE) != 0)
+                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    {
+                        let is_namespace =
+                            (symbol.flags & tsz_binder::symbol_flags::NAMESPACE) != 0;
+                        let mut has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                        if has_value
+                            && (symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
+                            && (symbol.flags
+                                & (tsz_binder::symbol_flags::VALUE
+                                    & !tsz_binder::symbol_flags::VALUE_MODULE))
+                                == 0
+                        {
+                            has_value = symbol.declarations.iter().any(|&decl_idx| {
+                                self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                                    decl_node.kind
+                                        != tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                                        || self.is_namespace_declaration_instantiated(decl_idx)
+                                })
+                            });
+                        }
+                        (is_namespace, has_value)
+                    } else {
+                        (false, false)
+                    }
                 } else {
-                    false
+                    (false, false)
                 };
 
                 if left_is_namespace {
+                    if !left_has_value && !self.is_ambient_declaration(stmt_idx) {
+                        self.error_namespace_used_as_value_at(&name, qn.left);
+                    }
                     // If left is resolved, check if right member exists (TS2694)
                     // Use the existing report_type_query_missing_member which handles this correctly
                     self.report_type_query_missing_member(module_ref);

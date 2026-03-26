@@ -8767,6 +8767,44 @@ fn bare_import_type_reports_ts1340() {
 }
 
 #[test]
+fn export_import_qualified_type_only_namespace_reports_ts2708() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs"
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"namespace x {
+    interface c {
+    }
+}
+export import a = x.c;
+export = x;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2708_diags: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2708).collect();
+    assert!(
+        ts2708_diags
+            .iter()
+            .any(|diag| diag.message_text.contains("Cannot use namespace 'x' as a value")),
+        "Expected TS2708 on the namespace qualifier in export import, got: {result:?}"
+    );
+}
+
+#[test]
 fn lib_replacement_honors_source_reference_subfiles() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
