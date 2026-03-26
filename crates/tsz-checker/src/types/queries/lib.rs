@@ -931,7 +931,13 @@ impl<'a> CheckerState<'a> {
             // Handle ModuleNamespace types (import * as ns / namespace value bindings)
             NamespaceMemberKind::ModuleNamespace(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
-                let (symbol_flags_value, module_name, direct_member_id, module_export_member_id) = {
+                let (
+                    symbol_flags_value,
+                    module_name,
+                    direct_member_id,
+                    module_export_member_id,
+                    import_module,
+                ) = {
                     let symbol = self.get_cross_file_symbol(sym_id)?;
                     if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
                         return None;
@@ -970,6 +976,7 @@ impl<'a> CheckerState<'a> {
                         module_name,
                         direct_member_id,
                         module_export_member_id,
+                        symbol.import_module.clone(),
                     )
                 };
 
@@ -1007,7 +1014,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                if let Some(ref module_specifier) = symbol.import_module
+                if let Some(ref module_specifier) = import_module
                     && self
                         .collect_module_augmentation_names(module_specifier)
                         .iter()
