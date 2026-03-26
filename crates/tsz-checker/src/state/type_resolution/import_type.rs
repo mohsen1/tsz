@@ -8,6 +8,135 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn resolve_ts_import_type_member_symbol(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let from_file = self.ctx.current_file_idx;
+
+        if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
+            && let Some((sym_id, _)) = source_binder
+                .resolve_import_with_reexports_type_only(module_specifier, member_name)
+        {
+            if let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file(from_file, module_specifier)
+            {
+                self.ctx.register_symbol_file_target(sym_id, target_idx);
+            }
+            return Some(sym_id);
+        }
+
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(from_file, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))?;
+
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+
+        let record_and_return = |sym_id: tsz_binder::SymbolId| -> Option<tsz_binder::SymbolId> {
+            self.ctx.register_symbol_file_target(sym_id, target_file_idx);
+            Some(sym_id)
+        };
+
+        if let Some((sym_id, _)) = target_binder
+            .resolve_import_with_reexports_type_only(&target_file_name, member_name)
+        {
+            return record_and_return(sym_id);
+        }
+
+        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+            && let Some(sym_id) = exports.get(member_name)
+            && target_binder.get_symbol(sym_id).is_some()
+        {
+            return record_and_return(sym_id);
+        }
+
+        if let Some(exports) = target_binder.module_exports.get(module_specifier)
+            && let Some(sym_id) = exports.get(member_name)
+            && target_binder.get_symbol(sym_id).is_some()
+        {
+            return record_and_return(sym_id);
+        }
+
+        if let Some(sym_id) = target_binder.file_locals.get(member_name)
+            && let Some(symbol) = target_binder.get_symbol(sym_id)
+        {
+            let pure_type_flags = tsz_binder::symbol_flags::TYPE_ALIAS
+                | tsz_binder::symbol_flags::INTERFACE
+                | tsz_binder::symbol_flags::TYPE_PARAMETER;
+            let is_pure_type =
+                symbol.is_type_only || ((symbol.flags & pure_type_flags) != 0 && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
+            if is_pure_type {
+                return record_and_return(sym_id);
+            }
+        }
+
+        if let Some(sym_id) = self.resolve_jsdoc_import_member(module_specifier, member_name)
+            && let Some(symbol) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        {
+            let pure_type_flags = tsz_binder::symbol_flags::TYPE_ALIAS
+                | tsz_binder::symbol_flags::INTERFACE
+                | tsz_binder::symbol_flags::TYPE_PARAMETER;
+            let is_pure_type =
+                symbol.is_type_only || ((symbol.flags & pure_type_flags) != 0 && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
+            if is_pure_type {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+        let stripped = module_specifier
+            .strip_prefix("./")
+            .or_else(|| module_specifier.strip_prefix("../"))
+            .unwrap_or(module_specifier);
+        let display_name = stripped
+            .strip_suffix(".d.ts")
+            .or_else(|| stripped.strip_suffix(".d.tsx"))
+            .or_else(|| stripped.strip_suffix(".d.mts"))
+            .or_else(|| stripped.strip_suffix(".d.cts"))
+            .or_else(|| stripped.strip_suffix(".ts"))
+            .or_else(|| stripped.strip_suffix(".tsx"))
+            .or_else(|| stripped.strip_suffix(".mts"))
+            .or_else(|| stripped.strip_suffix(".cts"))
+            .or_else(|| stripped.strip_suffix(".js"))
+            .or_else(|| stripped.strip_suffix(".jsx"))
+            .or_else(|| stripped.strip_suffix(".mjs"))
+            .or_else(|| stripped.strip_suffix(".cjs"))
+            .unwrap_or(stripped);
+        format!("\"{display_name}\".export=")
+    }
+
+    fn import_type_missing_member_node(&self, idx: NodeIndex) -> NodeIndex {
+        let mut current = idx;
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return idx;
+            };
+            if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+                return current;
+            }
+            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                return current;
+            };
+            let Some(left_node) = self.ctx.arena.get(qn.left) else {
+                return qn.right;
+            };
+            if left_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                return qn.right;
+            }
+            current = qn.left;
+        }
+    }
+
     fn import_type_member_segments(&self, idx: NodeIndex) -> Option<Vec<String>> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == syntax_kind_ext::CALL_EXPRESSION {
@@ -36,8 +165,14 @@ impl<'a> CheckerState<'a> {
         if segments.is_empty() {
             return None;
         }
+        if segments.len() == 1
+            && let Some(jsdoc_typedef_type) =
+                self.resolve_import_type_jsdoc_typedef(module_name, &segments[0])
+        {
+            return Some(jsdoc_typedef_type);
+        }
 
-        let mut current_sym = self.resolve_jsdoc_import_member(module_name, &segments[0])?;
+        let mut current_sym = self.resolve_ts_import_type_member_symbol(module_name, &segments[0])?;
         for segment in segments.iter().skip(1) {
             let symbol = self
                 .get_cross_file_symbol(current_sym)
@@ -76,6 +211,47 @@ impl<'a> CheckerState<'a> {
             TypeId::ERROR
         };
         (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
+    }
+
+    fn resolve_import_type_jsdoc_typedef(
+        &mut self,
+        module_name: &str,
+        typedef_name: &str,
+    ) -> Option<TypeId> {
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?.clone();
+
+        for source_file in &target_arena.source_files {
+            let comments = source_file.comments.clone();
+            let source_text = source_file.text.to_string();
+            let mut checker = Box::new(CheckerState::with_parent_cache(
+                &target_arena,
+                &target_binder,
+                self.ctx.types,
+                source_file.file_name.clone(),
+                self.ctx.compiler_options.clone(),
+                self,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
+            checker.ctx.current_file_idx = target_file_idx;
+            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+            if let Some((ty, _)) =
+                checker.resolve_jsdoc_typedef_info(typedef_name, &comments, &source_text)
+                && ty != TypeId::ERROR
+                && ty != TypeId::UNKNOWN
+            {
+                self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+                return Some(ty);
+            }
+        }
+
+        None
     }
 
     /// Format a generic type name with its type parameter names for TS2314 messages.
@@ -249,6 +425,7 @@ impl<'a> CheckerState<'a> {
             TypeId::ERROR
         };
         let report_unresolved_imports = self.ctx.report_unresolved_imports;
+        let member_segments = self.import_type_member_segments(type_name_idx);
 
         if let Some(resolved) = self.resolve_import_type_reference(&module_name, type_name_idx) {
             return resolved;
@@ -263,6 +440,14 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(&module_name)
         {
+            if let Some(member_segments) = member_segments.as_ref()
+                && let Some(first_segment) = member_segments.first()
+            {
+                let namespace_name = self.import_type_namespace_name(&module_name);
+                let member_idx = self.import_type_missing_member_node(type_name_idx);
+                self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
+                return TypeId::ERROR;
+            }
             return if is_bare_import_type
                 && !bare_import_type_refers_to_type
                 && !suppress_bare_import_type_error
@@ -275,6 +460,14 @@ impl<'a> CheckerState<'a> {
 
         // 2. Binder module_exports (cross-file)
         if self.ctx.binder.module_exports.contains_key(&module_name) {
+            if let Some(member_segments) = member_segments.as_ref()
+                && let Some(first_segment) = member_segments.first()
+            {
+                let namespace_name = self.import_type_namespace_name(&module_name);
+                let member_idx = self.import_type_missing_member_node(type_name_idx);
+                self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
+                return TypeId::ERROR;
+            }
             return if is_bare_import_type
                 && !bare_import_type_refers_to_type
                 && !suppress_bare_import_type_error
@@ -304,6 +497,14 @@ impl<'a> CheckerState<'a> {
 
         // 4. Declared modules (ambient modules with body)
         if self.ctx.binder.declared_modules.contains(&module_name) {
+            if let Some(member_segments) = member_segments.as_ref()
+                && let Some(first_segment) = member_segments.first()
+            {
+                let namespace_name = self.import_type_namespace_name(&module_name);
+                let member_idx = self.import_type_missing_member_node(type_name_idx);
+                self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
+                return TypeId::ERROR;
+            }
             return if is_bare_import_type
                 && !bare_import_type_refers_to_type
                 && !suppress_bare_import_type_error
@@ -362,6 +563,14 @@ impl<'a> CheckerState<'a> {
             // was never resolved. Check if any project file matches.
             let key = (self.ctx.current_file_idx, module_name.clone());
             if paths.contains_key(&key) {
+                if let Some(member_segments) = member_segments.as_ref()
+                    && let Some(first_segment) = member_segments.first()
+                {
+                    let namespace_name = self.import_type_namespace_name(&module_name);
+                    let member_idx = self.import_type_missing_member_node(type_name_idx);
+                    self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
+                    return TypeId::ERROR;
+                }
                 return if is_bare_import_type
                     && !bare_import_type_refers_to_type
                     && !suppress_bare_import_type_error
