@@ -10,6 +10,34 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn refine_jsx_callable_contextual_type(&mut self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_type_for_property_access(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, resolved)
+        else {
+            return resolved;
+        };
+
+        let mut callable_members = Vec::new();
+        for member in members {
+            let member = self.resolve_type_for_property_access(member);
+            let member = self.evaluate_type_with_env(member);
+            let is_callable = tsz_solver::type_queries::get_function_shape(self.ctx.types, member)
+                .is_some_and(|shape| !shape.is_constructor)
+                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, member)
+                    .is_some_and(|sigs| !sigs.is_empty());
+            if is_callable {
+                callable_members.push(member);
+            }
+        }
+
+        match callable_members.len() {
+            0 => resolved,
+            1 => callable_members[0],
+            _ => self.ctx.types.factory().union(callable_members),
+        }
+    }
+
     fn file_has_same_line_adjacent_jsx_recovery_pattern(&self) -> bool {
         // Previously this used text-based heuristics to detect adjacent JSX
         // recovery patterns (e.g., `/><` or `></`), but those patterns also
@@ -1221,6 +1249,7 @@ impl<'a> CheckerState<'a> {
         };
 
         self.get_jsx_children_prop_type(props_type)
+            .map(|children_type| self.refine_jsx_callable_contextual_type(children_type))
     }
     // JSX Attribute Name Extraction
 
