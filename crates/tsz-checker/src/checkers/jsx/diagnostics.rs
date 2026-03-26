@@ -4,8 +4,8 @@
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::SymbolId;
-use tsz_parser::parser::node::ClassData;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::ClassData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 

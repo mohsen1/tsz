@@ -437,7 +437,10 @@ fn collect_type_root_ambient_module_import_conflict_diagnostics(
             continue;
         }
         let canonical_file = canonicalize_or_owned(Path::new(&file.file_name));
-        if !type_roots.iter().any(|root| canonical_file.starts_with(root)) {
+        if !type_roots
+            .iter()
+            .any(|root| canonical_file.starts_with(root))
+        {
             continue;
         }
 
@@ -1269,12 +1272,14 @@ pub(super) fn collect_diagnostics(
         base_dir,
         &file_is_esm_map,
     ));
-    diagnostics.extend(collect_type_root_ambient_module_import_conflict_diagnostics(
-        program,
-        options,
-        base_dir,
-        &resolved_module_paths,
-    ));
+    diagnostics.extend(
+        collect_type_root_ambient_module_import_conflict_diagnostics(
+            program,
+            options,
+            base_dir,
+            &resolved_module_paths,
+        ),
+    );
 
     // Use the aggregated query-cache statistics. In the parallel path, these
     // are merged from all per-file caches. In the sequential path, they come
