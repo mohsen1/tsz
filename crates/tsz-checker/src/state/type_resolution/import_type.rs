@@ -108,20 +108,17 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(&module_name)
         {
-            return if is_bare_import_type {
-                bare_import_type_error(self)
-            } else {
-                TypeId::ERROR
-            };
+            // Module exists. For bare import types (`import("./foo")` as a type),
+            // do NOT emit TS1340 — we can't determine here whether the module
+            // exports a type (e.g., `export = SomeInterface`) or only values.
+            // TSC only emits TS1340 when it can confirm the module doesn't
+            // export a type, which requires full resolution.
+            return TypeId::ERROR;
         }
 
         // 2. Binder module_exports (cross-file)
         if self.ctx.binder.module_exports.contains_key(&module_name) {
-            return if is_bare_import_type {
-                bare_import_type_error(self)
-            } else {
-                TypeId::ERROR
-            };
+            return TypeId::ERROR;
         }
 
         // 3. Shorthand ambient modules (declare module "foo")
@@ -131,20 +128,12 @@ impl<'a> CheckerState<'a> {
             .shorthand_ambient_modules
             .contains(&module_name)
         {
-            return if is_bare_import_type {
-                bare_import_type_error(self)
-            } else {
-                TypeId::ERROR
-            };
+            return TypeId::ERROR;
         }
 
         // 4. Declared modules (ambient modules with body)
         if self.ctx.binder.declared_modules.contains(&module_name) {
-            return if is_bare_import_type {
-                bare_import_type_error(self)
-            } else {
-                TypeId::ERROR
-            };
+            return TypeId::ERROR;
         }
 
         // 5. Check if the driver has a resolution error for this specifier
@@ -191,11 +180,7 @@ impl<'a> CheckerState<'a> {
             // was never resolved. Check if any project file matches.
             let key = (self.ctx.current_file_idx, module_name.clone());
             if paths.contains_key(&key) {
-                return if is_bare_import_type {
-                    bare_import_type_error(self)
-                } else {
-                    TypeId::ERROR
-                };
+                return TypeId::ERROR;
             }
         }
 
