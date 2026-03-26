@@ -1518,15 +1518,20 @@ impl<'a> CheckerState<'a> {
             if export_decl.module_specifier.is_some() || export_decl.export_clause.is_none() {
                 continue;
             }
+            // Skip type-only export declarations (`export type { ... }`).
+            // These don't create value exports, so they shouldn't trigger TS2460.
+            let decl_is_type_only = export_decl.is_type_only;
             let Some(clause_node) = arena.get(export_decl.export_clause) else {
                 continue;
             };
             if arena.get_named_imports(clause_node).is_none() {
-                if self.declaration_name_matches_string(
-                    arena,
-                    export_decl.export_clause,
-                    import_name,
-                ) {
+                if !decl_is_type_only
+                    && self.declaration_name_matches_string(
+                        arena,
+                        export_decl.export_clause,
+                        import_name,
+                    )
+                {
                     direct_export = true;
                 }
                 continue;
@@ -1542,6 +1547,10 @@ impl<'a> CheckerState<'a> {
                 let Some(specifier) = arena.get_specifier(spec_node) else {
                     continue;
                 };
+                // Skip type-only specifiers (`export { type X as Y }`).
+                if decl_is_type_only || specifier.is_type_only {
+                    continue;
+                }
 
                 let original_name_idx = if specifier.property_name.is_none() {
                     specifier.name
