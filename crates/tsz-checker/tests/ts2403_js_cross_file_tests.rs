@@ -58,14 +58,14 @@ fn unchecked_js_global_does_not_trigger_cross_file_ts2403() {
 }
 
 #[test]
-fn checked_js_global_still_participates_in_cross_file_ts2403() {
+fn checked_js_global_does_not_trigger_cross_file_ts2403() {
     let codes = check_ts_file_with_prior_js_global(
         "// @ts-check\nvar t = [1, \"x\"];",
         r#"var t: [any, any];"#,
     );
 
     assert!(
-        codes.contains(&2403),
-        "Checked JS globals should still participate in cross-file TS2403 comparisons. Actual codes: {codes:?}"
+        !codes.contains(&2403),
+        "Checked JS globals should not act as the source side of cross-file TS2403 comparisons. Actual codes: {codes:?}"
     );
 }
