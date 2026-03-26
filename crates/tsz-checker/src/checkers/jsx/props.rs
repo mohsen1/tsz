@@ -471,6 +471,114 @@ impl<'a> CheckerState<'a> {
 
     // JSX Children Contextual Typing
 
+    fn collect_jsx_union_resolution_attr_value_type(
+        &mut self,
+        value_idx: NodeIndex,
+        allow_function_types: bool,
+    ) -> Option<TypeId> {
+        let Some(value_node) = self.ctx.arena.get(value_idx) else {
+            return Some(TypeId::ANY);
+        };
+        if !allow_function_types
+            && matches!(
+                value_node.kind,
+                syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+            )
+        {
+            return None;
+        }
+
+        let prev = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let ty = self.compute_type_of_node(value_idx);
+        self.ctx.preserve_literal_types = prev;
+        Some(ty)
+    }
+
+    fn collect_jsx_union_resolution_spread_attrs(
+        &mut self,
+        expr_idx: NodeIndex,
+        provided: &mut Vec<(String, Option<TypeId>)>,
+    ) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj_lit) = self.ctx.arena.get_literal_expr(expr_node) else {
+            return false;
+        };
+
+        for &elem_idx in &obj_lit.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.get_property_name(prop.name) else {
+                        return false;
+                    };
+                    let ty = self.collect_jsx_union_resolution_attr_value_type(
+                        prop.initializer,
+                        true,
+                    );
+                    provided.push((name, ty));
+                }
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.get_property_name(prop.name) else {
+                        return false;
+                    };
+                    let ty =
+                        self.collect_jsx_union_resolution_attr_value_type(prop.name, true);
+                    provided.push((name, ty));
+                }
+                syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR => {
+                    let name = match elem_node.kind {
+                        syntax_kind_ext::METHOD_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_method_decl(elem_node)
+                            .and_then(|method| self.get_property_name(method.name)),
+                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                            .ctx
+                            .arena
+                            .get_accessor(elem_node)
+                            .and_then(|accessor| self.get_property_name(accessor.name)),
+                        _ => None,
+                    };
+                    let Some(name) = name else {
+                        return false;
+                    };
+                    let ty =
+                        self.collect_jsx_union_resolution_attr_value_type(elem_idx, true);
+                    provided.push((name, ty));
+                }
+                syntax_kind_ext::SPREAD_ASSIGNMENT | syntax_kind_ext::SPREAD_ELEMENT => {
+                    let Some(spread) = self.ctx.arena.get_spread(elem_node) else {
+                        return false;
+                    };
+                    if !self.collect_jsx_union_resolution_spread_attrs(spread.expression, provided)
+                    {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+
+        true
+    }
+
     pub(super) fn collect_jsx_union_resolution_attrs(
         &mut self,
         attributes_idx: NodeIndex,
@@ -488,7 +596,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                return None;
+                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                    return None;
+                };
+                if !self.collect_jsx_union_resolution_spread_attrs(
+                    spread_data.expression,
+                    &mut provided,
+                ) {
+                    return None;
+                }
+                continue;
             }
             if attr_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
                 continue;
@@ -526,11 +643,7 @@ impl<'a> CheckerState<'a> {
                 {
                     None
                 } else {
-                    let prev = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = true;
-                    let ty = self.compute_type_of_node(value_idx);
-                    self.ctx.preserve_literal_types = prev;
-                    Some(ty)
+                    self.collect_jsx_union_resolution_attr_value_type(value_idx, false)
                 }
             } else {
                 Some(TypeId::ANY)
