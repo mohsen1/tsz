@@ -219,6 +219,65 @@ impl<'a> CheckerState<'a> {
                     type_id,
                 )
         {
+            let access_target_idx = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .map(|ext| ext.parent)
+                .and_then(|parent_idx| {
+                    self.ctx.arena.get(parent_idx).and_then(|node| {
+                        ((node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                            && self
+                                .ctx
+                                .arena
+                                .get_access_expr(node)
+                                .is_some_and(|access| access.name_or_argument == idx))
+                        .then_some(parent_idx)
+                    })
+                })
+                .unwrap_or(idx);
+            let is_direct_write_target = self
+                .ctx
+                .arena
+                .get_extended(access_target_idx)
+                .map(|ext| ext.parent)
+                .and_then(|parent_idx| {
+                    self.ctx
+                        .arena
+                        .get(parent_idx)
+                        .map(|node| (parent_idx, node))
+                })
+                .is_some_and(|(parent_idx, parent_node)| {
+                    if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                        && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+                        && access.expression == access_target_idx
+                    {
+                        return false;
+                    }
+
+                    if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                    {
+                        return binary.left == access_target_idx
+                            && self.is_assignment_operator(binary.operator_token);
+                    }
+
+                    if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                        && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+                    {
+                        return unary.operator == SyntaxKind::PlusPlusToken as u16
+                            || unary.operator == SyntaxKind::MinusMinusToken as u16;
+                    }
+
+                    let _ = parent_idx;
+                    false
+                });
+            if is_direct_write_target {
+                return self.format_type_for_assignability_message(type_id);
+            }
             return self.format_type_for_assignability_message(constraint);
         }
         if self.is_js_file()
