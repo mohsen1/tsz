@@ -16,8 +16,8 @@ impl<'a> CheckerState<'a> {
         let from_file = self.ctx.current_file_idx;
 
         if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
-            && let Some((sym_id, _)) = source_binder
-                .resolve_import_with_reexports_type_only(module_specifier, member_name)
+            && let Some((sym_id, _)) =
+                source_binder.resolve_import_with_reexports_type_only(module_specifier, member_name)
         {
             if let Some(target_idx) = self
                 .ctx
@@ -38,12 +38,13 @@ impl<'a> CheckerState<'a> {
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
         let record_and_return = |sym_id: tsz_binder::SymbolId| -> Option<tsz_binder::SymbolId> {
-            self.ctx.register_symbol_file_target(sym_id, target_file_idx);
+            self.ctx
+                .register_symbol_file_target(sym_id, target_file_idx);
             Some(sym_id)
         };
 
-        if let Some((sym_id, _)) = target_binder
-            .resolve_import_with_reexports_type_only(&target_file_name, member_name)
+        if let Some((sym_id, _)) =
+            target_binder.resolve_import_with_reexports_type_only(&target_file_name, member_name)
         {
             return record_and_return(sym_id);
         }
@@ -68,8 +69,9 @@ impl<'a> CheckerState<'a> {
             let pure_type_flags = tsz_binder::symbol_flags::TYPE_ALIAS
                 | tsz_binder::symbol_flags::INTERFACE
                 | tsz_binder::symbol_flags::TYPE_PARAMETER;
-            let is_pure_type =
-                symbol.is_type_only || ((symbol.flags & pure_type_flags) != 0 && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
+            let is_pure_type = symbol.is_type_only
+                || ((symbol.flags & pure_type_flags) != 0
+                    && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
             if is_pure_type {
                 return record_and_return(sym_id);
             }
@@ -83,8 +85,9 @@ impl<'a> CheckerState<'a> {
             let pure_type_flags = tsz_binder::symbol_flags::TYPE_ALIAS
                 | tsz_binder::symbol_flags::INTERFACE
                 | tsz_binder::symbol_flags::TYPE_PARAMETER;
-            let is_pure_type =
-                symbol.is_type_only || ((symbol.flags & pure_type_flags) != 0 && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
+            let is_pure_type = symbol.is_type_only
+                || ((symbol.flags & pure_type_flags) != 0
+                    && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
             if is_pure_type {
                 return Some(sym_id);
             }
@@ -172,7 +175,8 @@ impl<'a> CheckerState<'a> {
             return Some(jsdoc_typedef_type);
         }
 
-        let mut current_sym = self.resolve_ts_import_type_member_symbol(module_name, &segments[0])?;
+        let mut current_sym =
+            self.resolve_ts_import_type_member_symbol(module_name, &segments[0])?;
         for segment in segments.iter().skip(1) {
             let symbol = self
                 .get_cross_file_symbol(current_sym)

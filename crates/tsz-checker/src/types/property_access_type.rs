@@ -468,7 +468,8 @@ impl<'a> CheckerState<'a> {
         {
             let symbol_value_type = self.type_of_value_symbol_by_name("Symbol");
             if symbol_value_type != TypeId::UNKNOWN && symbol_value_type != TypeId::ERROR {
-                match self.resolve_property_access_with_env(symbol_value_type, &prop_ident.escaped_text)
+                match self
+                    .resolve_property_access_with_env(symbol_value_type, &prop_ident.escaped_text)
                 {
                     PropertyAccessResult::Success { type_id, .. }
                     | PropertyAccessResult::PossiblyNullOrUndefined {

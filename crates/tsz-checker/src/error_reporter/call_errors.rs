@@ -873,19 +873,26 @@ impl<'a> CheckerState<'a> {
         }
         let unknown_object = if arg_shape.string_index.is_some() || arg_shape.number_index.is_some()
         {
-            self.ctx.types.factory().object_with_index(tsz_solver::ObjectShape {
-                flags: tsz_solver::ObjectFlags::empty(),
-                properties: unknown_properties,
-                string_index: arg_shape.string_index.as_ref().map(|sig| tsz_solver::IndexSignature {
-                    value_type: TypeId::UNKNOWN,
-                    ..sig.clone()
-                }),
-                number_index: arg_shape.number_index.as_ref().map(|sig| tsz_solver::IndexSignature {
-                    value_type: TypeId::UNKNOWN,
-                    ..sig.clone()
-                }),
-                symbol: None,
-            })
+            self.ctx
+                .types
+                .factory()
+                .object_with_index(tsz_solver::ObjectShape {
+                    flags: tsz_solver::ObjectFlags::empty(),
+                    properties: unknown_properties,
+                    string_index: arg_shape.string_index.as_ref().map(|sig| {
+                        tsz_solver::IndexSignature {
+                            value_type: TypeId::UNKNOWN,
+                            ..sig.clone()
+                        }
+                    }),
+                    number_index: arg_shape.number_index.as_ref().map(|sig| {
+                        tsz_solver::IndexSignature {
+                            value_type: TypeId::UNKNOWN,
+                            ..sig.clone()
+                        }
+                    }),
+                    symbol: None,
+                })
         } else {
             self.ctx.types.factory().object(unknown_properties)
         };
