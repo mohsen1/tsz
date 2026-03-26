@@ -107,6 +107,21 @@ c?.foo;
 }
 
 #[test]
+fn test_window_console_resolves_through_global_this_alias() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics_with_lib(
+        r#"
+window.console;
+self.console;
+"#,
+    ));
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected window/self console accesses to resolve through globalThis aliases, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unresolved_computed_class_method_contributes_indexed_callable_type() {
     let source = r#"
 declare var something: string;

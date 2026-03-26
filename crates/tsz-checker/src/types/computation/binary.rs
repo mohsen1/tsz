@@ -959,18 +959,36 @@ impl<'a> CheckerState<'a> {
             if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
                 // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
                 self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
-                // TS2774: check for non-nullable callable tested for truthiness
-                // Only check at the top-level binary expression (not nested ones)
-                // to avoid duplicate diagnostics when this is inside an if-condition.
-                if let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent)
-                    && let Some(parent) = self.ctx.arena.get(parent_idx)
-                    && parent.kind != syntax_kind_ext::BINARY_EXPRESSION
-                    && parent.kind != syntax_kind_ext::IF_STATEMENT
-                    && parent.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION
-                    && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                {
-                    self.check_callable_truthiness(idx, None);
-                }
+                let callable_truthiness_body = self
+                    .ctx
+                    .arena
+                    .get_extended(idx)
+                    .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
+                    .and_then(|mut parent_idx| loop {
+                        let parent = self.ctx.arena.get(parent_idx)?;
+                        if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                            || matches!(
+                                self.ctx.arena.get_binary_expr(parent),
+                                Some(bin)
+                                    if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                                        || bin.operator_token == SyntaxKind::BarBarToken as u16
+                                        || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                            )
+                        {
+                            parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
+                            continue;
+                        }
+
+                        break if parent.kind == syntax_kind_ext::IF_STATEMENT {
+                            self.ctx
+                                .arena
+                                .get_if_statement(parent)
+                                .map(|if_stmt| if_stmt.then_statement)
+                        } else {
+                            None
+                        };
+                    });
+                self.check_callable_truthiness(left_idx, callable_truthiness_body);
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
                     continue;
@@ -993,6 +1011,38 @@ impl<'a> CheckerState<'a> {
                 // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
                 // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
                 self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
+                let callable_truthiness_body = self
+                    .ctx
+                    .arena
+                    .get_extended(idx)
+                    .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
+                    .and_then(|mut parent_idx| loop {
+                        let parent = self.ctx.arena.get(parent_idx)?;
+                        if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                            || matches!(
+                                self.ctx.arena.get_binary_expr(parent),
+                                Some(bin)
+                                    if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                                        || bin.operator_token == SyntaxKind::BarBarToken as u16
+                                        || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                            )
+                        {
+                            parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
+                            continue;
+                        }
+
+                        break if parent.kind == syntax_kind_ext::IF_STATEMENT {
+                            self.ctx
+                                .arena
+                                .get_if_statement(parent)
+                                .map(|if_stmt| if_stmt.then_statement)
+                        } else {
+                            None
+                        };
+                    });
+                if callable_truthiness_body.is_some() {
+                    self.check_callable_truthiness(left_idx, callable_truthiness_body);
+                }
 
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
@@ -1009,6 +1059,38 @@ impl<'a> CheckerState<'a> {
 
             // Nullish coalescing: `a ?? b`
             if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
+                let callable_truthiness_body = self
+                    .ctx
+                    .arena
+                    .get_extended(idx)
+                    .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
+                    .and_then(|mut parent_idx| loop {
+                        let parent = self.ctx.arena.get(parent_idx)?;
+                        if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                            || matches!(
+                                self.ctx.arena.get_binary_expr(parent),
+                                Some(bin)
+                                    if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                                        || bin.operator_token == SyntaxKind::BarBarToken as u16
+                                        || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                            )
+                        {
+                            parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
+                            continue;
+                        }
+
+                        break if parent.kind == syntax_kind_ext::IF_STATEMENT {
+                            self.ctx
+                                .arena
+                                .get_if_statement(parent)
+                                .map(|if_stmt| if_stmt.then_statement)
+                        } else {
+                            None
+                        };
+                    });
+                if callable_truthiness_body.is_some() {
+                    self.check_callable_truthiness(left_idx, callable_truthiness_body);
+                }
                 // Propagate error types (don't collapse to unknown)
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);

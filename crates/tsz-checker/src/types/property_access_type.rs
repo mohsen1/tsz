@@ -963,7 +963,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             let is_this_global = self.is_this_resolving_to_global(access.expression);
-            if self.is_global_this_expression(access.expression) || is_this_global {
+            if self.is_global_this_like_expression(access.expression) || is_this_global {
                 let property_type =
                     self.resolve_global_this_property_type(property_name, access.name_or_argument);
                 if property_type == TypeId::ERROR {
