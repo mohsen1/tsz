@@ -16932,6 +16932,50 @@ function f(k) {
 }
 
 #[test]
+fn test_function_declaration_does_not_inherit_previous_variable_jsdoc_type() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "a.js",
+            r#"
+/** @type {number | undefined} */
+var n;
+
+function f(a = null, b = n, l = []) {
+    a = undefined
+    a = null
+    a = 1
+    a = true
+    a = {}
+    a = 'ok'
+
+    b = 1
+    b = undefined
+    b = 'error'
+
+    l.push(1)
+    l.push('ok')
+}
+"#,
+        )],
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            no_implicit_any: true,
+            strict: true,
+            strict_null_checks: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 8030),
+        "Did not expect TS8030 for a function declaration to inherit a previous variable's JSDoc @type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_intersection_index_signature_diagnostics_preserve_declared_identifier_annotations() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
