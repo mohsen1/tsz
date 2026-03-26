@@ -89,11 +89,21 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     &["declare"],
                 );
-                self.error_at_node(
-                    member_idx,
-                    &message,
-                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
+                if let Some(declare_idx) =
+                    self.get_modifier_index(&prop.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword as u16)
+                {
+                    self.error_at_node(
+                        declare_idx,
+                        &message,
+                        diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    );
+                } else {
+                    self.error_at_node(
+                        member_idx,
+                        &message,
+                        diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    );
+                }
             }
 
             // TS8010: Type annotations can only be used in TypeScript files
