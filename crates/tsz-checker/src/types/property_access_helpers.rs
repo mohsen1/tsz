@@ -502,19 +502,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let parent_idx = match self.ctx.arena.get_extended(property_access_idx) {
-            Some(ext) if ext.parent.is_some() => ext.parent,
-            _ => return false,
-        };
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
-            return false;
-        };
-        if binary.operator_token != SyntaxKind::EqualsToken as u16
-            || binary.left != property_access_idx
-        {
+        if !self.property_access_is_write_target_or_base(property_access_idx) {
             return false;
         }
 
