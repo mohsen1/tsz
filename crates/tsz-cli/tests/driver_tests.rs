@@ -9995,6 +9995,80 @@ foo.m()
 }
 
 #[test]
+fn compile_js_static_expando_members_from_assignments_across_files() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["a.js", "global.js", "b.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("a.js"),
+        r#"export class C1 { }
+C1.staticProp = 0;
+
+export function F1() { }
+F1.staticProp = 0;
+
+export var C2 = class { };
+C2.staticProp = 0;
+
+export let F2 = function () { };
+F2.staticProp = 0;
+"#,
+    );
+    write_file(
+        &base.join("global.js"),
+        r#"class C3 { }
+C3.staticProp = 0;
+
+function F3() { }
+F3.staticProp = 0;
+
+var C4 = class { };
+C4.staticProp = 0;
+
+let F4 = function () { };
+F4.staticProp = 0;
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import * as a from "./a";
+var n: number;
+
+var n = a.C1.staticProp;
+var n = a.C2.staticProp;
+var n = a.F1.staticProp;
+var n = a.F2.staticProp;
+
+var n = C3.staticProp;
+var n = C4.staticProp;
+var n = F3.staticProp;
+var n = F4.staticProp;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected JS static expando reads across files to stay error-free, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn module_augmentation_method_type_params_and_members_resolve_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

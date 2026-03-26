@@ -6,16 +6,273 @@
 //! Extracted from `property_access_type.rs` to keep module size manageable.
 
 use crate::FlowAnalyzer;
+use crate::context::is_js_file_name;
 use crate::state::CheckerState;
 use std::rc::Rc;
-use tsz_binder::symbol_flags;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn property_access_chain_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let node = arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = arena.get_access_expr(node)?;
+            let left = Self::property_access_chain_in_arena(arena, access.expression)?;
+            let right = arena
+                .get_identifier_at(access.name_or_argument)?
+                .escaped_text
+                .clone();
+            return Some(format!("{left}.{right}"));
+        }
+        None
+    }
+
+    fn expando_assignment_access_key_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let node = arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone()),
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = arena.get_access_expr(node)?;
+                let left = Self::expando_assignment_access_key_in_arena(arena, access.expression)?;
+                let right = arena.get_identifier_at(access.name_or_argument)?;
+                Some(format!("{left}.{}", right.escaped_text))
+            }
+            _ => None,
+        }
+    }
+
+    fn root_symbol_for_expando_read(&self, object_expr_idx: NodeIndex) -> Option<SymbolId> {
+        self.resolve_identifier_symbol(object_expr_idx)
+            .or_else(|| self.resolve_qualified_symbol(object_expr_idx))
+    }
+
+    fn expando_read_root_keys(&self, object_expr_idx: NodeIndex) -> Vec<String> {
+        let mut keys = Vec::new();
+
+        if let Some(obj_key) = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx) {
+            keys.push(obj_key.clone());
+            if let Some((_, last_segment)) = obj_key.rsplit_once('.') {
+                keys.push(last_segment.to_string());
+            }
+        }
+
+        if let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+        {
+            let escaped_name = symbol.escaped_name.to_string();
+            if !keys.iter().any(|key| key == &escaped_name) {
+                keys.push(escaped_name);
+            }
+        }
+
+        keys
+    }
+
+    fn root_symbol_supports_js_expando_read(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return false;
+        };
+
+        if (symbol.flags
+            & (symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE))
+            != 0
+        {
+            return true;
+        }
+
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        let decl_idx = symbol.value_declaration;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = arena.get(var_decl.initializer) else {
+            return false;
+        };
+
+        init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+    }
+
+    fn expando_root_js_file_idx(&self, object_expr_idx: NodeIndex) -> Option<usize> {
+        let sym_id = self.root_symbol_for_expando_read(object_expr_idx)?;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let file_name = arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.as_str())
+            .unwrap_or(self.ctx.file_name.as_str());
+        (is_js_file_name(file_name) && self.root_symbol_supports_js_expando_read(sym_id))
+            .then_some(file_idx)
+    }
+
+    fn source_file_has_expando_assignment(
+        arena: &NodeArena,
+        idx: NodeIndex,
+        expected_key: &str,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && Self::expando_assignment_access_key_in_arena(arena, binary.left)
+                .is_some_and(|key| key == expected_key)
+        {
+            return true;
+        }
+
+        for child_idx in arena.get_children(idx) {
+            if Self::source_file_has_expando_assignment(arena, child_idx, expected_key) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn js_file_has_expando_assignment_for_keys(
+        &self,
+        file_idx: usize,
+        root_keys: &[String],
+        property_name: &str,
+    ) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+
+        root_keys.iter().any(|root_key| {
+            let expected_key = format!("{root_key}.{property_name}");
+            source_file
+                .statements
+                .nodes
+                .iter()
+                .copied()
+                .any(|stmt_idx| Self::source_file_has_expando_assignment(arena, stmt_idx, &expected_key))
+        })
+    }
+
+    fn cross_file_expando_property_read_type(
+        &mut self,
+        file_idx: usize,
+        expected_key: &str,
+    ) -> Option<TypeId> {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let file_name = arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            arena,
+            binder,
+            self.ctx.types,
+            file_name,
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        checker.ctx.current_file_idx = file_idx;
+
+        let source_file = arena.source_files.first()?;
+        let mut best_match: Option<(u32, TypeId)> = None;
+        for &stmt_idx in &source_file.statements.nodes {
+            checker.collect_expando_property_assignment_type(
+                stmt_idx,
+                expected_key,
+                u32::MAX,
+                &mut best_match,
+            );
+        }
+        best_match.map(|(_, ty)| ty)
+    }
+
+    fn js_expando_property_read_type_from_all_files(
+        &mut self,
+        root_keys: &[String],
+        property_name: &str,
+        preferred_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let mut file_indices = Vec::new();
+        if let Some(file_idx) = preferred_file_idx {
+            file_indices.push(file_idx);
+        }
+        if let Some(all_arenas) = self.ctx.all_arenas.as_ref() {
+            for file_idx in 0..all_arenas.len() {
+                if !file_indices.contains(&file_idx) {
+                    file_indices.push(file_idx);
+                }
+            }
+        } else if !file_indices.contains(&self.ctx.current_file_idx) {
+            file_indices.push(self.ctx.current_file_idx);
+        }
+
+        for file_idx in file_indices {
+            let arena = self.ctx.get_arena_for_file(file_idx as u32);
+            let file_name = arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str())
+                .unwrap_or(self.ctx.file_name.as_str());
+            if !is_js_file_name(file_name) {
+                continue;
+            }
+
+            for root_key in root_keys {
+                let expected_key = format!("{root_key}.{property_name}");
+                if !self.js_file_has_expando_assignment_for_keys(
+                    file_idx,
+                    std::slice::from_ref(root_key),
+                    property_name,
+                ) {
+                    continue;
+                }
+                if let Some(ty) = self.cross_file_expando_property_read_type(file_idx, &expected_key)
+                {
+                    return Some(ty);
+                }
+            }
+        }
+
+        None
+    }
+
     pub(super) fn synthesized_array_iterator_method_type(
         &mut self,
         object_type: TypeId,
@@ -280,25 +537,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        fn property_access_chain(
-            arena: &tsz_parser::parser::node::NodeArena,
-            idx: NodeIndex,
-        ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = arena.get_access_expr(node)?;
-                let left = property_access_chain(arena, access.expression)?;
-                let right_node = arena.get(access.name_or_argument)?;
-                let right = arena.get_identifier(right_node)?.escaped_text.clone();
-                return Some(format!("{left}.{right}"));
-            }
-            None
-        }
-
-        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
+        let Some(obj_key) = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx) else {
             return false;
         };
 
@@ -375,6 +614,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(file_idx) = self.expando_root_js_file_idx(object_expr_idx) {
+            return self.js_file_has_expando_assignment_for_keys(
+                file_idx,
+                &self.expando_read_root_keys(object_expr_idx),
+                property_name,
+            );
+        }
+
         false
     }
 
@@ -384,30 +631,15 @@ impl<'a> CheckerState<'a> {
         object_expr_idx: NodeIndex,
         property_name: &str,
     ) -> Option<TypeId> {
-        fn property_access_chain(
-            arena: &tsz_parser::parser::node::NodeArena,
-            idx: NodeIndex,
-        ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = arena.get_access_expr(node)?;
-                let left = property_access_chain(arena, access.expression)?;
-                let right = arena
-                    .get_identifier_at(access.name_or_argument)?
-                    .escaped_text
-                    .clone();
-                return Some(format!("{left}.{right}"));
-            }
-            None
-        }
-
         let read_node = self.ctx.arena.get(property_access_idx)?;
-        let obj_key = property_access_chain(self.ctx.arena, object_expr_idx)?;
+        let obj_key = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)?;
         let expected_key = format!("{obj_key}.{property_name}");
-        let source_file = self.ctx.arena.source_files.get(self.ctx.current_file_idx)?;
+        let source_file = self
+            .ctx
+            .arena
+            .source_files
+            .get(self.ctx.current_file_idx)
+            .or_else(|| self.ctx.arena.source_files.first())?;
         let mut best_match: Option<(u32, TypeId)> = None;
 
         for &stmt_idx in &source_file.statements.nodes {
@@ -419,7 +651,55 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        best_match.map(|(_, ty)| ty)
+        if let Some((_, ty)) = best_match {
+            return Some(ty);
+        }
+
+        let root_keys = self.expando_read_root_keys(object_expr_idx);
+        let preferred_file_idx = self.expando_root_js_file_idx(object_expr_idx);
+        self.js_expando_property_read_type_from_all_files(
+            &root_keys,
+            property_name,
+            preferred_file_idx,
+        )
+    }
+
+    pub(super) fn refine_expando_property_read_type(
+        &mut self,
+        property_access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+        property_name: &str,
+        fallback_type: TypeId,
+    ) -> TypeId {
+        if fallback_type != TypeId::ANY {
+            return fallback_type;
+        }
+
+        self.expando_property_read_type(property_access_idx, object_expr_idx, property_name)
+            .unwrap_or(fallback_type)
+    }
+
+    pub(crate) fn declared_expando_property_type_for_root(
+        &mut self,
+        sym_id: SymbolId,
+        root_name: &str,
+        property_name: &str,
+    ) -> TypeId {
+        let preferred_file_idx = self.ctx.resolve_symbol_file_index(sym_id).or_else(|| {
+            let arena = self.ctx.get_arena_for_file(self.ctx.current_file_idx as u32);
+            let file_name = arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str())
+                .unwrap_or(self.ctx.file_name.as_str());
+            is_js_file_name(file_name).then_some(self.ctx.current_file_idx)
+        });
+        self.js_expando_property_read_type_from_all_files(
+            &[root_name.to_string()],
+            property_name,
+            preferred_file_idx,
+        )
+        .unwrap_or(TypeId::ANY)
     }
 
     pub(super) fn prior_js_this_property_assignment_type(
@@ -627,6 +907,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if !self.is_expando_capable_read_root(object_expr_idx, property_name) {
+            return false;
+        }
+
+        if let Some(file_idx) = self.expando_root_js_file_idx(object_expr_idx)
+            && file_idx != self.ctx.current_file_idx
+        {
             return false;
         }
 
