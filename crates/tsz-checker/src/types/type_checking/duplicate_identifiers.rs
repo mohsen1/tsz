@@ -549,14 +549,9 @@ impl<'a> CheckerState<'a> {
                 const SPACE_VALUE: u32 = 2;
                 const SPACE_NAMESPACE: u32 = 4;
 
-                let any_in_declare_context = self.ctx.is_declaration_file()
-                    || declarations.iter().any(|&(decl_idx, _, is_local, _, _)| {
-                        is_local && self.is_in_declare_namespace_or_module(decl_idx)
-                    });
-
                 let mut error_nodes: Vec<NodeIndex> = Vec::new();
 
-                if !any_in_declare_context {
+                {
                     let decl_info: Vec<(NodeIndex, u32, u32, bool, NodeIndex)> = declarations
                         .iter()
                         .filter(|&(_, _, is_local, _, _)| *is_local)
