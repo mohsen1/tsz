@@ -84,7 +84,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if:
     /// 1. The property access is the LHS of a `=` assignment
-    /// 2. The object expression is an identifier bound to a function or class declaration
+    /// 2. The object expression is an identifier bound to a function/class declaration,
+    ///    or a variable initialized with a function expression / arrow function
     /// 3. The object type is a function type
     pub(super) fn is_expando_function_assignment(
         &self,
@@ -137,7 +138,25 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = sym_id
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0 {
+            let is_declared_function_or_class =
+                (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            let is_callable_variable = (symbol.flags
+                & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                != 0
+                && symbol.value_declaration.is_some()
+                && {
+                    let decl_idx = symbol.value_declaration;
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
+                        .and_then(|decl| self.ctx.arena.get(decl.initializer))
+                        .is_some_and(|init_node| {
+                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        })
+                };
+            if !is_declared_function_or_class && !is_callable_variable {
                 return false;
             }
             // For class declarations, don't treat as expando if the property
