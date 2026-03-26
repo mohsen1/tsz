@@ -545,7 +545,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             (Some(TypeData::Mapped(mapped_id)), _) => {
                 let mapped = self.interner.get_mapped(mapped_id);
-                let evaluated = self.interner.evaluate_mapped(&mapped);
+                let evaluated = self.checker.evaluate_type(source);
+                let evaluated = if evaluated == source {
+                    self.interner.evaluate_mapped(&mapped)
+                } else {
+                    evaluated
+                };
                 if evaluated != source {
                     self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
@@ -2160,11 +2165,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // tsc's getPartiallyInferableType behavior: implicit `any` params
                     // don't contribute to inference, producing `unknown` instead of
                     // falling through to the reverse-keyof `{ key: any }` path.
-                    let is_function_with_any_params =
-                        self.is_function_with_only_any_params(prop.type_id);
-                    if is_function_with_any_params {
-                        any_reversed = true;
-                    }
+                    any_reversed = true;
                     TypeId::UNKNOWN
                 }
             };

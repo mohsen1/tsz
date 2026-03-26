@@ -277,7 +277,7 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        let display_type = if param_type == TypeId::NEVER {
+        let mut display_type = if param_type == TypeId::NEVER {
             let direct_arg_type = self.elaboration_source_expression_type(arg_idx);
             if direct_arg_type == TypeId::ERROR || direct_arg_type == arg_type {
                 arg_type
@@ -287,6 +287,15 @@ impl<'a> CheckerState<'a> {
         } else {
             crate::query_boundaries::common::widen_type(self.ctx.types, arg_type)
         };
+
+        if tsz_solver::type_queries::is_mapped_type(self.ctx.types, display_type) {
+            let evaluated_display = self.evaluate_type_for_assignability(display_type);
+            if tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated_display)
+                .is_some()
+            {
+                display_type = evaluated_display;
+            }
+        }
         self.format_type_for_assignability_message(display_type)
     }
 
@@ -498,7 +507,7 @@ impl<'a> CheckerState<'a> {
     fn format_call_parameter_type_for_diagnostic(
         &mut self,
         param_type: TypeId,
-        _arg_type: TypeId,
+        arg_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
         if let Some(display) = self.contextual_generic_call_parameter_display(param_type, arg_idx) {
@@ -511,6 +520,16 @@ impl<'a> CheckerState<'a> {
 
         if let Some(display) = self.contextual_constraint_parameter_display(param_type, arg_idx) {
             return display;
+        }
+
+        if let Some(display) =
+            self.contextual_generic_mapped_parameter_display(param_type, arg_type, arg_idx)
+        {
+            return display;
+        }
+
+        if query_common::type_application(self.ctx.types, param_type).is_some() {
+            return self.format_type_diagnostic(param_type);
         }
 
         self.format_type_for_assignability_message(param_type)
@@ -828,6 +847,166 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn contextual_generic_mapped_parameter_display(
+        &mut self,
+        param_type: TypeId,
+        arg_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let evaluated_arg = self.evaluate_type_for_assignability(arg_type);
+        let arg_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated_arg)?;
+        if arg_shape.properties.is_empty()
+            && arg_shape.string_index.is_none()
+            && arg_shape.number_index.is_none()
+        {
+            return None;
+        }
+
+        let mut unknown_properties = Vec::with_capacity(arg_shape.properties.len());
+        for prop in &arg_shape.properties {
+            let mut unknown_prop = tsz_solver::PropertyInfo::new(prop.name, TypeId::UNKNOWN);
+            unknown_prop.optional = prop.optional;
+            unknown_prop.readonly = prop.readonly;
+            unknown_properties.push(unknown_prop);
+        }
+        let unknown_object = if arg_shape.string_index.is_some() || arg_shape.number_index.is_some()
+        {
+            self.ctx.types.factory().object_with_index(tsz_solver::ObjectShape {
+                flags: tsz_solver::ObjectFlags::empty(),
+                properties: unknown_properties,
+                string_index: arg_shape.string_index.as_ref().map(|sig| tsz_solver::IndexSignature {
+                    value_type: TypeId::UNKNOWN,
+                    ..sig.clone()
+                }),
+                number_index: arg_shape.number_index.as_ref().map(|sig| tsz_solver::IndexSignature {
+                    value_type: TypeId::UNKNOWN,
+                    ..sig.clone()
+                }),
+                symbol: None,
+            })
+        } else {
+            self.ctx.types.factory().object(unknown_properties)
+        };
+
+        let evaluated_param = self.evaluate_type_for_assignability(param_type);
+        let mut current = arg_idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.ctx.arena.get_call_expr(node)
+                && let Some(args) = &call.arguments
+            {
+                let arg_pos = args
+                    .nodes
+                    .iter()
+                    .position(|&candidate| candidate == arg_idx)?;
+                let callee_type = self.get_type_of_node(call.expression);
+                let arg_count = args.nodes.len();
+
+                let mut display = None;
+                let mut ambiguous = false;
+
+                if let Some(shape) =
+                    tsz_solver::type_queries::get_function_shape(self.ctx.types, callee_type)
+                {
+                    let sig = tsz_solver::CallSignature {
+                        type_params: shape.type_params.clone(),
+                        params: shape.params.clone(),
+                        this_type: shape.this_type,
+                        return_type: shape.return_type,
+                        type_predicate: shape.type_predicate.clone(),
+                        is_method: shape.is_method,
+                    };
+                    if self.call_signature_accepts_arg_count(&sig, arg_count) {
+                        self.collect_generic_mapped_parameter_display_candidate(
+                            &sig,
+                            arg_pos,
+                            unknown_object,
+                            evaluated_param,
+                            &mut display,
+                            &mut ambiguous,
+                        );
+                    }
+                }
+
+                if let Some(signatures) =
+                    tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type)
+                {
+                    for sig in signatures {
+                        if !self.call_signature_accepts_arg_count(&sig, arg_count) {
+                            continue;
+                        }
+                        self.collect_generic_mapped_parameter_display_candidate(
+                            &sig,
+                            arg_pos,
+                            unknown_object,
+                            evaluated_param,
+                            &mut display,
+                            &mut ambiguous,
+                        );
+                        if ambiguous {
+                            break;
+                        }
+                    }
+                }
+
+                return (!ambiguous).then_some(display).flatten();
+            }
+
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+
+        None
+    }
+
+    fn collect_generic_mapped_parameter_display_candidate(
+        &mut self,
+        sig: &tsz_solver::CallSignature,
+        arg_pos: usize,
+        unknown_object: TypeId,
+        evaluated_param: TypeId,
+        display: &mut Option<String>,
+        ambiguous: &mut bool,
+    ) {
+        if *ambiguous || sig.type_params.is_empty() {
+            return;
+        }
+        let Some(raw_param) = self.raw_param_for_argument_index(sig, arg_pos) else {
+            return;
+        };
+        if query_common::type_application(self.ctx.types, raw_param.type_id).is_none() {
+            return;
+        }
+
+        let mut substitution = query_common::TypeSubstitution::new();
+        for tp in &sig.type_params {
+            substitution.insert(tp.name, unknown_object);
+        }
+        if substitution.is_empty() {
+            return;
+        }
+
+        let candidate =
+            query_common::instantiate_type(self.ctx.types, raw_param.type_id, &substitution);
+        let evaluated_candidate = self.evaluate_type_for_assignability(candidate);
+        let matches_evaluated = evaluated_candidate == evaluated_param
+            || (self.is_assignable_to(evaluated_candidate, evaluated_param)
+                && self.is_assignable_to(evaluated_param, evaluated_candidate));
+        if !matches_evaluated {
+            return;
+        }
+
+        let candidate_display = self.format_type_diagnostic(candidate);
+        if display
+            .as_ref()
+            .is_some_and(|existing| existing != &candidate_display)
+        {
+            *ambiguous = true;
+            return;
+        }
+        *display = Some(candidate_display);
     }
 
     fn collect_constraint_parameter_display_candidate(

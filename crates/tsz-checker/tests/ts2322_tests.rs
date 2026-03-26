@@ -336,6 +336,41 @@ b = f;
 }
 
 #[test]
+fn mapped_source_generic_call_reports_ts2345() {
+    let source = r#"
+type A = "number" | "null" | A[];
+
+type F<T> = null extends T
+    ? [F<NonNullable<T>>, "null"]
+    : T extends number
+    ? "number"
+    : never;
+
+type G<T> = { [k in keyof T]: F<T[k]> };
+
+interface K {
+    b: number | null;
+}
+
+const gK: { [key in keyof K]: A } = { b: ["number", "null"] };
+
+function foo<T>(g: G<T>): T {
+    return {} as any;
+}
+
+foo(gK);
+"#;
+
+    assert!(
+        has_error_with_code(
+            source,
+            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        ),
+        "mapped source generic call should preserve concrete keys and report TS2345"
+    );
+}
+
+#[test]
 fn generic_function_identifier_argument_still_contextually_instantiates() {
     let source = r#"
 declare function takesString(fn: (x: string) => string): void;
