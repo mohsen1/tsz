@@ -2071,6 +2071,34 @@ let x = <App ref={{app}} />;
 }
 
 #[test]
+fn test_required_intrinsic_class_attribute_alias_missing_emits_ts2741() {
+    let source = r#"
+class App {}
+export const a = <App></App>;
+"#;
+    let react_types = r#"
+interface IntrinsicClassAttributesAlias<T> {
+    ref: T
+}
+declare namespace JSX {
+    interface Element {}
+    type IntrinsicClassAttributes<T> = IntrinsicClassAttributesAlias<T>
+}
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode(react_types, source, JsxMode::ReactJsx);
+
+    assert!(
+        diags.iter().any(|(code, msg)| {
+            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                && msg.contains("Property 'ref' is missing")
+                && msg.contains("IntrinsicClassAttributesAlias")
+        }),
+        "Expected TS2741 for missing required 'ref' from alias-based IntrinsicClassAttributes<T>, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_required_intrinsic_class_attribute_not_required_for_sfc() {
     let source = format!(
         r#"

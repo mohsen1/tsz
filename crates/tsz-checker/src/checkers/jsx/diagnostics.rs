@@ -38,7 +38,11 @@ impl<'a> CheckerState<'a> {
             .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
         let exports = symbol.exports.as_ref()?;
         let ica_sym_id = exports.get("IntrinsicClassAttributes")?;
-        Some(self.type_reference_symbol_type(ica_sym_id))
+        // Preserve the generic reference shape for aliases like
+        // `type IntrinsicClassAttributes<T> = IntrinsicClassAttributesAlias<T>`.
+        // Eagerly resolving the alias body here erases the generic reference we
+        // need to instantiate with the component instance type.
+        Some(self.resolve_symbol_as_lazy_type(ica_sym_id))
     }
 
     pub(crate) fn get_intrinsic_class_attributes_type_for_component(
