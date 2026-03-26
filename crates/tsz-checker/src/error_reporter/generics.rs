@@ -443,6 +443,15 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
             &[&source_str, &target_str],
         );
+        if let Some((start, len)) = self.jsdoc_type_tag_expr_span_for_node_direct(idx) {
+            self.ctx.error(
+                start,
+                len,
+                message,
+                diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
+            );
+            return;
+        }
         self.emit_render_request(
             idx,
             DiagnosticRenderRequest::simple(

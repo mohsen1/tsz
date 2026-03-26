@@ -1683,6 +1683,29 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn jsdoc_type_tag_expr_span_for_node_direct(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(u32, u32)> {
+        let sf = self.source_file_data_for_node(idx)?;
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let pos = self.effective_jsdoc_pos_for_node(idx, &comments, &source_text)?;
+        let (jsdoc, comment_pos) = self.try_leading_jsdoc_with_pos(&comments, pos, &source_text)?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let comment = comments.iter().find(|comment| comment.pos == comment_pos)?;
+        let raw_comment = comment.get_text(&source_text);
+        let type_tag_offset = raw_comment.find("@type")?;
+        let after_tag = &raw_comment[type_tag_offset + "@type".len()..];
+        let open_brace_offset = after_tag.find('{')?;
+        let after_open_brace = &after_tag[open_brace_offset + 1..];
+        let trimmed = after_open_brace.trim_start();
+        let leading_ws = after_open_brace.len().saturating_sub(trimmed.len());
+        let expr_start = comment_pos
+            + (type_tag_offset + "@type".len() + open_brace_offset + 1 + leading_ws) as u32;
+        Some((expr_start, type_expr.len() as u32))
+    }
+
     /// Check if a JSDoc type expression is syntactically a callable/function type.
     /// Returns true for arrow types (`(x: T) => R`), function types (`function(x): R`),
     /// and generic signatures (`<T>(x: T) => R`).

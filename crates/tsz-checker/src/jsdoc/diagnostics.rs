@@ -87,7 +87,11 @@ impl<'a> CheckerState<'a> {
             {
                 let has_conflict = type_values_by_name
                     .get(&decl.name)
-                    .is_some_and(|others| !others.is_empty());
+                    .is_some_and(|others| {
+                        others
+                            .iter()
+                            .any(|other| other.file_idx == current_file_idx)
+                    });
                 if !has_conflict {
                     continue;
                 }
@@ -112,7 +116,11 @@ impl<'a> CheckerState<'a> {
             {
                 let has_conflict = typedefs_by_name
                     .get(&decl.name)
-                    .is_some_and(|others| !others.is_empty());
+                    .is_some_and(|others| {
+                        others
+                            .iter()
+                            .any(|other| other.file_idx == current_file_idx)
+                    });
                 if !has_conflict {
                     continue;
                 }
