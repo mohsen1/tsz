@@ -279,6 +279,42 @@ fn test_prepare_test_dir_preserves_explicit_allow_js_false_with_check_js() {
     );
 }
 
+#[test]
+fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
+    let content = "";
+    let filenames = vec![
+        (
+            "/typings/phaser/types/phaser.d.ts".to_string(),
+            "declare module \"phaser\" { export const a2: number; }".to_string(),
+        ),
+        (
+            "/typings/phaser/package.json".to_string(),
+            r#"{ "name": "phaser", "version": "1.2.3", "types": "types/phaser.d.ts" }"#
+                .to_string(),
+        ),
+        ("a.ts".to_string(), "import { a2 } from \"phaser\";".to_string()),
+    ];
+    let options: HashMap<String, String> = HashMap::from([(
+        "noImplicitReferences".to_string(),
+        "true".to_string(),
+    )]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+
+    assert_eq!(
+        tsconfig_json.get("files"),
+        Some(&serde_json::json!(["a.ts"])),
+        "noImplicitReferences should keep only the last unit as a root file, got {tsconfig_raw}"
+    );
+    assert!(
+        tsconfig_json.get("include").is_none(),
+        "noImplicitReferences root-file mode should not synthesize include globs, got {tsconfig_raw}"
+    );
+}
+
 fn find_tsz_binary() -> String {
     // Try common build locations relative to workspace root
     let candidates = [

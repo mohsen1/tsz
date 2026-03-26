@@ -162,6 +162,348 @@ fn post_process_checker_diagnostics(
     }
 }
 
+fn collect_type_root_ambient_module_import_conflict_diagnostics(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) -> Vec<Diagnostic> {
+    use rustc_hash::{FxHashMap, FxHashSet};
+    use tsz::parser::syntax_kind_ext;
+    use tsz::scanner::SyntaxKind;
+    use tsz_common::diagnostics::diagnostic_codes;
+
+    fn is_bare_package_specifier(specifier: &str) -> bool {
+        !specifier.starts_with('.') && !specifier.starts_with('/') && !specifier.contains(':')
+    }
+
+    fn canonical_type_roots(base_dir: &Path, options: &ResolvedCompilerOptions) -> Vec<PathBuf> {
+        options
+            .type_roots
+            .clone()
+            .unwrap_or_else(|| default_type_roots(base_dir))
+            .into_iter()
+            .map(|root| {
+                if root.is_absolute() {
+                    canonicalize_or_owned(&root)
+                } else {
+                    canonicalize_or_owned(&base_dir.join(root))
+                }
+            })
+            .collect()
+    }
+
+    fn push_redeclare_diag(
+        diagnostics: &mut Vec<Diagnostic>,
+        seen: &mut FxHashSet<(usize, u32)>,
+        target_idx: usize,
+        file_name: &str,
+        arena: &tsz::parser::node::NodeArena,
+        name_node: NodeIndex,
+        name: &str,
+    ) {
+        let Some(node) = arena.get(name_node) else {
+            return;
+        };
+        if seen.insert((target_idx, node.pos)) {
+            diagnostics.push(Diagnostic::from_code(
+                diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                file_name.to_string(),
+                node.pos,
+                node.end.saturating_sub(node.pos),
+                &[name],
+            ));
+        }
+    }
+
+    fn collect_exported_value_redeclares_from_statement(
+        arena: &tsz::parser::node::NodeArena,
+        stmt_idx: NodeIndex,
+        file_name: &str,
+        target_idx: usize,
+        diagnostics: &mut Vec<Diagnostic>,
+        seen: &mut FxHashSet<(usize, u32)>,
+    ) {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return;
+        };
+
+        let mut emit_variable_statement = |var_stmt_idx: NodeIndex| {
+            let Some(var_stmt_node) = arena.get(var_stmt_idx) else {
+                return;
+            };
+            let Some(var_stmt) = arena.get_variable(var_stmt_node) else {
+                return;
+            };
+            if !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword) {
+                return;
+            }
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                    continue;
+                };
+                if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                    let Some(decl_list) = arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        let Some(name_node) = arena.get(decl.name) else {
+                            continue;
+                        };
+                        let Some(ident) = arena.get_identifier(name_node) else {
+                            continue;
+                        };
+                        push_redeclare_diag(
+                            diagnostics,
+                            seen,
+                            target_idx,
+                            file_name,
+                            arena,
+                            decl.name,
+                            &ident.escaped_text,
+                        );
+                    }
+                } else if let Some(decl) = arena.get_variable_declaration(decl_list_node)
+                    && let Some(name_node) = arena.get(decl.name)
+                    && let Some(ident) = arena.get_identifier(name_node)
+                {
+                    push_redeclare_diag(
+                        diagnostics,
+                        seen,
+                        target_idx,
+                        file_name,
+                        arena,
+                        decl.name,
+                        &ident.escaped_text,
+                    );
+                }
+            }
+        };
+
+        match stmt_node.kind {
+            syntax_kind_ext::VARIABLE_STATEMENT => emit_variable_statement(stmt_idx),
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = arena.get_function(stmt_node)
+                    && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                    && let Some(name_node) = arena.get(func.name)
+                    && let Some(ident) = arena.get_identifier(name_node)
+                {
+                    push_redeclare_diag(
+                        diagnostics,
+                        seen,
+                        target_idx,
+                        file_name,
+                        arena,
+                        func.name,
+                        &ident.escaped_text,
+                    );
+                }
+            }
+            syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = arena.get_class(stmt_node)
+                    && arena.has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                    && let Some(name_node) = arena.get(class.name)
+                    && let Some(ident) = arena.get_identifier(name_node)
+                {
+                    push_redeclare_diag(
+                        diagnostics,
+                        seen,
+                        target_idx,
+                        file_name,
+                        arena,
+                        class.name,
+                        &ident.escaped_text,
+                    );
+                }
+            }
+            syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enm) = arena.get_enum(stmt_node)
+                    && arena.has_modifier(&enm.modifiers, SyntaxKind::ExportKeyword)
+                    && let Some(name_node) = arena.get(enm.name)
+                    && let Some(ident) = arena.get_identifier(name_node)
+                {
+                    push_redeclare_diag(
+                        diagnostics,
+                        seen,
+                        target_idx,
+                        file_name,
+                        arena,
+                        enm.name,
+                        &ident.escaped_text,
+                    );
+                }
+            }
+            syntax_kind_ext::EXPORT_DECLARATION => {
+                let Some(export_decl) = arena.get_export_decl(stmt_node) else {
+                    return;
+                };
+                if export_decl.is_default_export
+                    || export_decl.module_specifier.is_some()
+                    || export_decl.export_clause.is_none()
+                {
+                    return;
+                }
+                let Some(clause_node) = arena.get(export_decl.export_clause) else {
+                    return;
+                };
+                match clause_node.kind {
+                    syntax_kind_ext::VARIABLE_STATEMENT => {
+                        emit_variable_statement(export_decl.export_clause);
+                    }
+                    syntax_kind_ext::FUNCTION_DECLARATION => {
+                        if let Some(func) = arena.get_function(clause_node)
+                            && let Some(name_node) = arena.get(func.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                        {
+                            push_redeclare_diag(
+                                diagnostics,
+                                seen,
+                                target_idx,
+                                file_name,
+                                arena,
+                                func.name,
+                                &ident.escaped_text,
+                            );
+                        }
+                    }
+                    syntax_kind_ext::CLASS_DECLARATION => {
+                        if let Some(class) = arena.get_class(clause_node)
+                            && let Some(name_node) = arena.get(class.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                        {
+                            push_redeclare_diag(
+                                diagnostics,
+                                seen,
+                                target_idx,
+                                file_name,
+                                arena,
+                                class.name,
+                                &ident.escaped_text,
+                            );
+                        }
+                    }
+                    syntax_kind_ext::ENUM_DECLARATION => {
+                        if let Some(enm) = arena.get_enum(clause_node)
+                            && let Some(name_node) = arena.get(enm.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                        {
+                            push_redeclare_diag(
+                                diagnostics,
+                                seen,
+                                target_idx,
+                                file_name,
+                                arena,
+                                enm.name,
+                                &ident.escaped_text,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let type_roots = canonical_type_roots(base_dir, options);
+    if type_roots.is_empty() {
+        return Vec::new();
+    }
+
+    let mut imported_specs_by_target: FxHashMap<usize, FxHashSet<String>> = FxHashMap::default();
+    for ((_, specifier), &target_idx) in resolved_module_paths {
+        if is_bare_package_specifier(specifier) {
+            imported_specs_by_target
+                .entry(target_idx)
+                .or_default()
+                .insert(specifier.clone());
+        }
+    }
+
+    let mut diagnostics = Vec::new();
+    let mut seen = FxHashSet::default();
+
+    for (target_idx, specifiers) in imported_specs_by_target {
+        let Some(file) = program.files.get(target_idx) else {
+            continue;
+        };
+        if !is_declaration_file(&file.file_name) {
+            continue;
+        }
+        let canonical_file = canonicalize_or_owned(Path::new(&file.file_name));
+        if !type_roots.iter().any(|root| canonical_file.starts_with(root)) {
+            continue;
+        }
+
+        let Some(source) = file.arena.get_source_file_at(file.source_file) else {
+            continue;
+        };
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module) = file.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if !file
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
+            let Some(name_node) = file.arena.get(module.name) else {
+                continue;
+            };
+            if !matches!(
+                name_node.kind,
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            ) {
+                continue;
+            }
+            let Some(lit) = file.arena.get_literal(name_node) else {
+                continue;
+            };
+            if !specifiers.contains(&lit.text) {
+                continue;
+            }
+            let Some(body_node) = file.arena.get(module.body) else {
+                continue;
+            };
+            if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                continue;
+            }
+            let Some(block) = file.arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(block_statements) = block.statements.as_ref() else {
+                continue;
+            };
+            for &module_stmt_idx in &block_statements.nodes {
+                collect_exported_value_redeclares_from_statement(
+                    &file.arena,
+                    module_stmt_idx,
+                    &file.file_name,
+                    target_idx,
+                    &mut diagnostics,
+                    &mut seen,
+                );
+            }
+        }
+    }
+
+    diagnostics
+}
+
 pub(super) fn collect_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
@@ -926,6 +1268,12 @@ pub(super) fn collect_diagnostics(
         options,
         base_dir,
         &file_is_esm_map,
+    ));
+    diagnostics.extend(collect_type_root_ambient_module_import_conflict_diagnostics(
+        program,
+        options,
+        base_dir,
+        &resolved_module_paths,
     ));
 
     // Use the aggregated query-cache statistics. In the parallel path, these
