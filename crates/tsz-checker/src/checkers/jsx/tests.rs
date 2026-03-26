@@ -307,9 +307,10 @@ fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
         diagnostics.contains(&2322),
         "Expected JSX.LibraryManagedAttributes to preserve prop type checking, got: {diagnostics:?}"
     );
-    assert!(
-        diagnostics.contains(&2741),
-        "Expected missing non-defaulted prop to remain required, got: {diagnostics:?}"
+    assert_eq!(
+        diagnostics.iter().filter(|&&code| code == 2322).count(),
+        2,
+        "Expected one type mismatch and one missing-required-prop assignability error, got: {diagnostics:?}"
     );
 }
 

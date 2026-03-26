@@ -136,11 +136,19 @@ impl<'a> CheckerState<'a> {
                 &substitution,
             )
         };
-
-        if crate::computation::call_inference::should_preserve_contextual_application_shape(
-            self.ctx.types,
-            instantiated,
-        ) {
+        let has_managed_props_metadata = matches!(
+            self.resolve_property_access_with_env(component_type, "defaultProps"),
+            crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+        ) || matches!(
+            self.resolve_property_access_with_env(component_type, "propTypes"),
+            crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+        );
+        if !has_managed_props_metadata
+            && crate::computation::call_inference::should_preserve_contextual_application_shape(
+                self.ctx.types,
+                instantiated,
+            )
+        {
             instantiated
         } else {
             self.evaluate_type_with_env(instantiated)
@@ -157,6 +165,7 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
+        let raw_component_type = component_type;
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -229,7 +238,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.get_jsx_props_type_for_component_member(component_type, element_idx)
+        self.get_jsx_props_type_for_component_member(raw_component_type, element_idx)
     }
 
     pub(super) fn get_jsx_props_type_for_component_member(
@@ -237,6 +246,7 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
+        let raw_component_type = component_type;
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -247,13 +257,13 @@ impl<'a> CheckerState<'a> {
 
         // Try SFC first: get call signatures -> first parameter is props type
         if let Some((props, raw_has_tp)) = self.get_sfc_props_type(component_type) {
-            let props = self.apply_jsx_library_managed_attributes(component_type, props);
+            let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
             return Some((props, raw_has_tp));
         }
 
         // Try class component: get construct signatures -> instance type -> props
         if let Some(props) = self.get_class_component_props_type(component_type, element_idx) {
-            let props = self.apply_jsx_library_managed_attributes(component_type, props);
+            let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
             return Some((props, false));
         }
 
@@ -761,9 +771,35 @@ impl<'a> CheckerState<'a> {
 
         match prop_name {
             None => {
-                // G2: No ElementAttributesProperty -> no JSX infrastructure.
-                // TSC skips attribute checking when JSX types aren't configured.
-                None
+                // In React-style JSX setups, class components frequently expose
+                // their props through an inherited instance `props` member even
+                // when ElementAttributesProperty is absent. Fall back to that
+                // surface before giving up on attribute checking.
+                let evaluated_instance = self.evaluate_type_with_env(instance_type);
+                use crate::query_boundaries::common::PropertyAccessResult;
+                match self.resolve_property_access_with_env(evaluated_instance, "props") {
+                    PropertyAccessResult::Success { type_id, .. } => {
+                        Some(self.strip_implicit_jsx_children_from_props_fallback(type_id))
+                    }
+                    _ => first_param_type.and_then(|param_type| {
+                        let param_type = self.evaluate_type_with_env(param_type);
+                        (param_type != TypeId::ANY
+                            && param_type != TypeId::ERROR
+                            && param_type != TypeId::STRING
+                            && param_type != TypeId::NUMBER)
+                            .then_some(param_type)
+                    }).or_else(|| {
+                        let has_managed_props_metadata = matches!(
+                            self.resolve_property_access_with_env(component_type, "defaultProps"),
+                            PropertyAccessResult::Success { .. }
+                        ) || matches!(
+                            self.resolve_property_access_with_env(component_type, "propTypes"),
+                            PropertyAccessResult::Success { .. }
+                        );
+                        has_managed_props_metadata
+                            .then(|| self.ctx.types.factory().object(vec![]))
+                    }),
+                }
             }
             Some(ref name) if name.is_empty() => {
                 // Empty ElementAttributesProperty -> instance type IS the props
@@ -812,6 +848,49 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    fn strip_implicit_jsx_children_from_props_fallback(&mut self, props_type: TypeId) -> TypeId {
+        let props_type = self.normalize_jsx_required_props_target(props_type);
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type) {
+            let filtered_props: Vec<_> = shape
+                .properties
+                .iter()
+                .filter(|prop| self.ctx.types.resolve_atom(prop.name) != "children")
+                .cloned()
+                .collect();
+            if filtered_props.len() != shape.properties.len() {
+                return self.ctx.types.factory().object(filtered_props);
+            }
+        }
+
+        let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)
+        else {
+            return props_type;
+        };
+
+        let filtered: Vec<_> = members
+            .into_iter()
+            .filter(|member| {
+                let Some(shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *member)
+                else {
+                    return true;
+                };
+                if shape.properties.len() != 1 {
+                    return true;
+                }
+                let prop = &shape.properties[0];
+                self.ctx.types.resolve_atom(prop.name) != "children"
+            })
+            .collect();
+
+        match filtered.len() {
+            0 => props_type,
+            1 => filtered[0],
+            _ => self.ctx.types.factory().intersection(filtered),
         }
     }
 

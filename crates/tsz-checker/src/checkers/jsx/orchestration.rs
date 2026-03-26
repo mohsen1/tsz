@@ -59,6 +59,49 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env(resolved)
     }
 
+    fn get_jsx_component_metadata_type(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        fallback_type: TypeId,
+    ) -> TypeId {
+        let Some(sym_id) = self.resolve_identifier_symbol(tag_name_idx) else {
+            return fallback_type;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return fallback_type;
+        };
+
+        let mut decls = Vec::new();
+        if symbol.value_declaration.is_some() {
+            decls.push(symbol.value_declaration);
+        }
+        decls.extend(symbol.declarations.iter().copied());
+
+        for mut decl_idx in decls {
+            let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                && parent.is_some()
+            {
+                decl_idx = parent;
+                let Some(parent_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                decl_node = parent_node;
+            }
+
+            if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class) = self.ctx.arena.get_class(decl_node)
+            {
+                return self.get_class_constructor_type(decl_idx, class);
+            }
+        }
+
+        fallback_type
+    }
+
     pub(super) fn get_jsx_specific_string_literal_component_tag_name(
         &self,
         tag_name_idx: NodeIndex,
@@ -712,6 +755,8 @@ impl<'a> CheckerState<'a> {
             // Component: resolve as variable expression
             // The tag name is a reference to a component (function or class)
             let component_type = self.compute_type_of_node(tag_name_idx);
+            let component_metadata_type =
+                self.get_jsx_component_metadata_type(tag_name_idx, component_type);
             let resolved_component_type =
                 self.normalize_jsx_component_type_for_resolution(component_type);
             let specific_intrinsic_tag = self.get_jsx_specific_string_literal_component_tag_name(
@@ -788,7 +833,7 @@ impl<'a> CheckerState<'a> {
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if !reported_factory_arity
                 && let Some((props_type, raw_has_type_params)) =
-                    self.get_jsx_props_type_for_component(resolved_component_type, Some(idx))
+                    self.get_jsx_props_type_for_component(component_metadata_type, Some(idx))
             {
                 let props_type =
                     self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
@@ -803,7 +848,7 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     props_type,
                     jsx_opening.tag_name,
-                    Some(resolved_component_type),
+                    Some(component_metadata_type),
                     raw_has_type_params,
                     display_target,
                     preferred_props_display.as_deref(),
@@ -1279,7 +1324,7 @@ impl<'a> CheckerState<'a> {
             {
                 props
             } else if let Some((props, _raw_has_type_params)) =
-                self.get_jsx_props_type_for_component(resolved_component_type, None)
+                self.get_jsx_props_type_for_component(component_type, None)
             {
                 self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props)
             } else if let Some(props) = self.infer_jsx_generic_component_props_type(

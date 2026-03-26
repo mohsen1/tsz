@@ -4,6 +4,7 @@
 //! Including distributive conditional types over union types.
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_with_infer};
+use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     ConditionalType, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
@@ -965,15 +966,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         extends_shape_id: ObjectShapeId,
     ) -> Option<TypeId> {
         let extends_shape = self.interner().object_shape(extends_shape_id);
-        let mut infer_prop = None;
+        let mut infer_props = Vec::new();
         let mut infer_nested = None;
 
         for prop in &extends_shape.properties {
             if let Some(TypeData::Infer(info)) = self.interner().lookup(prop.type_id) {
-                if infer_prop.is_some() || infer_nested.is_some() {
+                if infer_nested.is_some() {
                     return None;
                 }
-                infer_prop = Some((prop.name, info, prop.optional));
+                infer_props.push((prop.name, info, prop.optional));
                 continue;
             }
 
@@ -1000,7 +1001,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 if let Some((nested_name, info)) = nested_infer {
-                    if infer_prop.is_some() || infer_nested.is_some() {
+                    if !infer_props.is_empty() || infer_nested.is_some() {
                         return None;
                     }
                     infer_nested = Some((prop.name, nested_name, info));
@@ -1008,13 +1009,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
-        if let Some((prop_name, info, prop_optional)) = infer_prop {
+        if infer_props.len() == 1 {
+            let (prop_name, info, prop_optional) = infer_props[0];
             return Some(self.eval_conditional_object_prop_infer(
                 cond,
                 check_unwrapped,
                 prop_name,
                 info,
                 prop_optional,
+            ));
+        }
+
+        if infer_props.len() > 1 {
+            return Some(self.eval_conditional_object_multi_prop_infer(
+                cond,
+                check_unwrapped,
+                &infer_props,
             ));
         }
 
@@ -1029,6 +1039,61 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         None
+    }
+
+    fn eval_conditional_object_multi_prop_infer(
+        &mut self,
+        cond: &ConditionalType,
+        check_unwrapped: TypeId,
+        infer_props: &[(Atom, TypeParamInfo, bool)],
+    ) -> TypeId {
+        let check_key = self.interner().lookup(check_unwrapped);
+        if matches!(check_key, Some(TypeData::TypeParameter(_) | TypeData::Infer(_))) {
+            return self.interner().conditional(*cond);
+        }
+
+        let mut subst = TypeSubstitution::new();
+        for &(prop_name, info, optional) in infer_props {
+            let Some(mut inferred) =
+                self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
+            else {
+                return self.evaluate(cond.false_type);
+            };
+
+            subst.insert(info.name, inferred);
+
+            if let Some(constraint) = info.constraint {
+                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                checker.allow_bivariant_rest = true;
+                let is_union =
+                    matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
+                if optional {
+                    let Some(filtered) =
+                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                    else {
+                        let false_inst = instantiate_type_with_infer(
+                            self.interner(),
+                            cond.false_type,
+                            &subst,
+                        );
+                        return self.evaluate(false_inst);
+                    };
+                    inferred = filtered;
+                } else if is_union || cond.is_distributive {
+                    inferred = self.filter_inferred_by_constraint_or_undefined(
+                        inferred,
+                        constraint,
+                        &mut checker,
+                    );
+                } else if !checker.is_subtype_of(inferred, constraint) {
+                    return self.evaluate(cond.false_type);
+                }
+                subst.insert(info.name, inferred);
+            }
+        }
+
+        let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
+        self.evaluate(true_inst)
     }
 
     /// Handle object property infer pattern
@@ -1048,60 +1113,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
-        let inferred = match check_key {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner().object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .find(|prop| prop.name == prop_name)
-                    .map(|prop| {
-                        if prop_optional {
-                            self.optional_property_type(prop)
-                        } else {
-                            prop.type_id
-                        }
-                    })
-                    .or_else(|| prop_optional.then_some(TypeId::UNDEFINED))
-            }
-            Some(TypeData::Union(members)) => {
-                let members = self.interner().type_list(members);
-                let mut inferred_members = Vec::new();
-                for &member in members.iter() {
-                    let member_unwrapped = match self.interner().lookup(member) {
-                        Some(TypeData::ReadonlyType(inner)) => inner,
-                        _ => member,
-                    };
-                    match self.interner().lookup(member_unwrapped) {
-                        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                            let shape = self.interner().object_shape(shape_id);
-                            if let Some(prop) =
-                                PropertyInfo::find_in_slice(&shape.properties, prop_name)
-                            {
-                                inferred_members.push(if prop_optional {
-                                    self.optional_property_type(prop)
-                                } else {
-                                    prop.type_id
-                                });
-                            } else if prop_optional {
-                                inferred_members.push(TypeId::UNDEFINED);
-                            } else {
-                                return self.evaluate(cond.false_type);
-                            }
-                        }
-                        _ => return self.evaluate(cond.false_type),
-                    }
-                }
-                if inferred_members.is_empty() {
-                    None
-                } else if inferred_members.len() == 1 {
-                    Some(inferred_members[0])
-                } else {
-                    Some(self.interner().union(inferred_members))
-                }
-            }
-            _ => None,
-        };
+        let inferred =
+            self.resolve_conditional_infer_property(check_unwrapped, prop_name, prop_optional);
 
         let Some(mut inferred) = inferred else {
             return self.evaluate(cond.false_type);
@@ -1141,6 +1154,64 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
         self.evaluate(true_inst)
+    }
+
+    fn resolve_conditional_infer_property(
+        &mut self,
+        source: TypeId,
+        prop_name: Atom,
+        optional: bool,
+    ) -> Option<TypeId> {
+        if let Some(query_db) = self.query_db() {
+            let prop_name_str = self.interner().resolve_atom_ref(prop_name);
+            return match query_db.resolve_property_access(source, &prop_name_str) {
+                PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                PropertyAccessResult::PropertyNotFound { .. } => optional.then_some(TypeId::UNDEFINED),
+                _ => None,
+            };
+        }
+
+        match self.interner().lookup(source) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .find(|prop| prop.name == prop_name)
+                    .map(|prop| {
+                        if optional {
+                            self.optional_property_type(prop)
+                        } else {
+                            prop.type_id
+                        }
+                    })
+                    .or_else(|| optional.then_some(TypeId::UNDEFINED))
+            }
+            Some(TypeData::Union(members)) => {
+                let members = self.interner().type_list(members);
+                let mut inferred_members = Vec::new();
+                for &member in members.iter() {
+                    let member_unwrapped = match self.interner().lookup(member) {
+                        Some(TypeData::ReadonlyType(inner)) => inner,
+                        _ => member,
+                    };
+                    let Some(inferred) =
+                        self.resolve_conditional_infer_property(member_unwrapped, prop_name, optional)
+                    else {
+                        return None;
+                    };
+                    inferred_members.push(inferred);
+                }
+                if inferred_members.is_empty() {
+                    None
+                } else if inferred_members.len() == 1 {
+                    Some(inferred_members[0])
+                } else {
+                    Some(self.interner().union(inferred_members))
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Handle nested object infer pattern

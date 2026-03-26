@@ -75,7 +75,6 @@ type Schema = Record<string, unknown>;
 class Table<S extends Schema> {
     __schema!: S;
 }
-
 class ColumnSelectViewImp<S extends Schema> extends Table<S> { }
 
 const ColumnSelectView1: new <S extends Schema>() => Table<UnrollOnHover<S>> = ColumnSelectViewImp;
@@ -111,6 +110,54 @@ const ColumnSelectView2: new <S extends Schema>() => Table<UnrollOnHover<S>> = T
         0,
         "Expected no TS2322 errors, got {} errors. All diagnostics: {:?}",
         ts2322_errors.len(),
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_conditional_object_multi_infer_resolves_true_branch() {
+    let source = r#"
+type PickMeta<T> = T extends { defaultProps: infer D; propTypes: infer P } ? [D, P] : never;
+type Result = PickMeta<{
+    defaultProps: { foo: string };
+    propTypes: { bar: number };
+}>;
+
+const ok: Result = [{ foo: "x" }, { bar: 1 }];
+const bad: Result = [{ foo: 1 }, { bar: "x" }];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        2,
+        "Expected tuple element assignment errors from resolved multi-infer conditional, got diagnostics: {:?}",
         checker
             .ctx
             .diagnostics

@@ -804,8 +804,11 @@ impl<'a> CheckerState<'a> {
         // Matches tsc: only the first empty expression per element is reported.
         self.check_grammar_jsx_element(attributes_idx);
 
-        // Resolve Lazy(DefId) props before any checks (TS2698 needs this too).
-        let props_type = self.resolve_type_for_property_access(props_type);
+        // Normalize managed/evaluated JSX props before any checks so conditional,
+        // mapped, and application-based surfaces (for example
+        // JSX.LibraryManagedAttributes<...>) are read through the same structural
+        // path we already use for missing-required-prop analysis.
+        let props_type = self.normalize_jsx_required_props_target(props_type);
 
         // Union props: delegate to whole-object assignability checking.
         if tsz_solver::is_union_type(self.ctx.types, props_type) {
@@ -833,6 +836,16 @@ impl<'a> CheckerState<'a> {
         // Check both raw and evaluated props (evaluation may collapse type params).
         let props_has_type_params = raw_props_has_type_params
             || tsz_solver::contains_type_parameters(self.ctx.types, props_type);
+        let component_has_managed_props_metadata = component_type.is_some_and(|comp| {
+            use crate::query_boundaries::common::PropertyAccessResult;
+            matches!(
+                self.resolve_property_access_with_env(comp, "defaultProps"),
+                PropertyAccessResult::Success { .. }
+            ) || matches!(
+                self.resolve_property_access_with_env(comp, "propTypes"),
+                PropertyAccessResult::Success { .. }
+            )
+        });
 
         let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
         let mut spread_covers_all = false;
@@ -974,6 +987,11 @@ impl<'a> CheckerState<'a> {
                         };
                         if let Some(entry) = provided_attrs.last_mut() {
                             entry.1 = attr_value_type;
+                        }
+
+                        if component_has_managed_props_metadata {
+                            needs_special_attr_object_assignability = true;
+                            continue;
                         }
 
                         if !has_string_index // excess property check
