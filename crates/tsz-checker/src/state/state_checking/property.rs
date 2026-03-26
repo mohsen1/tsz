@@ -479,6 +479,52 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if crate::query_boundaries::common::is_mapped_type(self.ctx.types, effective_target) {
+            for source_prop in source_props {
+                if explicit_property_names.is_some()
+                    && !explicit_property_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&source_prop.name))
+                {
+                    continue;
+                }
+
+                let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                match self.resolve_property_access_with_env(effective_target, prop_name.as_ref()) {
+                    tsz_solver::operations::property::PropertyAccessResult::Success {
+                        type_id,
+                        ..
+                    } => {
+                        let nested_target = self.nested_property_target_type(
+                            effective_target,
+                            source_prop.name,
+                            type_id,
+                        );
+                        self.check_nested_object_literal_excess_properties(
+                            source_prop.name,
+                            Some(nested_target),
+                            idx,
+                        );
+                    }
+                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                        ..
+                    } => {
+                        let report_idx = self
+                            .find_object_literal_property_element(idx, source_prop.name)
+                            .unwrap_or(idx);
+                        let prop_name = self.object_literal_property_display_name(
+                            report_idx,
+                            self.ctx.types.resolve_atom(source_prop.name).as_ref(),
+                        );
+                        self.error_excess_property_at(&prop_name, target, report_idx);
+                        self.check_excess_property_initializer_implicit_any(report_idx, target);
+                    }
+                    _ => return,
+                }
+            }
+            return;
+        }
+
         // Handle simple object targets via the canonical boundary classification.
         //
         // The boundary's `classify_object_properties` determines which source
@@ -553,10 +599,43 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Use boundary classification for the excess-property decision.
-                let is_excess = classification
-                    .as_ref()
-                    .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
+                let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                let dynamic_target_prop_type = target_props
+                    .iter()
+                    .all(|prop| prop.name != source_prop.name)
+                    .then(|| {
+                        self.contextual_object_literal_property_type(target, prop_name.as_ref())
+                            .or_else(|| {
+                                [
+                                    target,
+                                    self.evaluate_contextual_type(target),
+                                    effective_target,
+                                ]
+                                .into_iter()
+                                .find_map(|candidate| {
+                                    match self.resolve_property_access_with_env(
+                                        candidate,
+                                        prop_name.as_ref(),
+                                    ) {
+                                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                                            type_id,
+                                            from_index_signature: false,
+                                            ..
+                                        } => Some(type_id),
+                                        _ => None,
+                                    }
+                                })
+                            })
+                    })
+                    .flatten();
+
+                // Use boundary classification for the excess-property decision,
+                // but honor property-resolution fallbacks for contextual targets
+                // whose structural shape has not materialized the accessible keys yet.
+                let is_excess = dynamic_target_prop_type.is_none()
+                    && classification
+                        .as_ref()
+                        .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
 
                 if is_excess {
                     let report_idx = self
@@ -570,12 +649,16 @@ impl<'a> CheckerState<'a> {
                     self.check_excess_property_initializer_implicit_any(report_idx, target);
                 } else {
                     // Property exists in target — check nested object literals.
-                    let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
-                    if let Some(target_prop) = target_prop {
+                    let target_prop_type = target_props
+                        .iter()
+                        .find(|p| p.name == source_prop.name)
+                        .map(|prop| prop.type_id)
+                        .or(dynamic_target_prop_type);
+                    if let Some(target_prop_type) = target_prop_type {
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
-                            target_prop.type_id,
+                            target_prop_type,
                         );
                         self.check_nested_object_literal_excess_properties(
                             source_prop.name,

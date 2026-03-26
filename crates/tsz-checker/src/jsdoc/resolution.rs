@@ -1375,6 +1375,10 @@ impl<'a> CheckerState<'a> {
     }
     /// Parse an inline object literal type: `{ propName: Type, ... }`.
     fn parse_jsdoc_object_literal_type(&mut self, type_expr: &str) -> Option<TypeId> {
+        if let Some(mapped) = self.parse_jsdoc_mapped_type(type_expr) {
+            return Some(mapped);
+        }
+
         let inner = type_expr[1..type_expr.len() - 1].trim();
         if inner.is_empty() {
             return Some(self.ctx.types.factory().object(Vec::new()));
@@ -1433,6 +1437,73 @@ impl<'a> CheckerState<'a> {
         }
         Some(self.ctx.types.factory().object(properties))
     }
+
+    fn parse_jsdoc_mapped_type(&mut self, type_expr: &str) -> Option<TypeId> {
+        let inner = type_expr[1..type_expr.len() - 1].trim();
+        if !inner.starts_with('[') {
+            return None;
+        }
+
+        let mut square_depth = 0u32;
+        let mut close_bracket = None;
+        for (idx, ch) in inner.char_indices() {
+            match ch {
+                '[' => square_depth += 1,
+                ']' => {
+                    square_depth = square_depth.saturating_sub(1);
+                    if square_depth == 0 {
+                        close_bracket = Some(idx);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close_bracket = close_bracket?;
+        let header = inner[1..close_bracket].trim();
+        let template_str = inner[close_bracket + 1..].trim().strip_prefix(':')?.trim();
+
+        let in_idx = header.find(" in ")?;
+        let type_param_name = header[..in_idx].trim();
+        let constraint_str = header[in_idx + 4..].trim();
+        if type_param_name.is_empty() || constraint_str.is_empty() || template_str.is_empty() {
+            return None;
+        }
+
+        let constraint = self.resolve_jsdoc_type_str(constraint_str)?;
+        let atom = self.ctx.types.intern_string(type_param_name);
+        let type_param = tsz_solver::TypeParamInfo {
+            name: atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        };
+        let type_param_id = self.ctx.types.factory().type_param(type_param);
+        let previous = self
+            .ctx
+            .type_parameter_scope
+            .insert(type_param_name.to_string(), type_param_id);
+        let template = self.resolve_jsdoc_type_str(template_str);
+        if let Some(previous) = previous {
+            self.ctx
+                .type_parameter_scope
+                .insert(type_param_name.to_string(), previous);
+        } else {
+            self.ctx.type_parameter_scope.remove(type_param_name);
+        }
+
+        template.map(|template| {
+            self.ctx.types.factory().mapped(tsz_solver::MappedType {
+                type_param,
+                constraint,
+                name_type: None,
+                template,
+                readonly_modifier: None,
+                optional_modifier: None,
+            })
+        })
+    }
+
     /// Parse a named method signature from a JSDoc object property string.
     /// Parse a call signature `(params): RetType` and return a function TypeId.
     fn parse_jsdoc_call_signature(&mut self, prop_str: &str) -> Option<TypeId> {
