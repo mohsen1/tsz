@@ -1865,19 +1865,11 @@ impl<'a> CheckerState<'a> {
                                     .first()
                                     .map(|sf| sf.file_name.clone())
                                     .unwrap_or_else(|| format!("cross-file-{file_idx}"));
-                                let other_source_text = other_arena
-                                    .source_files
-                                    .first()
-                                    .map(|sf| sf.text.as_ref())
-                                    .unwrap_or("");
-                                let other_is_non_checked_js =
-                                    crate::context::is_js_file_name(&other_file_name)
-                                        && !crate::context::should_resolve_jsdoc_for_file(
-                                            &other_file_name,
-                                            other_source_text,
-                                            &compiler_options,
-                                        );
-                                if other_is_non_checked_js {
+                                // JavaScript declarations do not act as the source side of
+                                // cross-file TS2403 comparisons. They can still influence
+                                // later symbol/type resolution, but tsc does not issue
+                                // subsequent-variable-declaration errors against them here.
+                                if crate::context::is_js_file_name(&other_file_name) {
                                     continue;
                                 }
                                 let Some(other_sym) = other_binder.get_symbol(other_sym_id) else {
