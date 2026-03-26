@@ -221,3 +221,40 @@ fn test_jsdoc_property_private_name_emits_ts1003() {
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_jsdoc_param_star_wrapping_emits_ts1003_and_empty_name_ts8024() {
+    let source = r#"
+/**
+ * @param *
+ * {number} x Arg x.
+ * @param {number}
+ * * y Arg y.
+ * @param {number} * z
+ * Arg z.
+ */
+function bad(x, y, z) {
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts1003 = diagnostics.iter().filter(|d| d.code == 1003).count();
+    let ts8024 = diagnostics.iter().filter(|d| d.code == 8024).count();
+    let ts7006 = diagnostics.iter().filter(|d| d.code == 7006).count();
+
+    assert_eq!(ts1003, 3, "Expected three TS1003 diagnostics, got: {diagnostics:?}");
+    assert_eq!(
+        ts8024, 2,
+        "Expected two TS8024 diagnostics for empty malformed @param names, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts7006, 3,
+        "Expected TS7006 on all three parameters after malformed JSDoc recovery, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 8024)
+            .all(|d| !d.message_text.contains("name '*'")),
+        "Did not expect TS8024 to preserve '*' as a JSDoc param name, got: {diagnostics:?}"
+    );
+}
