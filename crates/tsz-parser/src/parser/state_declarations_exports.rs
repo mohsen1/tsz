@@ -2056,6 +2056,21 @@ impl ParserState {
 
         // If expression parsing failed completely, resync to recover
         if expression.is_none() {
+            if !self.is_js_file()
+                && self.is_token(SyntaxKind::GreaterThanToken)
+                && self
+                    .get_source_text()
+                    .get(self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize)
+                    == Some("<")
+            {
+                while !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.scanner.has_preceding_line_break()
+                    && !self.is_token(SyntaxKind::SemicolonToken)
+                {
+                    self.next_token();
+                }
+                return NodeIndex::NONE;
+            }
             // Emit error for unexpected token if we haven't already
             if self.token_pos() != self.last_error_pos && !self.is_token(SyntaxKind::EndOfFileToken)
             {

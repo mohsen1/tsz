@@ -677,6 +677,23 @@ impl ParserState {
             opening
         };
 
+        if !self.is_js_file()
+            && kind == syntax_kind_ext::JSX_OPENING_FRAGMENT
+            && self.is_token(SyntaxKind::LessThanToken)
+            && self
+                .get_source_text()
+                .get(self.token_pos() as usize..)
+                .is_some_and(|rest| rest.starts_with("<>"))
+            && !self.is_jsx_adjacent_sibling_candidate()
+        {
+            while !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+            {
+                self.next_token();
+            }
+        }
+
         if in_expression_context {
             self.recover_adjacent_jsx_siblings(jsx_node);
         }
@@ -726,12 +743,14 @@ impl ParserState {
                 .map_or(self.token_end(), |node| node.end);
         }
 
-        self.parse_error_at(
-            start_pos,
-            end_pos.saturating_sub(start_pos),
-            tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
-            tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
-        );
+        if self.is_js_file() {
+            self.parse_error_at(
+                start_pos,
+                end_pos.saturating_sub(start_pos),
+                tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+                tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+            );
+        }
         true
     }
 
@@ -1353,6 +1372,9 @@ impl ParserState {
 
     fn emit_jsx_unclosed_fragment_error(&mut self, opening_fragment: NodeIndex) {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+        if !self.is_js_file() {
+            return;
+        }
         if let Some(node) = self.arena.get(opening_fragment) {
             let start = if self.is_js_file() {
                 node.pos.saturating_sub(1)
@@ -1474,8 +1496,34 @@ impl ParserState {
     /// Parse a JSX closing fragment: </>
     pub(crate) fn parse_jsx_closing_fragment(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        if !self.is_js_file() && !self.is_token(SyntaxKind::LessThanSlashToken) {
+            while !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+            {
+                self.next_token();
+            }
+            return self.arena.add_token(
+                syntax_kind_ext::JSX_CLOSING_FRAGMENT,
+                start_pos,
+                self.token_pos(),
+            );
+        }
         // In JSX mode, </ is scanned as a single LessThanSlashToken
         self.parse_expected(SyntaxKind::LessThanSlashToken);
+        if !self.is_js_file() && !self.is_token(SyntaxKind::GreaterThanToken) {
+            if self.is_token(SyntaxKind::Identifier) {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::GreaterThanToken) {
+                self.next_token();
+            }
+            return self.arena.add_token(
+                syntax_kind_ext::JSX_CLOSING_FRAGMENT,
+                start_pos,
+                self.token_pos(),
+            );
+        }
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::GreaterThanToken);
         self.arena

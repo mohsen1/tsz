@@ -918,6 +918,21 @@ impl ParserState {
                 break;
             }
 
+            if !self.is_js_file()
+                && self.scanner.has_preceding_line_break()
+                && matches!(op, SyntaxKind::LessThanToken | SyntaxKind::GreaterThanToken)
+                && self.arena.get(left).is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::JSX_ELEMENT
+                            | syntax_kind_ext::JSX_FRAGMENT
+                            | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    )
+                })
+            {
+                break;
+            }
+
             let precedence = self.get_operator_precedence(op);
             if precedence == 0 || precedence < min_precedence {
                 break;
@@ -1107,10 +1122,18 @@ impl ParserState {
             // tsc only suppresses at the exact same position, so a missing RHS
             // after a binary operator always emits TS1109 even if a prior error
             // (e.g., TS1003 from JSX) is nearby.
-            self.parse_error_at_current_token(
-                "Expression expected.",
-                diagnostic_codes::EXPRESSION_EXPECTED,
-            );
+            if !(!self.is_js_file()
+                && self.is_token(SyntaxKind::GreaterThanToken)
+                && self
+                    .get_source_text()
+                    .get(self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize)
+                    == Some("<"))
+            {
+                self.parse_error_at_current_token(
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
             let recovered = self.try_recover_binary_rhs();
             if recovered.is_none() {
                 // Create a missing expression placeholder instead of returning
@@ -2298,6 +2321,21 @@ impl ParserState {
                     // tsc does not emit TS1213 for `foo(public ...)` inside a class body.
                     self.parse_identifier_name()
                 } else {
+                    if !self.is_js_file()
+                        && self.is_token(SyntaxKind::GreaterThanToken)
+                        && self
+                            .get_source_text()
+                            .get(self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize)
+                            == Some("<")
+                    {
+                        while !self.is_token(SyntaxKind::EndOfFileToken)
+                            && !self.scanner.has_preceding_line_break()
+                            && !self.is_token(SyntaxKind::SemicolonToken)
+                        {
+                            self.next_token();
+                        }
+                        return NodeIndex::NONE;
+                    }
                     // Unknown primary expression - create an error token
                     let start_pos = self.token_pos();
                     let end_pos = self.token_end();

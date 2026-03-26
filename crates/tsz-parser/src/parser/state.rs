@@ -1430,6 +1430,15 @@ impl ParserState {
 
     /// Error: Expression expected (TS1109)
     pub(crate) fn error_expression_expected(&mut self) {
+        if !self.is_js_file()
+            && self.is_token(SyntaxKind::GreaterThanToken)
+            && self
+                .get_source_text()
+                .get(self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize)
+                == Some("<")
+        {
+            return;
+        }
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading TS1109 errors when TS1005 or other errors already reported
         // Use centralized error suppression heuristic
