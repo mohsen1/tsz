@@ -766,6 +766,7 @@ impl<'a> CheckerState<'a> {
         tracing::trace!(name, "resolve_lib_type_by_name: called");
         let mut lib_type_id: Option<TypeId> = None;
         let factory = self.ctx.types.factory();
+        let mut symbol_has_interface = false;
 
         let lib_contexts = self.ctx.lib_contexts.clone();
         // Collect lowered types from the symbol's declarations.
@@ -788,6 +789,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = sym_id {
             // Get the symbol's declaration(s) from the main file's binder
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                symbol_has_interface = (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0;
                 let fallback_arena = resolve_lib_fallback_arena(
                     self.ctx.binder,
                     sym_id,
@@ -930,13 +932,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Merge all found types from different lib files using intersection
+        // Merge repeated lib interface declarations using interface-merge
+        // semantics instead of a raw intersection. Constructor interfaces like
+        // `RangeErrorConstructor` are split across multiple lib files
+        // (`lib.es5.d.ts`, `lib.es2022.error.d.ts`), and intersecting their
+        // callable shapes can drop constructor signatures from the merged type.
+        // Non-interface lib entities still use intersection semantics.
         if lib_types.len() == 1 {
             lib_type_id = Some(lib_types[0]);
         } else if lib_types.len() > 1 {
             let mut merged = lib_types[0];
             for &ty in &lib_types[1..] {
-                merged = factory.intersection2(merged, ty);
+                merged = if symbol_has_interface {
+                    self.merge_interface_types(merged, ty)
+                } else {
+                    factory.intersection2(merged, ty)
+                };
             }
             lib_type_id = Some(merged);
         }
