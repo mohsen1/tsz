@@ -169,6 +169,7 @@ git status --short --branch
 
 # Read recent context so you do not duplicate or undo active work
 git log --oneline -20
+git fetch origin main --quiet
 
 # If you are working as a campaign agent, read the campaign checkpoint first.
 # If none exists yet, initialize it once and then read status.
@@ -189,6 +190,11 @@ if [ -z "$last_pull" ] || [ $((now - last_pull)) -ge 600 ]; then
   echo "$now" > "$CONFORMANCE_MAIN_SYNC_FILE"
 fi
 ```
+
+Refresh from `main` frequently while you work:
+- fetch `origin/main` at least every 10 minutes during an active iteration
+- fetch again immediately before rebasing, integrating, or pushing
+- if `origin/main` moved in a way that likely changes your target or baseline, rerun the targeted validation before continuing
 
 If `git status` shows unrelated modified files, keep them out of your conformance attempt:
 - do not revert user/other-agent changes
@@ -553,7 +559,7 @@ On each iteration:
 1. **Pick** the highest-impact unimplemented or partially implemented error code from the quick-win tables above.
 2. **Identify** a representative failing test using the query tools.
 3. **Implement or extend** diagnostic logic in the appropriate module (checker, solver, binder, etc.), respecting architecture boundaries.
-4. **Run** the target test and a focused regression run (`--max 200`) before broader validation.
+4. **Run** the target test and a focused regression run (`--max 200`) before broader validation, and require conformance to stay flat or improve for that iteration.
 5. **Update architecture** if needed — extract modules when files grow, ensure boundaries remain clean.
 6. **Update conformance snapshot only after the change is stable and regression checks pass.**
 7. **Commit in one change set** and push; avoid mixing unrelated file edits with conformance work.
