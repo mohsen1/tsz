@@ -18812,11 +18812,11 @@ mdast.toString();
         .map(|d| (d.code, d.message_text.clone()))
         .collect();
 
+    // tsc suppresses TS1192 for .d.ts files when allowSyntheticDefaultImports is true,
+    // even for pure ESM modules. The synthetic default is the module namespace object.
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| *code == 1192 && message.contains("\"mod\"")),
-        "Expected pure ESM declaration modules without a default export to keep TS1192 even with allowSyntheticDefaultImports. Got: {diagnostics:#?}"
+        !diagnostics.iter().any(|(code, _)| *code == 1192),
+        "Expected no TS1192 for .d.ts files with allowSyntheticDefaultImports=true. Got: {diagnostics:#?}"
     );
 }
 

@@ -1044,7 +1044,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_specifier: &str,
         decl_node: NodeIndex,
-        _is_source_file_import: bool,
+        is_source_file_import: bool,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -1164,8 +1164,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // For non-source-file imports (.d.ts, .js, .json), allowSyntheticDefaultImports
+        // unconditionally suppresses TS1192. For .ts source files, we only suppress
+        // when the module is CommonJS-shaped (has export= or CJS exports).
         if self.ctx.allow_synthetic_default_imports()
-            && self.module_can_use_synthetic_default_import(module_specifier)
+            && (!is_source_file_import
+                || self.module_can_use_synthetic_default_import(module_specifier))
         {
             return;
         }
