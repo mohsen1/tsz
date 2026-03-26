@@ -612,6 +612,48 @@ c.y;
     );
 }
 
+#[test]
+fn test_js_self_alias_this_prop_no_implicit_any_regression() {
+    let source = r#"
+class C {
+    constructor() {
+        var self = this;
+        self.x = 1;
+        self.m = function() {
+            console.log(self.x);
+        };
+    }
+    mreal() {
+        var self = this;
+        self.y = 2;
+    }
+}
+var c = new C();
+c.x;
+c.y;
+c.m();
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for self-alias class members under noImplicitAny, got: {diagnostics:?}"
+    );
+}
+
 /// Non-existent property still emits TS2339 (regression guard)
 #[test]
 fn test_js_constructor_nonexistent_prop_still_errors() {
