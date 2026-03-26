@@ -1281,24 +1281,6 @@ impl<'a> CheckerState<'a> {
             let hidden_qualified_namespace_member =
                 hidden_qualified_namespace_member_apparent_type.is_some();
 
-            // In write context (skip_flow_narrowing), skip this shortcut:
-            // resolve_namespace_value_member returns the symbol's read type, which
-            // doesn't account for divergent getter/setter types. The full property
-            // access path below correctly uses write_type for setter parameters.
-            if !skip_flow_narrowing
-                && !enum_instance_like_access
-                && !hidden_qualified_namespace_member
-                && let Some(member_type) =
-                    self.resolve_namespace_value_member(object_type, property_name)
-            {
-                return self.finalize_property_access_result(
-                    idx,
-                    member_type,
-                    skip_flow_narrowing,
-                    false,
-                );
-            }
-
             if !skip_flow_narrowing
                 && !enum_instance_like_access
                 && !hidden_qualified_namespace_member
@@ -1462,6 +1444,28 @@ impl<'a> CheckerState<'a> {
             }
             if object_type_for_access == TypeId::ERROR {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+            }
+
+            // In write context (skip_flow_narrowing), skip this shortcut:
+            // resolve_namespace_value_member returns the symbol's read type, which
+            // doesn't account for divergent getter/setter types. The full property
+            // access path below correctly uses write_type for setter parameters.
+            //
+            // Do this after resolving the base type for property access so cross-file
+            // enum/namespace objects (e.g. imported class statics initialized to enums)
+            // classify the same way as local ones.
+            if !skip_flow_narrowing
+                && !enum_instance_like_access
+                && !hidden_qualified_namespace_member
+                && let Some(member_type) =
+                    self.resolve_namespace_value_member(object_type_for_access, property_name)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
 
             if self.ctx.strict_bind_call_apply()
