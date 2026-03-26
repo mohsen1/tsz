@@ -68,6 +68,41 @@ impl<'a> CheckerState<'a> {
         trimmed.eq_ignore_ascii_case("function") || trimmed.eq_ignore_ascii_case("Function")
     }
 
+    pub(crate) fn resolve_jsdoc_implicit_any_builtin_type(
+        &mut self,
+        type_expr: &str,
+    ) -> Option<TypeId> {
+        let factory = self.ctx.types.factory();
+        match type_expr {
+            "Array" | "array" => Some(factory.array(TypeId::ANY)),
+            "Object" | "object" => Some(TypeId::OBJECT),
+            "Promise" => self.resolve_jsdoc_global_implicit_any_type("Promise"),
+            _ => None,
+        }
+    }
+
+    fn resolve_jsdoc_global_implicit_any_type(&mut self, name: &str) -> Option<TypeId> {
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self
+            .ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)?;
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if body_type == TypeId::ERROR || body_type == TypeId::UNKNOWN {
+            return None;
+        }
+        if type_params.is_empty() {
+            return Some(body_type);
+        }
+
+        Some(tsz_solver::instantiate_generic(
+            self.ctx.types,
+            body_type,
+            &type_params,
+            &vec![TypeId::ANY; type_params.len()],
+        ))
+    }
+
     fn strip_jsdoc_outer_parens(type_expr: &str) -> &str {
         let mut expr = type_expr.trim();
         loop {
@@ -274,13 +309,15 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             return Some(factory.literal_number(n));
         }
+        if let Some(ty) = self.resolve_jsdoc_implicit_any_builtin_type(type_expr) {
+            return Some(ty);
+        }
         let factory = self.ctx.types.factory();
         match type_expr {
             "string" | "String" => Some(TypeId::STRING),
             "number" | "Number" => Some(TypeId::NUMBER),
             "boolean" | "Boolean" => Some(TypeId::BOOLEAN),
             "bigint" | "BigInt" => Some(TypeId::BIGINT),
-            "object" => Some(TypeId::OBJECT),
             "any" | "*" => Some(TypeId::ANY),
             "unknown" => Some(TypeId::UNKNOWN),
             "undefined" | "Undefined" => Some(TypeId::UNDEFINED),
@@ -289,7 +326,6 @@ impl<'a> CheckerState<'a> {
             "never" => Some(TypeId::NEVER),
             "symbol" | "Symbol" => Some(TypeId::SYMBOL),
             "this" => Some(self.ctx.types.this_type()),
-            "Array" | "array" => Some(factory.array(TypeId::ANY)),
             _ => {
                 if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
                     return Some(*tp);

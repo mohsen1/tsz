@@ -913,6 +913,12 @@ impl<'a> CheckerState<'a> {
         if !Self::is_plain_jsdoc_type_name(type_expr) {
             return None;
         }
+        if self
+            .resolve_jsdoc_implicit_any_builtin_type(type_expr)
+            .is_some()
+        {
+            return None;
+        }
 
         let sym_id = self.ctx.binder.file_locals.get(type_expr)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;

@@ -3411,6 +3411,55 @@ var obj = {
 }
 
 #[test]
+fn test_jsdoc_bare_array_object_promise_types_stay_implicit_any() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "jsdocArrayObjectPromiseImplicitAny.js",
+        r#"
+/**
+ * @param {Array} arr
+ * @return {Array}
+ */
+function returnAnyArray(arr) {
+  return arr;
+}
+
+/**
+ * @param {Promise} pr
+ * @return {Promise}
+ */
+function returnAnyPromise(pr) {
+  return pr;
+}
+
+/**
+ * @param {Object} obj
+ * @return {Object}
+ */
+function returnAnyObject(obj) {
+  return obj;
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2314),
+        "Did not expect TS2314 for bare JSDoc Array/Object/Promise annotations. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.js",
