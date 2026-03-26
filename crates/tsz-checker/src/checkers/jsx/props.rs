@@ -303,15 +303,19 @@ impl<'a> CheckerState<'a> {
         if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
             && shape.is_method
         {
-            return self.ctx.types.factory().function(tsz_solver::FunctionShape {
-                type_params: shape.type_params.clone(),
-                params: shape.params.clone(),
-                this_type: None,
-                return_type: shape.return_type,
-                type_predicate: shape.type_predicate.clone(),
-                is_constructor: shape.is_constructor,
-                is_method: false,
-            });
+            return self
+                .ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape {
+                    type_params: shape.type_params.clone(),
+                    params: shape.params.clone(),
+                    this_type: None,
+                    return_type: shape.return_type,
+                    type_predicate: shape.type_predicate.clone(),
+                    is_constructor: shape.is_constructor,
+                    is_method: false,
+                });
         }
 
         type_id
@@ -1083,7 +1087,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         continue;
                     };
-                    let expected_type = self.normalize_jsx_function_context_type(expected_type);
+                let expected_type = self.normalize_jsx_function_context_type(expected_type);
 
                 // TS2783: Check if a later spread overwrites this attr (skip type check if so).
                 let overwritten = self.check_jsx_attr_overwritten_by_spread(
@@ -1105,8 +1109,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(value_node) = self.ctx.arena.get(value_node_idx)
                         && matches!(
                             value_node.kind,
-                            syntax_kind_ext::ARROW_FUNCTION
-                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
                         )
                     {
                         let has_function_context = tsz_solver::type_queries::get_function_shape(
@@ -1128,7 +1131,9 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .implicit_any_contextual_closures
                             .insert(value_node_idx);
-                        self.ctx.implicit_any_checked_closures.insert(value_node_idx);
+                        self.ctx
+                            .implicit_any_checked_closures
+                            .insert(value_node_idx);
                         self.invalidate_function_like_for_contextual_retry(value_node_idx);
                         function_value_span = Some((value_node.pos, value_node.end));
                     }
@@ -1142,8 +1147,7 @@ impl<'a> CheckerState<'a> {
                             expected_context_type
                         };
                     // Set contextual type to preserve narrow literal types.
-                    let diag_snap = function_value_span
-                        .map(|_| self.ctx.snapshot_diagnostics());
+                    let diag_snap = function_value_span.map(|_| self.ctx.snapshot_diagnostics());
                     let actual_type = self.compute_type_of_node_with_request(
                         value_node_idx,
                         &request

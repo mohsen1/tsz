@@ -1416,12 +1416,8 @@ impl<'a> CheckerState<'a> {
                 && props != TypeId::ERROR
             {
                 props
-            } else if let Some((props, _raw_has_type_params)) = self
-                .recover_jsx_component_props_type(
-                    jsx_opening.attributes,
-                    component_type,
-                    None,
-                )
+            } else if let Some((props, _raw_has_type_params)) =
+                self.recover_jsx_component_props_type(jsx_opening.attributes, component_type, None)
             {
                 self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props)
             } else if self.is_generic_jsx_component(resolved_component_type) {

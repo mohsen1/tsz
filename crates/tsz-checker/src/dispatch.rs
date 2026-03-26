@@ -1181,17 +1181,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             && let Some(expr_data) =
                                 self.checker.ctx.arena.get_jsx_expression(child_node)
                             && expr_data.expression.is_some()
-                            && self.checker.ctx.arena.get(expr_data.expression).is_some_and(|expr| {
-                                matches!(
-                                    expr.kind,
-                                    syntax_kind_ext::ARROW_FUNCTION
-                                        | syntax_kind_ext::FUNCTION_EXPRESSION
-                                )
-                            })
+                            && self
+                                .checker
+                                .ctx
+                                .arena
+                                .get(expr_data.expression)
+                                .is_some_and(|expr| {
+                                    matches!(
+                                        expr.kind,
+                                        syntax_kind_ext::ARROW_FUNCTION
+                                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    )
+                                })
                         {
-                            let has_function_context = children_request
-                                .contextual_type
-                                .is_some_and(|ctx_type| {
+                            let has_function_context =
+                                children_request.contextual_type.is_some_and(|ctx_type| {
                                     let ctx_type =
                                         self.checker.resolve_type_for_property_access(ctx_type);
                                     tsz_solver::type_queries::get_function_shape(

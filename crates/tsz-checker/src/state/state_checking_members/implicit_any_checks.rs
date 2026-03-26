@@ -326,7 +326,11 @@ impl<'a> CheckerState<'a> {
         let Some(function_idx) = function_idx else {
             return false;
         };
-        let Some(function_parent) = self.ctx.arena.get_extended(function_idx).map(|ext| ext.parent)
+        let Some(function_parent) = self
+            .ctx
+            .arena
+            .get_extended(function_idx)
+            .map(|ext| ext.parent)
         else {
             return false;
         };
@@ -337,7 +341,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(jsx_parent) = self.ctx.arena.get_extended(function_parent).map(|ext| ext.parent)
+        let Some(jsx_parent) = self
+            .ctx
+            .arena
+            .get_extended(function_parent)
+            .map(|ext| ext.parent)
         else {
             return false;
         };

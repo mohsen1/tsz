@@ -1560,9 +1560,7 @@ impl<'a> CheckerState<'a> {
                         && self.ctx.compiler_options.check_js
                         && let Some(jsdoc_type) = self
                             .enclosing_expression_statement(idx)
-                            .and_then(|stmt_idx| {
-                                self.js_statement_declared_type(stmt_idx)
-                            })
+                            .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                             .or_else(|| self.jsdoc_type_annotation_for_node_direct(idx))
                             .or_else(|| {
                                 self.jsdoc_type_annotation_for_node_direct(access.expression)
