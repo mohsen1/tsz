@@ -561,6 +561,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if !is_instantiated {
+                    if let Some(value_type) =
+                        self.non_js_cross_file_global_value_type_by_name(name)
+                    {
+                        return value_type;
+                    }
+                    if self.has_non_umd_global_value(name) {
+                        return self.get_type_of_symbol(sym_id);
+                    }
                     if self.is_direct_heritage_type_reference(idx) {
                         return TypeId::ERROR;
                     }
@@ -1629,39 +1637,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(crate) fn preferred_non_js_cross_file_global_value_type(
-        &mut self,
-        name: &str,
-        local_sym_id: SymbolId,
-    ) -> Option<TypeId> {
-        if self.ctx.binder.file_locals.get(name) != Some(local_sym_id) {
-            return None;
-        }
-
-        if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id) {
-            for &decl_idx in &symbol.declarations {
-                if !decl_idx.is_some() {
-                    continue;
-                }
-                let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
-                    continue;
-                };
-                if source_file.file_name == self.ctx.file_name
-                    || is_js_file_name(&source_file.file_name)
-                {
-                    continue;
-                }
-
-                let candidate_type = self.type_of_value_declaration(decl_idx);
-                if !matches!(
-                    candidate_type,
-                    TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
-                ) {
-                    return Some(candidate_type);
-                }
-            }
-        }
-
+    fn non_js_cross_file_global_value_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         let entries = self
             .ctx
             .global_file_locals_index
@@ -1692,7 +1668,10 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = binder.get_symbol(sym_id) else {
                 continue;
             };
-            if symbol.escaped_name != name || (symbol.flags & symbol_flags::VALUE) == 0 {
+            if symbol.escaped_name != name
+                || (symbol.flags & symbol_flags::VALUE) == 0
+                || symbol.is_umd_export
+            {
                 continue;
             }
 
@@ -1758,6 +1737,41 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    pub(crate) fn preferred_non_js_cross_file_global_value_type(
+        &mut self,
+        name: &str,
+        local_sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        if self.ctx.binder.file_locals.get(name) != Some(local_sym_id) {
+            return None;
+        }
+
+        if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id) {
+            for &decl_idx in &symbol.declarations {
+                if !decl_idx.is_some() {
+                    continue;
+                }
+                let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
+                    continue;
+                };
+                if source_file.file_name == self.ctx.file_name
+                    || is_js_file_name(&source_file.file_name)
+                {
+                    continue;
+                }
+
+                let candidate_type = self.type_of_value_declaration(decl_idx);
+                if !matches!(
+                    candidate_type,
+                    TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+                ) {
+                    return Some(candidate_type);
+                }
+            }
+        }
+        self.non_js_cross_file_global_value_type_by_name(name)
     }
 
     /// Returns `true` if `idx` is the name identifier inside an

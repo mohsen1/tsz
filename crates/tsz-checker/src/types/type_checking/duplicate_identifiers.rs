@@ -770,6 +770,7 @@ impl<'a> CheckerState<'a> {
             let mut conflicts = FxHashSet::default();
             let mut propagate_type_alias_conflict_to_namespaces = false;
             let mut namespace_order_errors = FxHashSet::default();
+            let mut has_umd_global_value_conflict = false;
 
             for i in 0..declarations.len() {
                 for j in (i + 1)..declarations.len() {
@@ -881,6 +882,26 @@ impl<'a> CheckerState<'a> {
                     let both_enums = (decl_flags & symbol_flags::ENUM) != 0
                         && (other_flags & symbol_flags::ENUM) != 0;
                     if both_enums {
+                        continue;
+                    }
+
+                    let is_umd_global_value_conflict = decl_is_local
+                        && other_is_local
+                        && ((self.is_namespace_export_declaration_name_in_current_file(decl_idx)
+                            && self.is_block_scoped_global_augmentation_value_decl_in_current_file(
+                                other_idx,
+                                other_flags,
+                            ))
+                            || (self.is_namespace_export_declaration_name_in_current_file(
+                                other_idx,
+                            ) && self
+                                .is_block_scoped_global_augmentation_value_decl_in_current_file(
+                                    decl_idx, decl_flags,
+                                )));
+                    if is_umd_global_value_conflict {
+                        has_umd_global_value_conflict = true;
+                        conflicts.insert(decl_idx);
+                        conflicts.insert(other_idx);
                         continue;
                     }
 
@@ -1172,7 +1193,7 @@ impl<'a> CheckerState<'a> {
             // TS2323: Check exported variable conflict using symbol.is_exported
             let has_exported_variable_conflict = symbol.is_exported && has_variable_conflict;
 
-            let (message, code) = if !has_non_block_scoped {
+            let (message, code) = if !has_non_block_scoped || has_umd_global_value_conflict {
                 (
                     format_message(
                         diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,

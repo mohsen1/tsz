@@ -9,6 +9,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn find_visible_outer_declarations_for_block_function(
@@ -234,6 +235,73 @@ impl<'a> CheckerState<'a> {
         }
 
         declarations
+    }
+
+    pub(super) fn is_namespace_export_declaration_name_in_current_file(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
+            return true;
+        }
+        let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+            return false;
+        };
+        if !ext.parent.is_some() {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get(ext.parent)
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION)
+    }
+
+    pub(super) fn is_block_scoped_global_augmentation_value_decl_in_current_file(
+        &self,
+        decl_idx: NodeIndex,
+        flags: u32,
+    ) -> bool {
+        use tsz_parser::parser::node_flags;
+
+        if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+            || (flags & symbol_flags::VALUE) == 0
+        {
+            return false;
+        }
+
+        let mut current = decl_idx;
+        for _ in 0..32 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if !ext.parent.is_some() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::MODULE_DECLARATION {
+                let is_global_augmentation =
+                    (u32::from(parent.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
+                        || self
+                            .ctx
+                            .arena
+                            .get_module(parent)
+                            .and_then(|module| self.ctx.arena.get(module.name))
+                            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                            .is_some_and(|ident| ident.escaped_text == "global");
+                if is_global_augmentation {
+                    return true;
+                }
+            }
+            current = parent_idx;
+        }
+
+        false
     }
 
     fn top_level_script_declarations_in_arena(
