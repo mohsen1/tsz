@@ -185,9 +185,10 @@ fn tslib_exists_on_filesystem(base_dir: &Path) -> bool {
 }
 
 fn program_appears_filesystem_backed(program: &MergedProgram) -> bool {
-    program.files.iter().any(|file| {
-        !file.file_name.ends_with(".d.ts") && Path::new(&file.file_name).exists()
-    })
+    program
+        .files
+        .iter()
+        .any(|file| !file.file_name.ends_with(".d.ts") && Path::new(&file.file_name).exists())
 }
 
 pub(super) fn required_helpers(
@@ -1497,10 +1498,11 @@ mod tests {
     #[test]
     fn default_reexport_requires_import_default_helper_when_interop_enabled() {
         let file = bound_file("export { default } from \"./a\";");
-        let helpers: Vec<_> = required_helpers(&file, tsz_common::ScriptTarget::ES2017, true, false)
-            .into_iter()
-            .map(|(name, _, _)| name)
-            .collect();
+        let helpers: Vec<_> =
+            required_helpers(&file, tsz_common::ScriptTarget::ES2017, true, false)
+                .into_iter()
+                .map(|(name, _, _)| name)
+                .collect();
         assert_eq!(helpers, vec!["__importDefault"]);
     }
 
