@@ -1279,6 +1279,61 @@ impl<'a> CheckerState<'a> {
             .get_binder_for_file(file_idx as usize)
             .unwrap_or(self.ctx.binder);
 
+        let mut namespace_names = Vec::new();
+        let mut root_namespace_sym = SymbolId::NONE;
+        let mut parent_sym_id = symbol.parent;
+        while !parent_sym_id.is_none() {
+            let Some(parent_symbol) = self.get_symbol_from_any_binder(parent_sym_id) else {
+                break;
+            };
+            if (parent_symbol.flags
+                & (tsz_binder::symbol_flags::VALUE_MODULE
+                    | tsz_binder::symbol_flags::NAMESPACE_MODULE))
+                == 0
+            {
+                break;
+            }
+            namespace_names.push(parent_symbol.escaped_name.clone());
+            root_namespace_sym = parent_sym_id;
+            parent_sym_id = parent_symbol.parent;
+        }
+        if !namespace_names.is_empty() {
+            namespace_names.reverse();
+            return Some((namespace_names.join("."), root_namespace_sym, file_idx));
+        }
+
+        let matches_symbol = |candidate_sym_id: SymbolId| {
+            if candidate_sym_id == sym_id {
+                return true;
+            }
+            let Some(candidate_symbol) = owner_binder.get_symbol(candidate_sym_id) else {
+                return false;
+            };
+            candidate_symbol.escaped_name == symbol.escaped_name
+                && (candidate_symbol.value_declaration_span == symbol.value_declaration_span
+                    || candidate_symbol.first_declaration_span == symbol.first_declaration_span)
+        };
+
+        for candidate in owner_binder.symbols.iter() {
+            if (candidate.flags
+                & (tsz_binder::symbol_flags::VALUE_MODULE
+                    | tsz_binder::symbol_flags::NAMESPACE_MODULE))
+                == 0
+            {
+                continue;
+            }
+            let Some(exports) = candidate.exports.as_ref() else {
+                continue;
+            };
+            if !exports
+                .iter()
+                .any(|(_, exported_sym_id)| matches_symbol(*exported_sym_id))
+            {
+                continue;
+            }
+            return Some((candidate.escaped_name.clone(), candidate.id, file_idx));
+        }
+
         let mut decl_candidates = symbol.declarations.clone();
         if symbol.value_declaration.is_some()
             && !decl_candidates.contains(&symbol.value_declaration)
@@ -1303,9 +1358,30 @@ impl<'a> CheckerState<'a> {
             }
 
             for arena in candidate_arenas {
-                let Some(node) = arena.get(decl_idx) else {
+                let mut variable_decl_idx = decl_idx;
+                let Some(mut node) = arena.get(variable_decl_idx) else {
                     continue;
                 };
+
+                if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                    let mut parent = arena
+                        .get_extended(variable_decl_idx)
+                        .map_or(NodeIndex::NONE, |info| info.parent);
+                    while !parent.is_none() {
+                        let Some(parent_node) = arena.get(parent) else {
+                            break;
+                        };
+                        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                            variable_decl_idx = parent;
+                            node = parent_node;
+                            break;
+                        }
+                        parent = arena
+                            .get_extended(parent)
+                            .map_or(NodeIndex::NONE, |info| info.parent);
+                    }
+                }
+
                 if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
                     continue;
                 }
@@ -1313,7 +1389,7 @@ impl<'a> CheckerState<'a> {
                 let mut namespace_names = Vec::new();
                 let mut namespace_nodes = Vec::new();
                 let mut parent = arena
-                    .get_extended(decl_idx)
+                    .get_extended(variable_decl_idx)
                     .map_or(NodeIndex::NONE, |info| info.parent);
                 while !parent.is_none() {
                     let Some(parent_node) = arena.get(parent) else {
