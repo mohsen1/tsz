@@ -167,7 +167,7 @@ impl<'a> CheckerState<'a> {
             let Some(root_nodes) = root_exports.get(&name) else {
                 continue;
             };
-            let message = format!("Cannot redeclare exported variable '{}'.", name);
+            let message = format!("Cannot redeclare exported variable '{name}'.");
             let mut seen = FxHashSet::default();
             for &node in export_nodes.iter().chain(root_nodes.iter()) {
                 if seen.insert(node) {

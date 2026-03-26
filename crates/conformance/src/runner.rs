@@ -793,7 +793,7 @@ impl Runner {
                                 } else {
                                     Duration::ZERO
                                 };
-                                match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
+                                match pool.compile(&prepared.project_dir, timeout_dur).await? {
                                     BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                         &output,
                                         prepared.temp_dir.path(),
@@ -812,11 +812,11 @@ impl Runner {
                                 // relative to project root (matching cache generator behavior)
                                 let child = tokio::process::Command::new(&tsz_binary)
                                     .arg("--project")
-                                    .arg(prepared.temp_dir.path())
+                                    .arg(&prepared.project_dir)
                                     .arg("--noEmit")
                                     .arg("--pretty")
                                     .arg("false")
-                                    .current_dir(prepared.temp_dir.path())
+                                    .current_dir(&prepared.project_dir)
                                     .stdout(std::process::Stdio::piped())
                                     .stderr(std::process::Stdio::piped())
                                     .kill_on_drop(true)
@@ -1097,7 +1097,7 @@ impl Runner {
                         } else {
                             Duration::ZERO
                         };
-                        match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
+                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
                             BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                 &output,
                                 prepared.temp_dir.path(),
@@ -1113,11 +1113,11 @@ impl Runner {
                     } else {
                         let child = tokio::process::Command::new(&tsz_binary)
                             .arg("--project")
-                            .arg(prepared.temp_dir.path())
+                            .arg(&prepared.project_dir)
                             .arg("--noEmit")
                             .arg("--pretty")
                             .arg("false")
-                            .current_dir(prepared.temp_dir.path())
+                            .current_dir(&prepared.project_dir)
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
                             .kill_on_drop(true)
@@ -1260,7 +1260,7 @@ impl Runner {
                         } else {
                             Duration::ZERO
                         };
-                        match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
+                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
                             BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                 &output,
                                 prepared.temp_dir.path(),
@@ -1276,11 +1276,11 @@ impl Runner {
                     } else {
                         let child = tokio::process::Command::new(&tsz_binary)
                             .arg("--project")
-                            .arg(prepared.temp_dir.path())
+                            .arg(&prepared.project_dir)
                             .arg("--noEmit")
                             .arg("--pretty")
                             .arg("false")
-                            .current_dir(prepared.temp_dir.path())
+                            .current_dir(&prepared.project_dir)
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
                             .kill_on_drop(true)

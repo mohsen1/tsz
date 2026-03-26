@@ -234,7 +234,13 @@ mod tests {
         let mut directives = HashMap::new();
         directives.insert("unknownoption".to_string(), "foo".to_string());
         let opts = directives_to_check_options(&directives);
-        assert!(opts.as_object().unwrap().is_empty());
+        let map = opts.as_object().unwrap();
+        assert!(!map.contains_key("unknownoption"));
+        assert_eq!(
+            map.get("strictPropertyInitialization"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(map.get("strictNullChecks"), Some(&Value::Bool(true)));
     }
 
     #[test]

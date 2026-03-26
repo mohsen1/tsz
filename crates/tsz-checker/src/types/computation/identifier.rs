@@ -433,6 +433,7 @@ impl<'a> CheckerState<'a> {
                 && !self.ctx.compiler_options.allow_umd_global_access
                 && (flags & symbol_flags::VALUE) == 0
                 && !self.is_namespace_export_declaration_name(idx)
+                && !self.is_export_assignment_expression_name(idx)
                 && !self.has_non_umd_global_value(name)
             {
                 use crate::diagnostics::diagnostic_codes;
@@ -1781,6 +1782,21 @@ impl<'a> CheckerState<'a> {
             && let Some(parent) = self.ctx.arena.get(ext.parent)
         {
             return parent.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
+        }
+        false
+    }
+
+    /// Returns `true` if `idx` is the expression identifier inside an
+    /// `export = X` assignment. That reference is part of the UMD definition
+    /// site and should not be treated as a module-side UMD global usage.
+    fn is_export_assignment_expression_name(&self, idx: NodeIndex) -> bool {
+        if let Some(ext) = self.ctx.arena.get_extended(idx)
+            && ext.parent.is_some()
+            && let Some(parent) = self.ctx.arena.get(ext.parent)
+            && parent.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            && let Some(assign) = self.ctx.arena.get_export_assignment(parent)
+        {
+            return assign.expression == idx;
         }
         false
     }

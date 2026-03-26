@@ -404,12 +404,8 @@ impl<'a> CheckerState<'a> {
             None
         }
 
-        let Some(read_node) = self.ctx.arena.get(property_access_idx) else {
-            return None;
-        };
-        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
-            return None;
-        };
+        let read_node = self.ctx.arena.get(property_access_idx)?;
+        let obj_key = property_access_chain(self.ctx.arena, object_expr_idx)?;
         let expected_key = format!("{obj_key}.{property_name}");
         let source_file = self.ctx.arena.source_files.get(self.ctx.current_file_idx)?;
         let mut best_match: Option<(u32, TypeId)> = None;

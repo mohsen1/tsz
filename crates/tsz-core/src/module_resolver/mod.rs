@@ -176,6 +176,23 @@ impl ModuleResolver {
         specifier_span: Span,
         import_kind: ImportKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
+        self.resolve_with_kind_and_module_kind(
+            specifier,
+            containing_file,
+            specifier_span,
+            import_kind,
+            None,
+        )
+    }
+
+    fn resolve_with_kind_and_module_kind(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+        import_kind: ImportKind,
+        importing_module_kind_override: Option<ImportingModuleKind>,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
         let containing_dir = containing_file
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -189,8 +206,10 @@ impl ModuleResolver {
             _ => None,
         };
 
-        // Determine the module kind of the importing file
-        let importing_module_kind = self.get_importing_module_kind(containing_file);
+        // Determine the module kind of the importing file, honoring any explicit
+        // driver-provided resolution-mode override from import attributes.
+        let importing_module_kind = importing_module_kind_override
+            .unwrap_or_else(|| self.get_importing_module_kind(containing_file));
         let cache_key = (
             containing_dir.clone(),
             specifier.to_string(),
@@ -453,7 +472,13 @@ impl ModuleResolver {
         let import_kind = request.import_kind;
 
         // 1. Try primary resolution
-        match self.resolve_with_kind(specifier, containing_file, span, import_kind) {
+        match self.resolve_with_kind_and_module_kind(
+            specifier,
+            containing_file,
+            span,
+            import_kind,
+            request.resolution_mode_override,
+        ) {
             Ok(resolved_module) => ModuleLookupResult::resolved(resolved_module.resolved_path),
             Err(failure) => {
                 // JsxNotEnabled: file exists but --jsx is not set.

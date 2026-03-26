@@ -1181,6 +1181,7 @@ impl ParserState {
         result
     }
 
+    #[allow(dead_code)]
     pub(crate) fn look_ahead_is_await_using(&mut self) -> bool {
         look_ahead_is(&mut self.scanner, self.current_token, |token| {
             token == SyntaxKind::UsingKeyword
