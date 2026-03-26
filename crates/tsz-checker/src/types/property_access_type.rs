@@ -1857,14 +1857,14 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 self.error_property_not_exist_at(
                                     property_name,
-                                    display_object_type,
+                                    missing_property_display_type,
                                     access.name_or_argument,
                                 );
                             }
                         } else {
                             self.error_property_not_exist_at(
                                 property_name,
-                                display_object_type,
+                                missing_property_display_type,
                                 access.name_or_argument,
                             );
                         }
