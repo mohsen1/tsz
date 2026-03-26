@@ -3419,6 +3419,12 @@ fn test_jsdoc_bare_array_object_promise_types_stay_implicit_any() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "jsdocArrayObjectPromiseImplicitAny.js",
         r#"
+/** @type {Array} */
+var anyArray = [5];
+
+/** @type {Array<number>} */
+var numberArray = [5];
+
 /**
  * @param {Array} arr
  * @return {Array}
@@ -3427,6 +3433,12 @@ function returnAnyArray(arr) {
   return arr;
 }
 
+/** @type {Promise} */
+var anyPromise = Promise.resolve(5);
+
+/** @type {Promise<number>} */
+var numberPromise = Promise.resolve(5);
+
 /**
  * @param {Promise} pr
  * @return {Promise}
@@ -3434,6 +3446,12 @@ function returnAnyArray(arr) {
 function returnAnyPromise(pr) {
   return pr;
 }
+
+/** @type {Object} */
+var anyObject = {valueOf: 1};
+
+/** @type {Object<string, number>} */
+var paramedObject = {valueOf: 1};
 
 /**
  * @param {Object} obj
