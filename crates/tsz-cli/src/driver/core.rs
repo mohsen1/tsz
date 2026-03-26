@@ -1124,6 +1124,18 @@ fn compile_inner(
     }
 
     let root_file_paths = file_paths.clone();
+    let source_directive_no_types_and_symbols = if resolved.checker.no_types_and_symbols {
+        true
+    } else {
+        file_paths.iter().any(|path| match read_source_file(path) {
+            FileReadResult::Text(text) => sources::has_no_types_and_symbols_directive(&text),
+            FileReadResult::Binary { text, .. } => {
+                sources::has_no_types_and_symbols_directive(&text)
+            }
+            FileReadResult::Error(_) => false,
+        })
+    };
+    resolved.checker.no_types_and_symbols = source_directive_no_types_and_symbols;
 
     let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
 
@@ -1277,12 +1289,8 @@ fn compile_inner(
     let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
-    // `@noTypesAndSymbols` in source comments is a conformance-harness directive.
-    // It should not change CLI semantic compilation behavior (tsc ignores it when
-    // compiling files directly), so keep detection for harness plumbing only.
-    let _no_types_and_symbols =
+    resolved.checker.no_types_and_symbols =
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
-    resolved.checker.no_types_and_symbols = _no_types_and_symbols;
     let lib_paths =
         resolve_effective_lib_paths(&resolved, &sources, &base_dir, disable_default_libs)?;
     let typescript_dom_replacement_globals = scan_typescript_dom_replacement_globals(&lib_paths);

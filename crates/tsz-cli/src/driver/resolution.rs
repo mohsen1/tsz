@@ -1619,7 +1619,7 @@ fn resolve_node_module_specifier(
 
         // 2. Look for @types package (if not already looking for one)
         // TypeScript looks up @types/foo for 'foo', and @types/scope__pkg for '@scope/pkg'
-        if !package_name.starts_with("@types/") {
+        if !options.checker.no_types_and_symbols && !package_name.starts_with("@types/") {
             let types_package_name = if let Some(scope_pkg) = package_name.strip_prefix('@') {
                 // Scoped package: @scope/pkg -> @types/scope__pkg
                 // Skip the '@' (1 char) and replace '/' with '__'
@@ -1657,7 +1657,7 @@ fn resolve_node_module_specifier(
     // treats bare imports from that package as resolved. Mirror that here by
     // consulting the configured type roots for package entrypoints after the
     // normal node_modules walk-up fails.
-    if subpath.is_none() {
+    if !options.checker.no_types_and_symbols && subpath.is_none() {
         let type_roots = options
             .type_roots
             .clone()
