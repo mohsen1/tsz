@@ -1746,6 +1746,32 @@ impl ParserState {
                     break;
                 }
 
+                // `var x = 2.toString();` leaves `toString` in the token stream after the
+                // scanner reports TS1351 on the identifier. tsc recovers by treating that
+                // identifier as the malformed start of a second declaration, which shifts
+                // the follow-up diagnostics onto the call tail: TS1005 at `(` and TS1109
+                // at `)`. Mirror that recovery shape here instead of emitting a stray
+                // comma error at the identifier itself.
+                if self.current_token_has_numeric_literal_follow_error() {
+                    self.next_token();
+
+                    if self.is_token(SyntaxKind::OpenParenToken) {
+                        self.error_comma_expected();
+                        self.next_token();
+
+                        if self.is_token(SyntaxKind::CloseParenToken) {
+                            let saved_error_pos = self.last_error_pos;
+                            self.last_error_pos = 0;
+                            self.error_expression_expected();
+                            if self.last_error_pos == 0 {
+                                self.last_error_pos = saved_error_pos;
+                            }
+                            self.next_token();
+                        }
+                    }
+                    break;
+                }
+
                 // No ASI - emit ',' expected for the unexpected token and stop.
                 // We break instead of continuing to avoid cascading TS1134 errors
                 // when the recovery eats into what tsc treats as a separate statement.
