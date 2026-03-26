@@ -251,6 +251,10 @@ impl<'a> CheckerState<'a> {
         {
             let mut visited = Vec::new();
             let alias_result = self.resolve_alias_symbol(sym_id, &mut visited);
+            let is_default_import_alias = self
+                .get_cross_file_symbol(sym_id)
+                .and_then(|symbol| symbol.import_name.as_deref())
+                == Some("default");
             if let Some(target_sym_id) = alias_result
                 && target_sym_id != sym_id
             {
@@ -291,10 +295,25 @@ impl<'a> CheckerState<'a> {
 
             // Fallback: resolve_alias_symbol may fail for cross-file default imports
             // when the relative module specifier doesn't match the binder's module_exports
-            // keys. Use the cross-file resolution infrastructure to find the target
-            // default export and check for type meaning (e.g., `export default C.B`
-            // where B is both a static property and an interface).
-            if alias_result.is_none() || alias_result == Some(sym_id) {
+            // keys. Also retry for default imports when local alias resolution lands
+            // on a runtime-only target symbol so we can still inspect the synthetic
+            // default export's type meaning (e.g., `export default C.B` where B is
+            // both a static property and an interface).
+            let should_try_cross_file_default = alias_result.is_none()
+                || alias_result == Some(sym_id)
+                || (is_default_import_alias
+                    && alias_result.is_some_and(|target_sym_id| {
+                        let target_flags = self
+                            .get_cross_file_symbol(target_sym_id)
+                            .map(|s| s.flags)
+                            .unwrap_or(0);
+                        target_flags
+                            & (symbol_flags::CLASS
+                                | symbol_flags::INTERFACE
+                                | symbol_flags::EXPORT_VALUE)
+                            == 0
+                    }));
+            if should_try_cross_file_default {
                 let cross_file_result = self.resolve_import_alias_cross_file(sym_id);
                 if let Some(target_sym_id) = cross_file_result {
                     let target_flags = self
@@ -387,15 +406,74 @@ impl<'a> CheckerState<'a> {
         let base_sym_id = source_binder.file_locals.get(base_name)?;
         let base_symbol = source_binder.get_symbol_with_libs(base_sym_id, &lib_binders)?;
 
-        // Look for a TYPE-flagged member in the base's exports.
-        let exports = base_symbol.exports.as_ref()?;
-        let member_sym_id = exports.get(member_name)?;
-        let member_symbol = source_binder.get_symbol_with_libs(member_sym_id, &lib_binders)?;
+        let symbol_named_member =
+            |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<SymbolId> {
+                if let Some(exports) = symbol.exports.as_ref()
+                    && let Some(sym_id) = exports.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+                if let Some(members) = symbol.members.as_ref()
+                    && let Some(sym_id) = members.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+                None
+            };
+
+        let mut member_sym_id = symbol_named_member(base_symbol, member_name)?;
+        let mut member_symbol = source_binder.get_symbol_with_libs(member_sym_id, &lib_binders)?;
         if member_symbol.flags
             & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
             == 0
         {
-            return None;
+            // Namespace-merge fallback: for `export default C.B`, the merged class symbol
+            // can surface the static VALUE member (`C.B: number`) first, while the type
+            // meaning lives on the split namespace symbol (`namespace C { export interface B }`).
+            // Mirror the `export =` namespace-merge fallback and search sibling symbols
+            // with the same base name for a TYPE-meaning member.
+            for &candidate_sym_id in source_binder.get_symbols().find_all_by_name(base_name) {
+                if candidate_sym_id == base_sym_id {
+                    continue;
+                }
+                let Some(candidate_symbol) =
+                    source_binder.get_symbol_with_libs(candidate_sym_id, &lib_binders)
+                else {
+                    continue;
+                };
+                if (candidate_symbol.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE))
+                    == 0
+                {
+                    continue;
+                }
+                let Some(candidate_member_id) = symbol_named_member(candidate_symbol, member_name)
+                else {
+                    continue;
+                };
+                let Some(candidate_member_symbol) =
+                    source_binder.get_symbol_with_libs(candidate_member_id, &lib_binders)
+                else {
+                    continue;
+                };
+                if candidate_member_symbol.flags
+                    & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
+                    == 0
+                {
+                    continue;
+                }
+                member_sym_id = candidate_member_id;
+                member_symbol = candidate_member_symbol;
+                break;
+            }
+            if member_symbol.flags
+                & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
+                == 0
+            {
+                return None;
+            }
         }
 
         // Record cross-file symbol tracking if necessary.
