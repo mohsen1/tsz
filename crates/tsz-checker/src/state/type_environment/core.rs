@@ -1159,7 +1159,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
-        if let Some(cached) = self.ctx.get_def_type_params(def_id) {
+        // Use only the local def_type_params cache, NOT get_def_type_params which
+        // falls through to the DefinitionStore. The DefinitionStore may contain
+        // pre-populated placeholder params (from from_semantic_defs) that have
+        // constraint: None even when the actual type parameter declarations have
+        // constraints. The local cache is only populated after full AST-based
+        // resolution via insert_def_type_params, so it always has correct constraints.
+        if let Some(cached) = self.ctx.def_type_params.borrow().get(&def_id).cloned() {
             self.ctx.leave_recursion();
             return cached;
         }
