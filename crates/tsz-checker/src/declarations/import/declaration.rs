@@ -815,12 +815,16 @@ impl<'a> CheckerState<'a> {
                         // imports a .js ESM target — only when the target is .mjs/.mts
                         // (unambiguously ESM). However, .cjs files are unambiguously CJS,
                         // so they DO get TS1479 when importing .js ESM targets.
-                        let target_ext_is_esm =
-                            file_name.ends_with(".mjs") || file_name.ends_with(".mts");
+                        // JSON files are data, not modules — they can always be
+                        // require()'d and never count as ESM for TS1479.
+                        let target_is_json = file_name.ends_with(".json");
+                        let target_ext_is_esm = !target_is_json
+                            && (file_name.ends_with(".mjs") || file_name.ends_with(".mts"));
                         // Skip file_is_esm_map check only for ambiguous JS sources (.js/.jsx).
                         // .cjs is unambiguously CJS, so it should check file_is_esm_map
                         // to detect .js targets that are ESM via package.json "type".
-                        let skip_esm_map = self.ctx.file_name.ends_with(".js")
+                        let skip_esm_map = target_is_json
+                            || self.ctx.file_name.ends_with(".js")
                             || self.ctx.file_name.ends_with(".jsx")
                             || self.ctx.file_name.ends_with(".mjs");
                         let target_is_esm = target_ext_is_esm
@@ -872,15 +876,16 @@ impl<'a> CheckerState<'a> {
                         }
                     };
 
-                    // TSC suppresses TS1479 for .cjs files with relative imports.
-                    // .cjs files are always CJS, but TS1479 only applies for non-relative
+                    // TSC suppresses TS1479 for .cjs/.cts files with relative imports.
+                    // These explicitly-CJS files only get TS1479 for non-relative
                     // (package) imports where Node's runtime resolution would fail loading
                     // an ESM module via require(). Relative imports within the project are
                     // handled by tsc's output processing, not Node's runtime loader.
-                    let is_cjs_file = self.ctx.file_name.ends_with(".cjs");
+                    let is_explicit_cjs_file = self.ctx.file_name.ends_with(".cjs")
+                        || self.ctx.file_name.ends_with(".cts");
                     let is_relative_import =
                         module_name.starts_with("./") || module_name.starts_with("../");
-                    let suppress_for_cjs_relative = is_cjs_file && is_relative_import;
+                    let suppress_for_cjs_relative = is_explicit_cjs_file && is_relative_import;
 
                     // TS1479 only applies under Node16/NodeNext module kinds where
                     // CJS/ESM interop boundaries exist at runtime. Bundler resolution

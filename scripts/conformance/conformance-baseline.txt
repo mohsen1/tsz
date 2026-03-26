@@ -891,6 +891,7 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule5.ts | expected:
 FAIL TypeScript/tests/cases/conformance/jsdoc/typedefDuplicateTypeDeclaration.ts | expected:[TS8033] actual:[TS8033]
 FAIL TypeScript/tests/cases/conformance/jsdoc/typedefScope1.ts | expected:[TS2304] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/jsdoc/typedefTagNested.ts | expected:[] actual:[TS2322]
+FAIL TypeScript/tests/cases/conformance/jsdoc/typedefTagWrapping.ts | expected:[TS1110] actual:[TS1110]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenCanBeTupleType.tsx | expected:[TS2769] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty5.tsx | expected:[TS2740,TS2741] actual:[TS2740,TS2741]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxGenericTagHasCorrectInferences.tsx | expected:[TS2322] actual:[]
@@ -966,24 +967,20 @@ FAIL TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_noI
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsPackagePatternExports.ts | expected:[] actual:[TS1479]
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsPackagePatternExportsExclude.ts | expected:[TS2307] actual:[TS2307]
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsPackagePatternExportsTrailers.ts | expected:[] actual:[TS1479]
-FAIL TypeScript/tests/cases/conformance/node/esmModuleExports1.ts | expected:[TS18003] actual:[TS1479,TS2351,TS2614]
-FAIL TypeScript/tests/cases/conformance/node/esmModuleExports2.ts | expected:[TS5024,TS18003] actual:[TS1479,TS2351,TS2614,TS5024]
-FAIL TypeScript/tests/cases/conformance/node/esmModuleExports3.ts | expected:[TS18003] actual:[TS1479,TS2351,TS2614]
+FAIL TypeScript/tests/cases/conformance/node/esmModuleExports1.ts | expected:[TS18003] actual:[TS2351,TS2614]
+FAIL TypeScript/tests/cases/conformance/node/esmModuleExports2.ts | expected:[TS5024,TS18003] actual:[TS2351,TS2614,TS5024]
+FAIL TypeScript/tests/cases/conformance/node/esmModuleExports3.ts | expected:[TS18003] actual:[TS2351,TS2614]
 FAIL TypeScript/tests/cases/conformance/node/legacyNodeModulesExportsSpecifierGenerationConditions.ts | expected:[TS2883] actual:[TS2883]
-FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts | expected:[TS1471,TS1479,TS2307,TS2834,TS2835] actual:[TS1479,TS2835]
+FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts | expected:[TS1471,TS1479,TS2307,TS2834,TS2835] actual:[TS2835]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSEmit1.ts | expected:[TS18003] actual:[TS2882]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM1_emptyPackageJson.ts | expected:[TS1479] actual:[TS1479]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM2_cjsPackageJson.ts | expected:[TS1479] actual:[TS1479]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM3_modulePackageJson.ts | expected:[] actual:[TS1479]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM4_noPackageJson.ts | expected:[TS1479] actual:[TS1479]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesConditionalPackageExports.ts | expected:[TS1479,TS2307,TS2835] actual:[TS1479]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesDeclarationEmitWithPackageExports.ts | expected:[TS1036,TS1479,TS2307,TS2835] actual:[TS1036,TS1479]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsBlocksSpecifierResolution.ts | expected:[TS2307] actual:[TS2307,TS2883]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsBlocksTypesVersions.ts | expected:[TS18003] actual:[TS2307]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsDoubleAsterisk.ts | expected:[TS18003] actual:[]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSourceTs.ts | expected:[TS2307,TS2835] actual:[TS2307,TS2883]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAssertions.ts | expected:[TS2823] actual:[TS1479,TS2823]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributes.ts | expected:[TS2823] actual:[TS1479,TS2823]
+FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAssertions.ts | expected:[TS2823] actual:[TS2823]
+FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributes.ts | expected:[TS2823] actual:[TS2823]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmit1.ts | expected:[TS2305,TS2823] actual:[TS2305,TS2823]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmit2.ts | expected:[TS2305,TS2823] actual:[TS2305,TS2823]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmitErrors.ts | expected:[TS1453,TS2305,TS2823] actual:[TS2305,TS2823]
@@ -1002,7 +999,7 @@ FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackageImportsRootWildca
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackagePatternExports.ts | expected:[] actual:[TS1479]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackagePatternExportsExclude.ts | expected:[TS2307] actual:[TS1479,TS2307]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackagePatternExportsTrailers.ts | expected:[] actual:[TS1479]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesResolveJsonModule.ts | expected:[TS2823] actual:[TS1479,TS2395,TS2451,TS2823]
+FAIL TypeScript/tests/cases/conformance/node/nodeModulesResolveJsonModule.ts | expected:[TS2823] actual:[TS2395,TS2451,TS2823]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesSynchronousCallErrors.ts | expected:[TS1471,TS1479] actual:[TS1479]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit7.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/node/nodePackageSelfName.ts | expected:[TS2835] actual:[TS1479]
@@ -10304,7 +10301,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/typedefOnSemicolonClassElement.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefOnStatements.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefTagExtraneousProperty.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/typedefTagTypeResolution.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/typedefTagWrapping.ts
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty10.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty11.tsx
@@ -10511,6 +10507,10 @@ PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsPackageEx
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsPackageImports.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsSynchronousCallErrors.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsTopLevelAwait.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM1_emptyPackageJson.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM2_cjsPackageJson.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM3_modulePackageJson.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM4_noPackageJson.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesCjsFormatFileAlwaysHasDefault.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesDeclarationEmitDynamicImportWithPackageExports.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesDynamicImport.ts
@@ -11345,7 +11345,6 @@ PASS TypeScript/tests/cases/conformance/salsa/circularMultipleAssignmentDeclarat
 PASS TypeScript/tests/cases/conformance/salsa/commonJSAliasedExport.ts
 PASS TypeScript/tests/cases/conformance/salsa/commonJSImportClassTypeReference.ts
 PASS TypeScript/tests/cases/conformance/salsa/commonJSImportExportedClassExpression.ts
-PASS TypeScript/tests/cases/conformance/salsa/commonJSImportNestedClassTypeReference.ts
 PASS TypeScript/tests/cases/conformance/salsa/commonJSReexport.ts
 PASS TypeScript/tests/cases/conformance/salsa/conflictingCommonJSES2015Exports.ts
 PASS TypeScript/tests/cases/conformance/salsa/constructorFunctionMethodTypeParameters.ts
