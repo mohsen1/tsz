@@ -424,6 +424,57 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn has_cross_file_script_value_named(&self, name: &str) -> bool {
+        if let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+        {
+            for &(file_idx, sym_id) in entries {
+                if file_idx == self.ctx.current_file_idx {
+                    continue;
+                }
+                let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                    continue;
+                };
+                if binder.is_external_module() {
+                    continue;
+                }
+                if let Some(symbol) = binder
+                    .get_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        self.ctx
+            .all_binders
+            .as_ref()
+            .is_some_and(|all_binders| {
+                all_binders.iter().enumerate().any(|(file_idx, binder)| {
+                    if file_idx == self.ctx.current_file_idx || binder.is_external_module() {
+                        return false;
+                    }
+                    binder
+                        .file_locals
+                        .get(name)
+                        .and_then(|sym_id| {
+                            binder
+                                .get_symbol(sym_id)
+                                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                        })
+                        .is_some_and(|symbol| {
+                            (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                        })
+                })
+            })
+    }
+
     fn enclosing_instance_property_initializer_of_node(
         &self,
         node_idx: NodeIndex,
@@ -688,11 +739,11 @@ impl<'a> CheckerState<'a> {
                 .resolve_identifier(self.ctx.arena, ident_idx)
             {
                 if self.symbol_is_constructor_parameter_of_current_class(sym_id) {
-                    let is_parameter_property =
-                        self.symbol_is_parameter_property_of_current_class(sym_id);
-                    let error_code = if is_parameter_property
+                    let should_prefer_instance_member = self
+                        .symbol_is_parameter_property_of_current_class(sym_id)
                         && self.ctx.binder.is_external_module()
-                    {
+                        && !self.has_cross_file_script_value_named(&name);
+                    let error_code = if should_prefer_instance_member {
                         diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
                     } else {
                         diagnostic_codes::INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN
@@ -743,9 +794,11 @@ impl<'a> CheckerState<'a> {
                     &[member_name, &name],
                 );
             } else {
-                let is_parameter_property = self.current_class_has_parameter_property_named(&name)
-                    && self.ctx.binder.is_external_module();
-                let error_code = if is_parameter_property {
+                let should_prefer_instance_member = self
+                    .current_class_has_parameter_property_named(&name)
+                    && self.ctx.binder.is_external_module()
+                    && !self.has_cross_file_script_value_named(&name);
+                let error_code = if should_prefer_instance_member {
                     diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
                 } else {
                     diagnostic_codes::INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN
