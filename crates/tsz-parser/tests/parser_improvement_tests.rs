@@ -2328,7 +2328,7 @@ let b: ?number = 42;
 }
 
 #[test]
-fn test_adjacent_jsx_roots_report_ts2657_without_expression_cascade() {
+fn test_adjacent_jsx_roots_in_tsx_do_not_report_ts2657_or_expression_cascade() {
     let source = r"
 declare namespace JSX { interface Element { } }
 
@@ -2346,8 +2346,8 @@ var x = <div></div><div></div>
     let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
 
     assert_eq!(
-        ts2657_count, 2,
-        "Expected TS2657 for both adjacent JSX root cases, got diagnostics: {diagnostics:?}"
+        ts2657_count, 0,
+        "Expected TSX adjacent JSX root recovery to avoid TS2657, got diagnostics: {diagnostics:?}"
     );
     assert_eq!(
         ts1003_count, 0,
@@ -2491,7 +2491,7 @@ const b = 1 as !any;
 }
 
 #[test]
-fn test_unclosed_jsx_fragment_after_unary_plus_reports_ts17014() {
+fn test_unclosed_jsx_fragment_after_unary_plus_in_tsx_suppresses_ts17014() {
     let source = r#"
 const x = "oops";
 const y = + <> x;
@@ -2503,8 +2503,8 @@ const y = + <> x;
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&17014),
-        "Expected TS17014 for an unclosed JSX fragment after unary plus, got diagnostics: {diagnostics:?}"
+        !codes.contains(&17014),
+        "Expected TSX unary `+ <>` recovery to avoid TS17014, got diagnostics: {diagnostics:?}"
     );
 }
 
@@ -2523,5 +2523,51 @@ const y = + <> x;
     assert!(
         codes.contains(&17014),
         "Expected TS17014 for JS unary `+ <>` JSX-fragment recovery, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_tsx_fragment_errors_conformance_shape_has_no_diagnostics() {
+    let source = r#"
+declare namespace JSX {
+	interface Element { }
+	interface IntrinsicElements {
+		[s: string]: any;
+	}
+}
+declare var React: any;
+
+<>hi</div>
+
+<>eof
+"#;
+    let mut parser = ParserState::new("file.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.is_empty(),
+        "Expected no parser diagnostics for current tsxFragmentErrors conformance shape, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_tsx_fragment_errors_actual_conformance_file_has_no_diagnostics() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../TypeScript/tests/cases/conformance/jsx/tsxFragmentErrors.tsx"
+    ))
+    .unwrap();
+    let mut parser = ParserState::new("file.tsx".to_string(), source);
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.is_empty(),
+        "Expected no parser diagnostics for actual tsxFragmentErrors conformance file, got diagnostics: {diagnostics:?}"
     );
 }

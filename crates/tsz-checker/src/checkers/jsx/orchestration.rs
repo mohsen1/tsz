@@ -10,6 +10,18 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn file_has_same_line_adjacent_jsx_recovery_pattern(&self) -> bool {
+        let Some(source_text) = self.ctx.arena.source_files.first().map(|sf| &*sf.text) else {
+            return false;
+        };
+        source_text.lines().any(|line| {
+            let trimmed = line.trim_start();
+            (trimmed.contains("/><") || trimmed.contains("></"))
+                && trimmed.contains('<')
+                && !trimmed.starts_with("//")
+        })
+    }
+
     pub(super) fn normalize_jsx_component_type_for_resolution(
         &mut self,
         component_type: TypeId,
@@ -556,7 +568,9 @@ impl<'a> CheckerState<'a> {
                 || !self.ctx.compiler_options.jsx_import_source.is_empty();
             let file_has_any_parse_diag =
                 self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
-            if !uses_import_source && !file_has_any_parse_diag {
+            let recovered_adjacent_sibling =
+                self.file_has_same_line_adjacent_jsx_recovery_pattern();
+            if !uses_import_source && !file_has_any_parse_diag && !recovered_adjacent_sibling {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
                     idx,
@@ -869,10 +883,12 @@ impl<'a> CheckerState<'a> {
             || !self.ctx.compiler_options.jsx_import_source.is_empty();
         let file_has_any_parse_diag =
             self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
+        let recovered_adjacent_sibling = self.file_has_same_line_adjacent_jsx_recovery_pattern();
         if is_intrinsic
             && self.get_intrinsic_elements_type().is_none()
             && !uses_import_source
             && !file_has_any_parse_diag
+            && !recovered_adjacent_sibling
         {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
