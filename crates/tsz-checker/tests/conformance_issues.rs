@@ -18846,3 +18846,43 @@ declare var v2: C<B>;
         "Should emit exactly 1 TS2344 for C<B>. Actual: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_no_false_ts2314_for_merged_function_interface_same_name() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Mixin {
+    mixinMethod(): void;
+}
+function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass): TBaseClass & (abstract new (...args: any) => Mixin) {
+    abstract class MixinClass extends baseClass implements Mixin {
+        mixinMethod() {}
+    }
+    return MixinClass;
+}
+        "#,
+    );
+    let ts2314: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Should NOT emit TS2314 for merged function+interface 'Mixin'. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2314_for_merged_function_type_alias_same_name() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function Mixin<TBase extends {new (...args: any[]): {}}>(Base: TBase) {
+    return class extends Base {};
+}
+type Mixin = any;
+type Crashes = number & Mixin;
+        "#,
+    );
+    let ts2314: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Should NOT emit TS2314 for merged function+type alias 'Mixin'. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}

@@ -2590,7 +2590,39 @@ impl BinderState {
             }
             // If the first declaration had no type params but this one does
             // (e.g., augmentation adds generics), update the arity and names.
-            if existing.type_param_count == 0 && type_param_count > 0 {
+            // However, do NOT merge function type params into/over a type-level
+            // (interface/type alias/class) semantic def, and vice versa.
+            // Function type params are function-scoped and don't represent
+            // the type's generic arity.
+            // E.g., `interface Mixin {}; function Mixin<T>(...) {...}` — the
+            // interface has 0 type params, and the function's `T` is irrelevant.
+            // Also handles the reverse: `function Mixin<T>(...); type Mixin = any;`
+            // — the type alias has 0 type params and should override the function's.
+            let is_type_kind = |k: &crate::state::SemanticDefKind| {
+                matches!(
+                    k,
+                    crate::state::SemanticDefKind::Interface
+                        | crate::state::SemanticDefKind::TypeAlias
+                        | crate::state::SemanticDefKind::Class
+                )
+            };
+            let is_function_kind = |k: &crate::state::SemanticDefKind| {
+                matches!(k, crate::state::SemanticDefKind::Function)
+            };
+            let cross_function_type = (is_function_kind(&kind) && is_type_kind(&existing.kind))
+                || (is_type_kind(&kind) && is_function_kind(&existing.kind));
+            // When a type declaration (interface/type alias/class) merges with
+            // a function, the semantic def's type_param_count should reflect the
+            // TYPE declaration's params (which is the relevant arity for TS2314).
+            if cross_function_type {
+                // If a type declaration is merging in, update to its param count
+                // (even if 0, since the type might have no params).
+                if is_type_kind(&kind) {
+                    existing.type_param_count = type_param_count;
+                    existing.type_param_names = type_param_names;
+                }
+                // If function is merging into a type, don't update params (already handled)
+            } else if existing.type_param_count == 0 && type_param_count > 0 {
                 existing.type_param_count = type_param_count;
                 existing.type_param_names = type_param_names;
             }
