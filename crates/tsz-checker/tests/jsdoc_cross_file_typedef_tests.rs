@@ -192,3 +192,63 @@ export let bar;
         "Expected exported JSDoc-typed variable to suppress TS7005, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn imported_jsdoc_typedef_does_not_conflict_with_exported_source_symbol_name() {
+    let codes = check_js_file_with_types(
+        "file.ts",
+        r#"
+class Foo {
+    x: number;
+}
+
+declare global {
+    var module: any;
+}
+
+export = Foo;
+"#,
+        "something.js",
+        r#"
+/** @typedef {typeof import("./file")} Foo */
+/** @typedef {(foo: Foo) => string} FooFun */
+
+module.exports = /** @type {FooFun} */(void 0);
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_unused_locals: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !codes.contains(&2300),
+        "Expected imported JSDoc typedef alias to avoid cross-file TS2300, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn same_file_jsdoc_typedef_still_conflicts_with_local_class_name() {
+    let codes = check_js_file_with_types(
+        "types.d.ts",
+        "",
+        "usage.js",
+        r#"
+class Foo {}
+/** @typedef {number} Foo */
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        codes.contains(&2300),
+        "Expected same-file JSDoc typedef/class name collision to keep TS2300, got codes: {codes:?}"
+    );
+}
