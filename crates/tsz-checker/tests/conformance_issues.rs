@@ -10409,6 +10409,41 @@ a2.x;
 }
 
 #[test]
+fn test_declaration_file_with_top_level_declare_global_does_not_emit_ts2306() {
+    let files = [
+        (
+            "/src/index.ts",
+            r#"
+import * as React from "react";
+export const x = React;
+"#,
+        ),
+        (
+            "/node_modules/@types/react/index.d.ts",
+            r#"
+declare global {}
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/src/index.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2306),
+        "Expected declaration file with top-level declare global to stay importable without TS2306. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_augmentation_global_imported_return_type_keeps_augmented_array_method() {
     if load_lib_files_for_test().is_empty() {
         return;
