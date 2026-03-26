@@ -1331,6 +1331,12 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if self.is_namespace_value_type(object_type) && !enum_instance_like_access {
+                if self.is_js_file()
+                    && property_name == "prototype"
+                    && self.property_access_is_direct_write_target(idx)
+                {
+                    return TypeId::ANY;
+                }
                 if !access.question_dot_token
                     && !property_name.starts_with('#')
                     && !accessibility_error_emitted
@@ -1781,7 +1787,6 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if self.is_js_file()
-                        && skip_flow_narrowing
                         && property_name == "prototype"
                         && self.property_access_is_direct_write_target(idx)
                     {
