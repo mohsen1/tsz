@@ -2033,7 +2033,9 @@ mod tests {
         );
 
         assert!(
-            !diagnostics.iter().any(|diag| diag.code == 2343 || diag.code == 2354),
+            !diagnostics
+                .iter()
+                .any(|diag| diag.code == 2343 || diag.code == 2354),
             "Did not expect tslib helper diagnostics when index.d.ts declares __decorate. Got: {diagnostics:#?}"
         );
     }

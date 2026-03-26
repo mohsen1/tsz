@@ -1846,9 +1846,8 @@ impl<'a> CheckerState<'a> {
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
-                        let preserve_namespace_display =
-                            !(module_is_non_module_entity
-                                && self.ctx.allow_synthetic_default_imports());
+                        let preserve_namespace_display = !(module_is_non_module_entity
+                            && self.ctx.allow_synthetic_default_imports());
                         if preserve_namespace_display {
                             self.ctx.namespace_module_names.insert(
                                 namespace_type,

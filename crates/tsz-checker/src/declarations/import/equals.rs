@@ -846,7 +846,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .arena
                         .get(file_stmt_idx)
-                        .and_then(|file_stmt_node| self.ctx.arena.get_export_assignment(file_stmt_node))
+                        .and_then(|file_stmt_node| {
+                            self.ctx.arena.get_export_assignment(file_stmt_node)
+                        })
                         .is_some_and(|export_assignment| export_assignment.is_export_equals)
                 })
             });

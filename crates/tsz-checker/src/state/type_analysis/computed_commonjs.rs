@@ -2288,8 +2288,8 @@ impl<'a> CheckerState<'a> {
             let has_named_props = !props.is_empty();
             let namespace_type = has_named_props.then(|| {
                 let namespace_type = factory.object(props);
-                let preserve_namespace_display = !(module_is_non_module_entity
-                    && self.ctx.allow_synthetic_default_imports());
+                let preserve_namespace_display =
+                    !(module_is_non_module_entity && self.ctx.allow_synthetic_default_imports());
                 if preserve_namespace_display {
                     let display_module_name =
                         self.resolve_namespace_display_module_name(&exports_table, module_name);
