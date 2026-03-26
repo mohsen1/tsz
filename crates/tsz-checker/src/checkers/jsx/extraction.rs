@@ -699,7 +699,10 @@ impl<'a> CheckerState<'a> {
         if let Some(sigs) =
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
         {
-            let generic: Vec<_> = sigs.iter().filter(|sig| !sig.type_params.is_empty()).collect();
+            let generic: Vec<_> = sigs
+                .iter()
+                .filter(|sig| !sig.type_params.is_empty())
+                .collect();
             if generic.len() == 1 {
                 let sig = generic[0];
                 let props = sig
