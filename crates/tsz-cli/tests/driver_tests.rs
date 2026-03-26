@@ -144,7 +144,10 @@ export type SomeType = import('./inner').SomeType;
         .collect();
 
     assert!(
-        messages.iter().any(|m| m.contains("reference to 'SomeType' from '../node_modules/some-dep/dist/inner'")),
+        messages
+            .iter()
+            .any(|m| m
+                .contains("reference to 'SomeType' from '../node_modules/some-dep/dist/inner'")),
         "expected canonical SomeType TS2883, got: {messages:#?}"
     );
     assert!(

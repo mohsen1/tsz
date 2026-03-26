@@ -1636,7 +1636,8 @@ fn normalize_ts2883_diagnostics_in_place(
         }
 
         if diagnostic.code == 2883
-            && let Some((first, second)) = parse_ts2883_named_reference_message(&diagnostic.message_text)
+            && let Some((first, second)) =
+                parse_ts2883_named_reference_message(&diagnostic.message_text)
             && !looks_like_module_path(&first)
             && looks_like_module_path(&second)
         {
@@ -1653,7 +1654,8 @@ fn normalize_ts2883_diagnostics_in_place(
                 return true;
             }
 
-            let Some((first, second)) = parse_ts2883_named_reference_message(&diagnostic.message_text)
+            let Some((first, second)) =
+                parse_ts2883_named_reference_message(&diagnostic.message_text)
             else {
                 return true;
             };
@@ -1662,7 +1664,11 @@ fn normalize_ts2883_diagnostics_in_place(
                 return true;
             }
 
-            !canonical_sites.contains(&(diagnostic.file.clone(), diagnostic.start, diagnostic.length))
+            !canonical_sites.contains(&(
+                diagnostic.file.clone(),
+                diagnostic.start,
+                diagnostic.length,
+            ))
         })
         .collect();
 }
