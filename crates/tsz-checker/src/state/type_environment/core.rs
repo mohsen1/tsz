@@ -1427,41 +1427,6 @@ impl<'a> CheckerState<'a> {
     /// Count required type params by inspecting the AST directly, without resolving
     /// defaults. Returns `Some(count)` if AST-level info is available, `None` otherwise.
     pub(crate) fn count_required_type_params_from_ast(&self, sym_id: SymbolId) -> Option<usize> {
-        fn count_in_arena(
-            arena: &tsz_parser::parser::NodeArena,
-            decl_idx: tsz_parser::parser::NodeIndex,
-            flags: u32,
-        ) -> Option<usize> {
-            let node = arena.get(decl_idx)?;
-            let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
-                arena
-                    .get_interface(node)
-                    .and_then(|iface| iface.type_parameters.as_ref())
-            } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
-                arena
-                    .get_type_alias(node)
-                    .and_then(|ta| ta.type_parameters.as_ref())
-            } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
-                arena
-                    .get_class(node)
-                    .and_then(|c| c.type_parameters.as_ref())
-            } else {
-                None
-            };
-
-            type_params_list.map(|list| {
-                list.nodes
-                    .iter()
-                    .filter(|&&param_idx| {
-                        arena
-                            .get(param_idx)
-                            .and_then(|n| arena.get_type_parameter(n))
-                            .is_some_and(|tp| tp.default == tsz_parser::parser::NodeIndex::NONE)
-                    })
-                    .count()
-            })
-        }
-
         let symbol = self.get_symbol_globally(sym_id)?;
         let flags = symbol.flags;
         let decl_candidates: Vec<_> =
