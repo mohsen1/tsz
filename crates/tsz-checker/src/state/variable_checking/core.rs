@@ -1198,12 +1198,20 @@ impl<'a> CheckerState<'a> {
             let is_ambient = self.is_ambient_declaration(decl_idx);
             let is_const = self.is_const_variable_declaration(decl_idx);
             let is_exported = self.is_declaration_exported(self.ctx.arena, decl_idx);
-            if is_exported && var_decl.type_annotation.is_none() {
-                self.maybe_report_unnameable_exported_variable_type(
-                    var_decl.name,
-                    var_name.as_deref().unwrap_or(""),
-                    final_type,
-                );
+            if is_exported {
+                if var_decl.type_annotation.is_some() {
+                    self.maybe_report_private_name_in_exported_variable_type_annotation(
+                        var_decl.name,
+                        var_name.as_deref().unwrap_or(""),
+                        var_decl.type_annotation,
+                    );
+                } else {
+                    self.maybe_report_unnameable_exported_variable_type(
+                        var_decl.name,
+                        var_name.as_deref().unwrap_or(""),
+                        final_type,
+                    );
+                }
             }
             // TS4094: Property of exported anonymous class type may not be private or protected.
             if is_exported && var_decl.initializer.is_some() {
