@@ -523,7 +523,9 @@ impl<'a> CheckerState<'a> {
                 let expando_root = target_arena
                     .get_identifier_at(rhs_expr)
                     .map(|ident| ident.escaped_text.as_str());
-                self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, expando_root)
+                let rhs_type =
+                    self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, expando_root);
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, rhs_type)
             })
             .filter(|&rhs_type| rhs_type != TypeId::UNDEFINED);
 

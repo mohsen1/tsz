@@ -378,23 +378,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let has_named_props = !props.is_empty();
-        let namespace_type = self.ctx.types.factory().object(props);
-        let type_id = match (surface.direct_export_type, has_named_props) {
-            (Some(direct), true) => self
-                .ctx
-                .types
-                .factory()
-                .intersection2(direct, namespace_type),
-            (Some(direct), false) => direct,
-            (None, _) => namespace_type,
-        };
-        if has_named_props || surface.direct_export_type.is_none() {
-            self.ctx.namespace_module_names.insert(
-                type_id,
-                self.current_file_commonjs_module_name(preserve_js_extension),
-            );
+        crate::query_boundaries::js_exports::JsExportSurface {
+            direct_export_type: surface.direct_export_type,
+            named_exports: props,
+            prototype_members: surface.prototype_members,
+            has_commonjs_exports: surface.has_commonjs_exports || has_named_props,
         }
-        type_id
+        .to_type_id_with_display_name(
+            self,
+            Some(self.current_file_commonjs_module_name(preserve_js_extension)),
+        )
+        .unwrap_or(TypeId::ANY)
     }
 
     fn collect_current_file_commonjs_export_names(

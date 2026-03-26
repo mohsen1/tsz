@@ -945,11 +945,48 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        let commonjs_named_props_disallowed = self.is_js_file()
+            && self.is_current_file_commonjs_export_base(access.expression)
+            && self
+                .resolve_js_export_surface(self.ctx.current_file_idx)
+                .direct_export_type
+                .is_some_and(|direct_export_type| {
+                    !crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                        self.ctx.types,
+                        direct_export_type,
+                    )
+                });
+
+        let is_this_access = self.ctx.arena.get(access.expression).is_some_and(|obj_node| {
+            obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+        });
+        let static_member_name = self
+            .ctx
+            .arena
+            .get_identifier(name_node)
+            .map(|ident| ident.escaped_text.clone())
+            .or_else(|| self.current_file_commonjs_static_member_name(access.name_or_argument));
+
+        if self.is_js_file()
+            && is_this_access
+            && !self.property_access_is_direct_write_target(idx)
+            && let Some(member_name) = static_member_name.as_deref()
+            && let Some(prior_type) =
+                self.prior_js_this_property_assignment_type(idx, member_name)
+        {
+            return prior_type;
+        }
+
         let mut js_expando_before_assignment = false;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
-            js_expando_before_assignment =
-                self.expando_property_read_before_assignment(idx, access.expression, property_name);
+            if !commonjs_named_props_disallowed {
+                js_expando_before_assignment = self.expando_property_read_before_assignment(
+                    idx,
+                    access.expression,
+                    property_name,
+                );
+            }
             if js_expando_before_assignment {
                 use crate::diagnostics::format_message;
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -1023,7 +1060,16 @@ impl<'a> CheckerState<'a> {
             && self.is_js_file()
             && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
         {
-            return TypeId::ANY;
+            let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
+            let can_add_named_props = surface.direct_export_type.is_none_or(|direct_export_type| {
+                crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                    self.ctx.types,
+                    direct_export_type,
+                )
+            });
+            if can_add_named_props {
+                return TypeId::ANY;
+            }
         }
 
         if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {
@@ -1586,18 +1632,9 @@ impl<'a> CheckerState<'a> {
                     // Check for expando property reads: X.prop where X.prop = value was assigned
                     // Recover the assigned value type when we can, then fall back to `any`.
                     if !skip_flow_narrowing
+                        && !commonjs_named_props_disallowed
                         && self.is_expando_property_read(access.expression, property_name)
                     {
-                        if self.is_js_file()
-                            && self.ctx.compiler_options.check_js
-                            && let Some(expando_type) = self.expando_property_read_type(
-                                idx,
-                                access.expression,
-                                property_name,
-                            )
-                        {
-                            return expando_type;
-                        }
                         if let Some(expando_type) =
                             self.expando_property_read_type(idx, access.expression, property_name)
                         {
@@ -1609,28 +1646,23 @@ impl<'a> CheckerState<'a> {
                     // TypeScript allows property assignments to function/class declarations
                     // without emitting TS2339. The assigned properties become part of the
                     // function's type (expando pattern).
-                    if self.is_expando_function_assignment(
-                        idx,
-                        access.expression,
-                        object_type_for_access,
-                    ) {
+                    if !commonjs_named_props_disallowed
+                        && self.is_expando_function_assignment(
+                            idx,
+                            access.expression,
+                            object_type_for_access,
+                        )
+                    {
                         return TypeId::ANY;
                     }
 
                     // JavaScript files allow dynamic property assignment on 'this' without errors.
                     // In JS files, accessing a property on 'this' that doesn't exist should not error
                     // and should return 'any' type, matching TypeScript's behavior.
-                    let is_this_access =
-                        if let Some(obj_node) = self.ctx.arena.get(access.expression) {
-                            obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
-                        } else {
-                            false
-                        };
                     let has_explicit_this_context = is_this_access
                         && self
                             .current_this_type()
                             .is_some_and(|ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN);
-
                     // When `this` type comes from a ThisType<T> marker (e.g., Vue 2
                     // Options API pattern), property access on unresolved type parameters
                     // should not emit TS2339. The type parameters will be inferred from the
@@ -1676,7 +1708,9 @@ impl<'a> CheckerState<'a> {
                         // as an implicit instance-property declaration. In write context,
                         // allow the missing-property access so the assignment path can
                         // establish the member without a false TS2339 on the same node.
-                        if skip_flow_narrowing {
+                        if skip_flow_narrowing
+                            && self.property_access_is_direct_write_target(idx)
+                        {
                             return TypeId::ANY;
                         }
                     }

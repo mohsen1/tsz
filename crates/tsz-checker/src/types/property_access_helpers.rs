@@ -390,6 +390,97 @@ impl<'a> CheckerState<'a> {
         best_match.map(|(_, ty)| ty)
     }
 
+    pub(super) fn prior_js_this_property_assignment_type(
+        &mut self,
+        property_access_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let scope_root = self.find_enclosing_function_or_source_file(property_access_idx);
+        let read_pos = self.ctx.arena.get(property_access_idx)?.pos;
+        let mut best_match: Option<(u32, TypeId)> = None;
+        self.collect_prior_js_this_property_assignment_type(
+            scope_root,
+            scope_root,
+            property_name,
+            read_pos,
+            &mut best_match,
+        );
+        best_match.map(|(_, ty)| ty)
+    }
+
+    fn collect_prior_js_this_property_assignment_type(
+        &mut self,
+        idx: NodeIndex,
+        scope_root: NodeIndex,
+        property_name: &str,
+        read_pos: u32,
+        best_match: &mut Option<(u32, TypeId)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        if idx != scope_root
+            && (self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION)
+        {
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && node.pos < read_pos
+            && self
+                .js_this_assignment_target_name(binary.left)
+                .is_some_and(|name| name == property_name)
+        {
+            let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
+            let rhs_type = self.get_type_of_node(rhs_idx);
+            if rhs_type != TypeId::ANY
+                && rhs_type != TypeId::ERROR
+                && best_match.is_none_or(|(best_pos, _)| node.pos >= best_pos)
+            {
+                *best_match = Some((node.pos, rhs_type));
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(idx) {
+            self.collect_prior_js_this_property_assignment_type(
+                child_idx,
+                scope_root,
+                property_name,
+                read_pos,
+                best_match,
+            );
+        }
+    }
+
+    fn js_this_assignment_target_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let object_node = self.ctx.arena.get(access.expression)?;
+                if object_node.kind != SyntaxKind::ThisKeyword as u16 {
+                    return None;
+                }
+                self.ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let object_node = self.ctx.arena.get(access.expression)?;
+                if object_node.kind != SyntaxKind::ThisKeyword as u16 {
+                    return None;
+                }
+                self.current_file_commonjs_static_member_name(access.name_or_argument)
+            }
+            _ => None,
+        }
+    }
+
     fn collect_expando_property_assignment_type(
         &mut self,
         idx: NodeIndex,
@@ -767,6 +858,44 @@ impl<'a> CheckerState<'a> {
             };
             return binary.left == current && self.is_assignment_operator(binary.operator_token);
         }
+    }
+
+    pub(super) fn property_access_is_direct_write_target(
+        &self,
+        property_access_idx: NodeIndex,
+    ) -> bool {
+        let Some(prop_ext) = self.ctx.arena.get_extended(property_access_idx) else {
+            return false;
+        };
+        let parent_idx = prop_ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.expression == property_access_idx
+        {
+            return false;
+        }
+
+        if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+        {
+            return binary.left == property_access_idx
+                && self.is_assignment_operator(binary.operator_token);
+        }
+
+        if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+        {
+            return unary.operator == SyntaxKind::PlusPlusToken as u16
+                || unary.operator == SyntaxKind::MinusMinusToken as u16;
+        }
+
+        false
     }
 
     fn flow_node_for_reference_usage(&self, idx: NodeIndex) -> Option<tsz_binder::FlowNodeId> {
