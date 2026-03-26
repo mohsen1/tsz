@@ -1722,6 +1722,14 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if self.is_js_file()
+                        && skip_flow_narrowing
+                        && property_name == "prototype"
+                        && self.property_access_is_direct_write_target(idx)
+                    {
+                        return TypeId::ANY;
+                    }
+
+                    if self.is_js_file()
                         && self.is_super_expression(access.expression)
                         && let Some((_, is_static_access)) = resolved_class_access
                         && is_static_access

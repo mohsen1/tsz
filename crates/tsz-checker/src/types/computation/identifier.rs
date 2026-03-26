@@ -562,11 +562,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if !is_instantiated {
-                    if let Some(value_type) = self.non_js_cross_file_global_value_type_by_name(name)
+                    if let Some(value_type) =
+                        self.cross_file_global_value_type_by_name(name, true)
                     {
                         return value_type;
                     }
                     if self.has_non_umd_global_value(name) {
+                        let value_type = self.type_of_value_symbol_by_name(name);
+                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                            return value_type;
+                        }
                         return self.get_type_of_symbol(sym_id);
                     }
                     if self.is_direct_heritage_type_reference(idx) {
@@ -1596,7 +1601,7 @@ impl<'a> CheckerState<'a> {
     /// Returns `true` if any cross-file binder provides a non-UMD VALUE binding for
     /// `name`. This handles cases like `declare global { const React }` where a separate
     /// declaration provides a legitimate global value binding alongside the UMD export.
-    fn has_non_umd_global_value(&self, name: &str) -> bool {
+    pub(crate) fn has_non_umd_global_value(&self, name: &str) -> bool {
         // Check lib_contexts (lib files + some user files)
         for lib_ctx in &self.ctx.lib_contexts {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
@@ -1615,8 +1620,13 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .and_then(|idx| idx.get(name))
         {
-            for &(_file_idx, sym_id) in entries {
-                if let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            let all_binders = self.ctx.all_binders.as_ref();
+            for &(file_idx, sym_id) in entries {
+                let binder = all_binders
+                    .and_then(|binders| binders.get(file_idx))
+                    .map(|binder| binder.as_ref())
+                    .unwrap_or(self.ctx.binder);
+                if let Some(sym) = binder.get_symbol(sym_id)
                     && (sym.flags & symbol_flags::VALUE) != 0
                     && !sym.is_umd_export
                 {
@@ -1637,7 +1647,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn non_js_cross_file_global_value_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+    fn cross_file_global_value_type_by_name(
+        &mut self,
+        name: &str,
+        include_js: bool,
+    ) -> Option<TypeId> {
         let entries = self
             .ctx
             .global_file_locals_index
@@ -1661,7 +1675,7 @@ impl<'a> CheckerState<'a> {
             let Some(source_file) = arena.source_files.first() else {
                 continue;
             };
-            if is_js_file_name(&source_file.file_name) {
+            if !include_js && is_js_file_name(&source_file.file_name) {
                 continue;
             }
 
@@ -1712,7 +1726,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.clone(),
                 self,
             ));
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.current_file_idx = file_idx;
             checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
             checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
             checker
@@ -1737,6 +1753,10 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn non_js_cross_file_global_value_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+        self.cross_file_global_value_type_by_name(name, false)
     }
 
     pub(crate) fn preferred_non_js_cross_file_global_value_type(

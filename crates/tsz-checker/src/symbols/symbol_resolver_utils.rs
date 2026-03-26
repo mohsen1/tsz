@@ -45,7 +45,8 @@ impl<'a> CheckerState<'a> {
                     flags = val_symbol.flags,
                     "find_value_symbol_in_libs: symbol details"
                 );
-                if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+                if (val_symbol.flags & value_flags_except_module) != 0 && !val_symbol.is_type_only {
                     trace!(
                         name = name,
                         returned_sym_id = ?val_sym_id,
@@ -109,7 +110,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(val_sym_id, &lib_binders)
-            && (val_symbol.flags & symbol_flags::VALUE) != 0
+            && (val_symbol.flags & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)) != 0
             && !val_symbol.is_type_only
             && val_symbol.value_declaration.is_some()
         {

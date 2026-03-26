@@ -5644,6 +5644,41 @@ let x = new alias.Class();
 }
 
 #[test]
+fn test_cross_file_js_container_merge_does_not_emit_shadowed_namespace_ts2708() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "a.d.ts",
+                r"
+declare namespace C {
+    function bar(): void;
+}
+                ",
+            ),
+            (
+                "b.js",
+                r"
+C.prototype = {};
+C.bar = 2;
+                ",
+            ),
+        ],
+        "b.js",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2708),
+        "Did not expect TS2708 once the JS container provides a real value binding. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_user_defined_generic_without_type_args_reports_ts2314() {
     let diagnostics = compile_and_get_diagnostics(
         r"

@@ -686,6 +686,41 @@ export default MyFunction;
 }
 
 #[test]
+fn compile_shadowing_namespace_symbol_keeps_global_symbol_value_access() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"namespace M {
+    namespace Symbol {}
+
+    class C {
+        [Symbol.iterator]() {}
+    }
+}
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2708: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2708).collect();
+    assert!(
+        ts2708.is_empty(),
+        "Expected shadowing namespace to keep global Symbol value access, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_mapped_type_generic_indexed_access_preserves_context() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
