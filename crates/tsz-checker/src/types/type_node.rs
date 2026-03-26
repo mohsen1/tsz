@@ -737,7 +737,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let result = self.lower_with_resolvers(idx, false, true);
 
         // TS2677: Check that a type predicate's type is assignable to its parameter's type.
-        self.check_type_predicate_assignability(func_data.type_annotation, result);
+        self.check_type_predicate_assignability(idx, func_data.type_annotation, result);
 
         result
     }
@@ -745,6 +745,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// TS2677: A type predicate's type must be assignable to its parameter's type.
     fn check_type_predicate_assignability(
         &mut self,
+        function_type_idx: NodeIndex,
         type_annotation: NodeIndex,
         lowered_type: TypeId,
     ) {
@@ -764,24 +765,55 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if pred_data.type_node.is_none() {
             return;
         }
-        let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, lowered_type)
+        let Some(predicate_name) = self.ctx.arena.get_identifier_text(pred_data.parameter_name)
         else {
             return;
         };
-        let Some(ref predicate) = shape.type_predicate else {
-            return;
+
+        let predicate_type = self.check(pred_data.type_node);
+        let mut param_type = None;
+
+        if let Some(function_node) = self.ctx.arena.get(function_type_idx)
+            && let Some(function_data) = self.ctx.arena.get_function_type(function_node)
+        {
+            for &param_idx in &function_data.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if self.ctx.arena.get_identifier_text(param_data.name) == Some(predicate_name) {
+                    param_type = (!param_data.type_annotation.is_none())
+                        .then(|| self.check(param_data.type_annotation));
+                    break;
+                }
+            }
+        }
+
+        let (predicate_type, param_type) = if let Some(param_type) = param_type {
+            (predicate_type, param_type)
+        } else {
+            let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                self.ctx.types,
+                lowered_type,
+            ) else {
+                return;
+            };
+            let Some(ref predicate) = shape.type_predicate else {
+                return;
+            };
+            let Some(predicate_type) = predicate.type_id else {
+                return;
+            };
+            let Some(param_index) = predicate.parameter_index else {
+                return;
+            };
+            let Some(param) = shape.params.get(param_index) else {
+                return;
+            };
+            (predicate_type, param.type_id)
         };
-        let Some(predicate_type) = predicate.type_id else {
-            return;
-        };
-        let Some(param_index) = predicate.parameter_index else {
-            return;
-        };
-        let Some(param) = shape.params.get(param_index) else {
-            return;
-        };
-        let param_type = param.type_id;
         // Skip the check when the predicate type is an unevaluable Application
         // (e.g., NonNullable<T> where T is a free type parameter). Our evaluator
         // can't resolve all lib.d.ts type aliases yet, so the Application stays
@@ -791,6 +823,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if self.predicate_type_contains_unevaluable_application(predicate_type) {
             return;
         }
+        let predicate_type = if tsz_solver::type_queries::is_type_parameter_like(
+            self.ctx.types,
+            predicate_type,
+        ) {
+            tsz_solver::type_param_info(self.ctx.types, predicate_type)
+                .and_then(|info| info.constraint)
+                .unwrap_or(TypeId::UNKNOWN)
+        } else {
+            predicate_type
+        };
+        let param_type = if tsz_solver::type_queries::is_type_parameter_like(
+            self.ctx.types,
+            param_type,
+        ) {
+            tsz_solver::type_param_info(self.ctx.types, param_type)
+                .and_then(|info| info.constraint)
+                .unwrap_or(TypeId::UNKNOWN)
+        } else {
+            param_type
+        };
+
         if !self.ctx.types.is_assignable_to(predicate_type, param_type)
             && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
         {
