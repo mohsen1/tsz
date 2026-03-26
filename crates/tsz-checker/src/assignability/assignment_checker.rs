@@ -1169,11 +1169,16 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if self.ctx.enclosing_class.is_some()
-            || self.find_enclosing_non_arrow_function(access.expression).is_some()
+            || self
+                .find_enclosing_non_arrow_function(access.expression)
+                .is_some()
         {
             return false;
         }
-        if self.get_literal_string_from_node(access.name_or_argument).is_some() {
+        if self
+            .get_literal_string_from_node(access.name_or_argument)
+            .is_some()
+        {
             return false;
         }
 

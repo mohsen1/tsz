@@ -1578,7 +1578,8 @@ impl<'a> CheckerState<'a> {
                         decl_idx,
                         &symbol.escaped_name,
                     )
-                }) && !names.is_empty()
+                })
+                && !names.is_empty()
             {
                 return names;
             }
@@ -1647,7 +1648,9 @@ impl<'a> CheckerState<'a> {
                 .get_type_alias(node)
                 .and_then(|ta| ta.type_parameters.as_ref())
         } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
-            arena.get_class(node).and_then(|c| c.type_parameters.as_ref())
+            arena
+                .get_class(node)
+                .and_then(|c| c.type_parameters.as_ref())
         } else {
             None
         }?;

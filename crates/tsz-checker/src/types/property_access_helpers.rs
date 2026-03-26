@@ -453,7 +453,8 @@ impl<'a> CheckerState<'a> {
         };
 
         if idx != scope_root
-            && (self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION)
+            && (self.is_scope_owner_kind(node.kind)
+                || node.kind == syntax_kind_ext::CLASS_DECLARATION)
         {
             return;
         }

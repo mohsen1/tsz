@@ -325,8 +325,7 @@ impl<'a> CheckerState<'a> {
             && self.is_this_expression(access.expression)
             && !self.property_access_is_direct_write_target(idx)
             && let Some(member_name) = static_member_name.as_deref()
-            && let Some(prior_type) =
-                self.prior_js_this_property_assignment_type(idx, member_name)
+            && let Some(prior_type) = self.prior_js_this_property_assignment_type(idx, member_name)
         {
             return if skip_flow_narrowing {
                 prior_type
@@ -473,7 +472,9 @@ impl<'a> CheckerState<'a> {
                 .get(access.expression)
                 .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
             && self.ctx.enclosing_class.is_none()
-            && self.find_enclosing_non_arrow_function(access.expression).is_none();
+            && self
+                .find_enclosing_non_arrow_function(access.expression)
+                .is_none();
 
         if (is_this_global || is_top_level_this_element_access)
             && literal_string.is_none()

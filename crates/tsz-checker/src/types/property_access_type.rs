@@ -957,9 +957,11 @@ impl<'a> CheckerState<'a> {
                     )
                 });
 
-        let is_this_access = self.ctx.arena.get(access.expression).is_some_and(|obj_node| {
-            obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
-        });
+        let is_this_access = self
+            .ctx
+            .arena
+            .get(access.expression)
+            .is_some_and(|obj_node| obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16);
         let static_member_name = self
             .ctx
             .arena
@@ -971,8 +973,7 @@ impl<'a> CheckerState<'a> {
             && is_this_access
             && !self.property_access_is_direct_write_target(idx)
             && let Some(member_name) = static_member_name.as_deref()
-            && let Some(prior_type) =
-                self.prior_js_this_property_assignment_type(idx, member_name)
+            && let Some(prior_type) = self.prior_js_this_property_assignment_type(idx, member_name)
         {
             return prior_type;
         }
@@ -1715,9 +1716,7 @@ impl<'a> CheckerState<'a> {
                         // as an implicit instance-property declaration. In write context,
                         // allow the missing-property access so the assignment path can
                         // establish the member without a false TS2339 on the same node.
-                        if skip_flow_narrowing
-                            && self.property_access_is_direct_write_target(idx)
-                        {
+                        if skip_flow_narrowing && self.property_access_is_direct_write_target(idx) {
                             return TypeId::ANY;
                         }
                     }
