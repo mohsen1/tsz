@@ -798,7 +798,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Used to emit TS2708 instead of TS2339 when a property access targets an
     /// empty / type-only namespace (e.g., `namespace Basil { }` → `Basil.Pepper`).
-    pub(crate) fn uninstantiated_namespace_name(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn uninstantiated_namespace_name(&mut self, expr_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(expr_idx)?;
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = &ident.escaped_text;
@@ -814,6 +814,17 @@ impl<'a> CheckerState<'a> {
         let has_other_value = (symbol.flags & value_flags_except_module) != 0;
 
         if !is_namespace || has_other_value {
+            return None;
+        }
+
+        let value_type = self.type_of_value_symbol_by_name(name);
+        if !matches!(value_type, TypeId::UNKNOWN | TypeId::ERROR) {
+            return None;
+        }
+
+        // A shadowing namespace should not trigger TS2708 when some other
+        // project/lib binder still provides a real runtime value with this name.
+        if self.has_non_umd_global_value(name) {
             return None;
         }
 
