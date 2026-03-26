@@ -21,16 +21,13 @@ impl<'a> CheckerState<'a> {
         if return_context == TypeId::ANY
             || return_context == TypeId::UNKNOWN
             || self.type_has_unresolved_inference_holes(return_context)
-            || tsz_solver::type_queries::contains_type_parameters_db(
-                self.ctx.types,
-                return_context,
-            )
+            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, return_context)
         {
             return None;
         }
 
         crate::computation::contextual::expression_needs_contextual_return_type(self, expr_idx)
-        .then_some(return_context)
+            .then_some(return_context)
     }
 
     /// Check if a function body falls through (doesn't always return).

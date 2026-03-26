@@ -1048,7 +1048,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         infer_props: &[(Atom, TypeParamInfo, bool)],
     ) -> TypeId {
         let check_key = self.interner().lookup(check_unwrapped);
-        if matches!(check_key, Some(TypeData::TypeParameter(_) | TypeData::Infer(_))) {
+        if matches!(
+            check_key,
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        ) {
             return self.interner().conditional(*cond);
         }
 
@@ -1065,17 +1068,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(constraint) = info.constraint {
                 let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
                 checker.allow_bivariant_rest = true;
-                let is_union =
-                    matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
+                let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
                 if optional {
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                     else {
-                        let false_inst = instantiate_type_with_infer(
-                            self.interner(),
-                            cond.false_type,
-                            &subst,
-                        );
+                        let false_inst =
+                            instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
                         return self.evaluate(false_inst);
                     };
                     inferred = filtered;
@@ -1166,7 +1165,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let prop_name_str = self.interner().resolve_atom_ref(prop_name);
             return match query_db.resolve_property_access(source, &prop_name_str) {
                 PropertyAccessResult::Success { type_id, .. } => Some(type_id),
-                PropertyAccessResult::PropertyNotFound { .. } => optional.then_some(TypeId::UNDEFINED),
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    optional.then_some(TypeId::UNDEFINED)
+                }
                 _ => None,
             };
         }
@@ -1195,9 +1196,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => member,
                     };
-                    let Some(inferred) =
-                        self.resolve_conditional_infer_property(member_unwrapped, prop_name, optional)
-                    else {
+                    let Some(inferred) = self.resolve_conditional_infer_property(
+                        member_unwrapped,
+                        prop_name,
+                        optional,
+                    ) else {
                         return None;
                     };
                     inferred_members.push(inferred);

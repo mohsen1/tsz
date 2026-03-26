@@ -295,8 +295,8 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
         let declarations = symbol.declarations.clone();
-        let mixed_class_interface =
-            (symbol.flags & symbol_flags::CLASS) != 0 && (symbol.flags & symbol_flags::INTERFACE) != 0;
+        let mixed_class_interface = (symbol.flags & symbol_flags::CLASS) != 0
+            && (symbol.flags & symbol_flags::INTERFACE) != 0;
 
         for &decl_idx in &declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
