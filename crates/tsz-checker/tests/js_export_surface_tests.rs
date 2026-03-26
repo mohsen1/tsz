@@ -321,6 +321,89 @@ fn format_commonjs_single_file_symbol_type(
     checker.format_type(symbol_type)
 }
 
+fn format_commonjs_two_file_consumer_symbol_type(
+    producer_name: &str,
+    producer_source: &str,
+    consumer_name: &str,
+    consumer_source: &str,
+    consumer_symbol_name: &str,
+    module_specifier: &str,
+) -> String {
+    let mut parser_a = ParserState::new(producer_name.to_string(), producer_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = ParserState::new(consumer_name.to_string(), consumer_source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let arena_a = Arc::new(parser_a.get_arena().clone());
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
+
+    let file_a_exports = binder_a.module_exports.get(producer_name).cloned();
+    if let Some(exports) = &file_a_exports {
+        binder_b
+            .module_exports
+            .insert(module_specifier.to_string(), exports.clone());
+    }
+
+    let mut cross_file_targets = FxHashMap::default();
+    if let Some(exports) = &file_a_exports {
+        for (_name, &sym_id) in exports.iter() {
+            cross_file_targets.insert(sym_id, 0usize);
+        }
+    }
+
+    let sym_id = binder_b
+        .file_locals
+        .get(consumer_symbol_name)
+        .unwrap_or_else(|| panic!("missing consumer symbol {consumer_symbol_name}"));
+
+    let binder_a = Arc::new(binder_a);
+    let binder_b = Arc::new(binder_b);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_b.as_ref(),
+        binder_b.as_ref(),
+        &types,
+        consumer_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: false,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(1);
+    for (sym_id, file_idx) in &cross_file_targets {
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
+    }
+
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    resolved_module_paths.insert((1, module_specifier.to_string()), 0);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    resolved_modules.insert(module_specifier.to_string());
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(root_b);
+    let symbol_type = checker.get_type_of_symbol(sym_id);
+    checker.format_type(symbol_type)
+}
+
 // ==========================================================================
 // module.exports = X tests
 // ==========================================================================

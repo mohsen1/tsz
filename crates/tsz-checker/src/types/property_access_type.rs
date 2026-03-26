@@ -1039,8 +1039,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if object_type == TypeId::ANY
-            && self.is_js_file()
+        if self.is_js_file()
             && self
                 .ctx
                 .arena

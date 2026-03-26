@@ -1178,6 +1178,24 @@ impl<'a> CheckerState<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn is_cross_file_declaration_runtime_shim(&self, sym_id: SymbolId, name: &str) -> bool {
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.escaped_name != name
+            || symbol.decl_file_idx == u32::MAX
+            || symbol.decl_file_idx == self.ctx.current_file_idx as u32
+        {
+            return false;
+        }
+
+        self.ctx
+            .get_arena_for_file(symbol.decl_file_idx)
+            .source_files
+            .first()
+            .is_some_and(|source_file| source_file.is_declaration_file)
+    }
+
     pub(crate) fn is_unshadowed_commonjs_require_identifier(&mut self, idx: NodeIndex) -> bool {
         // JavaScript/checkJs files use CommonJS-style `require(...)` value resolution
         // even when the `module` compiler option stays at its default script mode.
@@ -1221,6 +1239,10 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = resolved_symbol else {
             return true;
         };
+
+        if self.is_js_file() && self.is_cross_file_declaration_runtime_shim(sym_id, "require") {
+            return true;
+        }
 
         let lib_binders = self.get_lib_binders();
         let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
