@@ -1193,6 +1193,46 @@ fn test_ts2322_annotated_getter_contextually_types_unannotated_setter_parameter(
 }
 
 #[test]
+fn test_ts2322_js_accessor_jsdoc_does_not_force_inferred_getter_mismatch() {
+    let source = r#"
+        export class Foo {
+            /**
+             * @type {null | string}
+             */
+            _bar = null;
+
+            get bar() {
+                return this._bar;
+            }
+            /**
+             * @type {string}
+             */
+            set bar(value) {
+                this._bar = value;
+            }
+        }
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            allow_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected JS accessor JSDoc pair to avoid TS2322 getter/setter mismatch. Actual diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_for_of_annotation_mismatch() {
     let source = r"
         for (const x: string of [1, 2, 3]) {}

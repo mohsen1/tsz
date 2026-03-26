@@ -883,7 +883,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .and_then(|param| {
-                                (param.type_annotation.is_some())
+                                (!self.ctx.is_js_file() && param.type_annotation.is_some())
                                     .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
