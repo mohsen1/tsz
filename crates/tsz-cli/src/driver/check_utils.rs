@@ -116,10 +116,29 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
         return emit_tslib_helper_diagnostics(program, options, "tslib", file_is_esm_map);
     }
 
-    // Check the filesystem only when the program appears to be backed by real
-    // on-disk files and normal automatic type loading is enabled. Virtual or
-    // isolated programs (like conformance harnesses using `@noTypesAndSymbols`)
-    // must not inherit tslib availability from the host workspace.
+    // Always honor a project-local `node_modules/tslib` directly under the
+    // compilation base directory. Conformance tests often materialize tslib in
+    // a temp project while also excluding `node_modules` from the synthetic
+    // tsconfig and enabling `@noTypesAndSymbols`, so the binder never sees the
+    // file even though it intentionally exists for this project.
+    if let Some(tslib_path) = local_filesystem_tslib_declaration(base_dir) {
+        if let Some(helper_parameter_counts) = filesystem_tslib_helper_parameter_counts(&tslib_path)
+        {
+            return emit_tslib_helper_diagnostics_from_counts(
+                program,
+                options,
+                &helper_parameter_counts,
+                file_is_esm_map,
+            );
+        }
+        return Vec::new();
+    }
+
+    // Check parent directories only when the program appears to be backed by
+    // real on-disk files and normal automatic type loading is enabled. Virtual
+    // or isolated programs (like conformance harnesses using
+    // `@noTypesAndSymbols`) must not inherit tslib availability from the host
+    // workspace.
     if !options.checker.no_types_and_symbols
         && program_appears_filesystem_backed(program)
         && let Some(tslib_path) = filesystem_tslib_declaration(base_dir)
@@ -322,21 +341,35 @@ fn emit_tslib_helper_diagnostics_from_counts(
     result
 }
 
+fn tslib_declaration_in_dir(dir: &Path) -> Option<std::path::PathBuf> {
+    let candidate = dir.join("node_modules").join("tslib");
+    if !candidate.is_dir() {
+        return None;
+    }
+
+    let tslib_d_ts = candidate.join("tslib.d.ts");
+    if tslib_d_ts.is_file() {
+        return Some(tslib_d_ts);
+    }
+
+    let index_d_ts = candidate.join("index.d.ts");
+    if index_d_ts.is_file() {
+        return Some(index_d_ts);
+    }
+
+    None
+}
+
+fn local_filesystem_tslib_declaration(base_dir: &Path) -> Option<std::path::PathBuf> {
+    tslib_declaration_in_dir(base_dir)
+}
+
 /// Walk up from `base_dir` looking for `node_modules/tslib`.
 fn filesystem_tslib_declaration(base_dir: &Path) -> Option<std::path::PathBuf> {
     let mut dir = base_dir;
     loop {
-        let candidate = dir.join("node_modules").join("tslib");
-        if candidate.is_dir() {
-            let tslib_d_ts = candidate.join("tslib.d.ts");
-            if tslib_d_ts.is_file() {
-                return Some(tslib_d_ts);
-            }
-            let index_d_ts = candidate.join("index.d.ts");
-            if index_d_ts.is_file() {
-                return Some(index_d_ts);
-            }
-            return None;
+        if let Some(tslib_path) = tslib_declaration_in_dir(dir) {
+            return Some(tslib_path);
         }
         match dir.parent() {
             Some(parent) => dir = parent,
@@ -2039,6 +2072,42 @@ mod tests {
                 .iter()
                 .any(|diag| diag.code == 2343 || diag.code == 2354),
             "Did not expect tslib helper diagnostics when index.d.ts declares __decorate. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_types_and_symbols_still_honors_project_local_tslib() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let tslib_dir = temp_dir.path().join("node_modules").join("tslib");
+        std::fs::create_dir_all(&tslib_dir).unwrap();
+        std::fs::write(
+            tslib_dir.join("index.d.ts"),
+            "export declare function __decorate(decorators: Function[], target: any, key?: string | symbol, desc?: any): any;\n",
+        )
+        .unwrap();
+
+        let program = merged_program(&[(
+            "/app/a.ts",
+            "declare var dec: any, __decorate: any;\n@dec export class A {}\n",
+        )]);
+        let mut options = ResolvedCompilerOptions::default();
+        options.import_helpers = true;
+        options.checker.target = tsz_common::ScriptTarget::ES2015;
+        options.checker.experimental_decorators = true;
+        options.checker.no_types_and_symbols = true;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            temp_dir.path(),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diag| diag.code == 2343 || diag.code == 2354),
+            "Did not expect tslib helper diagnostics when a project-local tslib exists. Got: {diagnostics:#?}"
         );
     }
 
