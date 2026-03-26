@@ -82,6 +82,86 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
         let is_bare_import_type = call_idx == type_name_idx;
+        let has_import_type_options = self.ctx.arena.get(call_idx).is_some_and(|call_node| {
+            self.ctx
+                .arena
+                .get_call_expr(call_node)
+                .and_then(|call| call.arguments.as_ref())
+                .is_some_and(|args| args.nodes.len() > 1)
+        });
+        let has_call_parse_diagnostic = self.ctx.arena.get(call_idx).is_some_and(|call_node| {
+            self.ctx
+                .diagnostics
+                .iter()
+                .any(|diag| diag.start >= call_node.pos && diag.start < call_node.end)
+        });
+        let suppress_bare_import_type_error = has_call_parse_diagnostic || has_import_type_options;
+        let bare_import_type_refers_to_type = if is_bare_import_type {
+            use tsz_binder::symbol_flags;
+
+            const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+            const VALUE: u32 = symbol_flags::VARIABLE
+                | symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::ENUM
+                | symbol_flags::ENUM_MEMBER
+                | symbol_flags::VALUE_MODULE;
+
+            let lib_binders = self.get_lib_binders();
+            let ambient_export_equals_sym = self
+                .ctx
+                .binder
+                .module_exports
+                .get(&module_name)
+                .and_then(|exports| exports.get("export="))
+                .or_else(|| {
+                    self.ctx
+                        .global_module_exports_index
+                        .as_ref()
+                        .and_then(|idx| idx.get(&module_name))
+                        .and_then(|inner| inner.get("export="))
+                        .and_then(|entries| entries.first().map(|&(_file_idx, sym_id)| sym_id))
+                });
+            let file_export_equals = self
+                .ctx
+                .resolve_import_target(&module_name)
+                .and_then(|target_idx| self.ctx.get_binder_for_file(target_idx).map(|binder| (target_idx, binder)))
+                .and_then(|(target_idx, binder)| {
+                    let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                    let file_name = target_arena.source_files.first()?.file_name.as_str();
+                    binder
+                        .module_exports
+                        .get(file_name)
+                        .and_then(|exports| exports.get("export="))
+                });
+            let has_export_equals = ambient_export_equals_sym.is_some() || file_export_equals.is_some();
+
+            has_export_equals
+                || self.is_module_export_equals_type_only(&module_name)
+                || ambient_export_equals_sym.is_some_and(|sym_id| {
+                    let symbol_is_type = |checker: &Self, sym_id: tsz_binder::SymbolId| {
+                        checker
+                            .ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .is_some_and(|sym| {
+                                sym.is_type_only
+                                    || ((sym.flags & PURE_TYPE) != 0
+                                        && (sym.flags & VALUE) == 0)
+                            })
+                    };
+
+                    if symbol_is_type(self, sym_id) {
+                        return true;
+                    }
+
+                    let mut visited = Vec::new();
+                    self.resolve_alias_symbol(sym_id, &mut visited)
+                        .is_some_and(|resolved| symbol_is_type(self, resolved))
+                })
+        } else {
+            false
+        };
         let bare_import_type_error = |checker: &mut Self| {
             let message = format_message(
                 diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
@@ -108,17 +188,26 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(&module_name)
         {
-            // Module exists. For bare import types (`import("./foo")` as a type),
-            // do NOT emit TS1340 — we can't determine here whether the module
-            // exports a type (e.g., `export = SomeInterface`) or only values.
-            // TSC only emits TS1340 when it can confirm the module doesn't
-            // export a type, which requires full resolution.
-            return TypeId::ERROR;
+            return if is_bare_import_type
+                && !bare_import_type_refers_to_type
+                && !suppress_bare_import_type_error
+            {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 2. Binder module_exports (cross-file)
         if self.ctx.binder.module_exports.contains_key(&module_name) {
-            return TypeId::ERROR;
+            return if is_bare_import_type
+                && !bare_import_type_refers_to_type
+                && !suppress_bare_import_type_error
+            {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 3. Shorthand ambient modules (declare module "foo")
@@ -128,12 +217,26 @@ impl<'a> CheckerState<'a> {
             .shorthand_ambient_modules
             .contains(&module_name)
         {
-            return TypeId::ERROR;
+            return if is_bare_import_type
+                && !bare_import_type_refers_to_type
+                && !suppress_bare_import_type_error
+            {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 4. Declared modules (ambient modules with body)
         if self.ctx.binder.declared_modules.contains(&module_name) {
-            return TypeId::ERROR;
+            return if is_bare_import_type
+                && !bare_import_type_refers_to_type
+                && !suppress_bare_import_type_error
+            {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 5. Check if the driver has a resolution error for this specifier
@@ -180,7 +283,14 @@ impl<'a> CheckerState<'a> {
             // was never resolved. Check if any project file matches.
             let key = (self.ctx.current_file_idx, module_name.clone());
             if paths.contains_key(&key) {
-                return TypeId::ERROR;
+                return if is_bare_import_type
+                    && !bare_import_type_refers_to_type
+                    && !suppress_bare_import_type_error
+                {
+                    bare_import_type_error(self)
+                } else {
+                    TypeId::ERROR
+                };
             }
         }
 

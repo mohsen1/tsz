@@ -7,7 +7,7 @@ use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type, resolve_call,
-    resolve_new, tuple_elements_for_type,
+    resolve_new, stable_call_recovery_return_type, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
@@ -220,9 +220,25 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             self.ctx.daa_error_nodes.remove(&arg_idx.0);
             self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
+            let diag_snap = self.ctx.snapshot_diagnostics();
             let actual = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
+            let has_callback_body_diagnostic = self
+                .callback_body_span(arg_idx)
+                .is_some_and(|(start, end)| {
+                    self.ctx
+                        .speculative_diagnostics_since(&diag_snap)
+                        .iter()
+                        .any(|diag| diag.start >= start && diag.start < end)
+                });
             self.ctx.rollback_full(&snap);
-            (!self.is_assignable_to(actual, expected)).then_some((index, actual, expected))
+            let has_return_type_mismatch = stable_call_recovery_return_type(self.ctx.types, actual)
+                .zip(stable_call_recovery_return_type(self.ctx.types, expected))
+                .is_some_and(|(actual_return, expected_return)| {
+                    !self.is_assignable_to(actual_return, expected_return)
+                });
+            (has_callback_body_diagnostic && has_return_type_mismatch).then_some((
+                index, actual, expected,
+            ))
         })
     }
 

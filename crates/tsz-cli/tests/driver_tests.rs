@@ -8722,6 +8722,49 @@ export { foo, bar as baz };
 }
 
 #[test]
+fn direct_export_with_separate_type_alias_does_not_report_ts2460() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs"
+  },
+  "files": ["a.ts", "b.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        r#"export class A<T> { a!: T }
+export type { A as B };
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import type { A } from "./a";
+import { B } from "./a";
+
+let a: A<string> = { a: "" };
+let b: B<number> = { a: 3 };
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS),
+        "Did not expect TS2460 for direct export plus type-only alias, got: {result:?}"
+    );
+}
+
+#[test]
 fn bare_import_type_reports_ts1340() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -8764,6 +8807,48 @@ fn bare_import_type_reports_ts1340() {
                 && diag.message_text.contains("typeof import('./test')")
         }),
         "Expected TS1340 for bare import type, got: {result:?}"
+    );
+}
+
+#[test]
+fn bare_import_type_export_equals_class_does_not_report_ts1340() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true
+  },
+  "files": ["foo.ts", "usage.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("foo.ts"),
+        r#"class Conn {
+    item = 3;
+}
+
+export = Conn;
+"#,
+    );
+    write_file(
+        &base.join("usage.ts"),
+        r#"type Conn = import("./foo");
+declare const x: Conn;
+export const y = x.item;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result.diagnostics.iter().any(|d| d.code == 1340),
+        "Did not expect TS1340 for bare import type of export= class module, got: {result:?}"
     );
 }
 
@@ -8863,6 +8948,43 @@ export = x;
             .message_text
             .contains("Cannot use namespace 'x' as a value")),
         "Expected TS2708 on the namespace qualifier in export import, got: {result:?}"
+    );
+}
+
+#[test]
+fn export_import_namespace_type_alias_without_export_equals_does_not_report_ts2708() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"export namespace a {
+    export interface I {
+    }
+}
+
+export import b = a.I;
+export declare const x: b;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result.diagnostics.iter().any(|d| d.code == 2708),
+        "Did not expect TS2708 for namespace type alias without export=, got: {result:?}"
     );
 }
 
