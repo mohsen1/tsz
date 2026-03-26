@@ -894,6 +894,12 @@ impl ParserState {
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
             );
             self.next_token(); // consume 'import'
+            if self.is_token(SyntaxKind::CommaToken) {
+                let end_pos = self.token_end();
+                return self
+                    .arena
+                    .add_token(syntax_kind_ext::EMPTY_STATEMENT, start_pos, end_pos);
+            }
             // Consume remaining tokens until statement boundary
             while !self.is_token(SyntaxKind::SemicolonToken)
                 && !self.is_token(SyntaxKind::EndOfFileToken)

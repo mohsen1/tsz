@@ -135,6 +135,12 @@ pub struct ParserState {
     pub(crate) seen_module_indicator: bool,
     /// Whether the most recently parsed named import list consumed its closing brace.
     pub(crate) last_named_imports_consumed_closing_brace: bool,
+    /// Whether the most recently parsed named import list recovered directly to
+    /// a `from` clause after a missing closing brace.
+    pub(crate) last_named_imports_recovered_to_from: bool,
+    /// Whether the most recently parsed named import list hit a structural
+    /// recovery path rather than a semantic-only specifier error.
+    pub(crate) last_named_imports_had_structural_error: bool,
     /// When recovery consumes a malformed arrow-body `}` directly, keep a small
     /// number of following module-closing braces in the token stream so outer
     /// list recovery can report them as stray braces.
@@ -196,6 +202,8 @@ impl ParserState {
             label_scopes: vec![FxHashMap::default()],
             seen_module_indicator: false,
             last_named_imports_consumed_closing_brace: false,
+            last_named_imports_recovered_to_from: false,
+            last_named_imports_had_structural_error: false,
             deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
             fallback_import_type_options_once: false,
@@ -220,6 +228,8 @@ impl ParserState {
         self.label_scopes.push(FxHashMap::default());
         self.seen_module_indicator = false;
         self.last_named_imports_consumed_closing_brace = false;
+        self.last_named_imports_recovered_to_from = false;
+        self.last_named_imports_had_structural_error = false;
         self.deferred_module_close_braces = 0;
         self.abort_intersection_continuation = false;
         self.fallback_import_type_options_once = false;

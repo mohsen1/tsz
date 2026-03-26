@@ -349,6 +349,33 @@ fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
 }
 
 #[test]
+fn malformed_import_clause_recovery_surfaces_statement_level_ts1434_and_ts1128() {
+    let (parser, _root) = parse_source(
+        r#"import { * } from "./foo";
+import defaultBinding, from "./foo";
+import , { a } from "./foo";
+import { a }, from "./foo";"#,
+    );
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let ts1434 = diagnostics.iter().filter(|d| d.code == 1434).count();
+    let ts1128 = diagnostics.iter().filter(|d| d.code == 1128).count();
+
+    assert!(
+        ts1434 >= 2,
+        "expected TS1434 for malformed import-clause follow-up recovery, got {diagnostics:?}"
+    );
+    assert!(
+        ts1128 >= 1,
+        "expected TS1128 for statement-level comma recovery, got {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&1003),
+        "expected the malformed named import to keep its TS1003 root error, got {codes:?}"
+    );
+}
+
+#[test]
 fn bigint_literal_property_names_parse_without_cascading_member_errors() {
     let (parser, _root) = parse_source(
         r#"

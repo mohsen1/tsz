@@ -1947,7 +1947,7 @@ impl ParserState {
             self.parse_string_literal()
         } else if import_clause_had_errors
             && self.is_token(SyntaxKind::FromKeyword)
-            && !self.last_named_imports_consumed_closing_brace
+            && self.last_named_imports_recovered_to_from
         {
             // The import clause had errors but we still see `from` — this happens
             // when a named import list failed to consume its closing `}` and we
@@ -1958,6 +1958,7 @@ impl ParserState {
         } else if import_clause_had_errors
             && self.is_token(SyntaxKind::FromKeyword)
             && self.last_named_imports_consumed_closing_brace
+            && !self.last_named_imports_had_structural_error
         {
             // The import clause had semantic errors (e.g., TS1003 for reserved word
             // binding name like `import { default } from "mod"`) but was structurally
@@ -1966,7 +1967,9 @@ impl ParserState {
             self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
         } else if import_clause_had_errors {
-            if self.is_token(SyntaxKind::CloseBraceToken) {
+            if self.is_token(SyntaxKind::CloseBraceToken)
+                || self.is_token(SyntaxKind::FromKeyword)
+            {
                 NodeIndex::NONE
             } else {
                 // The import clause had errors AND we're NOT at `from`.  This happens
@@ -2010,12 +2013,12 @@ impl ParserState {
 
         // Parse optional import attributes: with { ... } or assert { ... }
         let attributes = self.parse_import_attributes();
-        let recover_as_statement_boundary = import_clause_had_errors
+        let recover_as_statement_boundary = (import_clause_had_errors
             && module_specifier.is_none()
             && matches!(
                 self.token(),
-                SyntaxKind::CloseBraceToken | SyntaxKind::FromKeyword
-            )
+                SyntaxKind::CloseBraceToken | SyntaxKind::FromKeyword | SyntaxKind::CommaToken
+            ))
             || (recovered_trailing_comma_before_from && module_specifier.is_none());
         if !recover_as_statement_boundary {
             self.parse_semicolon();
@@ -2109,6 +2112,8 @@ impl ParserState {
         let mut is_type_only = false;
         let mut is_deferred = false;
         self.last_named_imports_consumed_closing_brace = false;
+        self.last_named_imports_recovered_to_from = false;
+        self.last_named_imports_had_structural_error = false;
 
         // Check for "type" keyword modifier (import type { ... } / import type X from ...)
         // Disambiguation: `import type` can mean either:
@@ -2286,6 +2291,8 @@ impl ParserState {
     pub(crate) fn parse_named_imports(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.last_named_imports_consumed_closing_brace = false;
+        self.last_named_imports_recovered_to_from = false;
+        self.last_named_imports_had_structural_error = false;
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut elements = Vec::new();
@@ -2299,10 +2306,12 @@ impl ParserState {
             // import { a from "module"  (missing closing brace)
             // In this case, break the loop to avoid parsing 'from' as an identifier
             if self.is_token(SyntaxKind::FromKeyword) {
+                self.last_named_imports_recovered_to_from = true;
                 break;
             }
 
             if self.is_token(SyntaxKind::AsteriskToken) {
+                self.last_named_imports_had_structural_error = true;
                 self.error_identifier_expected();
                 self.next_token();
                 if self.is_token(SyntaxKind::CloseBraceToken) {
@@ -2333,6 +2342,7 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::CloseBraceToken);
 
             if spec_failed_to_parse && self.is_token(SyntaxKind::CloseBraceToken) {
+                self.last_named_imports_had_structural_error = true;
                 // For malformed import specifiers like `{ 0n as foo }`, tsc
                 // ends the import clause before `}` and lets statement recovery
                 // surface the stray `}` / `from` follow-up diagnostics (TS1128/TS1434).
@@ -2353,10 +2363,13 @@ impl ParserState {
                     self.next_token();
                 }
                 if self.is_token(SyntaxKind::CloseBraceToken) {
+                    self.last_named_imports_had_structural_error = true;
                     leave_closing_brace_for_statement_recovery = true;
                     break;
                 }
                 if self.is_token(SyntaxKind::FromKeyword) {
+                    self.last_named_imports_had_structural_error = true;
+                    self.last_named_imports_recovered_to_from = true;
                     leave_closing_brace_for_statement_recovery = false;
                     break;
                 }
