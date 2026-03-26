@@ -16,8 +16,15 @@ impl<'a> CheckerState<'a> {
         // missed. This avoids silently skipping type param priming when
         // pre-population has gaps.
         let def_id = self.ctx.get_lib_def_id(sym_id);
-        if self.ctx.get_def_type_params(def_id).is_some() {
-            return;
+        if let Some(cached) = self.ctx.def_type_params.borrow().get(&def_id).cloned() {
+            let cached_is_placeholder = !cached.is_empty()
+                && cached
+                    .iter()
+                    .all(|param| param.constraint.is_none() && param.default.is_none());
+            if !cached_is_placeholder {
+                return;
+            }
+            self.ctx.def_type_params.borrow_mut().remove(&def_id);
         }
 
         let lib_contexts = &self.ctx.lib_contexts;

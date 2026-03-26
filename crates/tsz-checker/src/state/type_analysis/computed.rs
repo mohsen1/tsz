@@ -838,6 +838,10 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                    self.prime_type_reference_params_in_alias_body(
+                        decl_arena,
+                        type_alias.type_node,
+                    );
                     let mut alias_type = self.get_type_from_type_node(type_alias.type_node);
                     // Resolve TypeQuery references with flow narrowing while type
                     // parameters are still in scope. This prevents false TS2304

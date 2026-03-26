@@ -1192,11 +1192,20 @@ impl<'a> CheckerState<'a> {
         // seed the cache with the class arity before the interface-side defaults are
         // merged. Recompute those through the merged declaration walk instead of
         // trusting a potentially stale cache entry.
-        if !prefers_type_only_decls
-            && let Some(cached) = self.ctx.def_type_params.borrow().get(&def_id).cloned()
-        {
-            self.ctx.leave_recursion();
-            return cached;
+        let cached_params = (!prefers_type_only_decls)
+            .then(|| self.ctx.def_type_params.borrow().get(&def_id).cloned())
+            .flatten();
+        if let Some(cached) = cached_params {
+            let cached_is_placeholder = self.ctx.symbol_is_from_lib(sym_id)
+                && !cached.is_empty()
+                && cached
+                    .iter()
+                    .all(|param| param.constraint.is_none() && param.default.is_none());
+            if !cached_is_placeholder {
+                self.ctx.leave_recursion();
+                return cached;
+            }
+            self.ctx.def_type_params.borrow_mut().remove(&def_id);
         }
         if !prefers_type_only_decls && self.ctx.def_no_type_params.borrow().contains(&def_id) {
             self.ctx.leave_recursion();

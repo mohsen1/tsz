@@ -17,6 +17,30 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn type_node_is_nested_in_type_literal(&self, node_idx: NodeIndex) -> bool {
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(node_idx)
+            .map_or(NodeIndex::NONE, |info| info.parent);
+
+        while !current.is_none() {
+            let Some(parent) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if parent.kind == syntax_kind_ext::TYPE_LITERAL {
+                return true;
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map_or(NodeIndex::NONE, |info| info.parent);
+        }
+
+        false
+    }
+
     pub(crate) fn type_alias_reaches_resolving_alias(&self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
@@ -405,7 +429,11 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                let _ = self.get_type_from_type_node(node_idx);
+                let _ = if self.type_node_is_nested_in_type_literal(node_idx) {
+                    self.get_type_from_type_node_in_type_literal(node_idx)
+                } else {
+                    self.get_type_from_type_node(node_idx)
+                };
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {

@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
         // in the alias body. Without this, generic lib types like Uint8Array
         // (which has a default type parameter) produce bare Lazy(DefId) instead
         // of Application(Lazy(DefId), [defaults]), causing false TS2345/TS2322.
-        self.prime_cross_arena_type_reference_params(decl_arena, type_alias.type_node);
+        self.prime_type_reference_params_in_alias_body(decl_arena, type_alias.type_node);
         let binder = &self.ctx.binder;
         let lib_binders = self.get_lib_binders();
         let decl_binder = self
@@ -461,7 +461,11 @@ impl<'a> CheckerState<'a> {
     /// This ensures that generic lib types with all-default type params
     /// (e.g., `Uint8Array<TArrayBuffer = ArrayBuffer>`) get their defaults
     /// applied during lowering.
-    fn prime_cross_arena_type_reference_params(&mut self, decl_arena: &NodeArena, root: NodeIndex) {
+    pub(crate) fn prime_type_reference_params_in_alias_body(
+        &mut self,
+        decl_arena: &NodeArena,
+        root: NodeIndex,
+    ) {
         let mut stack = vec![root];
         let mut names_to_prime = Vec::new();
 

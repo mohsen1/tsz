@@ -1451,7 +1451,6 @@ impl<'a> CheckerState<'a> {
                     node.kind,
                     syntax_kind_ext::CALL_EXPRESSION
                         | syntax_kind_ext::NON_NULL_EXPRESSION
-                        | syntax_kind_ext::NEW_EXPRESSION
                 ) {
                     self.ctx.node_types.insert(idx.0, result);
                 }

@@ -10523,6 +10523,31 @@ function getEither<T>(in1: Iterable<T>, in2: ArrayLike<T>) {
 }
 
 #[test]
+fn test_type_literal_bare_uint8array_does_not_poison_later_defaulted_refs() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+type Arg = { data: string | Uint8Array } | { data: number };
+declare function foo(arg: Arg): void;
+foo({ data: new Uint8Array([30]) });
+const x: string | number | Uint8Array = new Uint8Array([30]);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected bare Uint8Array refs inside type literals to preserve lib defaults without TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_namespace_import_from_umd_module_includes_global_and_module_augmentations() {
     let files = [
         (
