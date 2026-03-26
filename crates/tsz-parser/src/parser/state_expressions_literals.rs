@@ -692,6 +692,213 @@ impl ParserState {
             None
         }
 
+        fn decode_surrogate_pair(high: u32, low: u32) -> Option<u32> {
+            if !(0xD800..=0xDBFF).contains(&high) || !(0xDC00..=0xDFFF).contains(&low) {
+                return None;
+            }
+            Some(0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00))
+        }
+
+        fn parse_hex_u32(raw_text: &str, start: usize, len: usize) -> Option<u32> {
+            raw_text
+                .get(start..start + len)
+                .and_then(|slice| u32::from_str_radix(slice, 16).ok())
+        }
+
+        fn split_non_unicode_atom_offsets(start: usize, ch: char) -> Vec<u32> {
+            let utf16_len = ch.len_utf16();
+            let utf8_len = ch.len_utf8();
+            ch.encode_utf16(&mut [0; 2])
+                .iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    u32::try_from(start + (i * utf8_len) / utf16_len)
+                        .expect("regex offsets must fit in u32")
+                })
+                .collect()
+        }
+
+        fn regex_range_order_errors(raw_text: &str, body_end: usize) -> Vec<(u32, u32)> {
+            #[derive(Clone, Copy)]
+            enum ClassToken {
+                Atom { value: u32, start: u32 },
+                OpaqueAtom,
+                Hyphen,
+            }
+
+            fn parse_class_atom(
+                raw_text: &str,
+                start: usize,
+                class_end: usize,
+                unicode_mode: bool,
+            ) -> Option<(Vec<(u32, u32)>, usize)> {
+                let rest = raw_text.get(start..class_end)?;
+                let mut chars = rest.chars();
+                let ch = chars.next()?;
+                if ch == '\\' {
+                    let next_start = start + ch.len_utf8();
+                    let next = raw_text.get(next_start..class_end)?.chars().next()?;
+                    if next == 'u' {
+                        let brace_start = next_start + next.len_utf8();
+                        if raw_text.as_bytes().get(brace_start).copied() == Some(b'{') {
+                            let hex_start = brace_start + 1;
+                            let mut hex_end = hex_start;
+                            while hex_end < class_end
+                                && raw_text.as_bytes().get(hex_end).copied() != Some(b'}')
+                            {
+                                hex_end += 1;
+                            }
+                            if hex_end < class_end
+                                && let Some(value) =
+                                    parse_hex_u32(raw_text, hex_start, hex_end - hex_start)
+                            {
+                                return Some((
+                                    vec![(
+                                        value,
+                                        u32::try_from(start).expect("regex offsets must fit in u32"),
+                                    )],
+                                    hex_end + 1,
+                                ));
+                            }
+                        } else if let Some(value) = parse_hex_u32(raw_text, brace_start, 4) {
+                            let next_index = brace_start + 4;
+                            if unicode_mode
+                                && let Some(after_first) = raw_text.get(next_index..class_end)
+                                && after_first.starts_with("\\u")
+                                && let Some(low) = parse_hex_u32(raw_text, next_index + 2, 4)
+                                && let Some(code_point) = decode_surrogate_pair(value, low)
+                            {
+                                return Some((
+                                    vec![(
+                                        code_point,
+                                        u32::try_from(start).expect("regex offsets must fit in u32"),
+                                    )],
+                                    next_index + 6,
+                                ));
+                            }
+                            return Some((
+                                vec![(
+                                    value,
+                                    u32::try_from(start).expect("regex offsets must fit in u32"),
+                                )],
+                                next_index,
+                            ));
+                        }
+                    }
+
+                    let escaped_start = next_start;
+                    let escaped = raw_text.get(escaped_start..class_end)?.chars().next()?;
+                    if matches!(escaped, 'd' | 'D' | 's' | 'S' | 'w' | 'W') {
+                        return Some((Vec::new(), escaped_start + escaped.len_utf8()));
+                    }
+                    if unicode_mode {
+                        Some((
+                            vec![(
+                                escaped as u32,
+                                u32::try_from(start).expect("regex offsets must fit in u32"),
+                            )],
+                            escaped_start + escaped.len_utf8(),
+                        ))
+                    } else {
+                        Some((
+                            escaped
+                                .encode_utf16(&mut [0; 2])
+                                .iter()
+                                .zip(split_non_unicode_atom_offsets(start, escaped))
+                                .map(|(u, offset)| (*u as u32, offset))
+                                .collect(),
+                            escaped_start + escaped.len_utf8(),
+                        ))
+                    }
+                } else if unicode_mode {
+                    Some((
+                        vec![(
+                            ch as u32,
+                            u32::try_from(start).expect("regex offsets must fit in u32"),
+                        )],
+                        start + ch.len_utf8(),
+                    ))
+                } else {
+                    Some((
+                        ch.encode_utf16(&mut [0; 2])
+                            .iter()
+                            .zip(split_non_unicode_atom_offsets(start, ch))
+                            .map(|(u, offset)| (*u as u32, offset))
+                            .collect(),
+                        start + ch.len_utf8(),
+                    ))
+                }
+            }
+
+            let flags = &raw_text[body_end + 1..];
+            let unicode_mode = flags.contains('u') || flags.contains('v');
+            let bytes = raw_text.as_bytes();
+            let mut errors = Vec::new();
+            let mut i = 1usize;
+
+            while i < body_end {
+                match bytes[i] {
+                    b'\\' => {
+                        i += 1;
+                        if i < body_end {
+                            i += 1;
+                        }
+                    }
+                    b'[' => {
+                        i += 1;
+                        let mut tokens = Vec::new();
+                        while i < body_end {
+                            if bytes[i] == b']' {
+                                i += 1;
+                                break;
+                            }
+                            if bytes[i] == b'-' {
+                                tokens.push(ClassToken::Hyphen);
+                                i += 1;
+                                continue;
+                            }
+                            let Some((atoms, next_i)) =
+                                parse_class_atom(raw_text, i, body_end, unicode_mode)
+                            else {
+                                break;
+                            };
+                            if atoms.is_empty() {
+                                tokens.push(ClassToken::OpaqueAtom);
+                            } else {
+                                tokens.extend(
+                                    atoms.into_iter()
+                                        .map(|(value, start)| ClassToken::Atom { value, start }),
+                                );
+                            }
+                            i = next_i;
+                        }
+
+                        if let Some(offending_start) = tokens.windows(3).find_map(|window| {
+                            match window {
+                                [
+                                    ClassToken::Atom { value: left, start },
+                                    ClassToken::Hyphen,
+                                    ClassToken::Atom { value: right, .. },
+                                ] if left > right => Some(*start),
+                                _ => None,
+                            }
+                        }) {
+                            errors.push((offending_start, 1));
+                        }
+                    }
+                    _ => {
+                        if let Some(ch) = raw_text.get(i..body_end).and_then(|s| s.chars().next()) {
+                            i += ch.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            errors
+        }
+
         let start_pos = self.token_pos();
 
         // Rescan the / or /= as a regex literal
@@ -757,6 +964,9 @@ impl ParserState {
                 errors
             })
             .unwrap_or_default();
+        let range_order_errors = regex_body_end(&raw_text)
+            .map(|body_end| regex_range_order_errors(&raw_text, body_end))
+            .unwrap_or_default();
 
         self.parse_expected(SyntaxKind::RegularExpressionLiteral);
         let end_pos = self.token_end();
@@ -793,6 +1003,14 @@ impl ParserState {
                 len,
                 tsz_common::diagnostics::diagnostic_messages::UNICODE_ESCAPE_SEQUENCES_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR_THE_UNICO,
                 tsz_common::diagnostics::diagnostic_codes::UNICODE_ESCAPE_SEQUENCES_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR_THE_UNICO,
+            );
+        }
+        for (pos, len) in range_order_errors {
+            self.parse_error_at(
+                start_pos + pos,
+                len,
+                tsz_common::diagnostics::diagnostic_messages::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS,
+                tsz_common::diagnostics::diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS,
             );
         }
 

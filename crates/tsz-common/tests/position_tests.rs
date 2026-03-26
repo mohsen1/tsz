@@ -56,6 +56,17 @@ fn test_utf16_columns() {
 }
 
 #[test]
+fn test_offset_to_position_inside_supplementary_scalar_uses_utf16_units() {
+    let source = "a😀b";
+    let map = LineMap::build(source);
+
+    assert_eq!(map.offset_to_position(1, source), Position::new(0, 1));
+    assert_eq!(map.offset_to_position(2, source), Position::new(0, 2));
+    assert_eq!(map.offset_to_position(3, source), Position::new(0, 2));
+    assert_eq!(map.offset_to_position(5, source), Position::new(0, 3));
+}
+
+#[test]
 fn test_line_start_reports_exact_offsets_and_out_of_range_none() {
     let source = "alpha\nbeta\r\ngamma\rdelta";
     let map = LineMap::build(source);
