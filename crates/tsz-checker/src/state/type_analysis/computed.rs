@@ -377,6 +377,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(param_node) = self.ctx.arena.get(param_idx)
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         && param.type_annotation.is_some()
+                        && !self.ctx.is_js_file()
                     {
                         let param_type = self.get_type_from_type_node(param.type_annotation);
                         return (param_type, Vec::new());

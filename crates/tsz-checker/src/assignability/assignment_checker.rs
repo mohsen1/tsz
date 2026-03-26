@@ -1222,27 +1222,12 @@ impl<'a> CheckerState<'a> {
             && self.ctx.compiler_options.check_js
             && let Some(jsdoc_left_type) = self
                 .enclosing_expression_statement(expr_idx)
-                .and_then(|stmt_idx| {
-                    self.js_statement_declared_type(stmt_idx).or_else(|| {
-                        let sf = self.source_file_data_for_node(stmt_idx)?;
-                        let source_text = sf.text.to_string();
-                        let comments = sf.comments.clone();
-                        let jsdoc =
-                            self.try_jsdoc_with_ancestor_walk(stmt_idx, &comments, &source_text)?;
-                        self.resolve_jsdoc_type_from_comment(
-                            &jsdoc,
-                            self.ctx.arena.get(stmt_idx)?.pos,
-                        )
-                    })
-                })
-                .or_else(|| self.jsdoc_type_annotation_for_node(expr_idx))
-                .or_else(|| self.jsdoc_type_annotation_for_node(left_idx))
+                .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                 .or_else(|| {
-                    let left_root = self.expression_root(left_idx);
-                    (left_root != left_idx)
-                        .then(|| self.jsdoc_type_annotation_for_node(left_root))?
-                })
-                .or_else(|| {
+                    // Nested assignments inside JS accessors/functions should not inherit
+                    // an enclosing declaration's JSDoc @type as the assignment target.
+                    // Only direct JSDoc attached to the assignment expression/LHS should
+                    // act as a declared target type here.
                     self.jsdoc_type_annotation_for_node_direct(expr_idx)
                         .or_else(|| self.jsdoc_type_annotation_for_node_direct(left_idx))
                 })

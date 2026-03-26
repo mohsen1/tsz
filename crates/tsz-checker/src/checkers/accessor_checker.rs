@@ -57,7 +57,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<Vec<Option<tsz_solver::TypeId>>> {
         let &first_param_idx = setter_accessor.parameters.nodes.first()?;
         let param = self.ctx.arena.get_parameter_at(first_param_idx)?;
-        if param.type_annotation.is_some() {
+        if param.type_annotation.is_some() && !self.ctx.is_js_file() {
             return None;
         }
 
@@ -265,6 +265,13 @@ impl<'a> CheckerState<'a> {
     /// }
     /// ```
     pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
+        // In JS/checkJs, accessor pairs are co-inferred from the property shape and
+        // backing writes. JSDoc on a setter can still affect emit/comments, but it
+        // does not force the inferred getter type through this TS2322 check.
+        if self.ctx.is_js_file() {
+            return;
+        }
+
         type GetterInfo = Option<(NodeIndex, NodeIndex, NodeIndex)>; // (name, body, type_ann)
         type SetterInfo = Option<(NodeIndex, NodeIndex)>; // (param_type_ann, param_idx)
 
