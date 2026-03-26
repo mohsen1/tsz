@@ -5479,6 +5479,85 @@ export class Test1 {
 }
 
 #[test]
+fn test_umd_namespace_conflicting_with_global_const_reports_ts2451() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "three.d.ts",
+                r"
+export namespace THREE {
+  export class Vector2 {}
+}
+                ",
+            ),
+            (
+                "global.d.ts",
+                r"
+import * as _three from './three';
+
+export as namespace THREE;
+
+declare global {
+  export const THREE: typeof _three;
+}
+                ",
+            ),
+            ("test.ts", "const m = THREE;"),
+        ],
+        "global.d.ts",
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2451_count = diagnostics.iter().filter(|(code, _)| *code == 2451).count();
+    assert!(
+        ts2451_count >= 2,
+        "Expected both UMD/global declarations to report TS2451 when checking global.d.ts. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_umd_namespace_with_global_const_value_does_not_emit_ts2708() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "three.d.ts",
+                r"
+export namespace THREE {
+  export class Vector2 {}
+}
+                ",
+            ),
+            (
+                "global.d.ts",
+                r"
+import * as _three from './three';
+
+export as namespace THREE;
+
+declare global {
+  export const THREE: typeof _three;
+}
+                ",
+            ),
+            ("test.ts", "const m = THREE;"),
+        ],
+        "test.ts",
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2708),
+        "Did not expect cascading TS2708 once a non-UMD global value exists. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_instance_member_initializer_local_shadow_does_not_report_ts2301() {
     let diagnostics = compile_and_get_diagnostics(
         r"
