@@ -84,8 +84,6 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         props_type: TypeId,
     ) -> TypeId {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
         let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
             return props_type;
         };
@@ -106,18 +104,6 @@ impl<'a> CheckerState<'a> {
 
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(lma_sym_id);
         if body_type == TypeId::ERROR || body_type == TypeId::ANY {
-            return props_type;
-        }
-
-        let has_prop_types = matches!(
-            self.resolve_property_access_with_env(component_type, "propTypes"),
-            PropertyAccessResult::Success { .. }
-        );
-        let has_default_props = matches!(
-            self.resolve_property_access_with_env(component_type, "defaultProps"),
-            PropertyAccessResult::Success { .. }
-        );
-        if !has_prop_types && !has_default_props {
             return props_type;
         }
 
@@ -143,6 +129,20 @@ impl<'a> CheckerState<'a> {
             self.resolve_property_access_with_env(component_type, "propTypes"),
             crate::query_boundaries::common::PropertyAccessResult::Success { .. }
         );
+        if !has_managed_props_metadata
+            && (tsz_solver::contains_type_parameters(self.ctx.types, props_type)
+                || crate::computation::call_inference::should_preserve_contextual_application_shape(
+                    self.ctx.types,
+                    props_type,
+                ))
+        {
+            return props_type;
+        }
+        if !has_managed_props_metadata
+            && !self.jsx_managed_attributes_preserve_original_props(props_type, instantiated)
+        {
+            return props_type;
+        }
         if !has_managed_props_metadata
             && crate::computation::call_inference::should_preserve_contextual_application_shape(
                 self.ctx.types,
@@ -998,6 +998,30 @@ impl<'a> CheckerState<'a> {
             1 => filtered[0],
             _ => self.ctx.types.factory().intersection(filtered),
         }
+    }
+
+    fn jsx_managed_attributes_preserve_original_props(
+        &mut self,
+        original_props: TypeId,
+        managed_props: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let original_props = self.normalize_jsx_required_props_target(original_props);
+        let managed_props = self.normalize_jsx_required_props_target(managed_props);
+        let Some(shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, original_props)
+        else {
+            return true;
+        };
+
+        shape.properties.iter().all(|prop| {
+            let prop_name = self.ctx.types.resolve_atom(prop.name).to_string();
+            matches!(
+                self.resolve_property_access_with_env(managed_props, &prop_name),
+                PropertyAccessResult::Success { .. }
+            )
+        })
     }
 
     /// Get the property name from `JSX.ElementAttributesProperty`.

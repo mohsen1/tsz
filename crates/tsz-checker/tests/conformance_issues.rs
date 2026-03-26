@@ -1158,7 +1158,15 @@ fn test_factory_scoped_jsx_library_managed_attributes_alias_preserves_added_prop
     let source = r#"
 // @jsx: react
 // @jsxFactory: jsx
-declare const jsx: any;
+declare namespace React {
+    function createElement(type: any, props: any, ...children: any[]): any;
+}
+
+declare const React: {
+    createElement: typeof React.createElement;
+};
+
+declare const jsx: typeof React.createElement;
 
 namespace jsx {
     export namespace JSX {
