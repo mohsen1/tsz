@@ -1345,7 +1345,12 @@ impl<'a> CheckerState<'a> {
                             self.enum_object_type(member_sym_id)
                                 .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id))
                         } else {
-                            self.get_type_of_symbol(member_sym_id)
+                            // For merged interface+variable symbols (e.g.,
+                            // `interface Foo` + `var Foo: FooConstructor`), prefer the
+                            // variable's type in value position so construct signatures
+                            // are visible to `new` expressions.
+                            self.merged_value_type_for_symbol_if_available(member_sym_id)
+                                .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id))
                         };
                         if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
                             return self.finalize_property_access_result(

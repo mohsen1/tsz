@@ -9,7 +9,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn merged_value_type_for_symbol_if_available(
+    pub(crate) fn merged_value_type_for_symbol_if_available(
         &mut self,
         sym_id: SymbolId,
     ) -> Option<TypeId> {
