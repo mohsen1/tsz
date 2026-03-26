@@ -826,6 +826,21 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // For enum members, return the runtime enum object type so that
+        // property access on enum members (e.g., `m.Color.Blue`) works correctly.
+        if member_sym.flags & symbol_flags::ENUM != 0
+            && (member_sym.flags & symbol_flags::ENUM_MEMBER) == 0
+        {
+            let member_type = self
+                .enum_object_type(member_sym_id)
+                .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id));
+            return if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
+                Some(member_type)
+            } else {
+                None
+            };
+        }
+
         // For merged interface+variable symbols, prefer the value declaration's type.
         let member_type = if member_sym.flags & symbol_flags::INTERFACE != 0
             && member_sym.flags & symbol_flags::VARIABLE != 0
