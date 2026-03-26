@@ -17416,6 +17416,114 @@ fn test_type_only_namespace_reexport_chain_does_not_emit_ts2305() {
 }
 
 #[test]
+fn test_js_extends_implicit_any_reports_ts2314_and_ts8026() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        r#"
+/**
+ * @template T
+ */
+class A {}
+
+class B extends A {}
+
+/** @augments A */
+class C extends A {}
+
+/** @augments A<number, number, number> */
+class D extends A {}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2314: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2314)
+        .collect();
+    let ts8026: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 8026)
+        .collect();
+
+    assert_eq!(
+        ts2314.len(),
+        2,
+        "Expected two TS2314 diagnostics for malformed @augments tags. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2314
+            .iter()
+            .all(|(_, message)| message.contains("A<T>")),
+        "Expected TS2314 messages to preserve the generic display name. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts8026.len(),
+        1,
+        "Expected one TS8026 diagnostic for the missing @extends tag. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts8026[0].1.contains("A<T>"),
+        "Expected TS8026 to mention the generic base class display name. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_js_imported_generic_extends_without_augments_emits_ts8026_only() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("somelib.d.ts", "export declare class Foo<T> { prop: T; }\n"),
+            (
+                "index.js",
+                r#"
+import { Foo } from "./somelib";
+
+class MyFoo extends Foo {
+    constructor() {
+        super();
+        this.prop.alpha = 12;
+    }
+}
+"#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts8026: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 8026)
+        .collect();
+
+    assert_eq!(
+        ts8026.len(),
+        1,
+        "Expected one TS8026 diagnostic for the missing @extends tag on an imported generic base. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts8026[0].1.contains("Foo<T>"),
+        "Expected TS8026 to mention the imported generic base class display name. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2314),
+        "Did not expect TS2314 for imported generic bases in JS. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_unbounded_generic_constraint_mismatch_preserves_record_alias_display() {
     if !lib_files_available() {
         return;
