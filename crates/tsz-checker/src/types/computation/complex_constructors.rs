@@ -229,9 +229,6 @@ impl<'a> CheckerState<'a> {
             None => return (method_bindings, this_props, has_prototype_evidence),
         };
 
-        // Variable-assigned function expressions sit under
-        // VARIABLE_DECLARATION_LIST -> VARIABLE_STATEMENT. Walk up to the enclosing
-        // statement container before scanning sibling statements for prototype writes.
         if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
             && let Some(grandparent_idx) = self.ctx.arena.get_extended(parent_idx).map(|e| e.parent)
             && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)

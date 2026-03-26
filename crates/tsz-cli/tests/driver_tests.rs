@@ -9943,6 +9943,58 @@ x.middleInit = "R";
 }
 
 #[test]
+fn compile_plain_function_self_alias_prototype_method_preserves_members() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noImplicitAny": true,
+            "strictNullChecks": true,
+            "noEmit": true
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"function Foonly() {
+    var self = this
+    self.x = 1
+    self.m = function() {
+        console.log(self.x)
+    }
+}
+Foonly.prototype.mreal = function() {
+    var self = this
+    self.y = 2
+}
+const foo = new Foonly()
+foo.x
+foo.y
+foo.m()
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Unexpected TS2339 for self-alias prototype members in project mode: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn module_augmentation_method_type_params_and_members_resolve_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
