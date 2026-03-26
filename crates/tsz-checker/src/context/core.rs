@@ -291,6 +291,8 @@ impl<'a> CheckerContext<'a> {
     pub fn copy_cross_file_state_from(&mut self, parent: &CheckerContext<'_>) {
         self.all_arenas = parent.all_arenas.clone();
         self.all_binders = parent.all_binders.clone();
+        self.report_unresolved_imports = parent.report_unresolved_imports;
+        self.resolved_modules = parent.resolved_modules.clone();
         self.global_file_locals_index = parent.global_file_locals_index.clone();
         self.global_module_exports_index = parent.global_module_exports_index.clone();
         self.global_declared_modules = parent.global_declared_modules.clone();
@@ -301,7 +303,10 @@ impl<'a> CheckerContext<'a> {
         self.global_arena_index = parent.global_arena_index.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
+        self.resolved_module_errors = parent.resolved_module_errors.clone();
         self.module_specifiers = parent.module_specifiers.clone();
+        self.is_external_module_by_file = parent.is_external_module_by_file.clone();
+        self.file_is_esm_map = parent.file_is_esm_map.clone();
     }
 
     /// Set all binders for cross-file resolution.

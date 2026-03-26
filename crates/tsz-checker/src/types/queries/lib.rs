@@ -270,6 +270,10 @@ impl<'a> CheckerState<'a> {
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
+            let source_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .unwrap_or(self.ctx.current_file_idx);
             // Look up the exported symbol in module_exports.
             // Only do this for named/default imports (import_name is Some).
             // For namespace/require imports (`import X = require("m")`),
@@ -277,6 +281,13 @@ impl<'a> CheckerState<'a> {
             // a specific export, resolving the alias to that export instead
             // of the module namespace.
             if symbol.import_name.is_some() {
+                if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                    module_name,
+                    export_name,
+                    Some(source_file_idx),
+                ) {
+                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                }
                 if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
                     && let Some(target_sym_id) = exports.get(export_name)
                 {

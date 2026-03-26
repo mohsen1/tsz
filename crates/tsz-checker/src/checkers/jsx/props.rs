@@ -949,15 +949,16 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     // Assignability check — tsc anchors at the attribute NAME.
-                    if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
-                        if !self.check_assignable_or_report_at(
+                    if actual_type != TypeId::ANY
+                        && actual_type != TypeId::ERROR
+                        && !self.check_assignable_or_report_at(
                             actual_type,
                             expected_type,
                             value_node_idx,
                             attr_data.name,
-                        ) {
-                            has_prop_type_error = true;
-                        }
+                        )
+                    {
+                        has_prop_type_error = true;
                     }
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {

@@ -1,12 +1,83 @@
 //! Import type resolution helpers (`import("./module").Foo`).
 
 use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn import_type_member_segments(&self, idx: NodeIndex) -> Option<Vec<String>> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            let call = self.ctx.arena.get_call_expr(node)?;
+            let expr_node = self.ctx.arena.get(call.expression)?;
+            return (expr_node.kind == SyntaxKind::ImportKeyword as u16).then(Vec::new);
+        }
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return None;
+        }
+
+        let qn = self.ctx.arena.get_qualified_name(node)?;
+        let mut segments = self.import_type_member_segments(qn.left)?;
+        let right_node = self.ctx.arena.get(qn.right)?;
+        let right_ident = self.ctx.arena.get_identifier(right_node)?;
+        segments.push(right_ident.escaped_text.clone());
+        Some(segments)
+    }
+
+    fn resolve_import_type_reference(
+        &mut self,
+        module_name: &str,
+        type_name_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let segments = self.import_type_member_segments(type_name_idx)?;
+        if segments.is_empty() {
+            return None;
+        }
+
+        let mut current_sym = self.resolve_jsdoc_import_member(module_name, &segments[0])?;
+        for segment in segments.iter().skip(1) {
+            let symbol = self
+                .get_cross_file_symbol(current_sym)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+        }
+
+        let symbol_flags = self
+            .get_cross_file_symbol(current_sym)
+            .or_else(|| self.ctx.binder.get_symbol(current_sym))
+            .map(|symbol| symbol.flags)?;
+
+        let resolved = if (symbol_flags
+            & (symbol_flags::TYPE_ALIAS
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::ENUM
+                | symbol_flags::TYPE_PARAMETER))
+            != 0
+        {
+            self.type_reference_symbol_type(current_sym)
+        } else if (symbol_flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+            != 0
+        {
+            self.get_type_of_symbol(current_sym)
+        } else {
+            TypeId::ERROR
+        };
+        (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
+    }
+
     /// Format a generic type name with its type parameter names for TS2314 messages.
     /// e.g., "Foo" + [T, U] → "Foo<T, U>"
     pub(crate) fn format_generic_display_name_with_interner(
@@ -73,7 +144,6 @@ impl<'a> CheckerState<'a> {
         _type_ref_idx: NodeIndex,
     ) -> TypeId {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
         // TS2880: Check for deprecated `assert` keyword in import type options
         self.check_import_type_deprecated_assert(call_idx);
 
@@ -125,7 +195,11 @@ impl<'a> CheckerState<'a> {
             let file_export_equals = self
                 .ctx
                 .resolve_import_target(&module_name)
-                .and_then(|target_idx| self.ctx.get_binder_for_file(target_idx).map(|binder| (target_idx, binder)))
+                .and_then(|target_idx| {
+                    self.ctx
+                        .get_binder_for_file(target_idx)
+                        .map(|binder| (target_idx, binder))
+                })
                 .and_then(|(target_idx, binder)| {
                     let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                     let file_name = target_arena.source_files.first()?.file_name.as_str();
@@ -134,7 +208,8 @@ impl<'a> CheckerState<'a> {
                         .get(file_name)
                         .and_then(|exports| exports.get("export="))
                 });
-            let has_export_equals = ambient_export_equals_sym.is_some() || file_export_equals.is_some();
+            let has_export_equals =
+                ambient_export_equals_sym.is_some() || file_export_equals.is_some();
 
             has_export_equals
                 || self.is_module_export_equals_type_only(&module_name)
@@ -146,8 +221,7 @@ impl<'a> CheckerState<'a> {
                             .get_symbol_with_libs(sym_id, &lib_binders)
                             .is_some_and(|sym| {
                                 sym.is_type_only
-                                    || ((sym.flags & PURE_TYPE) != 0
-                                        && (sym.flags & VALUE) == 0)
+                                    || ((sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0)
                             })
                     };
 
@@ -174,9 +248,10 @@ impl<'a> CheckerState<'a> {
             );
             TypeId::ERROR
         };
+        let report_unresolved_imports = self.ctx.report_unresolved_imports;
 
-        if !self.ctx.report_unresolved_imports {
-            return TypeId::ERROR;
+        if let Some(resolved) = self.resolve_import_type_reference(&module_name, type_name_idx) {
+            return resolved;
         }
 
         // Check if the module resolves through any of the known resolution paths.
@@ -244,18 +319,20 @@ impl<'a> CheckerState<'a> {
         if let Some(error) = self.ctx.get_resolution_error(&module_name) {
             // For Node.js built-in modules, use TS2591 instead of TS2307
             // (tsc emits "Cannot find name 'X'. Install @types/node" for these)
-            let (error_message, error_code) = {
-                let (msg, code) = self.module_not_found_diagnostic(&module_name);
-                if code != error.code {
-                    (msg, code) // module_not_found_diagnostic upgraded to TS2591
-                } else {
-                    (error.message.clone(), error.code)
+            if report_unresolved_imports {
+                let (error_message, error_code) = {
+                    let (msg, code) = self.module_not_found_diagnostic(&module_name);
+                    if code != error.code {
+                        (msg, code) // module_not_found_diagnostic upgraded to TS2591
+                    } else {
+                        (error.message.clone(), error.code)
+                    }
+                };
+                let module_key = module_name.to_string();
+                if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                    self.ctx.modules_with_ts2307_emitted.insert(module_key);
+                    self.error_at_node(specifier_node, &error_message, error_code);
                 }
-            };
-            let module_key = module_name.to_string();
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error_at_node(specifier_node, &error_message, error_code);
             }
             return TypeId::ERROR;
         }
@@ -265,11 +342,13 @@ impl<'a> CheckerState<'a> {
         //    packages or ambient modules — the binder has complete information.
         let is_relative = module_name.starts_with("./") || module_name.starts_with("../");
         if !is_relative {
-            let module_key = module_name.to_string();
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                let (message, code) = self.module_not_found_diagnostic(&module_name);
-                self.error_at_node(specifier_node, &message, code);
+            if report_unresolved_imports {
+                let module_key = module_name.to_string();
+                if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                    self.ctx.modules_with_ts2307_emitted.insert(module_key);
+                    let (message, code) = self.module_not_found_diagnostic(&module_name);
+                    self.error_at_node(specifier_node, &message, code);
+                }
             }
             return TypeId::ERROR;
         }

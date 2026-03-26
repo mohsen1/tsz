@@ -153,12 +153,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ctor_idx: NodeIndex,
     ) -> Option<TypeId> {
-        let Some(node) = self.ctx.arena.get(ctor_idx) else {
-            return None;
-        };
-        let Some(ctor) = self.ctx.arena.get_constructor(node) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(ctor_idx)?;
+        let ctor = self.ctx.arena.get_constructor(node)?;
 
         let class_info = self.ctx.enclosing_class.as_ref()?;
         let class_idx = class_info.class_idx;

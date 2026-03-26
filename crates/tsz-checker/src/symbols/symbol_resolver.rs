@@ -748,9 +748,61 @@ impl<'a> CheckerState<'a> {
         };
 
         let resolve_alias_type_position_result = |sym_id: SymbolId| {
+            if let Some(alias_symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                && let Some(module_name) = alias_symbol.import_module.as_ref()
+                && alias_symbol.import_name.is_some()
+            {
+                let expected_name = alias_symbol
+                    .import_name
+                    .as_deref()
+                    .unwrap_or(&alias_symbol.escaped_name);
+                let source_file_idx = self
+                    .ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .unwrap_or(self.ctx.current_file_idx);
+                if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                    module_name,
+                    expected_name,
+                    Some(source_file_idx),
+                ) {
+                    let target_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        .map_or(0, |s| s.flags);
+                    let target_is_namespace_module = (target_flags
+                        & (symbol_flags::MODULE
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE))
+                        != 0;
+                    let target_is_value_only = (self
+                        .alias_resolves_to_value_only(target_sym_id, None)
+                        || self.symbol_is_value_only(target_sym_id, None))
+                        && !self.symbol_is_type_only(target_sym_id, None);
+                    return Some(if target_is_value_only && !target_is_namespace_module {
+                        TypeSymbolResolution::ValueOnly(target_sym_id)
+                    } else {
+                        TypeSymbolResolution::Type(target_sym_id)
+                    });
+                }
+            }
             let mut visited_aliases = Vec::new();
             self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                 .map(|target_sym_id| {
+                    if let Some(alias_symbol) =
+                        self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        && let Some(module_name) = alias_symbol.import_module.as_ref()
+                    {
+                        let expected_name = alias_symbol
+                            .import_name
+                            .as_deref()
+                            .unwrap_or(&alias_symbol.escaped_name);
+                        self.record_cross_file_symbol_if_needed(
+                            target_sym_id,
+                            expected_name,
+                            module_name,
+                        );
+                    }
                     let target_flags = self
                         .ctx
                         .binder
@@ -792,6 +844,15 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
                 && symbol.flags & symbol_flags::ALIAS != 0
             {
+                if let Some((&type_alias_id, _)) = self
+                    .ctx
+                    .binder
+                    .alias_partners
+                    .iter()
+                    .find(|&(_, &alias_id)| alias_id == local_sym_id)
+                {
+                    return TypeSymbolResolution::Type(type_alias_id);
+                }
                 self.ctx
                     .referenced_symbols
                     .borrow_mut()

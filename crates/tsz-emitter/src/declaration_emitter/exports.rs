@@ -135,7 +135,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            self.emit_export_default_expression(export.export_clause);
+            self.emit_export_default_expression(export_idx, export.export_clause);
             return;
         }
 
@@ -356,16 +356,49 @@ impl<'a> DeclarationEmitter<'a> {
 
                 // TS2883: Check for non-portable inferred type references
                 // in export default expressions
-                if let Some(type_id) = self.get_node_type(assign.expression)
-                    && let Some(file_path) = self.current_file_path.clone()
-                {
-                    self.check_non_portable_type_references(
-                        type_id,
-                        "default",
-                        &file_path,
-                        assign_node.pos,
-                        assign_node.end - assign_node.pos,
-                    );
+                if let Some(file_path) = self.current_file_path.clone() {
+                    let reported = self
+                        .get_node_type(assign.expression)
+                        .is_some_and(|type_id| {
+                            self.emit_non_portable_type_diagnostic(
+                                type_id,
+                                "default",
+                                &file_path,
+                                assign_node.pos,
+                                assign_node.end - assign_node.pos,
+                            )
+                        });
+                    if !reported
+                        && expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                        && let Some(call) = self.arena.get_call_expr(expr_node)
+                        && self.is_object_assign_call(call.expression)
+                        && let Some(args) = &call.arguments
+                    {
+                        for &arg_idx in &args.nodes {
+                            if let Some(arg_type_id) = self
+                                .get_node_type_or_names(&[arg_idx])
+                                .or_else(|| self.get_type_via_symbol(arg_idx))
+                                && self.emit_non_portable_type_diagnostic(
+                                    arg_type_id,
+                                    "default",
+                                    &file_path,
+                                    assign_node.pos,
+                                    assign_node.end - assign_node.pos,
+                                )
+                            {
+                                break;
+                            }
+                            if self.emit_non_portable_expression_symbol_diagnostic(
+                                arg_idx,
+                                "default",
+                                &file_path,
+                                assign_node.pos,
+                                assign_node.end - assign_node.pos,
+                            ) {
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 // First, emit the synthesized variable with inferred type
@@ -613,7 +646,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    pub(crate) fn emit_export_default_expression(&mut self, expr_idx: NodeIndex) {
+    pub(crate) fn emit_export_default_expression(
+        &mut self,
+        export_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) {
         // If the expression is a simple identifier, emit `export default <name>;` directly.
         // This matches tsc behavior for `export default foo;` where `foo` is declared in scope.
         if let Some(expr_node) = self.arena.get(expr_idx)
@@ -629,6 +666,48 @@ impl<'a> DeclarationEmitter<'a> {
 
         // For complex expressions, synthesize a _default variable
         let var_name = self.unique_default_export_name();
+        if let Some(expr_node) = self.arena.get(expr_idx)
+            && let Some(file_path) = self.current_file_path.clone()
+        {
+            let (diag_pos, diag_len) = self
+                .arena
+                .get(export_idx)
+                .map(|export_node| (export_node.pos, export_node.end - export_node.pos))
+                .unwrap_or((expr_node.pos, expr_node.end - expr_node.pos));
+            let reported = self.get_node_type(expr_idx).is_some_and(|type_id| {
+                self.emit_non_portable_type_diagnostic(
+                    type_id, "default", &file_path, diag_pos, diag_len,
+                )
+            });
+
+            if !reported
+                && expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.arena.get_call_expr(expr_node)
+                && self.is_object_assign_call(call.expression)
+                && let Some(args) = &call.arguments
+            {
+                for &arg_idx in &args.nodes {
+                    if let Some(arg_type_id) = self
+                        .get_node_type_or_names(&[arg_idx])
+                        .or_else(|| self.get_type_via_symbol(arg_idx))
+                        && self.emit_non_portable_type_diagnostic(
+                            arg_type_id,
+                            "default",
+                            &file_path,
+                            diag_pos,
+                            diag_len,
+                        )
+                    {
+                        break;
+                    }
+                    if self.emit_non_portable_expression_symbol_diagnostic(
+                        arg_idx, "default", &file_path, diag_pos, diag_len,
+                    ) {
+                        break;
+                    }
+                }
+            }
+        }
 
         // First, emit: declare const _default: <type>;
         self.write_indent();

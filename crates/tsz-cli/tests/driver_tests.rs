@@ -320,6 +320,66 @@ fn compile_with_source_map_emits_map_outputs() {
 }
 
 #[test]
+fn compile_resolves_self_name_exports_with_virtual_absolute_output_paths_from_package_root() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    let package_root = base.join("pkg");
+
+    write_file(
+        &package_root.join("tsconfig.json"),
+        &format!(
+            r#"{{
+          "compilerOptions": {{
+            "module": "nodenext",
+            "moduleResolution": "nodenext",
+            "rootDir": "{root_dir}",
+            "outDir": "{out_dir}",
+            "declaration": true,
+            "declarationDir": "{declaration_dir}",
+            "noEmit": true
+          }},
+          "include": ["src/**/*.ts"]
+        }}"#,
+            root_dir = package_root.join("src").display(),
+            out_dir = package_root.join("dist").display(),
+            declaration_dir = package_root.join("types").display(),
+        ),
+    );
+    write_file(
+        &package_root.join("package.json"),
+        r#"{
+          "name": "@this/package",
+          "type": "module",
+          "exports": {
+            ".": {
+              "import": "./dist/index.js"
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &package_root.join("src/index.ts"),
+        "import {} from '@this/package';\nexport const value = 1;\n",
+    );
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, &package_root).expect("compile should succeed")
+    });
+
+    let ts2307: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2307)
+        .collect();
+    assert!(
+        ts2307.is_empty(),
+        "expected self-name import to resolve, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn private_static_accessor_on_derived_constructor_reports_ts2339_in_project_mode() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -2374,6 +2434,7 @@ fn compile_resolves_node_modules_exports_subpath() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "module": "node16",
             "moduleResolution": "node16",
             "noEmitOnError": true
           },
@@ -3231,6 +3292,7 @@ fn compile_resolves_package_imports_wildcard() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "module": "node16",
             "moduleResolution": "node16",
             "noEmitOnError": true
           },
@@ -3265,7 +3327,7 @@ fn compile_resolves_package_imports_wildcard() {
 }
 
 #[test]
-fn compile_allows_root_slash_package_import_specifier_under_node16() {
+fn compile_rejects_root_slash_package_import_specifier_under_node16() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -3274,6 +3336,7 @@ fn compile_allows_root_slash_package_import_specifier_under_node16() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "module": "node16",
             "moduleResolution": "node16",
             "noEmitOnError": true
           },
@@ -3301,9 +3364,9 @@ fn compile_allows_root_slash_package_import_specifier_under_node16() {
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        !result.diagnostics.iter().any(|diag| diag.code
+        result.diagnostics.iter().any(|diag| diag.code
             == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
-        "Expected no TS2307 for #/ package import (now resolved), got diagnostics: {:?}",
+        "Expected TS2307 for invalid #/ package import, got diagnostics: {:?}",
         result.diagnostics
     );
 }
@@ -9112,8 +9175,8 @@ fn import_from_type_package_loaded_via_types_does_not_emit_ts2307() {
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "target": "es2015",
             "module": "commonjs",
+            "target": "es2015",
             "typeRoots": ["typings"],
             "types": ["phaser"]
           },
