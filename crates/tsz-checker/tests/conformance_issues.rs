@@ -5601,8 +5601,8 @@ declare global {
 
 #[test]
 fn test_uninstantiated_namespace_shadowing_symbol_uses_global_value_for_property_access() {
-    let diagnostics = without_missing_global_type_errors(
-        compile_and_get_diagnostics_with_lib_and_options(
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
             r#"
 namespace M {
     namespace Symbol { }
@@ -5616,8 +5616,7 @@ namespace M {
                 target: ScriptTarget::ES2015,
                 ..Default::default()
             },
-        ),
-    );
+        ));
 
     assert!(
         !has_error(&diagnostics, 2708),
