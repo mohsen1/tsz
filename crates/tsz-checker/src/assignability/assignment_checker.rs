@@ -1138,6 +1138,58 @@ impl<'a> CheckerState<'a> {
         (member_symbol.flags & symbol_flags::ENUM) != 0
     }
 
+    fn error_top_level_js_this_computed_element_assignment(
+        &mut self,
+        target_idx: NodeIndex,
+    ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        if !self.is_js_file() || !self.ctx.no_implicit_any() {
+            return false;
+        }
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+        if !self
+            .ctx
+            .arena
+            .get(access.expression)
+            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+        {
+            return false;
+        }
+        if self.ctx.enclosing_class.is_some()
+            || self.find_enclosing_non_arrow_function(access.expression).is_some()
+        {
+            return false;
+        }
+        if self.get_literal_string_from_node(access.name_or_argument).is_some() {
+            return false;
+        }
+
+        let index_type = self.get_type_of_node(access.name_or_argument);
+        let index_type = self.format_type_diagnostic(index_type);
+        self.error_at_node(
+            target_idx,
+            &format_message(
+                diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                &[&index_type, "typeof globalThis"],
+            ),
+            diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+        );
+        true
+    }
+
     /// Check an assignment expression (=).
     ///
     /// ## Contextual Typing:
@@ -1370,6 +1422,10 @@ impl<'a> CheckerState<'a> {
         let suppress_for_readonly = is_readonly_target && !is_element_access;
 
         if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
+            return right_type;
+        }
+
+        if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
             return right_type;
         }
 

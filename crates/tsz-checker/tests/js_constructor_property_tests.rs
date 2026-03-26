@@ -1508,17 +1508,16 @@ function F() {
 }
 
 #[test]
-fn test_js_top_level_this_computed_property_assignment_is_allowed() {
+fn test_js_top_level_this_computed_property_assignment_reports_ts7053() {
     let source = r#"
 this["a" + "b"] = 0;
 "#;
 
     let diagnostics = check_js(source);
 
-    assert_eq!(
-        count_code(&diagnostics, 7053),
-        0,
-        "Expected top-level computed `this[...]` assignment to avoid TS7053, got: {diagnostics:?}"
+    assert!(
+        count_code(&diagnostics, 7053) > 0,
+        "Expected top-level computed `this[...]` assignment to emit TS7053, got: {diagnostics:?}"
     );
 }
 
