@@ -1415,27 +1415,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn literal_define_property_name_in_file(
-        &self,
-        arena: &tsz_parser::parser::NodeArena,
-        idx: NodeIndex,
-    ) -> Option<String> {
-        let node = arena.get(idx)?;
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                arena.get_literal(node).map(|lit| lit.text.clone())
-            }
-            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                let paren = arena.get_parenthesized(node)?;
-                self.literal_define_property_name_in_file(arena, paren.expression)
-            }
-            _ => None,
-        }
-    }
-
     pub(crate) fn define_property_info_from_descriptor(
         &mut self,
         target_file_idx: usize,
@@ -1603,6 +1582,31 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {}
             }
+        }
+
+        let has_getter = getter_type.is_some();
+        let has_accessor_descriptor = has_getter || has_setter;
+        let has_data_descriptor = has_value || writable_true;
+
+        // TSC treats malformed or mixed descriptors on exports as permissive
+        // open-world properties rather than surfacing readonly/missing-member
+        // behavior at import sites.
+        if (!has_accessor_descriptor && !has_data_descriptor)
+            || (has_accessor_descriptor && has_data_descriptor)
+            || (writable_true && !has_value && !has_accessor_descriptor)
+        {
+            return Some(PropertyInfo {
+                name: self.ctx.types.intern_string(name),
+                type_id: TypeId::ANY,
+                write_type: TypeId::ANY,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order,
+            });
         }
 
         if has_setter && setter_type == Some(TypeId::ANY) && getter_type.is_some() {
@@ -2107,7 +2111,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(name) = self.literal_define_property_name_in_file(&target_arena, name_expr)
+            let Some(name) =
+                self.constant_define_property_name_in_file(target_file_idx, &target_arena, name_expr)
             else {
                 continue;
             };

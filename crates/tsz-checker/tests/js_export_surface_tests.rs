@@ -1759,7 +1759,7 @@ lib.bar = "nope";
 }
 
 #[test]
-fn test_define_property_export_requires_literal_name_cross_file() {
+fn test_define_property_export_tracks_constant_names_cross_file() {
     let diagnostics = check_commonjs_two_files(
         "lib.js",
         r#"
@@ -1783,17 +1783,66 @@ lib.prop;
         .iter()
         .filter(|(c, msg)| *c == 2339 && msg.contains("thing"))
         .collect();
-    let dynamic_missing: Vec<_> = diagnostics
+    let missing: Vec<_> = diagnostics
         .iter()
-        .filter(|(c, msg)| *c == 2339 && (msg.contains("other") || msg.contains("prop")))
+        .filter(|(c, msg)| *c == 2339 && (msg.contains("thing") || msg.contains("other") || msg.contains("prop")))
         .collect();
     assert!(
         thing_missing.is_empty(),
         "Expected literal defineProperty export to stay visible, got: {diagnostics:#?}"
     );
     assert!(
-        dynamic_missing.len() == 2,
-        "Expected identifier-named defineProperty exports to stay hidden from cross-file surface, got: {diagnostics:#?}"
+        missing.is_empty(),
+        "Expected constant-name defineProperty exports to stay visible cross-file, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_define_property_export_supports_constant_names_and_malformed_descriptors_cross_file() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+const obj = { value: 42, writable: true };
+Object.defineProperty(exports, "thing", obj);
+
+/** @type {string} */
+let str = /** @type {string} */("other");
+Object.defineProperty(exports, str, { value: 42, writable: true });
+
+const propName = "prop";
+Object.defineProperty(exports, propName, { value: 42, writable: true });
+
+Object.defineProperty(exports, "bad1", { });
+Object.defineProperty(exports, "bad2", { get() { return 12 }, value: "no" });
+Object.defineProperty(exports, "bad3", { writable: true });
+"#,
+        "importer.js",
+        r#"
+const mod = require("./mod1");
+mod.thing;
+mod.other;
+mod.prop;
+mod.bad1;
+mod.bad2;
+mod.bad3;
+
+mod.thing = 0;
+mod.other = 0;
+mod.prop = 0;
+mod.bad1 = 0;
+mod.bad2 = 0;
+mod.bad3 = 0;
+"#,
+        "./mod1",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2540))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected constant-name defineProperty exports and malformed descriptors to stay permissive cross-file, got: {diagnostics:#?}"
     );
 }
 
