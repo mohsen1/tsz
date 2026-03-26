@@ -90,7 +90,11 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         current_arena_sources.sort_by_key(|(file_name, _, _)| {
-            if *file_name == current_file_name { 0usize } else { 1usize }
+            if *file_name == current_file_name {
+                0usize
+            } else {
+                1usize
+            }
         });
 
         for (_file_name, comments, source_text) in current_arena_sources {

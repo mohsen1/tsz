@@ -546,11 +546,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn check_callable_truthiness_helper(
-        &mut self,
-        cond_expr: NodeIndex,
-        body: Option<NodeIndex>,
-    ) {
+    fn check_callable_truthiness_helper(&mut self, cond_expr: NodeIndex, body: Option<NodeIndex>) {
         let cond_expr = self.skip_parenthesized_expression(cond_expr);
         let location = if let Some(node) = self.ctx.arena.get(cond_expr) {
             if let Some(bin) = self.ctx.arena.get_binary_expr(node)

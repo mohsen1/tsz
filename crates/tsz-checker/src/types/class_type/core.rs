@@ -462,7 +462,8 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    let declared_type = self.effective_class_property_declared_type(member_idx, prop);
+                    let declared_type =
+                        self.effective_class_property_declared_type(member_idx, prop);
 
                     let type_id = if let Some(declared_type) = declared_type {
                         declared_type
@@ -479,7 +480,8 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order: 0,
                         };
-                        let mut partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+                        let mut partial_props: Vec<PropertyInfo> =
+                            properties.values().cloned().collect();
                         if !partial_props.iter().any(|p| p.name == name_atom) {
                             partial_props.push(current_property_placeholder);
                         }

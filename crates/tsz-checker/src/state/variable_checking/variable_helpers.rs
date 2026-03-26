@@ -1,10 +1,10 @@
 //! Variable declaration checking helpers: shadowing, TS2403 type computation,
 //! unnameable type detection, and symbol resolution utilities.
 
-use rustc_hash::FxHashSet;
 use crate::query_boundaries::common::{collect_referenced_types, lazy_def_id};
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -1600,7 +1600,9 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         visited: &mut FxHashSet<SymbolId>,
     ) -> bool {
-        let sym_id = self.resolve_alias_symbol(sym_id, &mut Vec::new()).unwrap_or(sym_id);
+        let sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
         if !visited.insert(sym_id) {
             return false;
         }
@@ -1610,7 +1612,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !decl_candidates.contains(&symbol.value_declaration)
+        if symbol.value_declaration.is_some()
+            && !decl_candidates.contains(&symbol.value_declaration)
         {
             decl_candidates.push(symbol.value_declaration);
         }
@@ -1684,8 +1687,9 @@ impl<'a> CheckerState<'a> {
                     .and_then(|init_node| arena.get_identifier(init_node))
                     .is_some_and(|ident| ident.escaped_text == "globalThis")
                 {
-                    let init_sym_id =
-                        self.value_symbol_in_arena(arena, initializer).unwrap_or(SymbolId::NONE);
+                    let init_sym_id = self
+                        .value_symbol_in_arena(arena, initializer)
+                        .unwrap_or(SymbolId::NONE);
                     let init_sym_id = self
                         .resolve_alias_symbol(init_sym_id, &mut Vec::new())
                         .unwrap_or(init_sym_id);
@@ -1730,7 +1734,10 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .resolve_symbol_file_index(sym_id)
             .map(|idx| idx as u32)
-            .or_else(|| self.get_symbol_from_any_binder(sym_id).map(|symbol| symbol.decl_file_idx))
+            .or_else(|| {
+                self.get_symbol_from_any_binder(sym_id)
+                    .map(|symbol| symbol.decl_file_idx)
+            })
     }
 
     fn symbol_references_inaccessible_unique_symbol_type(
@@ -1738,7 +1745,9 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         visited: &mut FxHashSet<SymbolId>,
     ) -> bool {
-        let sym_id = self.resolve_alias_symbol(sym_id, &mut Vec::new()).unwrap_or(sym_id);
+        let sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
         if !visited.insert(sym_id) {
             return false;
         }
@@ -1748,7 +1757,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !decl_candidates.contains(&symbol.value_declaration)
+        if symbol.value_declaration.is_some()
+            && !decl_candidates.contains(&symbol.value_declaration)
         {
             decl_candidates.push(symbol.value_declaration);
         }
@@ -1778,10 +1788,7 @@ impl<'a> CheckerState<'a> {
 
             for arena in candidate_arenas {
                 if self.node_references_inaccessible_unique_symbol_type(
-                    arena,
-                    decl_idx,
-                    sym_id,
-                    visited,
+                    arena, decl_idx, sym_id, visited,
                 ) {
                     return true;
                 }
@@ -1813,23 +1820,21 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = arena.get_type_ref(node)
-            && let Some(type_sym_id) = self.type_reference_symbol_in_arena(arena, type_ref.type_name)
+            && let Some(type_sym_id) =
+                self.type_reference_symbol_in_arena(arena, type_ref.type_name)
             && self.symbol_references_inaccessible_unique_symbol_type(type_sym_id, visited)
         {
             return true;
         }
 
-        arena
-            .get_children(node_idx)
-            .into_iter()
-            .any(|child| {
-                self.node_references_inaccessible_unique_symbol_type(
-                    arena,
-                    child,
-                    owner_sym_id,
-                    visited,
-                )
-            })
+        arena.get_children(node_idx).into_iter().any(|child| {
+            self.node_references_inaccessible_unique_symbol_type(
+                arena,
+                child,
+                owner_sym_id,
+                visited,
+            )
+        })
     }
 
     fn node_is_symbol_type_reference(
