@@ -348,7 +348,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Start with the surface's typed named exports and any deep-scan names.
-        let props = if can_merge_named_exports {
+        let mut props = if can_merge_named_exports {
             surface.named_exports
         } else {
             Vec::new()
@@ -363,6 +363,18 @@ impl<'a> CheckerState<'a> {
             if props.iter().any(|p| p.name == name_atom) {
                 continue;
             }
+            props.push(PropertyInfo {
+                name: name_atom,
+                type_id: TypeId::ANY,
+                write_type: TypeId::ANY,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: props.len() as u32,
+            });
         }
 
         let has_named_props = !props.is_empty();
