@@ -12856,7 +12856,11 @@ fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
     ));
 
     let diagnostics = emitter.take_diagnostics();
-    assert_eq!(diagnostics.len(), 1, "expected swapped TS2883 to be removed");
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "expected swapped TS2883 to be removed"
+    );
     assert_eq!(
         diagnostics[0].message_text,
         "The inferred type of 'foo' cannot be named without a reference to 'SomeType' from '../node_modules/some-dep/dist/inner'. This is likely not portable. A type annotation is necessary."

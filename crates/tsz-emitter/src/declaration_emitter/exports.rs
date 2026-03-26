@@ -710,11 +710,7 @@ impl<'a> DeclarationEmitter<'a> {
                         break;
                     }
                     if self.emit_non_portable_initializer_declaration_diagnostics(
-                        arg_idx,
-                        "default",
-                        &file_path,
-                        diag_pos,
-                        diag_len,
+                        arg_idx, "default", &file_path, diag_pos, diag_len,
                     ) {
                         break;
                     }

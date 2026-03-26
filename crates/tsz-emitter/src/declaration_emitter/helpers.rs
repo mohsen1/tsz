@@ -7427,8 +7427,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         let declared_identifier_idx = self.return_expression_identifier(return_expr);
-        let declared_identifier_type_id = declared_identifier_idx
-            .and_then(|identifier_idx| self.function_return_identifier_declared_type_id(func, identifier_idx));
+        let declared_identifier_type_id = declared_identifier_idx.and_then(|identifier_idx| {
+            self.function_return_identifier_declared_type_id(func, identifier_idx)
+        });
         if let Some(type_name) = self.declared_return_identifier_type_name(func, return_expr)
             && let Some((from_path, _)) = declared_identifier_type_id
                 .and_then(|type_id| self.find_non_portable_type_reference(type_id))
@@ -7531,10 +7532,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn reference_declared_type_id(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<tsz_solver::types::TypeId> {
+    fn reference_declared_type_id(&self, expr_idx: NodeIndex) -> Option<tsz_solver::types::TypeId> {
         let sym_id = self.value_reference_symbol(expr_idx)?;
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
@@ -9400,12 +9398,12 @@ impl<'a> DeclarationEmitter<'a> {
                         &source_path,
                         results,
                         seen,
-                            visited_types,
-                            visited_symbols,
-                            visited_declaration_symbols,
-                            visited_nodes,
-                        );
-                    }
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    );
+                }
             }
 
             if let Some(sig) = source_arena.get_signature(decl_node) {
@@ -9720,7 +9718,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let source_text = std::fs::read_to_string(source_path).ok()?;
-        if let Some(import_module) = self.namespace_import_module_from_text(&source_text, &left_name)
+        if let Some(import_module) =
+            self.namespace_import_module_from_text(&source_text, &left_name)
         {
             if !import_module.starts_with('.') && !import_module.starts_with('/') {
                 let from_path =
