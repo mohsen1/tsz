@@ -12771,6 +12771,27 @@ const result: (n: number) => number = (function() { return function(n) { return 
     );
 }
 
+#[test]
+fn test_async_iife_block_body_preserves_contextual_tuple_return() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const test1: Promise<[one: number, two: string]> = (async () => {
+    return [1, 'two'];
+})();
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Async IIFE block body should preserve contextual tuple return typing. Got: {diagnostics:#?}"
+    );
+}
+
 /// Test: IIFE with object return type provides contextual typing for nested callbacks.
 #[test]
 fn test_iife_contextual_return_type_object_with_callback() {

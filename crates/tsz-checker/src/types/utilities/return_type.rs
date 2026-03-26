@@ -12,6 +12,27 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn inference_context_for_block_return_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+        return_context: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let return_context = return_context?;
+        if return_context == TypeId::ANY
+            || return_context == TypeId::UNKNOWN
+            || self.type_has_unresolved_inference_holes(return_context)
+            || tsz_solver::type_queries::contains_type_parameters_db(
+                self.ctx.types,
+                return_context,
+            )
+        {
+            return None;
+        }
+
+        crate::computation::contextual::expression_needs_contextual_return_type(self, expr_idx)
+        .then_some(return_context)
+    }
+
     /// Check if a function body falls through (doesn't always return).
     ///
     /// This function determines whether a function body might fall through
@@ -424,18 +445,12 @@ impl<'a> CheckerState<'a> {
         let mut saw_empty = false;
 
         if let Some(block) = self.ctx.arena.get_block(node) {
-            // Infer the function's actual return type from raw block-body return
-            // expressions. Contextual/annotated return checking happens later via
-            // check_return_statement, and feeding the contextual return type back
-            // into inference makes block-bodied callbacks appear to return the
-            // expected type instead of their real body type.
-            let infer_context = None;
             for &stmt_idx in &block.statements.nodes {
                 self.collect_return_types_in_statement(
                     stmt_idx,
                     &mut return_types,
                     &mut saw_empty,
-                    infer_context,
+                    return_context,
                 );
             }
         }
@@ -658,8 +673,16 @@ impl<'a> CheckerState<'a> {
                     if return_data.expression.is_none() {
                         *saw_empty = true;
                     } else {
+                        // Keep block-body inference mostly raw, but allow concrete
+                        // contextual return types to shape literals and other
+                        // context-sensitive return expressions that would otherwise
+                        // lose tuple/object precision.
+                        let infer_context = self.inference_context_for_block_return_expression(
+                            return_data.expression,
+                            return_context,
+                        );
                         let return_type =
-                            self.return_expression_type(return_data.expression, return_context);
+                            self.return_expression_type(return_data.expression, infer_context);
                         return_types.push(return_type);
                     }
                 }
