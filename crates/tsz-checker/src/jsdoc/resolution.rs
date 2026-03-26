@@ -896,18 +896,9 @@ impl<'a> CheckerState<'a> {
         // file-local values in JSDoc type-position lookups).
         // This matches tsc behavior where a JSDoc typedef can shadow an ambient value
         // with the same name in JSDoc annotation contexts.
-        if let Some(sf) = self.ctx.arena.source_files.first() {
-            if sf.comments.is_empty() {
-                return None;
-            }
-            let comments = sf.comments.clone();
-            let source_text: String = sf.text.to_string();
-            if let Some(ty) =
-                self.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
-            {
-                self.register_jsdoc_typedef_def(name, ty);
-                return Some(ty);
-            }
+        if let Some((ty, _)) = self.resolve_global_jsdoc_typedef_info(name) {
+            self.register_jsdoc_typedef_def(name, ty);
+            return Some(ty);
         }
 
         // 3c. File-local symbols (classes, interfaces, type aliases, enums, imports)
