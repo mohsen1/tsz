@@ -1486,6 +1486,28 @@ f.a;
 }
 
 #[test]
+fn test_js_chained_this_element_assignment_reports_ts7053() {
+    let source = r#"
+this["y"] = {};
+this["y"]["z"] = {};
+
+/** @constructor */
+function F() {
+  this["b"] = {};
+  this["b"]["c"] = {};
+}
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert_eq!(
+        count_code(&diagnostics, 7053),
+        2,
+        "Expected chained `this[...]...[...]` writes to emit TS7053, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_top_level_this_computed_property_assignment_is_allowed() {
     let source = r#"
 this["a" + "b"] = 0;
