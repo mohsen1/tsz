@@ -397,6 +397,8 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         component_type: TypeId,
     ) -> Option<TypeId> {
+        use crate::computation::call_inference::should_preserve_contextual_application_shape;
+
         let function_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
             self.ctx.types,
             component_type,
@@ -450,21 +452,18 @@ impl<'a> CheckerState<'a> {
 
         let instantiated =
             self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
-        let raw_props_type = instantiated.params.first()?.type_id;
-        let props_type =
-            if crate::computation::call_inference::should_preserve_contextual_application_shape(
-                self.ctx.types,
-                raw_props_type,
-            ) {
-                raw_props_type
-            } else {
-                let resolved = self.resolve_type_for_property_access(raw_props_type);
-                self.evaluate_type_with_env(resolved)
-            };
-        if props_type == TypeId::ANY
-            || props_type == TypeId::UNKNOWN
-            || props_type == TypeId::ERROR
-            || tsz_solver::contains_type_parameters(self.ctx.types, props_type)
+        let props_type = instantiated.params.first()?.type_id;
+        let props_type = if tsz_solver::is_union_type(self.ctx.types, props_type)
+            || should_preserve_contextual_application_shape(self.ctx.types, props_type)
+        {
+            props_type
+        } else {
+            let props_type = self.resolve_type_for_property_access(props_type);
+            self.evaluate_type_with_env(props_type)
+        };
+        let props_type = self.apply_jsx_library_managed_attributes(component_type, props_type);
+        let props_type = self.narrow_jsx_props_union_from_attributes(attributes_idx, props_type);
+        if props_type == TypeId::ANY || props_type == TypeId::UNKNOWN || props_type == TypeId::ERROR
         {
             return None;
         }
@@ -914,14 +913,62 @@ impl<'a> CheckerState<'a> {
                                     else {
                                         continue;
                                     };
-                                    match self.resolve_property_access_with_env(props_type, &attr_name) {
+                                    let props_for_access =
+                                        self.normalize_jsx_required_props_target(props_type);
+                                    match self.resolve_property_access_with_env(
+                                        props_for_access,
+                                        &attr_name,
+                                    ) {
                                         crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
                                             request
                                                 .read()
                                                 .normal_origin()
                                                 .contextual(tsz_solver::remove_undefined(self.ctx.types, type_id))
                                         }
-                                        _ => generic_attr_fallback,
+                                        _ => {
+                                            if attr_name != "as"
+                                                && let Some(as_tag) = self
+                                                    .collect_jsx_union_resolution_attrs(
+                                                        jsx_opening.attributes,
+                                                    )
+                                                    .and_then(|attrs| {
+                                                        attrs.into_iter().find_map(|(name, ty)| {
+                                                            if name == "as" {
+                                                                ty.and_then(|ty| {
+                                                                    self.get_jsx_single_string_literal_tag_name(ty)
+                                                                })
+                                                            } else {
+                                                                None
+                                                            }
+                                                        })
+                                                    })
+                                                && let Some(intrinsic_props) = self
+                                                    .get_jsx_intrinsic_props_for_tag(idx, &as_tag, false)
+                                            {
+                                                let intrinsic_props =
+                                                    self.normalize_jsx_required_props_target(
+                                                        intrinsic_props,
+                                                    );
+                                                if let crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } =
+                                                    self.resolve_property_access_with_env(
+                                                        intrinsic_props,
+                                                        &attr_name,
+                                                    )
+                                                {
+                                                    request
+                                                        .read()
+                                                        .normal_origin()
+                                                        .contextual(tsz_solver::remove_undefined(
+                                                            self.ctx.types,
+                                                            type_id,
+                                                        ))
+                                                } else {
+                                                    generic_attr_fallback
+                                                }
+                                            } else {
+                                                generic_attr_fallback
+                                            }
+                                        }
                                     }
                                 } else {
                                     generic_attr_fallback

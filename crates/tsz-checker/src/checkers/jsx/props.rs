@@ -673,6 +673,7 @@ impl<'a> CheckerState<'a> {
         else {
             return props_type;
         };
+        let member_count = members.len();
 
         let Some(provided_attrs) = self.collect_jsx_union_resolution_attrs(attributes_idx) else {
             return props_type;
@@ -736,7 +737,26 @@ impl<'a> CheckerState<'a> {
                     compatible[0]
                 }
             }
-            _ if !prefer_children_specificity => props_type,
+            _ if !prefer_children_specificity => {
+                if compatible.len() >= member_count {
+                    props_type
+                } else {
+                    let mut compatible_members = Vec::new();
+                    let mut seen = rustc_hash::FxHashSet::default();
+                    for member in compatible {
+                        let key = self.format_type(member);
+                        if seen.insert(key) {
+                            compatible_members.push(member);
+                        }
+                    }
+
+                    match compatible_members.len() {
+                        0 => props_type,
+                        1 => compatible_members[0],
+                        _ => self.ctx.types.factory().union(compatible_members),
+                    }
+                }
+            }
             _ => {
                 let mut normalized_members = Vec::new();
                 let mut seen = rustc_hash::FxHashSet::default();
@@ -1043,14 +1063,23 @@ impl<'a> CheckerState<'a> {
                 );
 
                 if !overwritten {
+                    let expected_context_type = self.evaluate_application_type(expected_type);
+                    let expected_context_type =
+                        self.resolve_type_for_property_access(expected_context_type);
+                    let expected_context_type =
+                        self.resolve_lazy_type(expected_context_type);
+                    let expected_context_type =
+                        self.evaluate_application_type(expected_context_type);
+                    let expected_context_type =
+                        self.evaluate_type_with_env(expected_context_type);
                     let contextual_expected_type =
                         if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
                             node.kind == syntax_kind_ext::ARROW_FUNCTION
                                 || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                         }) {
-                            self.refine_jsx_callable_contextual_type(expected_type)
+                            self.refine_jsx_callable_contextual_type(expected_context_type)
                         } else {
-                            expected_type
+                            expected_context_type
                         };
                     // Set contextual type to preserve narrow literal types.
                     let actual_type = self.compute_type_of_node_with_request(

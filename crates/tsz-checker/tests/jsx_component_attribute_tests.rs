@@ -951,6 +951,23 @@ fn cross_file_jsx_diagnostics_with_mode(
         .collect()
 }
 
+fn load_typescript_fixture(rel_path: &str) -> Option<String> {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest_dir.join("../../").join(rel_path),
+        manifest_dir.join("../../../").join(rel_path),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return std::fs::read_to_string(candidate).ok();
+        }
+    }
+
+    eprintln!("Skipping JSX fixture test; fixture not found: {rel_path}");
+    None
+}
+
 #[test]
 fn test_cross_file_import_require_export_equals() {
     // Simulate: declare module "react" { export = __React; }
@@ -1432,6 +1449,86 @@ declare function UnwrappedLink2<T extends React.ElementType = React.ElementType>
     assert!(
         !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "React-style defaulted conditional generic JSX props should keep callback members assignable, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_jsx_props_conditional_component_props_with_ref_keeps_callback_context() {
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        a: { onClick?: (e: { anchorOnly: true }) => void; href?: string };
+        button: { onClick?: (e: { buttonOnly: true }) => void; disabled?: boolean };
+    }
+}
+
+declare namespace React {
+    type ElementType = keyof JSX.IntrinsicElements;
+    type ComponentPropsWithRef<T extends ElementType> = JSX.IntrinsicElements[T] & { as?: T };
+}
+
+declare module "react" {
+    export default React;
+    export type ElementType = React.ElementType;
+    export type ComponentPropsWithRef<T extends React.ElementType> = React.ComponentPropsWithRef<T>;
+}
+"#;
+
+    let main_source = r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+import React from "react";
+import { ComponentPropsWithRef, ElementType } from "react";
+
+function UnwrappedLink<T extends ElementType = ElementType>(
+  props: Omit<ComponentPropsWithRef<ElementType extends T ? "a" : T>, "as">,
+) {
+  return <a></a>;
+}
+
+<UnwrappedLink onClick={(e) => e.anchorOnly} />;
+
+function UnwrappedLink2<T extends ElementType = ElementType>(
+  props: Omit<ComponentPropsWithRef<ElementType extends T ? "a" : T>, "as"> & {
+    as?: T;
+  },
+) {
+  return <a></a>;
+}
+
+<UnwrappedLink2 onClick={(e) => e.anchorOnly} />;
+<UnwrappedLink2 as="button" onClick={(e) => e.buttonOnly} />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics(lib_source, main_source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "conditional ComponentPropsWithRef generic JSX props should contextually type callback params, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "conditional ComponentPropsWithRef generic JSX props should preserve callback member access, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(source) =
+        load_typescript_fixture("TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx")
+    else {
+        return;
+    };
+
+    let diags = cross_file_jsx_diagnostics_with_mode(&react_types, &source, JsxMode::Preserve);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "real react16 fixture should not emit TS7006, got: {diags:?}"
     );
 }
 

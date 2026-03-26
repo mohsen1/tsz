@@ -1054,6 +1054,8 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
         sym_escaped_name: &str,
     ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        let mixed_class_interface =
+            (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
         if let Some(node) = checker.ctx.arena.get(decl_idx) {
             if flags & symbol_flags::TYPE_ALIAS != 0
                 && let Some(type_alias) = checker.ctx.arena.get_type_alias(node)
@@ -1062,7 +1064,8 @@ impl<'a> CheckerState<'a> {
                 checker.pop_type_parameters(updates);
                 return Some(params);
             }
-            if flags & symbol_flags::CLASS != 0
+            if !mixed_class_interface
+                && flags & symbol_flags::CLASS != 0
                 && let Some(class) = checker.ctx.arena.get_class(node)
             {
                 let (params, updates) = checker.push_type_parameters(&class.type_parameters);
@@ -1159,20 +1162,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
-        // Use only the local def_type_params cache, NOT get_def_type_params which
-        // falls through to the DefinitionStore. The DefinitionStore may contain
-        // pre-populated placeholder params (from from_semantic_defs) that have
-        // constraint: None even when the actual type parameter declarations have
-        // constraints. The local cache is only populated after full AST-based
-        // resolution via insert_def_type_params, so it always has correct constraints.
-        if let Some(cached) = self.ctx.def_type_params.borrow().get(&def_id).cloned() {
-            self.ctx.leave_recursion();
-            return cached;
-        }
-        if self.ctx.def_no_type_params.borrow().contains(&def_id) {
-            self.ctx.leave_recursion();
-            return Vec::new();
-        }
 
         // Use get_symbol_globally to find symbols in lib files and other files.
         // Extract needed data to avoid holding a borrow during deeper operations.
@@ -1189,6 +1178,30 @@ impl<'a> CheckerState<'a> {
                     return Vec::new();
                 }
             };
+        let prefers_type_only_decls =
+            (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
+
+        // Use only the local def_type_params cache, NOT get_def_type_params which
+        // falls through to the DefinitionStore. The DefinitionStore may contain
+        // pre-populated placeholder params (from from_semantic_defs) that have
+        // constraint: None even when the actual type parameter declarations have
+        // constraints. The local cache is only populated after full AST-based
+        // resolution via insert_def_type_params, so it always has correct constraints.
+        //
+        // Merged class+interface symbols are special: class-side resolution paths can
+        // seed the cache with the class arity before the interface-side defaults are
+        // merged. Recompute those through the merged declaration walk instead of
+        // trusting a potentially stale cache entry.
+        if !prefers_type_only_decls
+            && let Some(cached) = self.ctx.def_type_params.borrow().get(&def_id).cloned()
+        {
+            self.ctx.leave_recursion();
+            return cached;
+        }
+        if !prefers_type_only_decls && self.ctx.def_no_type_params.borrow().contains(&def_id) {
+            self.ctx.leave_recursion();
+            return Vec::new();
+        }
 
         // Fast path: only class/interface/type alias symbols can declare type parameters.
         if flags & (symbol_flags::TYPE_ALIAS | symbol_flags::CLASS | symbol_flags::INTERFACE) == 0 {
@@ -1196,8 +1209,9 @@ impl<'a> CheckerState<'a> {
             self.ctx.leave_recursion();
             return Vec::new();
         }
+
         let mut decl_candidates = Vec::new();
-        if value_decl != tsz_parser::parser::NodeIndex::NONE {
+        if !prefers_type_only_decls && value_decl != tsz_parser::parser::NodeIndex::NONE {
             decl_candidates.push(value_decl);
         }
         for &decl in &declarations {

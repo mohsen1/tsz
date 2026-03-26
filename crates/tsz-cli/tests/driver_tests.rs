@@ -71,6 +71,23 @@ fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_
     tsz::parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs")
 }
 
+fn load_typescript_fixture(rel_path: &str) -> Option<String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest_dir.join("../../").join(rel_path),
+        manifest_dir.join("../../../").join(rel_path),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return std::fs::read_to_string(candidate).ok();
+        }
+    }
+
+    eprintln!("Skipping driver fixture test; fixture not found: {rel_path}");
+    None
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct SymbolSnapshot {
     flags: u32,
@@ -518,6 +535,54 @@ createInstance(MenuWorkbenchToolBar, {
     assert!(
         result.diagnostics.is_empty(),
         "Expected ConstructorParameters rest contextual typing to avoid TS2345/TS7006, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
+    let Some(mut source) =
+        load_typescript_fixture("TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx")
+    else {
+        return;
+    };
+    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    source = source.replace(
+        "\"/.lib/react16.d.ts\"",
+        "\"./.lib/react16.d.ts\"",
+    );
+
+    write_file(&base.join("test.tsx"), &source);
+    write_file(&base.join(".lib/react16.d.ts"), &react16);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.no_implicit_any = Some(true);
+    args.target = Some(crate::args::Target::Es2015);
+    args.jsx = Some(crate::args::JsxEmit::React);
+    args.es_module_interop = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.tsx")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts7006: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE)
+        .collect();
+
+    assert!(
+        ts7006.is_empty(),
+        "Expected real react16 JSX fixture to avoid TS7006, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
         result.diagnostics,
         result.files_read,
         result.file_infos
