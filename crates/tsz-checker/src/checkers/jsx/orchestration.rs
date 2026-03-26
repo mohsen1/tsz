@@ -11,15 +11,12 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn file_has_same_line_adjacent_jsx_recovery_pattern(&self) -> bool {
-        let Some(source_text) = self.ctx.arena.source_files.first().map(|sf| &*sf.text) else {
-            return false;
-        };
-        source_text.lines().any(|line| {
-            let trimmed = line.trim_start();
-            (trimmed.contains("/><") || trimmed.contains("></"))
-                && trimmed.contains('<')
-                && !trimmed.starts_with("//")
-        })
+        // Previously this used text-based heuristics to detect adjacent JSX
+        // recovery patterns (e.g., `/><` or `></`), but those patterns also
+        // match normal JSX syntax (e.g., `</span><div>` or `</span>`).
+        // Parser recovery situations are already detected by `has_parse_errors`
+        // and `all_parse_error_positions`, so this heuristic is no longer needed.
+        false
     }
 
     pub(super) fn normalize_jsx_component_type_for_resolution(
