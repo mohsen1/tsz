@@ -82,3 +82,22 @@ declare module "node:events" {
         "Did not expect TS2303 for ambient import alias re-export, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn export_equals_global_augmentation_namespace_cycle_reports_ts2303_not_ts2686() {
+    let source = r#"
+declare global { namespace N {} }
+export = N;
+export as namespace N;
+"#;
+
+    let diagnostics = get_diagnostics(source, "a.d.ts");
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2303),
+        "Expected TS2303 for export= cycle through global augmentation namespace. Got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2686),
+        "Did not expect TS2686 for the export= cycle case. Got: {diagnostics:?}"
+    );
+}
