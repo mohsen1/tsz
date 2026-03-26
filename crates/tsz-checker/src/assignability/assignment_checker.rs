@@ -1210,6 +1210,7 @@ impl<'a> CheckerState<'a> {
         let left_target = self.get_type_of_assignment_target(left_idx);
         self.ctx.in_destructuring_target = prev_destructuring;
         let mut left_type = self.resolve_type_query_type(left_target);
+        let mut has_explicit_jsdoc_left_type = false;
 
         // In JS/checkJs mode, allow JSDoc `@type` on assignment statements to
         // provide the contextual target type for the LHS.
@@ -1247,6 +1248,7 @@ impl<'a> CheckerState<'a> {
                 })
         {
             left_type = jsdoc_left_type;
+            has_explicit_jsdoc_left_type = true;
         }
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
@@ -1270,7 +1272,11 @@ impl<'a> CheckerState<'a> {
             // The export surface is inferred from the RHS, so using the current
             // `module.exports` shape as a contextual type for `X` can introduce
             // false excess-property errors before assignability is even skipped.
-            return self.get_type_of_node(right_idx);
+            // However, when an explicit JSDoc `@type` provides the assignment target,
+            // tsc does contextually type the RHS from that declared type.
+            if !has_explicit_jsdoc_left_type {
+                return self.get_type_of_node(right_idx);
+            }
         }
 
         let contextual_request = if !is_destructuring
