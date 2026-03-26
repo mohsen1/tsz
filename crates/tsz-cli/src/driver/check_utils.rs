@@ -81,6 +81,18 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             }
         }
 
+        if let Some(source) = tslib_file.arena.source_files.first().map(|sf| &*sf.text)
+            && let Some(helper_parameter_counts) = source_tslib_helper_parameter_counts(source)
+            && !helper_parameter_counts.is_empty()
+        {
+            return emit_tslib_helper_diagnostics_from_counts(
+                program,
+                options,
+                &helper_parameter_counts,
+                file_is_esm_map,
+            );
+        }
+
         return emit_tslib_helper_diagnostics(
             program,
             options,
@@ -139,6 +151,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             options.checker.target,
             options.es_module_interop,
             is_esm,
+            options.checker.experimental_decorators,
         );
         if let Some((_helper_name, start, length)) = helpers.first() {
             result.push(Diagnostic::error(
@@ -180,6 +193,7 @@ fn emit_tslib_helper_diagnostics(
             options.checker.target,
             options.es_module_interop,
             is_esm,
+            options.checker.experimental_decorators,
         ) {
             let export_sym_id = tslib_exports.and_then(|exports| exports.get(helper.name));
             match export_sym_id {
@@ -266,6 +280,7 @@ fn emit_tslib_helper_diagnostics_from_counts(
             options.checker.target,
             options.es_module_interop,
             is_esm,
+            options.checker.experimental_decorators,
         ) {
             match helper_parameter_counts.get(helper.name) {
                 Some(&actual_parameter_count) => {
@@ -334,15 +349,28 @@ fn filesystem_tslib_helper_parameter_counts(
     tslib_path: &Path,
 ) -> Option<rustc_hash::FxHashMap<String, usize>> {
     let source = std::fs::read_to_string(tslib_path).ok()?;
+    source_tslib_helper_parameter_counts(&source)
+}
+
+fn source_tslib_helper_parameter_counts(
+    source: &str,
+) -> Option<rustc_hash::FxHashMap<String, usize>> {
     let mut counts = rustc_hash::FxHashMap::default();
     for helper_name in [
         "__extends",
         "__asyncGenerator",
         "__classPrivateFieldGet",
         "__classPrivateFieldSet",
+        "__decorate",
+        "__param",
+        "__metadata",
         "__importStar",
         "__importDefault",
         "__exportStar",
+        "__esDecorate",
+        "__runInitializers",
+        "__setFunctionName",
+        "__propKey",
     ] {
         if let Some(param_count) = extract_declared_function_parameter_count(&source, helper_name) {
             counts.insert(helper_name.to_string(), param_count);
@@ -453,6 +481,7 @@ pub(super) fn required_helpers(
     target: tsz_common::ScriptTarget,
     es_module_interop: bool,
     is_esm: bool,
+    experimental_decorators: bool,
 ) -> Vec<(&'static str, u32, u32)> {
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
@@ -496,7 +525,7 @@ pub(super) fn required_helpers(
 
     // Decorators take priority (ES decorators handle private fields internally)
     if let Some((start, length)) = first_decorator {
-        return es_decorator_helpers(file, start, length);
+        return decorator_helpers(file, start, length, experimental_decorators);
     }
 
     if let Some((start, length)) = first_private_id {
@@ -525,6 +554,7 @@ fn required_tslib_helpers(
     target: tsz_common::ScriptTarget,
     es_module_interop: bool,
     is_esm: bool,
+    experimental_decorators: bool,
 ) -> Vec<TslibHelperRequirement> {
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
@@ -621,7 +651,7 @@ fn required_tslib_helpers(
     }
 
     if let Some((start, length)) = first_decorator {
-        return es_decorator_helpers(file, start, length)
+        return decorator_helpers(file, start, length, experimental_decorators)
             .into_iter()
             .map(|(name, start, length)| TslibHelperRequirement {
                 name,
@@ -945,6 +975,19 @@ fn es_decorator_helpers(
         helpers.push(("__setFunctionName", first_dec_start, first_dec_length));
     }
     helpers
+}
+
+fn decorator_helpers(
+    file: &BoundFile,
+    first_dec_start: u32,
+    first_dec_length: u32,
+    experimental_decorators: bool,
+) -> Vec<(&'static str, u32, u32)> {
+    if experimental_decorators {
+        return vec![("__decorate", first_dec_start, first_dec_length)];
+    }
+
+    es_decorator_helpers(file, first_dec_start, first_dec_length)
 }
 
 /// Compute the unified export signature for a file from the merged program.
@@ -1887,7 +1930,7 @@ mod tests {
 
     fn helper_names_at(source: &str, target: tsz_common::ScriptTarget) -> Vec<&'static str> {
         let file = bound_file(source);
-        required_helpers(&file, target, false, false)
+        required_helpers(&file, target, false, false, false)
             .into_iter()
             .map(|(name, _, _)| name)
             .collect()
@@ -1918,7 +1961,7 @@ mod tests {
     fn default_reexport_requires_import_default_helper_when_interop_enabled() {
         let file = bound_file("export { default } from \"./a\";");
         let helpers: Vec<_> =
-            required_helpers(&file, tsz_common::ScriptTarget::ES2017, true, false)
+            required_helpers(&file, tsz_common::ScriptTarget::ES2017, true, false, false)
                 .into_iter()
                 .map(|(name, _, _)| name)
                 .collect();
@@ -1929,7 +1972,7 @@ mod tests {
     fn default_named_import_requires_import_default_helper_without_interop() {
         let file = bound_file("import { default as b } from \"./a\";\nvoid b;");
         let helpers: Vec<_> =
-            required_helpers(&file, tsz_common::ScriptTarget::ES2017, false, false)
+            required_helpers(&file, tsz_common::ScriptTarget::ES2017, false, false, false)
                 .into_iter()
                 .map(|(name, _, _)| name)
                 .collect();
@@ -1962,6 +2005,36 @@ mod tests {
                         == "This syntax requires an imported helper but module 'tslib' cannot be found."
             }),
             "Expected TS2354 for virtual program without tslib. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn in_program_tslib_index_helpers_satisfy_legacy_decorator_requirements() {
+        let program = merged_program(&[
+            (
+                "/app/a.ts",
+                "declare var dec: any;\n@dec export class A {}\n",
+            ),
+            (
+                "/app/node_modules/tslib/index.d.ts",
+                "export declare function __decorate(decorators: Function[], target: any, key?: string | symbol, desc?: any): any;\n",
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions::default();
+        options.import_helpers = true;
+        options.checker.target = tsz_common::ScriptTarget::ES2015;
+        options.checker.experimental_decorators = true;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/app"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2343 || diag.code == 2354),
+            "Did not expect tslib helper diagnostics when index.d.ts declares __decorate. Got: {diagnostics:#?}"
         );
     }
 
