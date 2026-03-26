@@ -227,6 +227,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.resolver
     }
 
+    /// Get the query database when one is available.
+    #[inline]
+    pub(crate) const fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
+        self.query_db
+    }
+
     /// Check if `no_unchecked_indexed_access` is enabled.
     #[inline]
     pub(crate) const fn no_unchecked_indexed_access(&self) -> bool {
