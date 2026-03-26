@@ -270,6 +270,49 @@ b.func10;
 }
 
 #[test]
+fn test_ts_import_type_does_not_see_commonjs_object_literal_members_as_named_exports() {
+    let diagnostics = check_commonjs_two_files(
+        "mod.js",
+        r#"
+class Thing  { x = 1 }
+class AnotherThing { y = 2  }
+function foo() { return 3 }
+function bar() { return 4 }
+/** @typedef {() => number} buz */
+module.exports = {
+    Thing,
+    AnotherThing,
+    foo,
+    qux: bar,
+    baz() { return 5 },
+    literal: "",
+};
+"#,
+        "index.ts",
+        r#"
+function types(
+    a: import('./mod.js').Thing,
+    b: import('./mod.js').AnotherThing,
+    c: import('./mod.js').foo,
+    d: import('./mod.js').qux,
+    e: import('./mod.js').baz,
+    g: import('./mod.js').literal,
+) {
+    return a.x + b.y + c() + d() + e() + g.length;
+}
+"#,
+        "./mod.js",
+    );
+
+    let ts2694 = diagnostics.iter().filter(|(code, _)| *code == 2694);
+    assert_eq!(
+        ts2694.count(),
+        6,
+        "Expected TS2694 for CommonJS object-literal export members in TS import types, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_exports_chain_assignment_alias_keeps_same_file_reads_in_sync() {
     let diagnostics = check_commonjs_file(
         "npmlog.js",
