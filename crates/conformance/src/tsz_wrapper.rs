@@ -222,6 +222,21 @@ pub fn prepare_test_dir(
         .or_else(|| options.get("checkjs"))
         .is_some_and(|v| v == "true");
     let allow_js = matches!(explicit_allow_js, Some(v) if v == "true");
+    let no_implicit_references = options
+        .get("noImplicitReferences")
+        .or_else(|| options.get("noimplicitreferences"))
+        .is_some_and(|v| v == "true");
+    let harness_root_file = if no_implicit_references && !filenames.is_empty() {
+        filenames.iter().rev().find_map(|(name, _)| {
+            if name.replace('\\', "/").ends_with("tsconfig.json") {
+                None
+            } else {
+                Some(name.replace("..", "_").trim_start_matches('/').to_string())
+            }
+        })
+    } else {
+        None
+    };
     // Match the cache generator's include patterns exactly.
     // The tsc cache always uses .ts/.tsx/.js/.jsx (no .cts/.mts/.mjs/.cjs).
     // Note: tsc discovers .mts/.cts/.mjs/.cjs files via import resolution
@@ -275,11 +290,19 @@ pub fn prepare_test_dir(
                     .or_insert(serde_json::Value::Bool(true));
             }
         }
-        let tsconfig_content = serde_json::json!({
-            "compilerOptions": compiler_options,
-            "include": include,
-            "exclude": ["node_modules"]
-        });
+        let tsconfig_content = if let Some(root_file) = harness_root_file {
+            serde_json::json!({
+                "compilerOptions": compiler_options,
+                "files": [root_file],
+                "exclude": ["node_modules"]
+            })
+        } else {
+            serde_json::json!({
+                "compilerOptions": compiler_options,
+                "include": include,
+                "exclude": ["node_modules"]
+            })
+        };
         std::fs::write(
             &tsconfig_path,
             serde_json::to_string_pretty(&tsconfig_content)?,
