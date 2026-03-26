@@ -969,13 +969,47 @@ impl<'a> CheckerState<'a> {
 
                 let type_param_bindings = self.get_type_param_bindings();
 
+                let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();
+                for (decl_idx, decl_arena) in &decls_with_arenas {
+                    let mut stack = vec![*decl_idx];
+                    while let Some(node_idx) = stack.pop() {
+                        let Some(node) = decl_arena.get(node_idx) else {
+                            continue;
+                        };
+                        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                            && let Some(type_ref) = decl_arena.get_type_ref(node)
+                        {
+                            let has_type_args = type_ref
+                                .type_arguments
+                                .as_ref()
+                                .is_some_and(|args| !args.nodes.is_empty());
+                            if !has_type_args
+                                && let Some(name_node) = decl_arena.get(type_ref.type_name)
+                                && name_node.kind == SyntaxKind::Identifier as u16
+                                && let Some(name) =
+                                    decl_arena.get_identifier_text(type_ref.type_name)
+                            {
+                                self.prime_lib_type_params(name);
+                                if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                                    if let Some(params) = self.ctx.get_def_type_params(def_id)
+                                        && !params.is_empty()
+                                    {
+                                        prewarmed_lazy_type_params.insert(def_id, params);
+                                    }
+                                }
+                            }
+                        }
+                        stack.extend(decl_arena.get_children(node_idx));
+                    }
+                }
+                let binder = &self.ctx.binder;
+                let lib_binders = self.get_lib_binders();
                 // For multi-arena interfaces (e.g. PromiseConstructor declared in
                 // lib.es2015.promise.d.ts AND lib.es2015.iterable.d.ts), the resolver
                 // must look up identifier text from ALL declaration arenas, not just
                 // self.ctx.arena. NodeIndices from different arenas may collide, so
                 // using self.ctx.arena alone could resolve to the wrong node.
-                let binder = &self.ctx.binder;
-                let lib_binders = self.get_lib_binders();
                 let multi_arena_resolve = |node_idx: NodeIndex| -> Option<SymbolId> {
                     // Use checker-accessible compiler-managed type detection helper.
 
@@ -1028,6 +1062,12 @@ impl<'a> CheckerState<'a> {
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
                     computed_names.get(&expr_idx).copied()
                 };
+                let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
+                    prewarmed_lazy_type_params
+                        .get(&def_id)
+                        .cloned()
+                        .or_else(|| self.ctx.get_def_type_params(def_id))
+                };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     fallback_arena,
                     self.ctx.types,
@@ -1036,6 +1076,7 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings)
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_preferred_self_reference(

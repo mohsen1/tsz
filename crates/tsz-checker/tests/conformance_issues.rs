@@ -17024,6 +17024,46 @@ function f(a = null, b = n, l = []) {
 }
 
 #[test]
+fn test_atomics_wait_async_accepts_shared_typed_arrays_without_ts2769() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+const sab = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 1024);
+const int32 = new Int32Array(sab);
+const sab64 = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT * 1024);
+const int64 = new BigInt64Array(sab64);
+
+const check32: Int32Array<SharedArrayBuffer> = int32;
+const check64: BigInt64Array<SharedArrayBuffer> = int64;
+
+const waitValue = Atomics.wait(int32, 0, 0);
+const { async, value } = Atomics.waitAsync(int32, 0, 0);
+const { async: async64, value: value64 } = Atomics.waitAsync(int64, 0, BigInt(0));
+
+async function main() {
+    if (async) {
+        await value;
+    }
+    if (async64) {
+        await value64;
+    }
+    return waitValue;
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2769),
+        "Did not expect TS2769 for Atomics.waitAsync on shared typed arrays.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_intersection_index_signature_diagnostics_preserve_declared_identifier_annotations() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
