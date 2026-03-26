@@ -94,8 +94,20 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_solver::visitor::is_function_type;
 
-        // Check if object type is a function type
-        if !is_function_type(self.ctx.types, object_type) {
+        let prototype_root_expr = self.ctx.arena.get(object_expr_idx).and_then(|node| {
+            if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                return None;
+            }
+            let access = self.ctx.arena.get_access_expr(node)?;
+            let name = self.ctx.arena.get(access.name_or_argument)?;
+            let ident = self.ctx.arena.get_identifier(name)?;
+            (ident.escaped_text == "prototype").then_some(access.expression)
+        });
+
+        // Check if object type is a function type. In JS files, also allow
+        // `Ctor.prototype.method = ...` writes when `Ctor` resolves to a
+        // function/class symbol; the prototype object itself is not callable.
+        if prototype_root_expr.is_none() && !is_function_type(self.ctx.types, object_type) {
             return false;
         }
 
@@ -117,9 +129,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Resolve object symbol for both simple identifiers and qualified chains.
+        let symbol_target_expr = prototype_root_expr.unwrap_or(object_expr_idx);
         let sym_id = self
-            .resolve_identifier_symbol(object_expr_idx)
-            .or_else(|| self.resolve_qualified_symbol(object_expr_idx));
+            .resolve_identifier_symbol(symbol_target_expr)
+            .or_else(|| self.resolve_qualified_symbol(symbol_target_expr));
 
         if let Some(sym_id) = sym_id
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -131,7 +144,7 @@ impl<'a> CheckerState<'a> {
             // exists as an instance member. Accessing instance members on the
             // constructor type (e.g., `Base.instanceProp = 2`) should produce
             // TS2339, not be silently accepted as an expando.
-            if (symbol.flags & symbol_flags::CLASS) != 0 {
+            if prototype_root_expr.is_none() && (symbol.flags & symbol_flags::CLASS) != 0 {
                 let prop_name = self
                     .ctx
                     .arena
