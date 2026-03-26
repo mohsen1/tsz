@@ -181,6 +181,8 @@ impl<'a> CheckerState<'a> {
         let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut string_index_types: Vec<TypeId> = Vec::new();
         let mut number_index_types: Vec<TypeId> = Vec::new();
+        let mut spread_string_index_types: Vec<TypeId> = Vec::new();
+        let mut spread_number_index_types: Vec<TypeId> = Vec::new();
         let mut has_spread = false;
         let mut has_union_spread = false;
         let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
@@ -2144,6 +2146,21 @@ impl<'a> CheckerState<'a> {
                         }
 
                         let spread_props = self.collect_object_spread_properties(spread_type);
+                        let resolved_spread = self.resolve_lazy_type(spread_type);
+                        let resolved_spread = self.evaluate_type_with_env(resolved_spread);
+                        let resolved_spread =
+                            self.resolve_type_for_property_access(resolved_spread);
+                        let idx_resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+                        if let Some(value_type) =
+                            idx_resolver.resolve_string_index(resolved_spread)
+                        {
+                            spread_string_index_types.push(value_type);
+                        }
+                        if let Some(value_type) =
+                            idx_resolver.resolve_number_index(resolved_spread)
+                        {
+                            spread_number_index_types.push(value_type);
+                        }
 
                         // TS2783: Check if any earlier named properties will be
                         // overwritten by required properties from this spread.
@@ -2192,6 +2209,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Other element types (e.g., unknown AST node kinds) are silently skipped
+        }
+
+        if explicit_property_names.is_empty() {
+            string_index_types.extend(spread_string_index_types);
+            number_index_types.extend(spread_number_index_types);
         }
 
         let object_type = self.finalize_object_literal_type(
