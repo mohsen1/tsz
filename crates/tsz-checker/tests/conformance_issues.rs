@@ -16811,6 +16811,50 @@ Common.localize = function (string) {
 }
 
 #[test]
+fn test_jsdoc_typedef_string_index_signature_accepts_number_element_write() {
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &[(
+            "foo.js",
+            r#"
+// @allowJs: true
+// @checkJs: true
+// @target: esnext
+// @outDir: ./out
+// @declaration: true
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+
+let id = 0;
+
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => new Promise((resolve, reject) => {
+    handlers[++id] = [resolve, reject];
+});
+"#,
+        )],
+        "foo.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ESNext,
+            emit_declarations: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 when a JSDoc typedef string index signature is written through a numeric key.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_intersection_index_signature_diagnostics_preserve_declared_identifier_annotations() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"

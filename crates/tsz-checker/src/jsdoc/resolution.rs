@@ -1468,13 +1468,15 @@ impl<'a> CheckerState<'a> {
             return Some(mapped);
         }
 
+        let factory = self.ctx.types.factory();
         let inner = type_expr[1..type_expr.len() - 1].trim();
         if inner.is_empty() {
-            return Some(self.ctx.types.factory().object(Vec::new()));
+            return Some(factory.object(Vec::new()));
         }
         // Split properties by ',' or ';' at top level
         let prop_strs = Self::split_object_properties(inner);
         let mut properties = Vec::new();
+        let mut object_shape = ObjectShape::default();
         for prop_str in &prop_strs {
             let prop_str = prop_str.trim();
             if prop_str.is_empty() {
@@ -1498,6 +1500,18 @@ impl<'a> CheckerState<'a> {
             if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
                 let raw_name = prop_str[..colon_idx].trim();
                 let type_str = prop_str[colon_idx + 1..].trim();
+                if raw_name.starts_with('[')
+                    && raw_name.ends_with(']')
+                    && let Some(index_sig) =
+                        self.parse_jsdoc_object_literal_index_signature(raw_name, type_str)
+                {
+                    match index_sig.key_type {
+                        TypeId::STRING => object_shape.string_index = Some(index_sig),
+                        TypeId::NUMBER => object_shape.number_index = Some(index_sig),
+                        _ => {}
+                    }
+                    continue;
+                }
                 let (name, optional) = if let Some(stripped) = raw_name.strip_suffix('?') {
                     (stripped, true)
                 } else {
@@ -1521,10 +1535,43 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        if properties.is_empty() {
+        if properties.is_empty()
+            && object_shape.string_index.is_none()
+            && object_shape.number_index.is_none()
+        {
             return None;
         }
-        Some(self.ctx.types.factory().object(properties))
+        if object_shape.string_index.is_some() || object_shape.number_index.is_some() {
+            object_shape.properties = properties;
+            Some(factory.object_with_index(object_shape))
+        } else {
+            Some(factory.object(properties))
+        }
+    }
+
+    fn parse_jsdoc_object_literal_index_signature(
+        &mut self,
+        raw_name: &str,
+        type_str: &str,
+    ) -> Option<IndexSignature> {
+        let inner = raw_name
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .trim();
+        let colon_idx = Self::find_top_level_char(inner, ':')?;
+        let param_name = inner[..colon_idx].trim();
+        let key_type = self.resolve_jsdoc_type_str(inner[colon_idx + 1..].trim())?;
+        if key_type != TypeId::STRING && key_type != TypeId::NUMBER {
+            return None;
+        }
+
+        let value_type = self.resolve_jsdoc_type_str(type_str)?;
+        Some(IndexSignature {
+            key_type,
+            value_type,
+            readonly: false,
+            param_name: (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
+        })
     }
 
     fn parse_jsdoc_mapped_type(&mut self, type_expr: &str) -> Option<TypeId> {
