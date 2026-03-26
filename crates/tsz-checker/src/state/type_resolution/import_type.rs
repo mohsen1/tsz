@@ -69,15 +69,30 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_import_type_and_resolve(
         &mut self,
         call_idx: NodeIndex,
-        _type_name_idx: NodeIndex,
+        type_name_idx: NodeIndex,
         _type_ref_idx: NodeIndex,
     ) -> TypeId {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
         // TS2880: Check for deprecated `assert` keyword in import type options
         self.check_import_type_deprecated_assert(call_idx);
 
         let Some((module_name, specifier_node)) = self.get_import_type_module_specifier(call_idx)
         else {
             return TypeId::ERROR;
+        };
+        let is_bare_import_type = call_idx == type_name_idx;
+        let bare_import_type_error = |checker: &mut Self| {
+            let message = format_message(
+                diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                &[&module_name],
+            );
+            checker.error_at_node(
+                type_name_idx,
+                &message,
+                diagnostic_codes::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+            );
+            TypeId::ERROR
         };
 
         if !self.ctx.report_unresolved_imports {
@@ -93,12 +108,20 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(&module_name)
         {
-            return TypeId::ERROR; // Module exists — return ERROR (lowering can't resolve it yet)
+            return if is_bare_import_type {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 2. Binder module_exports (cross-file)
         if self.ctx.binder.module_exports.contains_key(&module_name) {
-            return TypeId::ERROR;
+            return if is_bare_import_type {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 3. Shorthand ambient modules (declare module "foo")
@@ -108,12 +131,20 @@ impl<'a> CheckerState<'a> {
             .shorthand_ambient_modules
             .contains(&module_name)
         {
-            return TypeId::ERROR;
+            return if is_bare_import_type {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 4. Declared modules (ambient modules with body)
         if self.ctx.binder.declared_modules.contains(&module_name) {
-            return TypeId::ERROR;
+            return if is_bare_import_type {
+                bare_import_type_error(self)
+            } else {
+                TypeId::ERROR
+            };
         }
 
         // 5. Check if the driver has a resolution error for this specifier
@@ -158,9 +189,13 @@ impl<'a> CheckerState<'a> {
         if let Some(ref paths) = self.ctx.resolved_module_paths {
             // If there's no entry for this (file_idx, specifier), the specifier
             // was never resolved. Check if any project file matches.
-            let key = (self.ctx.current_file_idx, module_name);
+            let key = (self.ctx.current_file_idx, module_name.clone());
             if paths.contains_key(&key) {
-                return TypeId::ERROR; // Module resolved to a project file
+                return if is_bare_import_type {
+                    bare_import_type_error(self)
+                } else {
+                    TypeId::ERROR
+                };
             }
         }
 
