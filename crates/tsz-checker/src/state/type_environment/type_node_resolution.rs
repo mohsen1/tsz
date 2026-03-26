@@ -523,10 +523,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let prop_type =
+                self.declared_expando_property_type_for_root(sym_id, root_name, &prop_name);
+
             properties.push(PropertyInfo {
                 name: prop_atom,
-                type_id: TypeId::ANY,
-                write_type: TypeId::ANY,
+                type_id: prop_type,
+                write_type: prop_type,
                 optional: false,
                 readonly: false,
                 is_method: false,
@@ -641,12 +644,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let prop_type =
+                self.declared_expando_property_type_for_root(sym_id, root_name, &prop_name);
+
             properties.insert(
                 prop_atom,
                 PropertyInfo {
                     name: prop_atom,
-                    type_id: TypeId::ANY,
-                    write_type: TypeId::ANY,
+                    type_id: prop_type,
+                    write_type: prop_type,
                     optional: false,
                     readonly: false,
                     is_method: false,

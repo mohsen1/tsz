@@ -904,15 +904,21 @@ impl<'a> CheckerState<'a> {
 
                 // property_cache stores Option<TypeId>: Some(id) = resolved type,
                 // None = property not found (fall through for TS2339 diagnostics).
-                if let Some(Some(type_id)) = self
+                let cached_property_type = self
                     .ctx
                     .narrowing_cache
                     .property_cache
                     .borrow()
                     .get(&(resolved_base, prop_atom))
-                    .copied()
+                    .copied();
+                if let Some(Some(type_id)) = cached_property_type
                 {
-                    let mut result_type = type_id;
+                    let mut result_type = self.refine_expando_property_read_type(
+                        idx,
+                        access.expression,
+                        property_name,
+                        type_id,
+                    );
                     if base_nullish.is_some()
                         && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
                     {
@@ -962,12 +968,19 @@ impl<'a> CheckerState<'a> {
                             // property reads, but fall back to the full path when
                             // TS4111 must be reported.
                         } else {
+                            let refined_type_id = self.refine_expando_property_read_type(
+                                idx,
+                                access.expression,
+                                property_name,
+                                type_id,
+                            );
                             self.ctx
                                 .narrowing_cache
                                 .property_cache
                                 .borrow_mut()
-                                .insert((resolved_base, prop_atom), Some(type_id));
-                            let mut result_type = effective_write_result(type_id, write_type);
+                                .insert((resolved_base, prop_atom), Some(refined_type_id));
+                            let mut result_type =
+                                effective_write_result(refined_type_id, write_type);
                             if base_nullish.is_some()
                                 && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
                             {
