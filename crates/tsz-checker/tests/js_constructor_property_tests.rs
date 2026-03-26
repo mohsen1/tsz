@@ -68,6 +68,36 @@ fn check_js_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, Str
         .collect()
 }
 
+fn check_ts(source: &str) -> Vec<(u32, String)> {
+    let options = CheckerOptions::default();
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn count_code(diags: &[(u32, String)], code: u32) -> usize {
     diags.iter().filter(|(c, _)| *c == code).count()
 }
@@ -550,6 +580,28 @@ test.K.prototype = {
     assert!(
         diagnostics.iter().all(|(code, _)| *code != 2565),
         "Expected self-defaulting expando initializer reads to avoid TS2565, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts_expando_reads_remain_any_typed() {
+    let source = r#"
+function fn() {}
+fn.answer = 1;
+
+let text: string = fn.answer;
+"#;
+
+    let diagnostics = check_ts(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected TypeScript expando reads to stay any-typed, got: {diagnostics:?}"
     );
 }
 

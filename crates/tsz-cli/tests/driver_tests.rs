@@ -1987,7 +1987,8 @@ fn compile_with_root_dir_flattens_output_paths() {
     );
     write_file(&base.join("src/index.ts"), "export const value = 1;");
 
-    let args = default_args();
+    let mut args = default_args();
+    args.project = Some(base.to_path_buf());
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(result.diagnostics.is_empty());
@@ -9331,6 +9332,142 @@ function bad1(x, {a, b}) {}
             .iter()
             .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Did not expect follow-on TS2339 alongside TS5107, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn js_checkjs_define_property_module_exports_preserve_augmented_shape() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.js", "validate.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("index.js"),
+        r#"const x = {};
+Object.defineProperty(x, "name", { value: "Charles", writable: true });
+Object.defineProperty(x, "middleInit", { value: "H" });
+Object.defineProperty(x, "lastName", { value: "Smith", writable: false });
+Object.defineProperty(x, "zip", { get() { return 98122 }, set(_) { /*ignore*/ } });
+Object.defineProperty(x, "houseNumber", { get() { return 21.75 } });
+Object.defineProperty(x, "zipStr", {
+    /** @param {string} str */
+    set(str) {
+        this.zip = Number(str)
+    }
+});
+
+/**
+ * @param {{name: string}} named
+ */
+function takeName(named) { return named.name; }
+
+takeName(x);
+
+/** @type {number} */
+var a = x.zip;
+
+/** @type {number} */
+var b = x.houseNumber;
+
+const returnExemplar = () => x;
+const needsExemplar = (_ = x) => void 0;
+
+const expected = /** @type {{name: string, readonly middleInit: string, readonly lastName: string, zip: number, readonly houseNumber: number, zipStr: string}} */(/** @type {*} */(null));
+
+/**
+ * @param {typeof returnExemplar} a
+ * @param {typeof needsExemplar} b
+ */
+function match(a, b) {}
+
+match(() => expected, (x = expected) => void 0);
+
+module.exports = x;
+"#,
+    );
+
+    write_file(
+        &base.join("validate.ts"),
+        r#"import "./";
+import x = require("./");
+
+x.name;
+x.middleInit;
+x.lastName;
+x.zip;
+x.houseNumber;
+x.zipStr;
+
+x.name = "Another";
+x.zip = 98123;
+x.zipStr = "OK";
+
+x.lastName = "should fail";
+x.houseNumber = 12;
+x.zipStr = 12;
+x.middleInit = "R";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2339: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .collect();
+    let ts2345: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .collect();
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    let ts2540: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY)
+        .collect();
+
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for defineProperty-augmented shape, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts2345.is_empty(),
+        "Expected no TS2345 when passing defineProperty-augmented object, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for invalid writable assignments, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !ts2540.is_empty(),
+        "Expected TS2540 for readonly defineProperty members, got diagnostics: {:?}",
         result.diagnostics
     );
 }

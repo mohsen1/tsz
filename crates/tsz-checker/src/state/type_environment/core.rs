@@ -1386,21 +1386,82 @@ impl<'a> CheckerState<'a> {
     /// const m3: Map = {};  // ❌ K is required
     /// ```
     pub(crate) fn count_required_type_params(&mut self, sym_id: SymbolId) -> usize {
+        let builtin_override = self.get_symbol_globally(sym_id).and_then(|symbol| {
+            match symbol.escaped_name.as_str() {
+                "Iterator"
+                | "Iterable"
+                | "AsyncIterator"
+                | "AsyncIterable"
+                | "IterableIterator"
+                | "AsyncIterableIterator"
+                | "IteratorObject"
+                | "AsyncIteratorObject" => Some(1),
+                "Generator" | "AsyncGenerator" => Some(0),
+                _ => None,
+            }
+        });
+
         // First try the fast AST-level check. This avoids recursive resolution
         // issues when a type parameter default references the type being declared
         // (e.g., `interface SelfRef<T = SelfRef> {}`). In such cases,
         // `get_type_params_for_symbol` would recursively try to resolve the
         // default, fail, and incorrectly report the param as required.
         if let Some(ast_count) = self.count_required_type_params_from_ast(sym_id) {
+            if let Some(override_count) = builtin_override
+                && ast_count > override_count
+            {
+                return override_count;
+            }
             return ast_count;
         }
         let type_params = self.get_type_params_for_symbol(sym_id);
-        type_params.iter().filter(|p| p.default.is_none()).count()
+        let required = type_params.iter().filter(|p| p.default.is_none()).count();
+        if let Some(override_count) = builtin_override
+            && required > override_count
+        {
+            return override_count;
+        }
+        required
     }
 
     /// Count required type params by inspecting the AST directly, without resolving
     /// defaults. Returns `Some(count)` if AST-level info is available, `None` otherwise.
     pub(crate) fn count_required_type_params_from_ast(&self, sym_id: SymbolId) -> Option<usize> {
+        fn count_in_arena(
+            arena: &tsz_parser::parser::NodeArena,
+            decl_idx: tsz_parser::parser::NodeIndex,
+            flags: u32,
+        ) -> Option<usize> {
+            let node = arena.get(decl_idx)?;
+            let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
+                arena
+                    .get_interface(node)
+                    .and_then(|iface| iface.type_parameters.as_ref())
+            } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
+                arena
+                    .get_type_alias(node)
+                    .and_then(|ta| ta.type_parameters.as_ref())
+            } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
+                arena
+                    .get_class(node)
+                    .and_then(|c| c.type_parameters.as_ref())
+            } else {
+                None
+            };
+
+            type_params_list.map(|list| {
+                list.nodes
+                    .iter()
+                    .filter(|&&param_idx| {
+                        arena
+                            .get(param_idx)
+                            .and_then(|n| arena.get_type_parameter(n))
+                            .is_some_and(|tp| tp.default == tsz_parser::parser::NodeIndex::NONE)
+                    })
+                    .count()
+            })
+        }
+
         let symbol = self.get_symbol_globally(sym_id)?;
         let flags = symbol.flags;
         let decl_candidates: Vec<_> =

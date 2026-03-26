@@ -270,6 +270,26 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn is_jsx_class_like_component_type(&mut self, component_type: TypeId) -> bool {
+        let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
+        let component_type = self.evaluate_type_with_env(component_type);
+
+        if tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
+            .is_some_and(|sigs| !sigs.is_empty())
+        {
+            return true;
+        }
+
+        tsz_solver::type_queries::get_union_members(self.ctx.types, component_type).is_some_and(
+            |members| {
+                members.iter().any(|&member| {
+                    tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
+                        .is_some_and(|sigs| !sigs.is_empty())
+                })
+            },
+        )
+    }
+
     fn get_normalized_jsx_required_props_shape(
         &mut self,
         props_type: TypeId,
@@ -1198,10 +1218,7 @@ impl<'a> CheckerState<'a> {
             && !display_target.is_empty()
             && !(prefer_named_missing_props_diag && provided_attrs.is_empty())
             && !has_prop_type_error
-            && component_type.is_some_and(|comp| {
-                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, comp)
-                    .is_some_and(|sigs| !sigs.is_empty())
-            })
+            && component_type.is_some_and(|comp| self.is_jsx_class_like_component_type(comp))
             && self.jsx_has_missing_required_props(props_type, &provided_attrs)
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
