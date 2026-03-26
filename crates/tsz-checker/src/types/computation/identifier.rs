@@ -4,7 +4,7 @@
 //! the binder, checking TDZ violations, validating definite assignment,
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
-use crate::context::{PendingImplicitAnyKind, TypingRequest};
+use crate::context::{PendingImplicitAnyKind, TypingRequest, is_js_file_name};
 use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
@@ -1010,6 +1010,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
+            let preferred_cross_file_type = if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && (flags
+                    & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                        | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                    != 0
+            {
+                self.preferred_non_js_cross_file_global_value_type(name, sym_id)
+            } else {
+                None
+            };
+            let declared_type = preferred_cross_file_type.unwrap_or(declared_type);
             // Check for TDZ violations (variable used before declaration in source order)
             if self.check_tdz_violation(sym_id, idx, name, true) {
                 return TypeId::ERROR;
@@ -1023,6 +1035,11 @@ impl<'a> CheckerState<'a> {
                 ?declared_type,
                 "After check_flow_usage in get_type_of_identifier"
             );
+
+            if let Some(preferred_cross_file_type) = preferred_cross_file_type {
+                return self
+                    .instantiate_callable_result_from_request(idx, preferred_cross_file_type, request);
+            }
 
             // FIX: Preserve readonly and other type modifiers from declared_type.
             // When declared_type has modifiers like ReadonlyType, we must preserve them
@@ -1600,6 +1617,131 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    pub(crate) fn preferred_non_js_cross_file_global_value_type(
+        &mut self,
+        name: &str,
+        local_sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        if self.ctx.binder.file_locals.get(name) != Some(local_sym_id) {
+            return None;
+        }
+
+        if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id) {
+            for &decl_idx in &symbol.declarations {
+                if !decl_idx.is_some() {
+                    continue;
+                }
+                let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
+                    continue;
+                };
+                if source_file.file_name == self.ctx.file_name
+                    || is_js_file_name(&source_file.file_name)
+                {
+                    continue;
+                }
+
+                let candidate_type = self.type_of_value_declaration(decl_idx);
+                if !matches!(candidate_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+                    return Some(candidate_type);
+                }
+            }
+        }
+
+        let entries = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+            .cloned()?;
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+
+        for (file_idx, sym_id) in entries {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+
+            let Some(arena) = all_arenas.get(file_idx).cloned() else {
+                continue;
+            };
+            let Some(binder) = all_binders.get(file_idx).cloned() else {
+                continue;
+            };
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+            if is_js_file_name(&source_file.file_name) {
+                continue;
+            }
+
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if symbol.escaped_name != name || (symbol.flags & symbol_flags::VALUE) == 0 {
+                continue;
+            }
+
+            let candidate_decl = symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|&decl_idx| {
+                    if !decl_idx.is_some() {
+                        return false;
+                    }
+                    let Some(node) = arena.get(decl_idx) else {
+                        return false;
+                    };
+                    matches!(
+                        node.kind,
+                        tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                            | tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT
+                            | tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                    )
+                })
+                .or_else(|| {
+                    (symbol.value_declaration.is_some()
+                        && arena.get(symbol.value_declaration).is_some())
+                    .then_some(symbol.value_declaration)
+                })
+                .unwrap_or(NodeIndex::NONE);
+
+            if !Self::enter_cross_arena_delegation() {
+                continue;
+            }
+
+            let mut checker = Box::new(CheckerState::with_parent_cache(
+                arena.as_ref(),
+                binder.as_ref(),
+                self.ctx.types,
+                source_file.file_name.clone(),
+                self.ctx.compiler_options.clone(),
+                self,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+            checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+            checker
+                .ctx
+                .symbol_resolution_depth
+                .set(self.ctx.symbol_resolution_depth.get());
+
+            let candidate_type = if candidate_decl.is_some() {
+                checker.type_of_value_declaration(candidate_decl)
+            } else {
+                checker.get_type_of_symbol(sym_id)
+            };
+
+            Self::leave_cross_arena_delegation();
+
+            if !matches!(candidate_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+                return Some(candidate_type);
+            }
+        }
+
+        None
     }
 
     /// Returns `true` if `idx` is the name identifier inside an

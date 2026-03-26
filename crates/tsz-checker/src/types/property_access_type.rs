@@ -690,6 +690,16 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(original_object_type)
         };
 
+        if self.ctx.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
+            && let Some(preferred_type) =
+                self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
+        {
+            display_object_type = preferred_type;
+        }
+
         // Evaluate Application types to resolve generic type aliases/interfaces.
         // But preserve original for error messages to maintain nominal identity (e.g., D<string>).
         //
@@ -1588,7 +1598,9 @@ impl<'a> CheckerState<'a> {
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
                     // Recover the assigned value type when we can, then fall back to `any`.
-                    if self.is_expando_property_read(access.expression, property_name) {
+                    if !skip_flow_narrowing
+                        && self.is_expando_property_read(access.expression, property_name)
+                    {
                         if self.is_js_file()
                             && self.ctx.compiler_options.check_js
                             && let Some(expando_type) = self.expando_property_read_type(
@@ -1596,6 +1608,11 @@ impl<'a> CheckerState<'a> {
                                 access.expression,
                                 property_name,
                             )
+                        {
+                            return expando_type;
+                        }
+                        if let Some(expando_type) =
+                            self.expando_property_read_type(idx, access.expression, property_name)
                         {
                             return expando_type;
                         }
@@ -1751,7 +1768,6 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
-
                         // Property access expressions are VALUE context - always emit TS2339.
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.

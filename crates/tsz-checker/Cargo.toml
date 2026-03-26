@@ -199,5 +199,9 @@ path = "tests/ts2450_const_enum_tests.rs"
 name = "ts2403_js_cross_file_tests"
 path = "tests/ts2403_js_cross_file_tests.rs"
 
+[[test]]
+name = "js_container_merge_ts2339_tests"
+path = "tests/js_container_merge_ts2339_tests.rs"
+
 [lints]
 workspace = true
