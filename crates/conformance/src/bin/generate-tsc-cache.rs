@@ -366,7 +366,7 @@ fn process_test_file(
         return Err(anyhow::anyhow!("No content or binary bytes for test file"));
     };
 
-    let work_dir = prepared.temp_dir.path();
+    let work_dir = prepared.project_dir.as_path();
 
     // Acquire semaphore before spawning node subprocess to cap memory usage
     node_sem.acquire();

@@ -10,6 +10,53 @@ use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_cross_arena_type_alias_body_with_checker(
+        &mut self,
+        decl_arena: &NodeArena,
+        sym_id: SymbolId,
+        type_alias: &TypeAliasData,
+    ) -> Option<TypeId> {
+        let delegate_binder = self
+            .ctx
+            .get_binder_for_arena(decl_arena)
+            .unwrap_or(self.ctx.binder);
+        let delegate_file_idx = if std::ptr::eq(decl_arena, self.ctx.arena) {
+            Some(self.ctx.current_file_idx)
+        } else {
+            self.ctx.get_file_idx_for_arena(decl_arena)
+        };
+        let delegate_file_name = decl_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            decl_arena,
+            delegate_binder,
+            self.ctx.types,
+            delegate_file_name,
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        for &id in &self.ctx.symbol_resolution_set {
+            if id != sym_id {
+                checker.ctx.symbol_resolution_set.insert(id);
+            }
+        }
+
+        let (_, tp_updates) = checker.push_type_parameters(&type_alias.type_parameters);
+        let alias_type = checker.get_type_from_type_node(type_alias.type_node);
+        checker.pop_type_parameters(tp_updates);
+
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        Some(alias_type)
+    }
+
     pub(crate) fn lower_cross_arena_type_alias_declaration(
         &mut self,
         _sym_id: SymbolId,

@@ -1444,7 +1444,7 @@ impl<'a> CheckerState<'a> {
                 for (export_name, sym_id) in exports.iter() {
                     if let Some(sym) = binder.symbols.get(*sym_id) {
                         let decl_arena = if sym.decl_file_idx == u32::MAX {
-                            &self.ctx.arena
+                            self.ctx.arena
                         } else {
                             self.ctx.get_arena_for_file(sym.decl_file_idx)
                         };
@@ -1469,7 +1469,7 @@ impl<'a> CheckerState<'a> {
             for (export_name, sym_id) in exports.iter() {
                 if let Some(sym) = binder.symbols.get(*sym_id) {
                     let decl_arena = if sym.decl_file_idx == u32::MAX {
-                        &self.ctx.arena
+                        self.ctx.arena
                     } else {
                         self.ctx.get_arena_for_file(sym.decl_file_idx)
                     };

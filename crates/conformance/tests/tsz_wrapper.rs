@@ -557,6 +557,25 @@ fn test_rewrite_bare_specifiers_skips_node_modules_packages() {
 }
 
 #[test]
+fn test_rewrite_bare_specifiers_skips_self_name_package_imports() {
+    let filenames = vec![
+        (
+            "index.js".to_string(),
+            r#"import * as self from "package";"#.to_string(),
+        ),
+        (
+            "package.json".to_string(),
+            r#"{"name":"package","private":true,"type":"module","exports":"./index.js"}"#
+                .to_string(),
+        ),
+    ];
+
+    let content = r#"import * as self from "package";"#;
+    let result = rewrite_bare_specifiers(content, "index.js", &filenames);
+    assert_eq!(result, content);
+}
+
+#[test]
 fn test_prepare_test_dir_preserves_tsconfig() {
     let filenames = vec![
         (
@@ -579,6 +598,31 @@ fn test_prepare_test_dir_preserves_tsconfig() {
         parsed.get("include").is_none(),
         "Expected provided tsconfig to be preserved without injected include"
     );
+}
+
+#[test]
+fn test_prepare_test_dir_includes_module_js_entry_extensions() {
+    let filenames = vec![
+        ("/index.js".to_string(), "export {};".to_string()),
+        ("/index.mjs".to_string(), "export {};".to_string()),
+        ("/index.cjs".to_string(), "export {};".to_string()),
+    ];
+    let options = HashMap::from([
+        ("allowjs".to_string(), "true".to_string()),
+        ("checkjs".to_string(), "true".to_string()),
+    ]);
+
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
+    let include = parsed["include"].as_array().expect("include array");
+    let include_values: Vec<_> = include.iter().filter_map(|v| v.as_str()).collect();
+
+    assert!(include_values.contains(&"*.mjs"));
+    assert!(include_values.contains(&"*.cjs"));
+    assert!(include_values.contains(&"**/*.mjs"));
+    assert!(include_values.contains(&"**/*.cjs"));
 }
 
 #[test]
@@ -672,12 +716,149 @@ fn test_prepare_test_dir_keeps_mixed_path_files() {
 }
 
 #[test]
+fn test_prepare_test_dir_applies_link_directives_as_symlinks() {
+    let content = r#"
+// @link: /packages/search -> /node_modules/search
+"#;
+    let filenames = vec![(
+        "/packages/search/package.json".to_string(),
+        r#"{"name":"search"}"#.to_string(),
+    )];
+    let options: HashMap<String, String> = HashMap::new();
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let link_path = prepared.temp_dir.path().join("node_modules/search");
+    let target_path = prepared.temp_dir.path().join("packages/search");
+
+    let metadata = std::fs::symlink_metadata(&link_path).expect("link should exist");
+    assert!(metadata.file_type().is_symlink(), "expected a symlink");
+    let resolved = std::fs::canonicalize(&link_path).expect("symlink should resolve");
+    let canonical_target = std::fs::canonicalize(&target_path).expect("target should resolve");
+    assert_eq!(resolved, canonical_target);
+}
+
+#[test]
+fn test_prepare_test_dir_remaps_virtual_absolute_path_options() {
+    let content = "";
+    let filenames = vec![(
+        "/packages/app/src/index.ts".to_string(),
+        "export const x = 1;".to_string(),
+    )];
+    let options: HashMap<String, String> = HashMap::from([
+        ("rootDir".to_string(), "/packages/app/src".to_string()),
+        ("outDir".to_string(), "/packages/app/lib".to_string()),
+        (
+            "declarationDir".to_string(),
+            "/packages/app/types".to_string(),
+        ),
+    ]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_raw = std::fs::read_to_string(prepared.project_dir.join("tsconfig.json"))
+        .expect("tsconfig should exist");
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let compiler_options = tsconfig_json["compilerOptions"]
+        .as_object()
+        .expect("compilerOptions should be an object");
+
+    assert_eq!(
+        compiler_options
+            .get("rootDir")
+            .and_then(serde_json::Value::as_str),
+        Some(
+            prepared
+                .temp_dir
+                .path()
+                .join("packages/app/src")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+    assert_eq!(
+        compiler_options
+            .get("outDir")
+            .and_then(serde_json::Value::as_str),
+        Some(
+            prepared
+                .temp_dir
+                .path()
+                .join("packages/app/lib")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+    assert_eq!(
+        compiler_options
+            .get("declarationDir")
+            .and_then(serde_json::Value::as_str),
+        Some(
+            prepared
+                .temp_dir
+                .path()
+                .join("packages/app/types")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_uses_package_root_as_project_dir_for_absolute_package_tests() {
+    let content = "";
+    let filenames = vec![
+        (
+            "/pkg/package.json".to_string(),
+            r#"{
+  "name": "@this/package",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./dist/index.js",
+      "types": "./types/index.d.ts"
+    }
+  }
+}"#
+            .to_string(),
+        ),
+        (
+            "/pkg/src/index.ts".to_string(),
+            r#"import * as me from "@this/package";
+me.thing();
+export function thing(): void {}"#
+                .to_string(),
+        ),
+    ];
+    let options: HashMap<String, String> = HashMap::from([
+        ("target".to_string(), "es2015".to_string()),
+        ("module".to_string(), "nodenext".to_string()),
+        ("outDir".to_string(), "/pkg/dist".to_string()),
+        ("declarationDir".to_string(), "/pkg/types".to_string()),
+        ("declaration".to_string(), "true".to_string()),
+        ("rootDir".to_string(), "/pkg/src".to_string()),
+    ]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    assert_eq!(prepared.project_dir, prepared.temp_dir.path().join("pkg"));
+    assert!(prepared.project_dir.join("tsconfig.json").is_file());
+}
+
+#[test]
 fn test_normalize_message_paths_normalizes_ts5057_not_found() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "tsconfig not found at /tmp/tsz-test/tsconfig.json";
     assert_eq!(
         normalize_message_paths(raw, root),
         "Cannot find a tsconfig.json file at the specified directory: ''."
+    );
+}
+
+#[test]
+fn test_normalize_message_paths_preserves_virtual_absolute_root_dir_prefix() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let raw = "File 'packages/search/lib/index.d.ts' is not under 'rootDir' 'packages/search-prefix/src'. 'rootDir' is expected to contain all source files.";
+    assert_eq!(
+        normalize_message_paths(raw, root),
+        "File 'packages/search/lib/index.d.ts' is not under 'rootDir' '/packages/search-prefix/src'. 'rootDir' is expected to contain all source files."
     );
 }
 

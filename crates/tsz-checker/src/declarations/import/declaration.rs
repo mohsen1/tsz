@@ -925,32 +925,31 @@ impl<'a> CheckerState<'a> {
                         && (!binder.is_external_module || target_is_global_augmentation_dts)
                         && !self.is_ambient_module_match(module_name)
                         && !binder.declared_modules.contains(normalized_module_name)
+                        && let Some(source_file) = source_file
                     {
-                        if let Some(source_file) = source_file {
-                            let file_name = source_file.file_name.as_str();
-                            let is_js_like = file_name.ends_with(".js")
-                                || file_name.ends_with(".jsx")
-                                || file_name.ends_with(".mjs")
-                                || file_name.ends_with(".cjs");
-                            let is_json_module = file_name.ends_with(".json")
-                                && self.ctx.compiler_options.resolve_json_module;
-                            if !is_js_like && !is_json_module {
-                                use crate::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages, format_message,
-                                };
-                                let message = format_message(
-                                    diagnostic_messages::FILE_IS_NOT_A_MODULE,
-                                    &[&source_file.file_name],
-                                );
-                                self.error_at_position(
-                                    spec_start,
-                                    spec_length,
-                                    &message,
-                                    diagnostic_codes::FILE_IS_NOT_A_MODULE,
-                                );
-                                self.ctx.import_resolution_stack.pop();
-                                return;
-                            }
+                        let file_name = source_file.file_name.as_str();
+                        let is_js_like = file_name.ends_with(".js")
+                            || file_name.ends_with(".jsx")
+                            || file_name.ends_with(".mjs")
+                            || file_name.ends_with(".cjs");
+                        let is_json_module = file_name.ends_with(".json")
+                            && self.ctx.compiler_options.resolve_json_module;
+                        if !is_js_like && !is_json_module {
+                            use crate::diagnostics::{
+                                diagnostic_codes, diagnostic_messages, format_message,
+                            };
+                            let message = format_message(
+                                diagnostic_messages::FILE_IS_NOT_A_MODULE,
+                                &[&source_file.file_name],
+                            );
+                            self.error_at_position(
+                                spec_start,
+                                spec_length,
+                                &message,
+                                diagnostic_codes::FILE_IS_NOT_A_MODULE,
+                            );
+                            self.ctx.import_resolution_stack.pop();
+                            return;
                         }
                     }
                 }

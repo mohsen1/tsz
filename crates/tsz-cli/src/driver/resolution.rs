@@ -445,7 +445,7 @@ pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Ve
     let (arena, _diagnostics) = parser.into_parts();
     collect_module_specifiers(&arena, source_file)
         .into_iter()
-        .map(|(specifier, _, _)| specifier)
+        .map(|(specifier, _, _, _)| specifier)
         .collect()
 }
 
@@ -467,7 +467,12 @@ fn text_may_contain_module_specifiers(text: &str) -> bool {
 pub(crate) fn collect_module_specifiers(
     arena: &NodeArena,
     source_file: NodeIndex,
-) -> Vec<(String, NodeIndex, tsz::module_resolver::ImportKind)> {
+) -> Vec<(
+    String,
+    NodeIndex,
+    tsz::module_resolver::ImportKind,
+    Option<tsz::module_resolver::ImportingModuleKind>,
+)> {
     use tsz::module_resolver::ImportKind;
     let mut specifiers = Vec::new();
 
@@ -501,7 +506,12 @@ pub(crate) fn collect_module_specifiers(
                 } else {
                     ImportKind::EsmImport
                 };
-                specifiers.push((strip_quotes(text), import_decl.module_specifier, kind));
+                specifiers.push((
+                    strip_quotes(text),
+                    import_decl.module_specifier,
+                    kind,
+                    import_attributes_resolution_mode(arena, import_decl.attributes),
+                ));
             } else {
                 // Handle import equals declaration: import x = require('./module')
                 // The module_specifier might be a CallExpression for require()
@@ -512,6 +522,7 @@ pub(crate) fn collect_module_specifiers(
                         spec_text,
                         import_decl.module_specifier,
                         ImportKind::CjsRequire,
+                        import_attributes_resolution_mode(arena, import_decl.attributes),
                     ));
                 }
             }
@@ -524,6 +535,7 @@ pub(crate) fn collect_module_specifiers(
                     strip_quotes(text),
                     export_decl.module_specifier,
                     ImportKind::EsmReExport,
+                    import_attributes_resolution_mode(arena, export_decl.attributes),
                 ));
             } else if export_decl.export_clause.is_some()
                 && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
@@ -533,6 +545,7 @@ pub(crate) fn collect_module_specifiers(
                     strip_quotes(text),
                     import_decl.module_specifier,
                     ImportKind::EsmReExport,
+                    import_attributes_resolution_mode(arena, export_decl.attributes),
                 ));
             }
         }
@@ -547,7 +560,12 @@ pub(crate) fn collect_module_specifiers(
                 })
             });
             if has_declare && let Some(text) = arena.get_literal_text(module_decl.name) {
-                specifiers.push((strip_quotes(text), module_decl.name, ImportKind::EsmImport));
+                specifiers.push((
+                    strip_quotes(text),
+                    module_decl.name,
+                    ImportKind::EsmImport,
+                    None,
+                ));
             }
         }
     }
@@ -563,7 +581,72 @@ pub(crate) fn collect_module_specifiers(
         collect_commonjs_requires(arena, &mut specifiers);
     }
 
+    collect_import_type_specifiers(arena, &strip_quotes, &mut specifiers);
+
     specifiers
+}
+
+fn leftmost_import_type_call(arena: &NodeArena, mut idx: NodeIndex) -> Option<NodeIndex> {
+    use tsz::parser::syntax_kind_ext;
+    use tsz::scanner::SyntaxKind;
+
+    for _ in 0..64 {
+        let node = arena.get(idx)?;
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = arena.get_qualified_name(node)?;
+            idx = qn.left;
+            continue;
+        }
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = arena.get_call_expr(node)?;
+        let callee = arena.get(call.expression)?;
+        return (callee.kind == SyntaxKind::ImportKeyword as u16).then_some(idx);
+    }
+    None
+}
+
+fn collect_import_type_specifiers(
+    arena: &NodeArena,
+    strip_quotes: &dyn Fn(&str) -> String,
+    specifiers: &mut Vec<(
+        String,
+        NodeIndex,
+        tsz::module_resolver::ImportKind,
+        Option<tsz::module_resolver::ImportingModuleKind>,
+    )>,
+) {
+    use tsz::module_resolver::ImportKind;
+    use tsz::parser::syntax_kind_ext;
+
+    for i in 0..arena.nodes.len() {
+        let node = &arena.nodes[i];
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            continue;
+        }
+        let Some(type_ref) = arena.get_type_ref(node) else {
+            continue;
+        };
+        let Some(call_idx) = leftmost_import_type_call(arena, type_ref.type_name) else {
+            continue;
+        };
+        let Some(call_node) = arena.get(call_idx) else {
+            continue;
+        };
+        let Some(call) = arena.get_call_expr(call_node) else {
+            continue;
+        };
+        let Some(args) = call.arguments.as_ref() else {
+            continue;
+        };
+        let Some(&arg_idx) = args.nodes.first() else {
+            continue;
+        };
+        if let Some(text) = arena.get_literal_text(arg_idx) {
+            specifiers.push((strip_quotes(text), arg_idx, ImportKind::EsmImport, None));
+        }
+    }
 }
 
 /// Collect dynamic `import()` expressions from the AST
@@ -571,7 +654,12 @@ fn collect_dynamic_imports(
     arena: &NodeArena,
     _source_file: NodeIndex,
     strip_quotes: &dyn Fn(&str) -> String,
-    specifiers: &mut Vec<(String, NodeIndex, tsz::module_resolver::ImportKind)>,
+    specifiers: &mut Vec<(
+        String,
+        NodeIndex,
+        tsz::module_resolver::ImportKind,
+        Option<tsz::module_resolver::ImportingModuleKind>,
+    )>,
 ) {
     use tsz::parser::syntax_kind_ext;
     use tsz::scanner::SyntaxKind;
@@ -607,6 +695,7 @@ fn collect_dynamic_imports(
                 strip_quotes(text),
                 arg_idx,
                 tsz::module_resolver::ImportKind::DynamicImport,
+                None,
             ));
         }
     }
@@ -614,7 +703,12 @@ fn collect_dynamic_imports(
 
 fn collect_commonjs_requires(
     arena: &NodeArena,
-    specifiers: &mut Vec<(String, NodeIndex, tsz::module_resolver::ImportKind)>,
+    specifiers: &mut Vec<(
+        String,
+        NodeIndex,
+        tsz::module_resolver::ImportKind,
+        Option<tsz::module_resolver::ImportingModuleKind>,
+    )>,
 ) {
     use tsz::parser::syntax_kind_ext;
     for i in 0..arena.nodes.len() {
@@ -625,9 +719,61 @@ fn collect_commonjs_requires(
         }
         let idx = NodeIndex(i as u32);
         if let Some(specifier) = extract_require_specifier(arena, idx) {
-            specifiers.push((specifier, idx, tsz::module_resolver::ImportKind::CjsRequire));
+            specifiers.push((
+                specifier,
+                idx,
+                tsz::module_resolver::ImportKind::CjsRequire,
+                None,
+            ));
         }
     }
+}
+
+fn import_attributes_resolution_mode(
+    arena: &NodeArena,
+    attributes_idx: NodeIndex,
+) -> Option<tsz::module_resolver::ImportingModuleKind> {
+    use tsz::module_resolver::ImportingModuleKind;
+    use tsz::parser::syntax_kind_ext;
+
+    let attr_node = arena.get(attributes_idx)?;
+    let attrs = arena.get_import_attributes_data(attr_node)?;
+
+    for &elem_idx in &attrs.elements.nodes {
+        let elem_node = match arena.get(elem_idx) {
+            Some(node) if node.kind == syntax_kind_ext::IMPORT_ATTRIBUTE => node,
+            _ => continue,
+        };
+        let attr = match arena.get_import_attribute_data(elem_node) {
+            Some(attr) => attr,
+            None => continue,
+        };
+        let name_node = match arena.get(attr.name) {
+            Some(node) => node,
+            None => continue,
+        };
+
+        let name = if let Some(ident) = arena.get_identifier(name_node) {
+            ident.escaped_text.as_str()
+        } else if let Some(lit) = arena.get_literal_text(attr.name) {
+            lit.trim_matches('"').trim_matches('\'')
+        } else {
+            continue;
+        };
+
+        if name != "resolution-mode" {
+            continue;
+        }
+
+        let value_text = arena.get_literal_text(attr.value)?;
+        return match value_text.trim_matches('"').trim_matches('\'') {
+            "import" => Some(ImportingModuleKind::Esm),
+            "require" => Some(ImportingModuleKind::CommonJs),
+            _ => None,
+        };
+    }
+
+    None
 }
 
 /// Extract module specifier from a `require()` call expression
@@ -1512,9 +1658,11 @@ fn resolve_node_module_specifier(
     // consulting the configured type roots for package entrypoints after the
     // normal node_modules walk-up fails.
     if subpath.is_none() {
-        if let Some(type_roots) = options.type_roots.as_deref()
-            && let Some(resolved) =
-                resolve_type_package_from_roots(&package_name, type_roots, options)
+        let type_roots = options
+            .type_roots
+            .clone()
+            .unwrap_or_else(|| default_type_roots(base_dir));
+        if let Some(resolved) = resolve_type_package_from_roots(&package_name, &type_roots, options)
         {
             return Some(resolved);
         }
@@ -1837,6 +1985,50 @@ fn try_remap_output_to_source(
     _from_file: &Path,
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
+    fn resolve_configured_path_against_package_root(
+        configured: &Path,
+        package_root: &Path,
+        canon_package_root: &Path,
+        _from_file: &Path,
+    ) -> PathBuf {
+        if configured.is_absolute() {
+            if let Ok(relative) = configured.strip_prefix(package_root) {
+                return canon_package_root.join(relative);
+            }
+
+            let canonical = canonicalize_or_owned(configured);
+            if canonical.exists() {
+                return canonical;
+            }
+
+            // Conformance tests use virtual absolute paths like `/pkg/src`
+            // while writing files under `<tmpdir>/pkg/src`. Re-anchor those
+            // option paths to the temporary project root when the host-absolute
+            // path doesn't exist.
+            if let Some(project_root) = canon_package_root.parent()
+                && let Ok(relative) = configured.strip_prefix(Path::new("/"))
+            {
+                let matches_package_root =
+                    relative
+                        .components()
+                        .next()
+                        .and_then(|component| match component {
+                            std::path::Component::Normal(name) => Some(name),
+                            _ => None,
+                        })
+                        == package_root.file_name();
+
+                if matches_package_root {
+                    return project_root.join(relative);
+                }
+            }
+
+            return canonical;
+        }
+
+        canon_package_root.join(configured)
+    }
+
     let target = target.trim_start_matches("./");
     // Canonicalize package_root first (it exists) so that symlinks are resolved
     // before joining the target (which may not exist on disk).
@@ -1851,14 +2043,15 @@ fn try_remap_output_to_source(
     // since export targets are relative to it.
     let source_dir_owned;
     let source_dir = if let Some(ref root_dir) = options.root_dir {
-        if root_dir.is_absolute() {
-            source_dir_owned = root_dir.clone();
-        } else {
-            source_dir_owned = package_root.join(root_dir);
-        }
+        source_dir_owned = resolve_configured_path_against_package_root(
+            root_dir,
+            package_root,
+            &canon_root,
+            _from_file,
+        );
         source_dir_owned.as_path()
     } else {
-        source_dir_owned = canonicalize_or_owned(package_root);
+        source_dir_owned = canon_root.clone();
         source_dir_owned.as_path()
     };
 
@@ -1875,12 +2068,12 @@ fn try_remap_output_to_source(
     }
 
     for out_dir in &out_dirs {
-        // Resolve the out_dir relative to package_root
-        let resolved_out_dir = if out_dir.is_absolute() {
-            out_dir.to_path_buf()
-        } else {
-            package_root.join(out_dir)
-        };
+        let resolved_out_dir = resolve_configured_path_against_package_root(
+            out_dir,
+            package_root,
+            &canon_root,
+            _from_file,
+        );
 
         // Check if the target path falls inside the output directory.
         let target_canon = normalize_path(&target_path);
@@ -2390,18 +2583,22 @@ fn match_exports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {
     let pattern_inner = pattern.strip_prefix("./")?;
     let subpath = subpath_key.strip_prefix("./")?;
 
-    // Handle trailing-slash directory patterns (e.g., "./" matches "./index.js").
-    // These are deprecated in Node.js but TypeScript still supports them.
+    // A bare "./" exports entry only exposes explicit file-like subpaths such as
+    // "./index.js". It should not manufacture extensionless package subpaths like
+    // "inner/other" that tsc still rejects with TS2307.
+    if pattern == "./" {
+        let has_explicit_extension = Path::new(subpath)
+            .extension()
+            .is_some_and(|ext| !ext.is_empty());
+        return has_explicit_extension.then(|| subpath.to_string());
+    }
+
+    // Handle deprecated trailing-slash directory patterns like "./dir/".
     if !pattern_inner.is_empty() && pattern_inner.ends_with('/') && !pattern.contains('*') {
         if let Some(rest) = subpath.strip_prefix(pattern_inner) {
             return Some(rest.to_string());
         }
         return None;
-    }
-
-    // Handle the bare "./" pattern — it matches any subpath
-    if pattern == "./" && !subpath.is_empty() {
-        return Some(subpath.to_string());
     }
 
     if !pattern.contains('*') {
@@ -2462,6 +2659,33 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 
 pub(crate) fn is_declaration_file(path: &Path) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(path).is_declaration()
+}
+
+pub(crate) fn canonicalize_with_missing_tail(path: &Path) -> PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return canonical;
+    }
+
+    let mut tail = Vec::new();
+    let mut current = path;
+    while !current.exists() {
+        let Some(name) = current.file_name() else {
+            return path.to_path_buf();
+        };
+        tail.push(name.to_os_string());
+        let Some(parent) = current.parent() else {
+            return path.to_path_buf();
+        };
+        current = parent;
+    }
+
+    let Ok(mut canonical) = std::fs::canonicalize(current) else {
+        return path.to_path_buf();
+    };
+    for component in tail.iter().rev() {
+        canonical.push(component);
+    }
+    canonical
 }
 
 pub(crate) fn canonicalize_or_owned(path: &Path) -> PathBuf {

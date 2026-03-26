@@ -121,6 +121,7 @@ binaries_are_fresh() {
     # These are all the workspace crates that tsz-cli and tsz-conformance depend on
     local crates_to_check=(
         "tsz-cli"
+        "tsz-core"
         "conformance"
         "tsz-common"
         "tsz-scanner"
@@ -157,7 +158,7 @@ binaries_are_fresh() {
         fi
     done
     
-    # Check root workspace src/ directory (tsz-core crate)
+    # Check root workspace src/ directory for any root-level crate sources.
     if [ -d "$REPO_ROOT/src" ]; then
         while IFS= read -r -d '' src_file; do
             local src_mtime=$(file_mtime "$src_file")

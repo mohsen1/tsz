@@ -157,16 +157,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     priority,
                 );
                 // Walk type predicate — e.g., `(a: any) => a is T` has T in predicate
-                if let Some(ref pred) = shape.type_predicate {
-                    if let Some(pred_type) = pred.type_id {
-                        self.propagate_type_to_placeholders(
-                            ctx,
-                            var_map,
-                            propagation_type,
-                            pred_type,
-                            priority,
-                        );
-                    }
+                if let Some(ref pred) = shape.type_predicate
+                    && let Some(pred_type) = pred.type_id
+                {
+                    self.propagate_type_to_placeholders(
+                        ctx,
+                        var_map,
+                        propagation_type,
+                        pred_type,
+                        priority,
+                    );
                 }
             }
             Some(TypeData::Callable(shape_id)) => {

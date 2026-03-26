@@ -2952,10 +2952,10 @@ fn is_identifier_part(ch: u32) -> bool {
     // We use is_alphabetic() for letters (Lu, Ll, Lt, Lm, Lo, Nl) and a dedicated Nd check
     // for decimal digits. Note: is_alphanumeric() is too broad — it includes No (Number, other)
     // like subscript/superscript digits (U+2081 etc.) which are NOT valid in identifiers.
-    if let Some(c) = char::from_u32(ch) {
-        if c.is_alphabetic() {
-            return true;
-        }
+    if let Some(c) = char::from_u32(ch)
+        && c.is_alphabetic()
+    {
+        return true;
     }
     if is_unicode_decimal_digit(ch) {
         return true;
@@ -2978,10 +2978,10 @@ fn is_identifier_part(ch: u32) -> bool {
 
 /// Check if a character is a Unicode decimal digit (Nd category).
 /// This covers digit characters from various scripts that are valid in
-/// ECMAScript identifiers as ID_Continue characters.
+/// ECMAScript identifiers as `ID_Continue` characters.
 /// Unlike `char::is_numeric()`, this excludes No (Number, other) like
 /// subscript/superscript digits and Nl (Number, letter) like Roman numerals.
-fn is_unicode_decimal_digit(ch: u32) -> bool {
+const fn is_unicode_decimal_digit(ch: u32) -> bool {
     // ASCII digits are handled by the fast path in is_identifier_part
     // This covers non-ASCII Nd ranges from Unicode
     matches!(ch,

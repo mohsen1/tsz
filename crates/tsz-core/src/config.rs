@@ -1961,21 +1961,29 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let mod_normalized =
                     normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
                 if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
-                    // When resolveJsonModule is explicitly set, point at that key.
-                    // When implied by bundler, fall back to the module key.
-                    let (error_key, key_len) = if resolve_json_explicit {
-                        ("resolveJsonModule", "resolveJsonModule".len() as u32 + 2)
-                    } else {
-                        ("module", "module".len() as u32 + 2)
+                    let emit_ts5071 = |diagnostics: &mut Vec<Diagnostic>,
+                                       error_key: &str,
+                                       key_len: u32| {
+                        let start = find_key_offset_in_source(&stripped, error_key);
+                        diagnostics.push(Diagnostic::error(
+                            file_path,
+                            start,
+                            key_len,
+                            diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O.to_string(),
+                            diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O,
+                        ));
                     };
-                    let start = find_key_offset_in_source(&stripped, error_key);
-                    diagnostics.push(Diagnostic::error(
-                        file_path,
-                        start,
-                        key_len,
-                        diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O.to_string(),
-                        diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O,
-                    ));
+
+                    // tsc reports the invalid pairing on both participating options when
+                    // resolveJsonModule is explicitly present in the config.
+                    emit_ts5071(&mut diagnostics, "module", "module".len() as u32 + 2);
+                    if resolve_json_explicit {
+                        emit_ts5071(
+                            &mut diagnostics,
+                            "resolveJsonModule",
+                            "resolveJsonModule".len() as u32 + 2,
+                        );
+                    }
                 }
             }
         }
@@ -5015,6 +5023,31 @@ mod tests {
         assert!(
             codes.contains(&5071),
             "Expected TS5071 for bundler-implied resolveJsonModule with module=system, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5071_explicit_resolve_json_module_reports_both_keys() {
+        let source = r#"{"compilerOptions":{"module":"none","moduleResolution":"bundler","resolveJsonModule":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let ts5071: Vec<_> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 5071)
+            .collect();
+        assert_eq!(
+            ts5071.len(),
+            2,
+            "Expected TS5071 at both 'module' and 'resolveJsonModule', got: {ts5071:?}"
+        );
+        let starts: Vec<u32> = ts5071.iter().map(|d| d.start).collect();
+        assert!(
+            starts.contains(&find_key_offset_in_source(source, "module")),
+            "Expected TS5071 anchored to 'module', got starts: {starts:?}"
+        );
+        assert!(
+            starts.contains(&find_key_offset_in_source(source, "resolveJsonModule")),
+            "Expected TS5071 anchored to 'resolveJsonModule', got starts: {starts:?}"
         );
     }
 

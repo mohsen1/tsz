@@ -221,7 +221,17 @@ impl<'a> CheckerState<'a> {
                 if has_type_alias_decl {
                     // Return structural type directly for type aliases (not Lazy) so
                     // conditional types are fully resolved during assignability checking.
-                    let structural_type = self.get_type_of_symbol(sym_id);
+                    let mut structural_type = self.get_type_of_symbol(sym_id);
+                    if (structural_type == TypeId::ANY
+                        || structural_type == TypeId::UNKNOWN
+                        || structural_type == TypeId::ERROR)
+                        && let Some((delegate_type, _)) =
+                            self.delegate_cross_arena_symbol_resolution(sym_id)
+                        && delegate_type != TypeId::UNKNOWN
+                        && delegate_type != TypeId::ERROR
+                    {
+                        structural_type = delegate_type;
+                    }
                     let preserve_deferred_keyof =
                         tsz_solver::type_queries::get_keyof_type(self.ctx.types, structural_type)
                             .is_some();
@@ -266,6 +276,9 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(0);
                 if target_flags & symbol_flags::CLASS != 0
                     || target_flags & symbol_flags::INTERFACE != 0
+                    || target_flags & symbol_flags::TYPE_ALIAS != 0
+                    || target_flags & symbol_flags::ENUM != 0
+                    || target_flags & symbol_flags::TYPE_PARAMETER != 0
                 {
                     self.ctx.leave_recursion();
                     return self.type_reference_symbol_type(target_sym_id);
@@ -324,6 +337,9 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(0);
                     if target_flags & symbol_flags::CLASS != 0
                         || target_flags & symbol_flags::INTERFACE != 0
+                        || target_flags & symbol_flags::TYPE_ALIAS != 0
+                        || target_flags & symbol_flags::ENUM != 0
+                        || target_flags & symbol_flags::TYPE_PARAMETER != 0
                     {
                         self.ctx.leave_recursion();
                         return self.type_reference_symbol_type(target_sym_id);

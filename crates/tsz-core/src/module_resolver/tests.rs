@@ -154,7 +154,7 @@ fn test_match_imports_pattern_wildcard() {
 }
 
 #[test]
-fn test_resolver_resolves_root_slash_package_import_with_wildcard() {
+fn test_resolver_rejects_root_slash_package_import_with_wildcard() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_package_import_root_slash");
     let _ = fs::remove_dir_all(&dir);
@@ -182,13 +182,9 @@ fn test_resolver_resolves_root_slash_package_import_with_wildcard() {
     let mut resolver = ModuleResolver::new(&options);
     let result = resolver.resolve("#/foo.js", &dir.join("index.ts"), Span::new(0, 8));
 
-    // TypeScript allows #/ prefixed specifiers when matched by wildcard
-    // patterns in the imports field (e.g., "#/*": "./src/*").
-    let resolved = result.expect("Expected #/foo.js to resolve via wildcard import pattern");
     assert!(
-        resolved.resolved_path.ends_with("src/foo.ts"),
-        "Expected resolution to src/foo.ts, got {:?}",
-        resolved.resolved_path
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "Expected #/foo.js to be rejected as an invalid package import specifier, got {result:?}"
     );
 
     let _ = fs::remove_dir_all(&dir);
@@ -1748,6 +1744,55 @@ fn test_node16_json_file_produces_ts2835_suggestion() {
 }
 
 #[test]
+fn test_node16_js_file_package_json_produces_ts2835_suggestion() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_node16_js_package_json_ts2835");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r#"{"type":"module","name":"pkg"}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("index.js"), "import './package';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        allow_js: true,
+        resolve_package_json_exports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let result = resolver.resolve_with_kind(
+        "./package",
+        &dir.join("index.js"),
+        Span::new(8, 19),
+        ImportKind::EsmImport,
+    );
+
+    assert!(
+        result.is_err(),
+        "Expected extension error for JS ESM import targeting package.json"
+    );
+    let failure = result.unwrap_err();
+    let diag = failure.to_diagnostic();
+    assert_eq!(
+        diag.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
+        "Expected TS2835 (with .json suggestion), got TS{}: {}",
+        diag.code, diag.message,
+    );
+    assert!(
+        diag.message.contains("./package.json"),
+        "Expected suggestion to include './package.json', got: {}",
+        diag.message,
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_node16_esm_package_no_directory_index_for_subpath() {
     // In Node16/NodeNext, ESM packages (type: "module") without an exports
     // field should NOT resolve subpaths through directory index (e.g.,
@@ -1890,6 +1935,7 @@ fn test_lookup_extension_suggestion_esm() {
         containing_file: &dir.join("src/index.mts"),
         specifier_span: Span::new(22, 30),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -1934,6 +1980,7 @@ fn test_lookup_cjs_esm_mismatch_classic_resolution() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(8, 20),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: true,
     };
@@ -1977,6 +2024,7 @@ fn test_lookup_json_module_without_flag() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(18, 30),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2012,6 +2060,7 @@ fn test_lookup_ambient_module_suppresses_error() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(8, 19),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2060,6 +2109,7 @@ fn test_lookup_untyped_js_module_no_implicit_any() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(8, 16),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: true,
         implied_classic_resolution: false,
     };
@@ -2078,6 +2128,7 @@ fn test_lookup_untyped_js_module_no_implicit_any() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(8, 16),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2118,6 +2169,7 @@ fn test_lookup_fallback_success() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(8, 20),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2165,6 +2217,7 @@ fn test_lookup_node16_esm_extensionless_fallback_error() {
         containing_file: &dir.join("src/index.mts"),
         specifier_span: Span::new(22, 30),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2226,6 +2279,7 @@ fn test_lookup_package_exports_subpath() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(8, 19),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2237,6 +2291,78 @@ fn test_lookup_package_exports_subpath() {
         result.error
     );
     assert!(result.error.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_resolution_mode_override_selects_import_condition() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_lookup_resolution_mode_override");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{".":{"import":"./esm.d.ts","require":"./missing.d.cts"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/esm.d.ts"),
+        "export type Foo = 1;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.cts"), "import type { Foo } from 'pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request_without_override = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.cts"),
+        specifier_span: Span::new(24, 29),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result_without_override =
+        resolver.lookup(&request_without_override, |_, _| None, |_| false);
+    assert!(
+        result_without_override.error.is_some(),
+        "CJS implied mode should follow the missing require condition"
+    );
+
+    resolver.clear_cache();
+
+    let request_with_override = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.cts"),
+        specifier_span: Span::new(24, 29),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: Some(ImportingModuleKind::Esm),
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result_with_override = resolver.lookup(&request_with_override, |_, _| None, |_| false);
+
+    assert!(
+        result_with_override.resolved_path.is_some(),
+        "resolution-mode import override should select the import condition: {:?}",
+        result_with_override.error
+    );
+    assert!(result_with_override.error.is_none());
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -2353,6 +2479,7 @@ fn test_lookup_ts5097_ts_extension_not_found() {
         containing_file: &dir.join("main.ts"),
         specifier_span: Span::new(20, 32),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2402,6 +2529,7 @@ fn test_lookup_ts5097_mts_extension_not_found() {
         containing_file: &dir.join("main.ts"),
         specifier_span: Span::new(20, 33),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2446,6 +2574,7 @@ fn test_lookup_ts_extension_resolves_when_file_exists() {
         containing_file: &dir.join("main.ts"),
         specifier_span: Span::new(20, 32),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2487,6 +2616,7 @@ fn test_lookup_jsx_not_enabled_classify_outcome() {
         containing_file: &dir.join("main.ts"),
         specifier_span: Span::new(16, 23),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2532,6 +2662,7 @@ fn test_lookup_successful_resolution_classify() {
         containing_file: &dir.join("main.ts"),
         specifier_span: Span::new(20, 29),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2578,6 +2709,7 @@ fn test_lookup_ts2307_plain_no_upgrade() {
         containing_file: &dir.join("main.ts"),
         specifier_span: Span::new(20, 35),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2622,6 +2754,7 @@ fn test_lookup_ts2732_nonexistent_json_without_resolve_json_module() {
         containing_file: &dir.join("index.ts"),
         specifier_span: Span::new(8, 22),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2667,6 +2800,7 @@ fn test_lookup_ts2732_not_emitted_when_resolve_json_module_enabled() {
         containing_file: &dir.join("index.ts"),
         specifier_span: Span::new(8, 22),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2712,6 +2846,7 @@ fn test_lookup_path_mapping_failure_produces_ts2307_via_lookup() {
         containing_file: &dir.join("src/index.ts"),
         specifier_span: Span::new(8, 22),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2759,6 +2894,7 @@ fn test_lookup_fallback_rescues_not_found() {
         containing_file: &dir.join("main.ts"),
         specifier_span: Span::new(8, 18),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2875,6 +3011,7 @@ fn test_lookup_classic_implied_resolution_upgrades_to_ts2792() {
         containing_file: &dir.join("index.ts"),
         specifier_span: Span::new(8, 18),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: true,
     };
@@ -2919,6 +3056,7 @@ fn test_lookup_bare_json_specifier_nonexistent_upgrades_to_ts2732() {
         containing_file: &dir.join("index.ts"),
         specifier_span: Span::new(8, 21),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
@@ -2956,6 +3094,7 @@ fn test_lookup_classify_ambient_no_path_no_error() {
         containing_file: &dir.join("index.ts"),
         specifier_span: Span::new(8, 24),
         import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
         no_implicit_any: false,
         implied_classic_resolution: false,
     };

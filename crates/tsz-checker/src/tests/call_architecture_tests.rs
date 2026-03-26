@@ -1566,14 +1566,12 @@ f((x) => { return x.toFixed(); });
     assert_eq!(
         ts2345.len(),
         1,
-        "Expected one outer TS2345 for block-body callback return mismatch, got: {:?}",
-        diags
+        "Expected one outer TS2345 for block-body callback return mismatch, got: {diags:?}"
     );
     assert_eq!(
         ts2322.len(),
         0,
-        "Expected no inner TS2322 for block-body callback return mismatch, got: {:?}",
-        diags
+        "Expected no inner TS2322 for block-body callback return mismatch, got: {diags:?}"
     );
 }
 
@@ -1591,14 +1589,12 @@ f((x) => x.toFixed());
     assert_eq!(
         ts2345.len(),
         0,
-        "Expected no outer TS2345 for expression-body callback return mismatch, got: {:?}",
-        diags
+        "Expected no outer TS2345 for expression-body callback return mismatch, got: {diags:?}"
     );
     assert_eq!(
         ts2322.len(),
         1,
-        "Expected one inner TS2322 for expression-body callback return mismatch, got: {:?}",
-        diags
+        "Expected one inner TS2322 for expression-body callback return mismatch, got: {diags:?}"
     );
 }
 
@@ -1626,7 +1622,6 @@ _.map(c2, rf1);
     assert_eq!(
         ts2769.len(),
         0,
-        "Expected no TS2769 for fewer-parameter block-body callback, got: {:?}",
-        diags
+        "Expected no TS2769 for fewer-parameter block-body callback, got: {diags:?}"
     );
 }

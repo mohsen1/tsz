@@ -34,7 +34,8 @@ use super::resolution::{
     ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
     collect_import_bindings, collect_module_specifiers, collect_module_specifiers_from_text,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
-    resolve_module_specifier, resolve_type_package_entry, resolve_type_package_from_roots,
+    is_declaration_file, resolve_module_specifier, resolve_type_package_entry,
+    resolve_type_package_from_roots,
 };
 use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
@@ -977,10 +978,14 @@ fn compile_inner(
 
     let base_dir = config_base_dir(&cwd, tsconfig_path.as_deref());
     let base_dir = canonicalize_or_owned(&base_dir);
+    let root_dir_display = resolved.root_dir.clone();
     let root_dir = normalize_root_dir(&base_dir, resolved.root_dir.clone());
     let out_dir = normalize_output_dir(&base_dir, resolved.out_dir.clone());
     let declaration_dir = normalize_output_dir(&base_dir, resolved.declaration_dir.clone());
     let base_url = normalize_base_url(&base_dir, resolved.base_url.clone());
+    resolved.root_dir = root_dir.clone();
+    resolved.out_dir = out_dir.clone();
+    resolved.declaration_dir = declaration_dir.clone();
     resolved.base_url = base_url;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
 
@@ -1104,30 +1109,21 @@ fn compile_inner(
         });
     }
 
-    // TS6059: Check that all source files are under rootDir when rootDir is set.
-    // tsc emits this as a positional-less error for each file outside rootDir.
+    let mut root_dir_diagnostic_roots: FxHashSet<PathBuf> = FxHashSet::default();
     if let Some(ref root_dir_path) = root_dir {
         let canonical_root = canonicalize_or_owned(root_dir_path);
         for file_path in &file_paths {
+            if is_declaration_file(file_path) {
+                continue;
+            }
             let canonical_file = canonicalize_or_owned(file_path);
             if !canonical_file.starts_with(&canonical_root) {
-                // Use relative path for the file and rootDir in the diagnostic message,
-                // matching tsc's output which uses the path as seen by the compiler.
-                let file_display = file_path.to_string_lossy();
-                let root_display = root_dir_path.to_string_lossy();
-                let message = format!(
-                    "File '{file_display}' is not under 'rootDir' '{root_display}'. 'rootDir' is expected to contain all source files."
-                );
-                config_diagnostics.push(Diagnostic::error(
-                    String::new(),
-                    0,
-                    0,
-                    message,
-                    diagnostic_codes::FILE_IS_NOT_UNDER_ROOTDIR_ROOTDIR_IS_EXPECTED_TO_CONTAIN_ALL_SOURCE_FILES,
-                ));
+                root_dir_diagnostic_roots.insert(canonical_file);
             }
         }
     }
+
+    let root_file_paths = file_paths.clone();
 
     let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
 
@@ -1171,6 +1167,45 @@ fn compile_inner(
     };
     let io_read_duration = read_sources_start.elapsed();
     perf_log_phase("read_sources", read_sources_start);
+
+    if let Some(ref root_dir_path) = root_dir {
+        let canonical_root = canonicalize_or_owned(root_dir_path);
+        let root_display_path = root_dir_display.as_ref().unwrap_or(root_dir_path);
+        let mut blame_files: FxHashSet<PathBuf> = root_dir_diagnostic_roots;
+        for root_file in &root_file_paths {
+            if is_declaration_file(root_file) {
+                continue;
+            }
+            let canonical_root_file = canonicalize_or_owned(root_file);
+            if blame_files.contains(&canonical_root_file) {
+                continue;
+            }
+            let Some(deps) = dependencies.get(&canonical_root_file) else {
+                continue;
+            };
+            if deps.iter().any(|dep| {
+                is_declaration_file(dep) && !canonicalize_or_owned(dep).starts_with(&canonical_root)
+            }) {
+                blame_files.insert(canonical_root_file);
+            }
+        }
+        let mut blame_files: Vec<_> = blame_files.into_iter().collect();
+        blame_files.sort();
+        for file_path in blame_files {
+            let file_display = file_path.to_string_lossy();
+            let root_display = root_display_path.to_string_lossy();
+            let message = format!(
+                "File '{file_display}' is not under 'rootDir' '{root_display}'. 'rootDir' is expected to contain all source files."
+            );
+            config_diagnostics.push(Diagnostic::error(
+                String::new(),
+                0,
+                0,
+                message,
+                diagnostic_codes::FILE_IS_NOT_UNDER_ROOTDIR_ROOTDIR_IS_EXPECTED_TO_CONTAIN_ALL_SOURCE_FILES,
+            ));
+        }
+    }
 
     // Update dependencies in the cache
     if let Some(ref mut c) = effective_cache {

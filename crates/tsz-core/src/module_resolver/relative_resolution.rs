@@ -162,6 +162,30 @@ impl ModuleResolver {
             });
         }
 
+        let js_json_extension_suggestion = matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+        ) && !specifier_has_extension
+            && containing_is_js
+            && match import_kind {
+                ImportKind::DynamicImport => true,
+                ImportKind::EsmImport | ImportKind::EsmReExport => {
+                    importing_module_kind == ImportingModuleKind::Esm
+                }
+                ImportKind::CjsRequire => false,
+            };
+        if js_json_extension_suggestion {
+            let json_candidate = candidate.with_extension("json");
+            if json_candidate.is_file() {
+                return Err(ResolutionFailure::ImportPathNeedsExtension {
+                    specifier: specifier.to_string(),
+                    suggested_extension: ".json".to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                });
+            }
+        }
+
         // Module not found - emit TS2307 (standard "Cannot find module" error).
         // TS2792 should only be emitted when we've detected a package.json exports
         // field that would work in a different resolution mode.
