@@ -911,8 +911,7 @@ impl<'a> CheckerState<'a> {
                     .borrow()
                     .get(&(resolved_base, prop_atom))
                     .copied();
-                if let Some(Some(type_id)) = cached_property_type
-                {
+                if let Some(Some(type_id)) = cached_property_type {
                     let mut result_type = self.refine_expando_property_read_type(
                         idx,
                         access.expression,

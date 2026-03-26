@@ -10,8 +10,8 @@ use crate::context::is_js_file_name;
 use crate::state::CheckerState;
 use std::rc::Rc;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeArena;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -59,7 +59,8 @@ impl<'a> CheckerState<'a> {
     fn expando_read_root_keys(&self, object_expr_idx: NodeIndex) -> Vec<String> {
         let mut keys = Vec::new();
 
-        if let Some(obj_key) = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx) {
+        if let Some(obj_key) = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
+        {
             keys.push(obj_key.clone());
             if let Some((_, last_segment)) = obj_key.rsplit_once('.') {
                 keys.push(last_segment.to_string());
@@ -180,7 +181,9 @@ impl<'a> CheckerState<'a> {
                 .nodes
                 .iter()
                 .copied()
-                .any(|stmt_idx| Self::source_file_has_expando_assignment(arena, stmt_idx, &expected_key))
+                .any(|stmt_idx| {
+                    Self::source_file_has_expando_assignment(arena, stmt_idx, &expected_key)
+                })
         })
     }
 
@@ -263,7 +266,8 @@ impl<'a> CheckerState<'a> {
                 ) {
                     continue;
                 }
-                if let Some(ty) = self.cross_file_expando_property_read_type(file_idx, &expected_key)
+                if let Some(ty) =
+                    self.cross_file_expando_property_read_type(file_idx, &expected_key)
                 {
                     return Some(ty);
                 }
@@ -537,7 +541,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(obj_key) = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx) else {
+        let Some(obj_key) = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
+        else {
             return false;
         };
 
@@ -686,7 +691,9 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
     ) -> TypeId {
         let preferred_file_idx = self.ctx.resolve_symbol_file_index(sym_id).or_else(|| {
-            let arena = self.ctx.get_arena_for_file(self.ctx.current_file_idx as u32);
+            let arena = self
+                .ctx
+                .get_arena_for_file(self.ctx.current_file_idx as u32);
             let file_name = arena
                 .source_files
                 .first()
