@@ -1037,11 +1037,7 @@ impl<'a> CheckerState<'a> {
                     )
                 });
 
-        let is_this_access = self
-            .ctx
-            .arena
-            .get(access.expression)
-            .is_some_and(|obj_node| obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16);
+        let is_this_access = self.js_object_expr_is_this_or_alias(access.expression);
         let static_member_name = self
             .ctx
             .arena
@@ -1849,6 +1845,14 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ANY;
                     }
 
+                    if self.is_js_file()
+                        && is_this_access
+                        && skip_flow_narrowing
+                        && self.property_access_is_direct_write_target(idx)
+                    {
+                        return TypeId::ANY;
+                    }
+
                     if self.is_js_file() && is_this_access && !has_explicit_this_context {
                         // Allow dynamic property on `this` in loose JS contexts, but
                         // keep checks when `this` is contextually owned by a class/object
@@ -1857,13 +1861,6 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ANY;
                         }
                         if self.is_jsdoc_annotated_this_member_declaration(idx) {
-                            return TypeId::ANY;
-                        }
-                        // Constructor and method bodies in JS/checkJs use `this.prop = value`
-                        // as an implicit instance-property declaration. In write context,
-                        // allow the missing-property access so the assignment path can
-                        // establish the member without a false TS2339 on the same node.
-                        if skip_flow_narrowing && self.property_access_is_direct_write_target(idx) {
                             return TypeId::ANY;
                         }
                     }

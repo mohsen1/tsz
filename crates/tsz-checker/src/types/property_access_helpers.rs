@@ -440,6 +440,36 @@ impl<'a> CheckerState<'a> {
         best_match.map(|(_, ty)| ty)
     }
 
+    pub(super) fn js_object_expr_is_this_or_alias(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl_node = match self.ctx.arena.get(symbol.value_declaration) {
+            Some(node) => node,
+            None => return false,
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        init_node.kind == SyntaxKind::ThisKeyword as u16
+    }
+
     fn collect_prior_js_this_property_assignment_type(
         &mut self,
         idx: NodeIndex,
