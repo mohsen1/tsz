@@ -10,8 +10,11 @@
 //!   - Readonly target properties only check read type (no write access)
 //! - Private brand checking for nominal class typing
 
+use crate::operations::iterators::get_iterator_info;
+use crate::type_queries::get_return_type;
 use crate::types::{ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility};
 use crate::utils;
+use crate::visitor::application_id;
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -25,6 +28,49 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         name: Atom,
     ) -> Option<&'props PropertyInfo> {
         crate::utils::lookup_property(self.interner, props, shape_id, name)
+    }
+
+    fn extract_iterator_like_yield_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let app_id = application_id(self.interner, type_id)?;
+        let app = self.interner.type_application(app_id);
+        app.args.first().copied()
+    }
+
+    fn has_compatible_symbol_iterator_methods(
+        &mut self,
+        source: &PropertyInfo,
+        target: &PropertyInfo,
+        source_method_type: TypeId,
+        target_method_type: TypeId,
+    ) -> bool {
+        let symbol_iterator = self.interner.intern_string("[Symbol.iterator]");
+        let internal_iterator = self.interner.intern_string("__@iterator");
+        let is_iterator_name = |name: Atom| name == symbol_iterator || name == internal_iterator;
+        if !is_iterator_name(source.name) || !is_iterator_name(target.name) {
+            return false;
+        }
+
+        let Some(query_db) = self.query_db else {
+            return false;
+        };
+
+        let Some(source_return_type) = get_return_type(query_db, source_method_type) else {
+            return false;
+        };
+        let Some(target_return_type) = get_return_type(query_db, target_method_type) else {
+            return false;
+        };
+
+        let source_yield_type = get_iterator_info(query_db, source_return_type, false)
+            .map(|info| info.yield_type)
+            .or_else(|| self.extract_iterator_like_yield_type(source_return_type));
+        let target_yield_type = get_iterator_info(query_db, target_return_type, false)
+            .map(|info| info.yield_type)
+            .or_else(|| self.extract_iterator_like_yield_type(target_return_type));
+
+        source_yield_type.zip(target_yield_type).is_some_and(|(source_yield, target_yield)| {
+            self.check_subtype(source_yield, target_yield).is_true()
+        })
     }
 
     /// Check private brand compatibility for object subtyping.
@@ -412,6 +458,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target_read: TypeId,
         allow_bivariant: bool,
     ) -> SubtypeResult {
+        if self.has_compatible_symbol_iterator_methods(source, target, source_read, target_read) {
+            return SubtypeResult::True;
+        }
+
         // Rule #26: Split Accessors - Covariant reads
         // Source read type must be subtype of target read type
         if source_read != target_read
