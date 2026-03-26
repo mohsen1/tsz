@@ -1424,7 +1424,8 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| {
                     // For lib file declarations, the node lives in a different arena.
                     // Look up the correct arena via declaration_arenas.
-                    if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                    if let Some(arenas) =
+                        self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
                     {
                         for arena in arenas {
                             if let Some(count) = Self::count_required_params_in_arena(

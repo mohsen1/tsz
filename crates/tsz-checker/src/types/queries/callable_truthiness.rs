@@ -198,7 +198,8 @@ impl<'a> CheckerState<'a> {
 
         let member_ty = self.get_type_of_symbol(sym_id);
         let member_ty = self.evaluate_type_with_env(member_ty);
-        let member_underlying = get_enum_member_type(self.ctx.types, member_ty).unwrap_or(member_ty);
+        let member_underlying =
+            get_enum_member_type(self.ctx.types, member_ty).unwrap_or(member_ty);
         let expr_underlying = get_enum_member_type(self.ctx.types, ty).unwrap_or(ty);
         let underlying = [member_underlying, expr_underlying, member_ty, ty]
             .into_iter()
@@ -264,7 +265,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(arena) = delegate_arena {
-            let delegate_binder = self.ctx.get_binder_for_arena(arena).unwrap_or(self.ctx.binder);
+            let delegate_binder = self
+                .ctx
+                .get_binder_for_arena(arena)
+                .unwrap_or(self.ctx.binder);
             let delegate_file_idx = self
                 .ctx
                 .get_file_idx_for_arena(arena)
@@ -371,7 +375,9 @@ impl<'a> CheckerState<'a> {
             {
                 None
             }
-            _ => self.evaluate_constant_expression(initializer).map(|value| value + 1.0),
+            _ => self
+                .evaluate_constant_expression(initializer)
+                .map(|value| value + 1.0),
         }
     }
 

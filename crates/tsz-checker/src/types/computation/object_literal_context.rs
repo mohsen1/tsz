@@ -380,9 +380,9 @@ impl<'a> CheckerState<'a> {
             return Some(property_context_type);
         }
 
-        if contextual_type
-            .is_some_and(|ctx_type| self.primitive_union_member_has_property(ctx_type, property_name))
-        {
+        if contextual_type.is_some_and(|ctx_type| {
+            self.primitive_union_member_has_property(ctx_type, property_name)
+        }) {
             return None;
         }
 

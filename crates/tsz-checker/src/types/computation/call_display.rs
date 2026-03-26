@@ -40,12 +40,15 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> bool {
         let source = {
-            let source_shape =
-                call_checker::get_contextual_signature(self.ctx.types, source).or_else(|| {
+            let source_shape = call_checker::get_contextual_signature(self.ctx.types, source)
+                .or_else(|| {
                     let evaluated = self.evaluate_type_with_env(source);
                     call_checker::get_contextual_signature(self.ctx.types, evaluated)
                 });
-            if source_shape.as_ref().is_some_and(|shape| !shape.type_params.is_empty()) {
+            if source_shape
+                .as_ref()
+                .is_some_and(|shape| !shape.type_params.is_empty())
+            {
                 if self.target_has_concrete_return_context_for_generic_refinement(target) {
                     self.instantiate_generic_function_argument_against_target_for_refinement(
                         source, target,

@@ -1190,9 +1190,9 @@ impl<'a> InferenceContext<'a> {
     ) -> bool {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
-        info.contra_candidates.iter().any(|c| {
-            !crate::type_queries::data::is_bare_infer_placeholder_db(db, c.type_id)
-        })
+        info.contra_candidates
+            .iter()
+            .any(|c| !crate::type_queries::data::is_bare_infer_placeholder_db(db, c.type_id))
     }
 
     /// Check whether a variable's inference came exclusively from contravariant positions.
