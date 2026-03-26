@@ -697,7 +697,10 @@ pub fn resolve_compiler_options(
     if let Some(lib_list) = options.lib.as_ref() {
         resolved.lib_files = resolve_lib_files(lib_list)?;
         resolved.lib_is_default = false;
-    } else if !resolved.checker.no_lib && !resolved.checker.no_types_and_symbols {
+    } else if !resolved.checker.no_lib {
+        // noTypesAndSymbols is a test harness directive that controls baseline
+        // output (type/symbol baselines), NOT lib loading. Default libs must
+        // still be loaded so that globals like Symbol, Promise, etc. are available.
         resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
         resolved.lib_is_default = true;
     }
