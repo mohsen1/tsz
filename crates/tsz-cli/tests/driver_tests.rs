@@ -8721,6 +8721,47 @@ export { foo, bar as baz };
 }
 
 #[test]
+fn bare_import_type_reports_ts1340() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs"
+  },
+  "files": ["test.ts", "main.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"export interface T {
+    value: string
+}
+"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"export const a: import("./test") = null;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1340_diags: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 1340).collect();
+    assert!(
+        ts1340_diags.iter().any(|diag| {
+            diag.message_text.contains("Module './test' does not refer to a type")
+                && diag.message_text.contains("typeof import('./test')")
+        }),
+        "Expected TS1340 for bare import type, got: {result:?}"
+    );
+}
+
+#[test]
 fn lib_replacement_honors_source_reference_subfiles() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
