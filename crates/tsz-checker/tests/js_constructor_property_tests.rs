@@ -1444,7 +1444,7 @@ f.b;
 }
 
 #[test]
-fn test_js_top_level_this_computed_property_assignment_requires_literal_key() {
+fn test_js_top_level_this_computed_property_assignment_is_allowed() {
     let source = r#"
 this["a" + "b"] = 0;
 "#;
@@ -1453,8 +1453,8 @@ this["a" + "b"] = 0;
 
     assert_eq!(
         count_code(&diagnostics, 7053),
-        1,
-        "Expected non-literal top-level `this[...]` assignment to report TS7053, got: {diagnostics:?}"
+        0,
+        "Expected top-level computed `this[...]` assignment to avoid TS7053, got: {diagnostics:?}"
     );
 }
 
