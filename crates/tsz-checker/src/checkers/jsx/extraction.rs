@@ -176,6 +176,14 @@ impl<'a> CheckerState<'a> {
                 else {
                     if self.is_generic_jsx_component(member)
                         || tsz_solver::contains_type_parameters(self.ctx.types, member)
+                        || tsz_solver::type_queries::needs_evaluation_for_merge(
+                            self.ctx.types,
+                            member,
+                        )
+                        || crate::query_boundaries::common::is_constructor_like_type(
+                            self.ctx.types,
+                            member,
+                        )
                         // String-like union members (e.g., `string` in `React.ReactType`)
                         // are valid intrinsic element references — skip them rather than
                         // aborting props extraction for the entire union.
