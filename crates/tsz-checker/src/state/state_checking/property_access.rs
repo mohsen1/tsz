@@ -105,6 +105,14 @@ impl<'a> CheckerState<'a> {
             self.ensure_relation_input_ready(object_type);
         }
 
+        // Resolve mapped types with unresolved constraints (e.g., Omit<T,K>,
+        // Pick<T,K> where the constraint is an Application like Exclude<keyof T, K>).
+        // The solver's QueryCache has a noop TypeResolver that can't evaluate
+        // Application constraints, causing is_key_in_mapped_constraint to return
+        // true for ALL properties. Pre-resolve the constraint through the checker's
+        // TypeEnvironment to get a concrete key union (e.g., "a" | "b").
+        let object_type = self.resolve_mapped_constraint_for_property_access(object_type);
+
         // Route through QueryDatabase so repeated property lookups hit QueryCache.
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.
@@ -287,6 +295,38 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    /// Pre-resolve a mapped type's constraint through the checker's TypeEnvironment.
+    ///
+    /// The solver's QueryCache has a noop TypeResolver that can't evaluate
+    /// Application constraints (e.g., `Exclude<keyof Foo, "c">` inside `Omit`).
+    /// This causes `is_key_in_mapped_constraint` to return true for ALL properties,
+    /// allowing access to properties that should have been excluded.
+    ///
+    /// This method evaluates the constraint using the checker's full resolver,
+    /// producing a concrete key union (e.g., `"a" | "b"`), and creates a new
+    /// mapped type with the resolved constraint.
+    fn resolve_mapped_constraint_for_property_access(&mut self, object_type: TypeId) -> TypeId {
+        let Some(mapped_id) = tsz_solver::mapped_type_id(self.ctx.types, object_type) else {
+            return object_type;
+        };
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        let eval_constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
+        if eval_constraint != mapped.constraint {
+            // Reconstruct the mapped type with the resolved constraint.
+            let new_mapped = tsz_solver::MappedType {
+                type_param: mapped.type_param,
+                constraint: eval_constraint,
+                name_type: mapped.name_type,
+                template: mapped.template,
+                readonly_modifier: mapped.readonly_modifier,
+                optional_modifier: mapped.optional_modifier,
+            };
+            self.ctx.types.factory().mapped(new_mapped)
+        } else {
+            object_type
+        }
     }
 
     /// Resolve a single mapped-type property with environment-aware key/template
