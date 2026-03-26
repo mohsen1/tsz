@@ -241,7 +241,10 @@ function bad(x, y, z) {
     let ts8024 = diagnostics.iter().filter(|d| d.code == 8024).count();
     let ts7006 = diagnostics.iter().filter(|d| d.code == 7006).count();
 
-    assert_eq!(ts1003, 3, "Expected three TS1003 diagnostics, got: {diagnostics:?}");
+    assert_eq!(
+        ts1003, 3,
+        "Expected three TS1003 diagnostics, got: {diagnostics:?}"
+    );
     assert_eq!(
         ts8024, 2,
         "Expected two TS8024 diagnostics for empty malformed @param names, got: {diagnostics:?}"

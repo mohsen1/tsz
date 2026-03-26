@@ -1967,8 +1967,7 @@ impl ParserState {
             self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
         } else if import_clause_had_errors {
-            if self.is_token(SyntaxKind::CloseBraceToken)
-                || self.is_token(SyntaxKind::FromKeyword)
+            if self.is_token(SyntaxKind::CloseBraceToken) || self.is_token(SyntaxKind::FromKeyword)
             {
                 NodeIndex::NONE
             } else {
