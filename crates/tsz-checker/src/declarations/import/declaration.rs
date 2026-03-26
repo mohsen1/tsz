@@ -4,9 +4,13 @@
 //! Import-equals validation (`import X = require("y")` / `import X = Namespace`)
 //! lives in the sibling `equals` module.
 
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node_flags;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 /// Returns the TypeScript extension suffix (e.g. `".ts"`, `".tsx"`) if the module path
 /// ends with a TS-specific extension that requires `allowImportingTsExtensions`.
@@ -97,9 +101,115 @@ pub(crate) fn is_node_builtin_module(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    fn source_file_has_syntactic_module_indicator(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
+    fn source_file_has_top_level_global_augmentation(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION == 0 {
+                continue;
+            }
+            let Some(module) = arena.get_module(stmt) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::GlobalKeyword as u16
+                || arena
+                    .get_identifier(name_node)
+                    .is_some_and(|ident| ident.escaped_text == "global")
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
     // =========================================================================
     // Import Declaration Validation
     // =========================================================================
+
+    fn maybe_emit_imported_global_augmentation_errors(&mut self, target_idx: usize) {
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return;
+        };
+        if self.source_file_has_syntactic_module_indicator(arena, source_file) {
+            return;
+        }
+        let mut diagnostics = Vec::new();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION == 0 {
+                continue;
+            }
+            let Some(module) = arena.get_module(stmt) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                continue;
+            };
+            let is_global = name_node.kind == SyntaxKind::GlobalKeyword as u16
+                || arena
+                    .get_identifier(name_node)
+                    .is_some_and(|ident| ident.escaped_text == "global");
+            if !is_global {
+                continue;
+            }
+
+            diagnostics.push(Diagnostic::error(
+                source_file.file_name.clone(),
+                name_node.pos,
+                name_node.end.saturating_sub(name_node.pos),
+                diagnostic_messages::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL
+                    .to_string(),
+                diagnostic_codes::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL,
+            ));
+        }
+
+        for diagnostic in diagnostics {
+            self.ctx.push_diagnostic(diagnostic);
+        }
+    }
 
     /// TS1214: Check import binding names for strict-mode reserved words.
     /// Import declarations make the file a module (always strict mode), so TS1214 applies.
@@ -793,18 +903,30 @@ impl<'a> CheckerState<'a> {
                 // specifier explicitly uses a .d.ts extension (handled above at the
                 // dts_ext check). TSC does NOT emit TS2846 when an import like
                 // "./foo" resolves to "foo.d.ts" — even under verbatimModuleSyntax.
+                self.maybe_emit_imported_global_augmentation_errors(target_idx);
                 if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
                     let normalized_module_name = module_name.trim_matches('"').trim_matches('\'');
                     // Side-effect imports (`import "x"`) never require the target
                     // to be a module — they just execute the file.  Skip TS2306
                     // regardless of the noUncheckedSideEffectImports setting.
+                    let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                    let source_file = arena.source_files.first();
+                    let target_is_global_augmentation_dts =
+                        source_file.is_some_and(|source_file| {
+                            source_file.file_name.ends_with(".d.ts")
+                                && !self
+                                    .source_file_has_syntactic_module_indicator(arena, source_file)
+                                && self.source_file_has_top_level_global_augmentation(
+                                    arena,
+                                    source_file,
+                                )
+                        });
                     if !is_side_effect_import
-                        && !binder.is_external_module
+                        && (!binder.is_external_module || target_is_global_augmentation_dts)
                         && !self.is_ambient_module_match(module_name)
                         && !binder.declared_modules.contains(normalized_module_name)
                     {
-                        let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                        if let Some(source_file) = arena.source_files.first() {
+                        if let Some(source_file) = source_file {
                             let file_name = source_file.file_name.as_str();
                             let is_js_like = file_name.ends_with(".js")
                                 || file_name.ends_with(".jsx")

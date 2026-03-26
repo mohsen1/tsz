@@ -10409,26 +10409,45 @@ a2.x;
 }
 
 #[test]
-fn test_declaration_file_with_top_level_declare_global_does_not_emit_ts2306() {
-    let files = [
-        (
-            "/src/index.ts",
-            r#"
-import * as React from "react";
-export const x = React;
-"#,
-        ),
-        (
-            "/node_modules/@types/react/index.d.ts",
-            r#"
-declare global {}
-"#,
-        ),
-    ];
+fn test_imported_declaration_file_with_top_level_declare_global_still_emits_ts2306() {
+    let mut parser_entry = ParserState::new(
+        "/src/index.ts".to_string(),
+        r#"
+import {} from "./react";
+export const x = 1;
+"#
+        .to_string(),
+    );
+    let root_entry = parser_entry.parse_source_file();
+    let mut binder_entry = BinderState::new();
+    binder_entry.bind_source_file(parser_entry.get_arena(), root_entry);
 
-    let diagnostics = compile_named_files_get_diagnostics_with_options(
-        &files,
-        "/src/index.ts",
+    let mut parser_react = ParserState::new(
+        "/src/react.d.ts".to_string(),
+        "declare global {}".to_string(),
+    );
+    let root_react = parser_react.parse_source_file();
+    let mut binder_react = BinderState::new();
+    binder_react.bind_source_file(parser_react.get_arena(), root_react);
+
+    let arena_entry = Arc::new(parser_entry.get_arena().clone());
+    let arena_react = Arc::new(parser_react.get_arena().clone());
+    let binder_entry = Arc::new(binder_entry);
+    let binder_react = Arc::new(binder_react);
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_entry), Arc::clone(&arena_react)]);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_entry), Arc::clone(&binder_react)]);
+
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    resolved_module_paths.insert((0, "./react".to_string()), 1);
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    resolved_modules.insert("./react".to_string());
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_entry.as_ref(),
+        binder_entry.as_ref(),
+        &types,
+        "/src/index.ts".to_string(),
         CheckerOptions {
             module: ModuleKind::CommonJS,
             target: ScriptTarget::ES2015,
@@ -10437,9 +10456,97 @@ declare global {}
         },
     );
 
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(0);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root_entry);
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2306),
-        "Expected declaration file with top-level declare global to stay importable without TS2306. Actual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().any(|(code, _)| *code == 2306),
+        "Expected imported declaration file with top-level declare global to still report TS2306. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_imported_declaration_file_with_top_level_declare_global_emits_ts2669() {
+    let mut parser_entry = ParserState::new(
+        "/src/index.ts".to_string(),
+        r#"
+import {} from "./react";
+export const x = 1;
+"#
+        .to_string(),
+    );
+    let root_entry = parser_entry.parse_source_file();
+    let mut binder_entry = BinderState::new();
+    binder_entry.bind_source_file(parser_entry.get_arena(), root_entry);
+
+    let mut parser_react = ParserState::new(
+        "/src/react.d.ts".to_string(),
+        "declare global {}".to_string(),
+    );
+    let root_react = parser_react.parse_source_file();
+    let mut binder_react = BinderState::new();
+    binder_react.bind_source_file(parser_react.get_arena(), root_react);
+
+    let arena_entry = Arc::new(parser_entry.get_arena().clone());
+    let arena_react = Arc::new(parser_react.get_arena().clone());
+    let binder_entry = Arc::new(binder_entry);
+    let binder_react = Arc::new(binder_react);
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_entry), Arc::clone(&arena_react)]);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_entry), Arc::clone(&binder_react)]);
+
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    resolved_module_paths.insert((0, "./react".to_string()), 1);
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    resolved_modules.insert("./react".to_string());
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_entry.as_ref(),
+        binder_entry.as_ref(),
+        &types,
+        "/src/index.ts".to_string(),
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(0);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root_entry);
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2669),
+        "Expected imported declaration file with top-level declare global to still report TS2669. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
