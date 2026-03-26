@@ -344,10 +344,7 @@ impl<'a> InferenceContext<'a> {
         let concrete_contra_candidates: Vec<_> = contra_candidates
             .iter()
             .filter(|c| {
-                !crate::type_queries::data::is_bare_infer_placeholder_db(
-                    self.interner,
-                    c.type_id,
-                )
+                !crate::type_queries::data::is_bare_infer_placeholder_db(self.interner, c.type_id)
             })
             .cloned()
             .collect();

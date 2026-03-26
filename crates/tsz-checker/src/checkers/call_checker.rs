@@ -1582,14 +1582,16 @@ impl<'a> CheckerState<'a> {
                 CallResult::Success(return_type) => {
                     if let Some((index, actual, expected)) = self
                         .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
-                            sig_helper.get_parameter_type_for_call(index, args.len()).or_else(|| {
-                                ContextualTypeContext::with_expected_and_options(
-                                    checker.ctx.types,
-                                    func_type,
-                                    checker.ctx.compiler_options.no_implicit_any,
-                                )
+                            sig_helper
                                 .get_parameter_type_for_call(index, args.len())
-                            })
+                                .or_else(|| {
+                                    ContextualTypeContext::with_expected_and_options(
+                                        checker.ctx.types,
+                                        func_type,
+                                        checker.ctx.compiler_options.no_implicit_any,
+                                    )
+                                    .get_parameter_type_for_call(index, args.len())
+                                })
                         })
                     {
                         all_arg_count_mismatches = false;

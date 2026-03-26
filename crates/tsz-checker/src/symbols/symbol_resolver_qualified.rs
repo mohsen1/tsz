@@ -733,7 +733,8 @@ impl<'a> CheckerState<'a> {
             && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             && let Some(import) = self.ctx.arena.get_import_decl(decl_node)
         {
-            if let Some(module_specifier) = self.get_require_module_specifier(import.module_specifier)
+            if let Some(module_specifier) =
+                self.get_require_module_specifier(import.module_specifier)
             {
                 if self
                     .ctx

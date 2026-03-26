@@ -988,7 +988,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn binder_reconstruction_from_original_fields_preserves_mapped_type_generic_indexed_access_context() {
+fn binder_reconstruction_from_original_fields_preserves_mapped_type_generic_indexed_access_context()
+{
     let source = r#"type Types = {
     first: { a1: true };
     second: { a2: true };
@@ -1180,9 +1181,18 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+    for name in [
+        "Types",
+        "Test",
+        "TypesMap",
+        "P",
+        "TypeHandlers",
+        "typeHandlers",
+        "onSomeEvent",
+    ] {
         let original = symbol_snapshot(&original_binder, name);
         let merged = symbol_snapshot(&merged_binder, name);
         assert_eq!(
@@ -1250,7 +1260,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (idx, node) in arena.nodes.iter().enumerate() {
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -1337,7 +1348,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
@@ -1422,7 +1434,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
     for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
@@ -1496,9 +1509,18 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+    for name in [
+        "Types",
+        "Test",
+        "TypesMap",
+        "P",
+        "TypeHandlers",
+        "typeHandlers",
+        "onSomeEvent",
+    ] {
         let original_sym_id = original_binder
             .file_locals
             .get(name)
@@ -1573,9 +1595,18 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         vec![("main.ts".to_string(), source.to_string())],
         &lib_paths,
     );
-    let merged_binder = tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let merged_binder =
+        tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for name in ["Types", "Test", "TypesMap", "P", "TypeHandlers", "typeHandlers", "onSomeEvent"] {
+    for name in [
+        "Types",
+        "Test",
+        "TypesMap",
+        "P",
+        "TypeHandlers",
+        "typeHandlers",
+        "onSomeEvent",
+    ] {
         let original_sym_id = original_binder
             .file_locals
             .get(name)
@@ -1604,8 +1635,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn reconstructed_binder_with_fresh_type_interner_preserves_mapped_type_generic_indexed_access_context(
-) {
+fn reconstructed_binder_with_fresh_type_interner_preserves_mapped_type_generic_indexed_access_context()
+ {
     let files = vec![(
         "main.ts".to_string(),
         r#"type Types = {
@@ -1704,8 +1735,8 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-fn original_binder_with_merged_program_type_interner_preserves_mapped_type_generic_indexed_access_context(
-) {
+fn original_binder_with_merged_program_type_interner_preserves_mapped_type_generic_indexed_access_context()
+ {
     let source = r#"type Types = {
     first: { a1: true };
     second: { a2: true };
@@ -8779,7 +8810,11 @@ namespace SomeOther.Thing {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2845_diags: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2845).collect();
+    let ts2845_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2845)
+        .collect();
     assert!(
         ts2845_diags
             .iter()
@@ -8817,11 +8852,15 @@ export = x;
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2708_diags: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2708).collect();
+    let ts2708_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2708)
+        .collect();
     assert!(
-        ts2708_diags
-            .iter()
-            .any(|diag| diag.message_text.contains("Cannot use namespace 'x' as a value")),
+        ts2708_diags.iter().any(|diag| diag
+            .message_text
+            .contains("Cannot use namespace 'x' as a value")),
         "Expected TS2708 on the namespace qualifier in export import, got: {result:?}"
     );
 }
