@@ -651,14 +651,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS2428: All declarations must have identical type parameters.
-            // Check both interface and class declarations — class+interface merges
-            // with different type parameter constraints also trigger TS2428.
+            // TS2428 only applies to merged interface declarations. Mixed
+            // class+interface merges are handled separately by
+            // check_merged_class_interface_declaration_diagnostics.
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
-                .filter(|(_, flags, is_local, _, _)| {
-                    *is_local && (flags & (symbol_flags::INTERFACE | symbol_flags::CLASS)) != 0
-                })
+                .filter(|(_, flags, is_local, _, _)| *is_local && (flags & symbol_flags::INTERFACE) != 0)
                 .map(|(decl_idx, _, _, _, _)| *decl_idx)
                 .collect();
             if interface_decls.len() > 1 {

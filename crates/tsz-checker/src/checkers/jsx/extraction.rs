@@ -79,11 +79,13 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn apply_jsx_library_managed_attributes(
+    pub(super) fn apply_jsx_library_managed_attributes(
         &mut self,
         component_type: TypeId,
         props_type: TypeId,
     ) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
         let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
             return props_type;
         };
@@ -104,6 +106,18 @@ impl<'a> CheckerState<'a> {
 
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(lma_sym_id);
         if body_type == TypeId::ERROR || body_type == TypeId::ANY {
+            return props_type;
+        }
+
+        let has_prop_types = matches!(
+            self.resolve_property_access_with_env(component_type, "propTypes"),
+            PropertyAccessResult::Success { .. }
+        );
+        let has_default_props = matches!(
+            self.resolve_property_access_with_env(component_type, "defaultProps"),
+            PropertyAccessResult::Success { .. }
+        );
+        if !has_prop_types && !has_default_props {
             return props_type;
         }
 

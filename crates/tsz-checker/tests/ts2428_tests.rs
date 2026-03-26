@@ -196,6 +196,31 @@ interface B<T> {
 }
 
 #[test]
+fn class_interface_merge_different_arity_no_ts2428() {
+    let source = r#"
+interface Component<P = {}, S = {}, SS = any> {}
+class Component<P, S> {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 for merged class/interface declarations with different arity"
+    );
+}
+
+#[test]
+fn class_interface_merge_uses_interface_type_parameter_arity_in_type_position() {
+    let source = r#"
+interface Component<P = {}, S = {}, SS = any> {}
+class Component<P, S> {}
+type X = Component<string, number, boolean>;
+"#;
+    assert!(
+        !has_error_with_code(source, 2707),
+        "Should NOT emit TS2707 when merged class/interface type position uses interface arity"
+    );
+}
+
+#[test]
 fn ts2717_separate_namespace_blocks_exported() {
     // Exported interfaces in separate namespace blocks should have
     // property types compared across blocks (TS2717).
