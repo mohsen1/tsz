@@ -6,8 +6,8 @@ use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -132,6 +132,19 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
         )
+    }
+
+    fn callback_prefers_argument_level_return_mismatch(&self, arg_idx: NodeIndex) -> bool {
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(arg_node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(func.body)
+            .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
     }
 
     fn preferred_literal_expected_for_mismatch(
@@ -485,10 +498,13 @@ impl<'a> CheckerState<'a> {
                     // expected parameter types, TSC reports TS2345 at the argument level
                     // rather than elaborating with an inner TS2322. Only suppress inner
                     // elaboration when the *parameter* types are the source of the mismatch.
+                    let prefer_argument_level_return_mismatch =
+                        self.callback_prefers_argument_level_return_mismatch(arg_idx);
                     let suppress_inner_elaboration =
                         self.callback_has_explicit_param_type_conflict(arg_idx, expected);
                     if !elaborated
                         && !suppress_inner_elaboration
+                        && !prefer_argument_level_return_mismatch
                         && self
                             .callback_body_span(arg_idx)
                             .is_some_and(|(start, end)| {
@@ -506,6 +522,7 @@ impl<'a> CheckerState<'a> {
                     // and suppress the outer TS2345.
                     if !elaborated
                         && !suppress_inner_elaboration
+                        && !prefer_argument_level_return_mismatch
                         && let Some(body_span) = self.callback_body_span(arg_idx)
                     {
                         let (body_start, body_end) = body_span;
@@ -524,7 +541,7 @@ impl<'a> CheckerState<'a> {
                     // When suppressing inner elaboration, remove any TS2322 inside the
                     // callback body that was left from the arg collection pass, so the
                     // outer TS2345 is the only diagnostic at the argument site.
-                    if suppress_inner_elaboration
+                    if (suppress_inner_elaboration || prefer_argument_level_return_mismatch)
                         && let Some((body_start, body_end)) = self.callback_body_span(arg_idx)
                     {
                         self.ctx.diagnostics.retain(|d| {
@@ -547,11 +564,19 @@ impl<'a> CheckerState<'a> {
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                         && !elaborated
                     {
-                        let _ = self.check_argument_assignable_or_report(
-                            reported_actual,
-                            reported_expected,
-                            arg_idx,
-                        );
+                        if prefer_argument_level_return_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                arg_idx,
+                            );
+                        } else {
+                            let _ = self.check_argument_assignable_or_report(
+                                reported_actual,
+                                reported_expected,
+                                arg_idx,
+                            );
+                        }
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];

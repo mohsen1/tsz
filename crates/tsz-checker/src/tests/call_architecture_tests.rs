@@ -1551,3 +1551,53 @@ if (g.check(val)) {
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn block_body_contextual_callback_return_mismatch_reports_ts2345() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function f(g: (x: number) => number[]): void;
+f((x) => { return x.toFixed(); });
+"#,
+    );
+
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected one outer TS2345 for block-body callback return mismatch, got: {:?}",
+        diags
+    );
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no inner TS2322 for block-body callback return mismatch, got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn expression_body_contextual_callback_return_mismatch_stays_ts2322() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function f(g: (x: number) => number[]): void;
+f((x) => x.toFixed());
+"#,
+    );
+
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2345.len(),
+        0,
+        "Expected no outer TS2345 for expression-body callback return mismatch, got: {:?}",
+        diags
+    );
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one inner TS2322 for expression-body callback return mismatch, got: {:?}",
+        diags
+    );
+}

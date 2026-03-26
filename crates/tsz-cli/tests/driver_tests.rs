@@ -9307,3 +9307,55 @@ fn phase_timings_are_populated_after_compilation() {
         sum
     );
 }
+
+#[test]
+fn compile_reports_outer_ts2345_for_block_body_contextual_callback_return_mismatch() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true,
+            "target": "es2015"
+          },
+          "include": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+interface Collection<T, U> {
+    length: number;
+    add(x: T, y: U): void;
+    remove(x: T, y: U): boolean;
+}
+
+interface Combinators {
+    map<T, U>(c: Collection<T, U>, f: (x: T, y: U) => any): Collection<any, any>;
+    map<T, U, V>(c: Collection<T, U>, f: (x: T, y: U) => V): Collection<T, V>;
+}
+
+declare var _: Combinators;
+declare var c2: Collection<number, string>;
+var r5a = _.map<number, string, Date>(c2, (x, y) => { return x.toFixed() });
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2345),
+        "Expected outer TS2345 for block-body callback return mismatch, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected no inner TS2322 for block-body callback return mismatch, got: {:?}",
+        result.diagnostics
+    );
+}
