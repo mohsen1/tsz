@@ -91,9 +91,14 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
         return emit_ts2343_for_missing_helpers(program, options, "tslib", file_is_esm_map);
     }
 
-    // Check the filesystem: tslib may exist in node_modules but not be part of
-    // the compiled program (since tsconfig `include` typically excludes node_modules).
-    if tslib_exists_on_filesystem(base_dir) {
+    // Check the filesystem only when the program appears to be backed by real
+    // on-disk files and normal automatic type loading is enabled. Virtual or
+    // isolated programs (like conformance harnesses using `@noTypesAndSymbols`)
+    // must not inherit tslib availability from the host workspace.
+    if !options.checker.no_types_and_symbols
+        && program_appears_filesystem_backed(program)
+        && tslib_exists_on_filesystem(base_dir)
+    {
         return Vec::new();
     }
 
@@ -179,6 +184,12 @@ fn tslib_exists_on_filesystem(base_dir: &Path) -> bool {
     }
 }
 
+fn program_appears_filesystem_backed(program: &MergedProgram) -> bool {
+    program.files.iter().any(|file| {
+        !file.file_name.ends_with(".d.ts") && Path::new(&file.file_name).exists()
+    })
+}
+
 pub(super) fn required_helpers(
     file: &BoundFile,
     target: tsz_common::ScriptTarget,
@@ -238,12 +249,11 @@ pub(super) fn required_helpers(
         return vec![("__asyncGenerator", start, length)];
     }
 
-    // esModuleInterop helpers: __importStar for namespace imports/re-exports,
-    // __importDefault for default named imports/re-exports,
-    // __exportStar for bare star re-exports.
-    // ESM files don't need these helpers — ESM syntax is native.
-    if es_module_interop && !is_esm {
-        let helpers = detect_es_module_interop_helpers(file);
+    // Module-transform helpers for import/export syntax that lower to tslib
+    // helpers in non-ESM output. ESM files don't need these helpers — ESM
+    // syntax is native there.
+    if !is_esm {
+        let helpers = detect_module_transform_helpers(file, es_module_interop);
         if !helpers.is_empty() {
             return helpers;
         }
@@ -252,17 +262,20 @@ pub(super) fn required_helpers(
     Vec::new()
 }
 
-/// Detect all esModuleInterop helpers needed in a file.
+/// Detect all module-transform helpers needed in a file.
 ///
 /// Patterns:
-/// - `import * as X from "m"` (non-type-only) → `__importStar` at import statement
-/// - `import { default as X } from "m"` (non-type-only) → `__importDefault` at `default` keyword
-/// - `export { default } from "m"` or `export { default as X } from "m"` → `__importDefault` at `default` keyword
-/// - `export * as ns from "m"` → `__importStar` at export statement
-/// - `export * from "m"` → `__exportStar` at export statement
+/// - `import * as X from "m"` (non-type-only, esModuleInterop) → `__importStar`
+/// - `import { default as X } from "m"` (non-type-only) → `__importDefault`
+/// - `export { default } from "m"` or `export { default as X } from "m"` → `__importDefault`
+/// - `export * as ns from "m"` (esModuleInterop) → `__importStar`
+/// - `export * from "m"` → `__exportStar`
 ///
 /// Note: `import X from "m"` (bare default import) does NOT require __importDefault in tsc.
-fn detect_es_module_interop_helpers(file: &BoundFile) -> Vec<(&'static str, u32, u32)> {
+fn detect_module_transform_helpers(
+    file: &BoundFile,
+    es_module_interop: bool,
+) -> Vec<(&'static str, u32, u32)> {
     let mut helpers = Vec::new();
 
     for node_idx_raw in 0..file.arena.len() {
@@ -290,7 +303,7 @@ fn detect_es_module_interop_helpers(file: &BoundFile) -> Vec<(&'static str, u32,
             };
 
             // `import * as X from "m"` → NAMESPACE_IMPORT
-            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+            if es_module_interop && bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
                 helpers.push(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
                 continue;
             }
@@ -344,7 +357,7 @@ fn detect_es_module_interop_helpers(file: &BoundFile) -> Vec<(&'static str, u32,
             };
 
             // `export * as ns from "m"` — the export_clause is a plain identifier (not NAMED_EXPORTS)
-            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            if es_module_interop && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
                 helpers.push(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
                 continue;
             }
@@ -1460,6 +1473,16 @@ mod tests {
             .collect()
     }
 
+    fn merged_program(files: &[(&str, &str)]) -> MergedProgram {
+        let bind_results = files
+            .iter()
+            .map(|(name, source)| {
+                parallel::parse_and_bind_single((*name).to_string(), (*source).to_string())
+            })
+            .collect();
+        parallel::merge_bind_results(bind_results)
+    }
+
     #[test]
     fn plain_class_needs_no_helpers() {
         assert!(helper_names("class C { method() {} }").is_empty());
@@ -1469,6 +1492,56 @@ mod tests {
     fn private_field_emits_class_private_field_set() {
         let helpers = helper_names("class C { #foo = 1; }");
         assert_eq!(helpers, vec!["__classPrivateFieldSet"]);
+    }
+
+    #[test]
+    fn default_reexport_requires_import_default_helper_when_interop_enabled() {
+        let file = bound_file("export { default } from \"./a\";");
+        let helpers: Vec<_> = required_helpers(&file, tsz_common::ScriptTarget::ES2017, true, false)
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect();
+        assert_eq!(helpers, vec!["__importDefault"]);
+    }
+
+    #[test]
+    fn default_named_import_requires_import_default_helper_without_interop() {
+        let file = bound_file("import { default as b } from \"./a\";\nvoid b;");
+        let helpers: Vec<_> =
+            required_helpers(&file, tsz_common::ScriptTarget::ES2017, false, false)
+                .into_iter()
+                .map(|(name, _, _)| name)
+                .collect();
+        assert_eq!(helpers, vec!["__importDefault"]);
+    }
+
+    #[test]
+    fn virtual_program_missing_tslib_reports_ts2354() {
+        let program = merged_program(&[
+            ("__virtual__/a.ts", "export default class { }"),
+            ("__virtual__/b.ts", "export { default } from \"./a\";"),
+        ]);
+        let mut options = ResolvedCompilerOptions::default();
+        options.import_helpers = true;
+        options.es_module_interop = true;
+        options.checker.target = tsz_common::ScriptTarget::ES2017;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/__virtual__"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2354
+                    && diag.file == "__virtual__/b.ts"
+                    && diag.message_text
+                        == "This syntax requires an imported helper but module 'tslib' cannot be found."
+            }),
+            "Expected TS2354 for virtual program without tslib. Got: {diagnostics:#?}"
+        );
     }
 
     #[test]
