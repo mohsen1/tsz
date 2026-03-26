@@ -8767,6 +8767,59 @@ fn bare_import_type_reports_ts1340() {
 }
 
 #[test]
+fn namespace_import_alias_const_enum_member_condition_reports_ts2845() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["internal.ts", "usage.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("internal.ts"),
+        r#"namespace My.Internal {
+    export function getThing(): void {}
+    export const enum WhichThing {
+        A, B, C
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("usage.ts"),
+        r#"/// <reference path="./internal.ts" preserve="true" />
+namespace SomeOther.Thing {
+    import Internal = My.Internal;
+    export class Foo {
+        private _which!: Internal.WhichThing;
+        constructor() {
+            Internal.getThing();
+            Internal.WhichThing.A ? "foo" : "bar";
+        }
+    }
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2845_diags: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2845).collect();
+    assert!(
+        ts2845_diags
+            .iter()
+            .any(|diag| diag.message_text.contains("always return 'false'")),
+        "Expected TS2845 for namespace-imported const enum member condition, got: {result:?}"
+    );
+}
+
+#[test]
 fn export_import_qualified_type_only_namespace_reports_ts2708() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

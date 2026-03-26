@@ -10,7 +10,7 @@
 //!   always defined." (for Promise/awaitable types in conditions)
 
 use crate::state::CheckerState;
-use tsz_binder::symbol_flags;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -188,18 +188,190 @@ impl<'a> CheckerState<'a> {
         }
 
         let ty = self.evaluate_type_with_env(ty);
-        let sym_id = self.ctx.resolve_type_to_symbol_id(ty)?;
+        let sym_id = self
+            .resolve_qualified_symbol(node_idx)
+            .or_else(|| self.ctx.resolve_type_to_symbol_id(ty))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
             return None;
         }
 
-        let underlying = get_enum_member_type(self.ctx.types, ty)?;
-        match classify_literal_type(self.ctx.types, underlying) {
-            LiteralTypeKind::Number(value) => Some(if value == 0.0 { "false" } else { "true" }),
-            LiteralTypeKind::String(value) => Some(if value.is_none() { "false" } else { "true" }),
-            LiteralTypeKind::Boolean(value) => Some(if value { "true" } else { "false" }),
-            _ => None,
+        let member_ty = self.get_type_of_symbol(sym_id);
+        let member_ty = self.evaluate_type_with_env(member_ty);
+        let member_underlying = get_enum_member_type(self.ctx.types, member_ty).unwrap_or(member_ty);
+        let expr_underlying = get_enum_member_type(self.ctx.types, ty).unwrap_or(ty);
+        let underlying = [member_underlying, expr_underlying, member_ty, ty]
+            .into_iter()
+            .find(|candidate| {
+                !matches!(
+                    classify_literal_type(self.ctx.types, *candidate),
+                    LiteralTypeKind::NotLiteral
+                )
+            });
+        match underlying.map(|candidate| classify_literal_type(self.ctx.types, candidate)) {
+            Some(LiteralTypeKind::Number(value)) => {
+                Some(if value == 0.0 { "false" } else { "true" })
+            }
+            Some(LiteralTypeKind::String(value)) => {
+                Some(if value.is_none() { "false" } else { "true" })
+            }
+            Some(LiteralTypeKind::Boolean(value)) => Some(if value { "true" } else { "false" }),
+            _ => self.enum_member_condition_result_from_decl(sym_id),
+        }
+    }
+
+    fn enum_member_condition_result_from_decl(&mut self, sym_id: SymbolId) -> Option<&'static str> {
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let mut delegate_arena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+            .filter(|arena| !std::ptr::eq(*arena, self.ctx.arena));
+
+        if delegate_arena.is_none() {
+            let mut decl_candidates = symbol.declarations.clone();
+            if symbol.value_declaration.is_some() {
+                decl_candidates.push(symbol.value_declaration);
+            }
+            for decl_idx in decl_candidates {
+                if decl_idx.is_none() {
+                    continue;
+                }
+                if let Some(arena) = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .and_then(|arenas| arenas.first())
+                    .map(std::convert::AsRef::as_ref)
+                    .filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))
+                {
+                    delegate_arena = Some(arena);
+                    break;
+                }
+            }
+        }
+
+        if delegate_arena.is_none()
+            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+        {
+            let arena = self.ctx.get_arena_for_file(file_idx as u32);
+            if !std::ptr::eq(arena, self.ctx.arena) {
+                delegate_arena = Some(arena);
+            }
+        }
+
+        if let Some(arena) = delegate_arena {
+            let delegate_binder = self.ctx.get_binder_for_arena(arena).unwrap_or(self.ctx.binder);
+            let delegate_file_idx = self
+                .ctx
+                .get_file_idx_for_arena(arena)
+                .unwrap_or(self.ctx.current_file_idx);
+            let delegate_file_name = arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())
+                .unwrap_or_else(|| self.ctx.file_name.clone());
+            let mut checker = Box::new(CheckerState::with_parent_cache(
+                arena,
+                delegate_binder,
+                self.ctx.types,
+                delegate_file_name,
+                self.ctx.compiler_options.clone(),
+                self,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
+            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+            checker.ctx.current_file_idx = delegate_file_idx;
+            return checker.enum_member_condition_result_from_decl_local(sym_id);
+        }
+
+        self.enum_member_condition_result_from_decl_local(sym_id)
+    }
+
+    fn enum_member_condition_result_from_decl_local(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<&'static str> {
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+            return None;
+        }
+        let member_decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|idx| idx.is_some())
+                .unwrap_or(NodeIndex::NONE)
+        };
+        if member_decl.is_none() {
+            return None;
+        }
+
+        let parent_symbol = self.get_cross_file_symbol(symbol.parent)?;
+        for &decl_idx in &parent_symbol.declarations {
+            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
+                continue;
+            };
+            let mut auto_value = 0.0;
+            for &member_idx in &enum_decl.members.nodes {
+                let member_node = self.ctx.arena.get(member_idx)?;
+                let member_data = self.ctx.arena.get_enum_member(member_node)?;
+
+                if member_idx == member_decl {
+                    return if member_data.initializer.is_some() {
+                        self.truthiness_for_enum_member_initializer(member_data.initializer)
+                    } else {
+                        Some(if auto_value == 0.0 { "false" } else { "true" })
+                    };
+                }
+
+                if member_data.initializer.is_some() {
+                    auto_value = self.next_enum_auto_value(member_data.initializer)?;
+                } else {
+                    auto_value += 1.0;
+                }
+            }
+        }
+        None
+    }
+
+    fn truthiness_for_enum_member_initializer(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<&'static str> {
+        let init_node = self.ctx.arena.get(initializer)?;
+        match init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(init_node)?;
+                Some(if lit.text.is_empty() { "false" } else { "true" })
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 => Some("true"),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some("false"),
+            _ => {
+                let value = self.evaluate_constant_expression(initializer)?;
+                Some(if value == 0.0 { "false" } else { "true" })
+            }
+        }
+    }
+
+    fn next_enum_auto_value(&self, initializer: NodeIndex) -> Option<f64> {
+        let init_node = self.ctx.arena.get(initializer)?;
+        match init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                None
+            }
+            _ => self.evaluate_constant_expression(initializer).map(|value| value + 1.0),
         }
     }
 
