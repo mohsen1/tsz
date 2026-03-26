@@ -5600,6 +5600,32 @@ declare global {
 }
 
 #[test]
+fn test_uninstantiated_namespace_shadowing_symbol_uses_global_value_for_property_access() {
+    let diagnostics = without_missing_global_type_errors(
+        compile_and_get_diagnostics_with_lib_and_options(
+            r#"
+namespace M {
+    namespace Symbol { }
+
+    class C {
+        [Symbol.iterator]() { }
+    }
+}
+            "#,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        ),
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2708),
+        "Did not expect TS2708 when an empty namespace shadows the global Symbol value in a property access. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_instance_member_initializer_local_shadow_does_not_report_ts2301() {
     let diagnostics = compile_and_get_diagnostics(
         r"
