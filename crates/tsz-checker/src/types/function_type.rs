@@ -357,9 +357,10 @@ impl<'a> CheckerState<'a> {
                 evaluated_type,
                 self.ctx.compiler_options.no_implicit_any,
             ))
-        } else if self.is_js_file() && is_function_declaration {
-            // For function declarations in JS files with @type {FunctionType},
-            // use the function type as contextual type for parameter typing.
+        } else if self.is_js_file() && (is_function_declaration || is_closure) {
+            // In JS/checkJs, JSDoc `@type {FunctionType}` can live either on a
+            // function declaration or on an enclosing variable statement for a
+            // function expression (`const f = function() {}`), so support both.
             if let Some(evaluated_type) = self.jsdoc_callable_type_annotation_for_function(idx) {
                 contextual_signature_type_params =
                     self.contextual_type_params_from_expected(evaluated_type);

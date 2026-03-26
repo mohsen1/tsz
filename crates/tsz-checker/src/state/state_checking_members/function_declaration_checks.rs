@@ -442,6 +442,21 @@ impl<'a> CheckerState<'a> {
                 pushed_this_type = true;
             }
         }
+        if !pushed_this_type
+            && self.is_js_file()
+            && let Some(jsdoc_callable_type) =
+                self.jsdoc_callable_type_annotation_for_function(func_idx)
+        {
+            let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                jsdoc_callable_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            if let Some(this_type) = ctx_helper.get_this_type() {
+                self.ctx.this_type_stack.push(this_type);
+                pushed_this_type = true;
+            }
+        }
 
         // Cache parameter types from annotations (so for-of binding uses correct types)
         // and then infer for any remaining unknown parameters using contextual information.

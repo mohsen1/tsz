@@ -190,3 +190,75 @@ y = x;
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// `@type {(this: {...}) => void}` should preserve the contextual `this`
+/// parameter so bad member reads still produce TS2339.
+#[test]
+fn jsdoc_arrow_function_type_preserves_this_parameter() {
+    let diags = check_js(
+        r#"/** @type {(this: { foo: number }) => void} */
+const f = function() {
+    this.test;
+};
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2339),
+        "Expected TS2339 when JSDoc arrow function type provides an object `this`, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Function declarations with arrow-style JSDoc callable types should also
+/// preserve the contextual `this` parameter during body checking.
+#[test]
+fn jsdoc_arrow_function_declaration_preserves_this_parameter() {
+    let diags = check_js(
+        r#"/** @type {(this: { foo: number }) => void} */
+function f() {
+    this.test;
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2339),
+        "Expected TS2339 when JSDoc arrow function declaration provides an object `this`, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `@type {function(this: Foo): void}` should preserve the contextual `this`
+/// parameter for Closure-style callable syntax too.
+#[test]
+fn jsdoc_closure_function_type_preserves_this_parameter() {
+    let diags = check_js(
+        r#"/** @type {function(this: { foo: number }): void} */
+const f = function() {
+    this.test;
+};
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2339),
+        "Expected TS2339 when Closure-style JSDoc function type provides an object `this`, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Function declarations with Closure-style JSDoc callable types should also
+/// preserve the contextual `this` parameter during body checking.
+#[test]
+fn jsdoc_closure_function_declaration_preserves_this_parameter() {
+    let diags = check_js(
+        r#"/** @type {function(this: { foo: number }): void} */
+function f() {
+    this.test;
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2339),
+        "Expected TS2339 when Closure-style JSDoc function declaration provides an object `this`, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}

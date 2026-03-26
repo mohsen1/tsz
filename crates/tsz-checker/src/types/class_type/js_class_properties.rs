@@ -229,11 +229,12 @@ impl CheckerState<'_> {
     }
 
     pub(crate) fn js_statement_declared_type(&mut self, stmt_idx: NodeIndex) -> Option<TypeId> {
-        self.jsdoc_type_annotation_for_node(stmt_idx).or_else(|| {
-            let stmt_node = self.ctx.arena.get(stmt_idx)?;
-            let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
-            self.jsdoc_type_annotation_for_node_direct(expr_stmt.expression)
-        })
+        self.jsdoc_type_annotation_for_node_direct(stmt_idx)
+            .or_else(|| {
+                let stmt_node = self.ctx.arena.get(stmt_idx)?;
+                let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+                self.jsdoc_type_annotation_for_node_direct(expr_stmt.expression)
+            })
     }
 
     /// Scan a body (constructor or method) for `this.prop = value` assignments
