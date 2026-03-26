@@ -465,6 +465,33 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let is_top_level_this_element_access = self.is_js_file()
+            && literal_string.is_none()
+            && self
+                .ctx
+                .arena
+                .get(access.expression)
+                .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            && self.ctx.enclosing_class.is_none()
+            && self.find_enclosing_non_arrow_function(access.expression).is_none();
+
+        if (is_this_global || is_top_level_this_element_access)
+            && literal_string.is_none()
+            && object_type == TypeId::ANY
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_str = self.format_type_diagnostic(index_type);
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                    &[&index_str, "typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+            );
+            return TypeId::ANY;
+        }
+
         // In write context, preserve `T[keyof T]` / `T[K]` on generic receivers
         // before resolving through the receiver's constraint. Otherwise the
         // write target collapses to the constraint's index-signature value type
