@@ -342,11 +342,14 @@ impl<'a> CheckerState<'a> {
             )
         {
             let zero_atom = self.ctx.types.intern_string("0");
-            let mapped_element = self.instantiate_mapped_property_template_with_env(&mapped, zero_atom);
+            let mapped_element =
+                self.instantiate_mapped_property_template_with_env(&mapped, zero_atom);
             let mapped_array = match mapped.readonly_modifier {
-                Some(tsz_solver::MappedModifier::Add) => {
-                    self.ctx.types.factory().readonly_type(self.ctx.types.factory().array(mapped_element))
-                }
+                Some(tsz_solver::MappedModifier::Add) => self
+                    .ctx
+                    .types
+                    .factory()
+                    .readonly_type(self.ctx.types.factory().array(mapped_element)),
                 _ => self.ctx.types.factory().array(mapped_element),
             };
             let array_result = self.resolve_property_access_with_env(mapped_array, prop_name);
@@ -429,8 +432,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             if keys.is_empty() {
-                if let Some(keyof_target) = keyof_target
-                {
+                if let Some(keyof_target) = keyof_target {
                     if matches!(
                         self.resolve_property_access_with_env(keyof_target, prop_name),
                         tsz_solver::operations::property::PropertyAccessResult::Success { .. }
