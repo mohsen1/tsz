@@ -426,15 +426,16 @@ impl<'a> CheckerState<'a> {
         let instantiated =
             self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
         let raw_props_type = instantiated.params.first()?.type_id;
-        let props_type = if crate::computation::call_inference::should_preserve_contextual_application_shape(
-            self.ctx.types,
-            raw_props_type,
-        ) {
-            raw_props_type
-        } else {
-            let resolved = self.resolve_type_for_property_access(raw_props_type);
-            self.evaluate_type_with_env(resolved)
-        };
+        let props_type =
+            if crate::computation::call_inference::should_preserve_contextual_application_shape(
+                self.ctx.types,
+                raw_props_type,
+            ) {
+                raw_props_type
+            } else {
+                let resolved = self.resolve_type_for_property_access(raw_props_type);
+                self.evaluate_type_with_env(resolved)
+            };
         if props_type == TypeId::ANY
             || props_type == TypeId::UNKNOWN
             || props_type == TypeId::ERROR

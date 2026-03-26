@@ -1891,18 +1891,16 @@ impl<'a> CheckerState<'a> {
                                     let decl_name_matches = other_arena
                                         .get(other_decl)
                                         .and_then(|n| {
-                                            other_arena.get_variable_declaration(n).and_then(
-                                                |vd| {
-                                                    other_arena
-                                                        .get(vd.name)
-                                                        .and_then(|name_node| {
-                                                            other_arena.get_identifier(name_node)
-                                                        })
-                                                        .map(|id| {
-                                                            other_arena.resolve_identifier_text(id)
-                                                        })
-                                                },
-                                            )
+                                            other_arena.get_variable_declaration(n).and_then(|vd| {
+                                                other_arena
+                                                    .get(vd.name)
+                                                    .and_then(|name_node| {
+                                                        other_arena.get_identifier(name_node)
+                                                    })
+                                                    .map(|id| {
+                                                        other_arena.resolve_identifier_text(id)
+                                                    })
+                                            })
                                         })
                                         .is_some_and(|n| n == name_str.as_str());
                                     if !decl_name_matches {
@@ -1939,8 +1937,7 @@ impl<'a> CheckerState<'a> {
                                         .get(other_decl)
                                         .and_then(|n| other_arena.get_variable_declaration(n))
                                         .is_some_and(|d| {
-                                            d.type_annotation.is_none()
-                                                && d.initializer.is_none()
+                                            d.type_annotation.is_none() && d.initializer.is_none()
                                         });
                                     if other_is_bare {
                                         continue;
