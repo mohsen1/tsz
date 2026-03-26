@@ -308,6 +308,49 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn resolve_shadowed_global_value_member(
+        &mut self,
+        expr_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let ident = self.ctx.arena.get_identifier_at(expr_idx)?;
+        let sym_id = self.resolve_identifier_symbol_without_tracking(expr_idx)?;
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+
+        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+        if !is_namespace || has_other_value {
+            return None;
+        }
+
+        let is_instantiated = symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
+        if is_instantiated {
+            return None;
+        }
+
+        let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+        if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+            return None;
+        }
+
+        match self.resolve_property_access_with_env(value_type, property_name) {
+            PropertyAccessResult::Success { type_id, .. }
+            | PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => None,
+        }
+    }
+
     /// Get type of property access expression.
     #[allow(dead_code)]
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
@@ -416,6 +459,25 @@ impl<'a> CheckerState<'a> {
                 &[&missing_global],
             );
             return TypeId::ERROR;
+        }
+
+        if self.ctx.checking_computed_property_name.is_some()
+            && let Some(base_ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && base_ident.escaped_text == "Symbol"
+            && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let symbol_value_type = self.type_of_value_symbol_by_name("Symbol");
+            if symbol_value_type != TypeId::UNKNOWN && symbol_value_type != TypeId::ERROR {
+                match self.resolve_property_access_with_env(symbol_value_type, &prop_ident.escaped_text)
+                {
+                    PropertyAccessResult::Success { type_id, .. }
+                    | PropertyAccessResult::PossiblyNullOrUndefined {
+                        property_type: Some(type_id),
+                        ..
+                    } => return type_id,
+                    _ => {}
+                }
+            }
         }
 
         // Check for abstract property access in constructor BEFORE evaluating types (error 2715)
@@ -1244,6 +1306,20 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if !skip_flow_narrowing
+                && !enum_instance_like_access
+                && !hidden_qualified_namespace_member
+                && let Some(member_type) =
+                    self.resolve_shadowed_global_value_member(access.expression, property_name)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
+
             // Fallback for namespace/export member accesses where type-only namespace
             // classification misses the object form but symbol resolution can still
             // identify `A.B` as a concrete exported value member.
@@ -1336,6 +1412,11 @@ impl<'a> CheckerState<'a> {
                     && self.property_access_is_direct_write_target(idx)
                 {
                     return TypeId::ANY;
+                }
+                if self.find_enclosing_computed_property(idx).is_some()
+                    && self.get_symbol_property_name_from_expr(idx).is_some()
+                {
+                    return TypeId::SYMBOL;
                 }
                 if !access.question_dot_token
                     && !property_name.starts_with('#')
