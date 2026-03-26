@@ -2109,7 +2109,7 @@ impl<'a> CheckerState<'a> {
     /// best value declaration from the list. Prefers `VariableDeclaration` nodes
     /// (corresponding to `declare var X: XConstructor`) over interface or other
     /// declaration kinds, since those carry the constructor-side type.
-    fn preferred_value_declaration(
+    pub(crate) fn preferred_value_declaration(
         &self,
         _sym_id: SymbolId,
         default_decl: NodeIndex,

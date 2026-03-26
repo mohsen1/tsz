@@ -1367,6 +1367,45 @@ impl<'a> CheckerState<'a> {
                         {
                             self.enum_object_type(member_sym_id)
                                 .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id))
+                        } else if (member_symbol.flags & symbol_flags::INTERFACE) != 0
+                            && (member_symbol.flags & symbol_flags::VALUE) != 0
+                        {
+                            // When a namespace member is both an interface and a value
+                            // (e.g., `interface NumberFormat` + `var NumberFormat: { new(): ... }`
+                            // in namespace Intl), resolve the value declaration's type so
+                            // construct signatures are available for `new NS.Member()`.
+                            // This mirrors the merged-symbol resolution in get_type_of_identifier.
+                            let value_decl = member_symbol.value_declaration;
+                            let declarations = member_symbol.declarations.clone();
+                            let preferred = self
+                                .preferred_value_declaration(
+                                    member_sym_id,
+                                    value_decl,
+                                    &declarations,
+                                )
+                                .unwrap_or(value_decl);
+                            let mut val_type =
+                                self.type_of_value_declaration_for_symbol(member_sym_id, preferred);
+                            if val_type == TypeId::UNKNOWN || val_type == TypeId::ERROR {
+                                for &decl_idx in &declarations {
+                                    if decl_idx == preferred {
+                                        continue;
+                                    }
+                                    let candidate = self.type_of_value_declaration_for_symbol(
+                                        member_sym_id,
+                                        decl_idx,
+                                    );
+                                    if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
+                                        val_type = candidate;
+                                        break;
+                                    }
+                                }
+                            }
+                            if val_type != TypeId::UNKNOWN && val_type != TypeId::ERROR {
+                                val_type
+                            } else {
+                                self.get_type_of_symbol(member_sym_id)
+                            }
                         } else {
                             // For merged interface+variable symbols (e.g.,
                             // `interface Foo` + `var Foo: FooConstructor`), prefer the
