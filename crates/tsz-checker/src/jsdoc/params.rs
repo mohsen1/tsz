@@ -351,6 +351,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if func_node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION {
+            return None;
+        }
+
         // Walk up parent chain (for const f = ...)
         let mut current = func_idx;
         for _ in 0..4 {
@@ -469,6 +473,10 @@ impl<'a> CheckerState<'a> {
             && is_jsdoc_comment(comment, source_text)
         {
             return Some(get_jsdoc_content(comment, source_text));
+        }
+
+        if func_node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION {
+            return self.try_leading_jsdoc(comments, func_node.pos, source_text);
         }
 
         // Try leading comments, then walk up the parent chain for
