@@ -260,8 +260,10 @@ impl<'a> CheckerContext<'a> {
 
     /// Check if allowSyntheticDefaultImports is enabled.
     /// When enabled, allows `import x from 'y'` when module doesn't have default export.
-    /// This is implied by esModuleInterop.
+    /// This is implied by esModuleInterop (tsc treats esModuleInterop as enabling
+    /// allowSyntheticDefaultImports automatically).
     pub const fn allow_synthetic_default_imports(&self) -> bool {
         self.compiler_options.allow_synthetic_default_imports
+            || self.compiler_options.es_module_interop
     }
 }
