@@ -147,20 +147,18 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::query_boundaries::common as freshness_query;
 
+        // Ensure the target type is fully resolved before excess property
+        // checking. Interface types are represented as Lazy(DefId) and need
+        // their structural body materialized in the type environment for
+        // object_shape queries to succeed.
+        self.ensure_relation_input_ready(target);
+
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter_like(self.ctx.types, target) {
             return;
         }
 
         // Only check excess properties for FRESH object literals
-        // This is the key TypeScript behavior:
-        // - const p: Point = {x: 1, y: 2, z: 3}  // ERROR: 'z' is excess (fresh)
-        // - const obj = {x: 1, y: 2, z: 3}; p = obj;  // OK: obj loses freshness
-        // - const p: Point = { ...source, z: 3 }  // ERROR: only explicit property `z` is checked
-        //
-        // IMPORTANT: Freshness is tracked on the TypeId itself.
-        // This fixes the "Zombie Freshness" bug by keeping fresh vs non-fresh
-        // object types distinct at the interner level.
         let is_fresh_source = freshness_query::is_fresh_object_type(self.ctx.types, source);
         let explicit_property_names = if is_fresh_source {
             None
@@ -621,7 +619,7 @@ impl<'a> CheckerState<'a> {
                                             type_id,
                                             from_index_signature: false,
                                             ..
-                                        } => Some(type_id),
+                                        } if type_id != TypeId::ANY && type_id != TypeId::ERROR => Some(type_id),
                                         _ => None,
                                     }
                                 })

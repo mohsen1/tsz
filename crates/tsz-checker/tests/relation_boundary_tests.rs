@@ -54,6 +54,45 @@ const p: Point = obj
 }
 
 #[test]
+fn fresh_object_literal_excess_property_interface_target_ts2353() {
+    // Same as the type alias test, but with an interface target.
+    // Interfaces are represented as Lazy(DefId) and must be resolved for EPC.
+    let diags = check_source_diagnostics(
+        r#"
+interface Point { x: number; y: number }
+const p: Point = { x: 1, y: 2, z: 3 }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2353),
+        "Expected TS2353 for excess property 'z' on interface target, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn satisfies_excess_property_ts2353() {
+    // The `satisfies` operator should trigger EPC for excess properties.
+    let diags = check_source_diagnostics(
+        r#"
+interface Theme { primary: string; secondary: string }
+const theme = { primary: "red", secondary: "blue", tertiary: "green" } satisfies Theme;
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2353),
+        "Expected TS2353 for excess property 'tertiary' via satisfies, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn excess_property_suppressed_for_index_signature_target() {
     // Index signatures accept arbitrary string-keyed properties.
     let diags = check_source_diagnostics(
