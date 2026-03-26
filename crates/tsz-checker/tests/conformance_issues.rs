@@ -191,6 +191,22 @@ const instanceBad: number = (new Holder())["x"];
 }
 
 #[test]
+fn test_recursive_type_parameter_constraint_missing_args_reports_generic_name_with_params() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface A<T extends A> {}
+"#,
+    );
+
+    let message = diagnostic_message(&diagnostics, 2314)
+        .expect("Expected TS2314 for recursive type parameter constraint");
+    assert!(
+        message.contains("Generic type 'A<T>' requires 1 type argument(s)."),
+        "Expected TS2314 message to include generic parameter list, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unresolved_computed_static_methods_produce_union_lookup_types() {
     let source = r#"
 declare const f1: string;

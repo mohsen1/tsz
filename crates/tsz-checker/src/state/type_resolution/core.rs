@@ -196,7 +196,7 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.entity_name_text(type_name_idx))
                         .unwrap_or_else(|| "<unknown>".to_string());
                     // tsc displays type name with param names: Foo<T, U>
-                    let type_params = self.get_type_params_for_symbol(sym_id);
+                    let type_params = self.get_display_type_params_for_symbol(sym_id);
                     let display_name = Self::format_generic_display_name_with_interner(
                         &name,
                         &type_params,
