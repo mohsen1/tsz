@@ -481,6 +481,34 @@ let result: number = apply(() => 42);
     );
 }
 
+#[test]
+fn overloaded_generic_call_contextually_types_inline_callback_after_inference() {
+    let source = r#"
+interface Collection<T> {
+    length: number;
+    add(x: T): void;
+    remove(x: T): boolean;
+}
+interface Combinators {
+    map<T, U>(c: Collection<T>, f: (x: T) => U): Collection<U>;
+    map<T>(c: Collection<T>, f: (x: T) => any): Collection<any>;
+}
+
+declare var _: Combinators;
+declare var c2: Collection<number>;
+
+var rf1 = (x: number) => { return x.toFixed() };
+var r1a = _.map(c2, (x) => { return x.toFixed() });
+var r1b = _.map(c2, rf1);
+var r5a = _.map<number, string>(c2, (x) => { return x.toFixed() });
+var r5b = _.map<number, string>(c2, rf1);
+"#;
+    assert!(
+        no_errors(source),
+        "Overloaded generic call should infer from the collection argument before contextually typing the inline callback"
+    );
+}
+
 // ============================================================================
 // Spread arguments
 // ============================================================================
