@@ -989,6 +989,26 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Only apply this check to names that belong to the currently tracked
+        // computed property expression. Recursive type instantiation of the same
+        // class can resolve other nodes while this flag is set (e.g. `x: T` inside
+        // the class body) and should not trigger TS2467.
+        let mut current = Some(type_name_idx);
+        let mut is_within_computed_name = false;
+        while let Some(idx) = current {
+            if idx == name_idx {
+                is_within_computed_name = true;
+                break;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                break;
+            };
+            current = Some(ext.parent);
+        }
+        if !is_within_computed_name {
+            return;
+        }
+
         let mut enclosing_decl = None;
         let mut current = Some(name_idx);
         while let Some(idx) = current {
