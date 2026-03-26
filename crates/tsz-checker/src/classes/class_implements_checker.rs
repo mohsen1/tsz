@@ -1308,6 +1308,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        self.check_jsdoc_extends_tag_type_arguments(class_idx);
+        self.check_missing_jsdoc_extends_type_arguments(class_idx, class_data);
+
         // Get the actual extends clause base class name
         let actual_extends_name = self.get_extends_clause_name(class_data);
         let Some(actual_name) = actual_extends_name else {
@@ -1419,6 +1422,383 @@ impl<'a> CheckerState<'a> {
                 return; // Only check first @extends/@augments tag
             }
         }
+    }
+
+    fn check_jsdoc_extends_tag_type_arguments(&mut self, class_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some((_tag, type_expr, type_pos)) =
+            self.attached_jsdoc_extends_or_augments_tag(class_idx)
+        else {
+            return;
+        };
+
+        let type_expr = type_expr.trim();
+        if type_expr.is_empty() {
+            return;
+        }
+
+        let (base_name, arg_count) = if let Some(angle_idx) = type_expr.find('<') {
+            if !type_expr.ends_with('>') {
+                return;
+            }
+            let base_name = type_expr[..angle_idx].trim();
+            if base_name.is_empty() {
+                return;
+            }
+            let arg_count =
+                Self::split_jsdoc_type_arguments(&type_expr[angle_idx + 1..type_expr.len() - 1])
+                    .len();
+            (base_name.to_string(), arg_count)
+        } else {
+            (type_expr.to_string(), 0)
+        };
+
+        let type_params = self.type_params_for_jsdoc_extends_name(&base_name);
+        if type_params.is_empty() {
+            return;
+        }
+
+        let max_expected = type_params.len();
+        let min_required = type_params
+            .iter()
+            .filter(|param| param.default.is_none())
+            .count();
+        if arg_count >= min_required && arg_count <= max_expected {
+            return;
+        }
+
+        let display_name =
+            Self::format_generic_display_name_with_interner(&base_name, &type_params, self.ctx.types);
+        let (message, code) = if min_required < max_expected {
+            (
+                format_message(
+                    diagnostic_messages::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                    &[
+                        &display_name,
+                        &min_required.to_string(),
+                        &max_expected.to_string(),
+                    ],
+                ),
+                diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+            )
+        } else {
+            (
+                format_message(
+                    diagnostic_messages::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                    &[&display_name, &max_expected.to_string()],
+                ),
+                diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+            )
+        };
+
+        self.ctx
+            .error(type_pos, base_name.len() as u32, message, code);
+    }
+
+    fn check_missing_jsdoc_extends_type_arguments(
+        &mut self,
+        class_idx: NodeIndex,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some((_type_idx, expr_idx, has_type_args)) =
+            self.first_extends_clause_expression_info(class_data)
+        else {
+            return;
+        };
+        if has_type_args {
+            return;
+        }
+        if self
+            .attached_jsdoc_extends_or_augments_tag(class_idx)
+            .is_some()
+        {
+            return;
+        }
+
+        let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) else {
+            return;
+        };
+
+        let type_params = self.type_params_for_heritage_symbol(heritage_sym);
+        if type_params.is_empty() {
+            return;
+        }
+
+        let max_expected = type_params.len();
+        let min_required = type_params
+            .iter()
+            .filter(|param| param.default.is_none())
+            .count();
+        if min_required == 0 {
+            return;
+        }
+
+        let name = self
+            .heritage_name_text(expr_idx)
+            .unwrap_or_else(|| "<expression>".to_string());
+        let (message, code) = if min_required < max_expected {
+            (
+                format_message(
+                    diagnostic_messages::EXPECTED_TYPE_ARGUMENTS_PROVIDE_THESE_WITH_AN_EXTENDS_TAG_2,
+                    &[&min_required.to_string(), &max_expected.to_string()],
+                ),
+                diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_PROVIDE_THESE_WITH_AN_EXTENDS_TAG_2,
+            )
+        } else {
+            let display_name =
+                Self::format_generic_display_name_with_interner(&name, &type_params, self.ctx.types);
+            (
+                format_message(
+                    diagnostic_messages::EXPECTED_TYPE_ARGUMENTS_PROVIDE_THESE_WITH_AN_EXTENDS_TAG,
+                    &[&display_name],
+                ),
+                diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_PROVIDE_THESE_WITH_AN_EXTENDS_TAG,
+            )
+        };
+
+        self.error_at_node(expr_idx, &message, code);
+    }
+
+    fn attached_jsdoc_extends_or_augments_tag(
+        &self,
+        class_idx: NodeIndex,
+    ) -> Option<(&'static str, String, u32)> {
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = self.ctx.arena.get(class_idx)?;
+
+        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
+        let leading = get_leading_comments_from_cache(comments, node.pos, source_text);
+        let comment = leading.last()?;
+        if !is_jsdoc_comment(comment, source_text) {
+            return None;
+        }
+
+        let comment_text = comment.get_text(source_text);
+        for tag in ["augments", "extends"] {
+            let needle = format!("@{tag}");
+            for (match_pos, _) in comment_text.match_indices(&needle) {
+                let after = match_pos + needle.len();
+                if after >= comment_text.len() {
+                    continue;
+                }
+                let next_ch = comment_text[after..]
+                    .chars()
+                    .next()
+                    .expect("after < len checked above");
+                if next_ch.is_ascii_alphanumeric() {
+                    continue;
+                }
+                let rest = comment_text[after..].trim_start();
+                if rest.is_empty() {
+                    continue;
+                }
+
+                let rest_offset = rest.as_ptr() as usize - comment_text.as_ptr() as usize;
+                if rest.starts_with('{') {
+                    let close = rest.find('}')?;
+                    let raw = &rest[1..close];
+                    let type_expr = raw.trim();
+                    if type_expr.is_empty() {
+                        continue;
+                    }
+                    let start_in_raw = raw.find(type_expr).unwrap_or(0);
+                    let type_offset = rest_offset + 1 + start_in_raw;
+                    return Some((tag, type_expr.to_string(), comment.pos + type_offset as u32));
+                }
+
+                let mut end = rest.len();
+                let mut angle_depth = 0usize;
+                let mut paren_depth = 0usize;
+                let mut bracket_depth = 0usize;
+                let mut brace_depth = 0usize;
+                for (idx, ch) in rest.char_indices() {
+                    match ch {
+                        '<' => angle_depth += 1,
+                        '>' => angle_depth = angle_depth.saturating_sub(1),
+                        '(' => paren_depth += 1,
+                        ')' => paren_depth = paren_depth.saturating_sub(1),
+                        '[' => bracket_depth += 1,
+                        ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                        '{' => brace_depth += 1,
+                        '}' => brace_depth = brace_depth.saturating_sub(1),
+                        '*'
+                            if angle_depth == 0
+                                && paren_depth == 0
+                                && bracket_depth == 0
+                                && brace_depth == 0 =>
+                        {
+                            end = idx;
+                            break;
+                        }
+                        c if c.is_whitespace()
+                            && angle_depth == 0
+                            && paren_depth == 0
+                            && bracket_depth == 0
+                            && brace_depth == 0 =>
+                        {
+                            end = idx;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let raw = &rest[..end];
+                let type_expr = raw.trim();
+                if type_expr.is_empty() {
+                    continue;
+                }
+                let start_in_raw = raw.find(type_expr).unwrap_or(0);
+                let type_offset = rest_offset + start_in_raw;
+                return Some((tag, type_expr.to_string(), comment.pos + type_offset as u32));
+            }
+        }
+
+        None
+    }
+
+    fn type_params_for_jsdoc_extends_name(
+        &mut self,
+        base_name: &str,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        use tsz_binder::symbol_flags;
+
+        if let Some((_, type_params)) = self.resolve_global_jsdoc_typedef_info(base_name) {
+            return type_params;
+        }
+
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .file_locals
+            .get(base_name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbols()
+                    .find_all_by_name(base_name)
+                    .iter()
+                    .copied()
+                    .find(|&candidate| {
+                        let mut visited_aliases = Vec::new();
+                        let resolved =
+                            self.resolve_alias_symbol(candidate, &mut visited_aliases).unwrap_or(candidate);
+                        self.ctx.binder.get_symbol(resolved).is_some_and(|symbol| {
+                            (symbol.flags
+                                & (symbol_flags::TYPE_ALIAS
+                                    | symbol_flags::CLASS
+                                    | symbol_flags::INTERFACE
+                                    | symbol_flags::ENUM))
+                                != 0
+                        })
+                    })
+            })
+        else {
+            return Vec::new();
+        };
+
+        self.type_params_for_heritage_symbol(sym_id)
+    }
+
+    fn type_params_for_heritage_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let mut type_params = self.get_type_params_for_symbol(sym_id);
+        if type_params.is_empty() {
+            let mut visited_aliases = Vec::new();
+            if let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                type_params = self.get_type_params_for_symbol(resolved);
+            }
+        }
+        type_params
+    }
+
+    fn split_jsdoc_type_arguments(type_args: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let mut angle_depth = 0usize;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+
+        for (idx, ch) in type_args.char_indices() {
+            match ch {
+                '<' => angle_depth += 1,
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                ','
+                    if angle_depth == 0
+                        && paren_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0 =>
+                {
+                    let part = type_args[start..idx].trim();
+                    if !part.is_empty() {
+                        parts.push(part);
+                    }
+                    start = idx + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+
+        let tail = type_args[start..].trim();
+        if !tail.is_empty() {
+            parts.push(tail);
+        }
+
+        parts
+    }
+
+    fn first_extends_clause_expression_info(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Option<(NodeIndex, NodeIndex, bool)> {
+        use tsz_scanner::SyntaxKind;
+
+        let heritage = class_data.heritage_clauses.as_ref()?;
+        for &clause_idx in &heritage.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            if clause_node.kind != syntax_kind_ext::HERITAGE_CLAUSE {
+                continue;
+            }
+            let clause = self.ctx.arena.get_heritage_clause(clause_node)?;
+            if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            let type_idx = *clause.types.nodes.first()?;
+            let type_node = self.ctx.arena.get(type_idx)?;
+            if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                && let Some(ewta) = self.ctx.arena.get_expr_type_args(type_node)
+            {
+                let has_type_args = ewta
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|args| !args.nodes.is_empty());
+                return Some((type_idx, ewta.expression, has_type_args));
+            }
+
+            let has_type_args = self
+                .ctx
+                .arena
+                .get_call_expr(type_node)
+                .and_then(|call| call.type_arguments.as_ref())
+                .is_some_and(|args| !args.nodes.is_empty());
+            return Some((type_idx, type_idx, has_type_args));
+        }
+
+        None
     }
 
     /// Get the base class name from the `extends` clause of a class declaration.
