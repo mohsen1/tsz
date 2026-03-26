@@ -158,16 +158,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
             || crate::visitor::collect_all_types(self.interner(), mapped.template)
                 .into_iter()
                 .filter_map(|candidate| match self.interner().lookup(candidate) {
-                    Some(TypeData::IndexAccess(source, idx)) => {
-                        match self.interner().lookup(idx) {
-                            Some(TypeData::TypeParameter(info))
-                                if info.name == mapped.type_param.name =>
-                            {
-                                Some(source)
-                            }
-                            _ => None,
+                    Some(TypeData::IndexAccess(source, idx)) => match self.interner().lookup(idx) {
+                        Some(TypeData::TypeParameter(info))
+                            if info.name == mapped.type_param.name =>
+                        {
+                            Some(source)
                         }
-                    }
+                        _ => None,
+                    },
                     _ => None,
                 })
                 .any(|source| self.is_array_like_type(source));

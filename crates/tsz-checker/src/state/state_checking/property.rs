@@ -1361,29 +1361,34 @@ impl<'a> CheckerState<'a> {
                 if property_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                     let computed = self.ctx.arena.get_computed_property(property_name_node)?;
                     let key_type = self.get_type_of_node(computed.expression);
-                    let (string_keys, number_keys) = self.get_literal_key_union_from_type(key_type)?;
+                    let (string_keys, number_keys) =
+                        self.get_literal_key_union_from_type(key_type)?;
                     if string_keys.is_empty() && number_keys.is_empty() {
                         return None;
                     }
 
                     let mut names = Vec::with_capacity(string_keys.len() + number_keys.len());
                     names.extend(string_keys);
-                    names.extend(
-                        number_keys
-                            .into_iter()
-                            .map(|num| {
-                                self.ctx.types.intern_string(
-                                    &tsz_solver::utils::canonicalize_numeric_name(&num.to_string())
-                                        .unwrap_or_else(|| num.to_string()),
-                                )
-                            }),
-                    );
+                    names.extend(number_keys.into_iter().map(|num| {
+                        self.ctx.types.intern_string(
+                            &tsz_solver::utils::canonicalize_numeric_name(&num.to_string())
+                                .unwrap_or_else(|| num.to_string()),
+                        )
+                    }));
                     names
                 } else {
-                    vec![self.ctx.types.intern_string(&self.get_property_name(element.property_name)?)]
+                    vec![
+                        self.ctx
+                            .types
+                            .intern_string(&self.get_property_name(element.property_name)?),
+                    ]
                 }
             } else {
-                vec![self.ctx.types.intern_string(&self.get_identifier_text_from_idx(element.name)?)]
+                vec![
+                    self.ctx
+                        .types
+                        .intern_string(&self.get_identifier_text_from_idx(element.name)?),
+                ]
             };
 
             prop_names.extend(property_names);

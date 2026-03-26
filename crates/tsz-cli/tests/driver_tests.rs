@@ -710,7 +710,11 @@ fn compile_shadowing_namespace_symbol_keeps_global_symbol_value_access() {
 
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2708: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2708).collect();
+    let ts2708: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2708)
+        .collect();
     assert!(
         ts2708.is_empty(),
         "Expected shadowing namespace to keep global Symbol value access, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",

@@ -1554,10 +1554,7 @@ impl<'a> CheckerState<'a> {
         raw_name: &str,
         type_str: &str,
     ) -> Option<IndexSignature> {
-        let inner = raw_name
-            .strip_prefix('[')?
-            .strip_suffix(']')?
-            .trim();
+        let inner = raw_name.strip_prefix('[')?.strip_suffix(']')?.trim();
         let colon_idx = Self::find_top_level_char(inner, ':')?;
         let param_name = inner[..colon_idx].trim();
         let key_type = self.resolve_jsdoc_type_str(inner[colon_idx + 1..].trim())?;

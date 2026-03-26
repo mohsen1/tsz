@@ -717,7 +717,8 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get_function(node)
-                    .and_then(|func| func.type_parameters.as_ref()).is_none_or(|params| params.nodes.is_empty())
+                    .and_then(|func| func.type_parameters.as_ref())
+                    .is_none_or(|params| params.nodes.is_empty())
                 {
                     return false;
                 }
