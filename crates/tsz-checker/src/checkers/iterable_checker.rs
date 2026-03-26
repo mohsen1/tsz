@@ -399,7 +399,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let next_return = self.get_call_return_type(next_fn_type);
-        tsz_solver::type_queries::is_promise_like(self.ctx.types, next_return)
+        crate::query_boundaries::flow_analysis::is_promise_like_type(self.ctx.types, next_return)
             && self
                 .promise_like_return_type_argument(next_return)
                 .is_none()
