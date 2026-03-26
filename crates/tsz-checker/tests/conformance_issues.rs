@@ -10671,6 +10671,78 @@ const o2 = {
 }
 
 #[test]
+fn test_array_buffer_view_default_type_argument_does_not_emit_ts2314() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+var obj: Object;
+if (ArrayBuffer.isView(obj)) {
+    var ab: ArrayBufferView = obj;
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2314),
+        "Expected bare ArrayBufferView to use its default type argument without TS2314. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_array_from_iterable_and_array_like_overloads_do_not_emit_ts2314() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+interface A {
+  a: string;
+}
+
+interface B {
+  b: string;
+}
+
+const inputA: A[] = [];
+const inputALike: ArrayLike<A> = { length: 0 };
+const inputARand = getEither(inputA, inputALike);
+const inputASet = new Set<A>();
+
+const result1: A[] = Array.from(inputA);
+const result2: A[] = Array.from(inputA.values());
+const result4: A[] = Array.from([{ b: "x" } as B], ({ b }): A => ({ a: b }));
+const result5: A[] = Array.from(inputALike);
+const result7: B[] = Array.from(inputALike, ({ a }): B => ({ b: a }));
+const result8: A[] = Array.from(inputARand);
+const result9: B[] = Array.from(inputARand, ({ a }): B => ({ b: a }));
+const result10: A[] = Array.from(inputASet);
+const result11: B[] = Array.from(inputASet, ({ a }): B => ({ b: a }));
+
+function getEither<T>(in1: Iterable<T>, in2: ArrayLike<T>) {
+  return Math.random() > 0.5 ? in1 : in2;
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2314),
+        "Expected Array.from overloads with defaulted lib generics to avoid TS2314. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_umd_global_conflict_prefers_first_namespace_export_surface() {
     let files = [
         (
