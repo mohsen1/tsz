@@ -670,7 +670,8 @@ impl<'a> CheckerState<'a> {
                     current_param_body.push_str(&segment[content_start + tag_len..]);
                 } else if current_param_offset.is_some() && content.starts_with('@') {
                     if let Some(param_offset) = current_param_offset.take() {
-                        if let Some(invalid_offset) = find_invalid_param_name_offset(&current_param_body)
+                        if let Some(invalid_offset) =
+                            find_invalid_param_name_offset(&current_param_body)
                         {
                             self.ctx.error(
                                 (comment.pos as usize + param_offset + invalid_offset) as u32,
