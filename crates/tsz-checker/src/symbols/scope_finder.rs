@@ -1827,6 +1827,37 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns `true` when the identifier is part of an import-equals
+    /// declaration's entity name (e.g., `M` in `import r = M.X;`).
+    /// In this context, namespace references are not value usages and
+    /// should not trigger TS2708.
+    pub(crate) fn is_in_import_equals_entity_name(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..10 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                return true;
+            }
+            // Keep walking through qualified names
+            if parent_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                current = parent_idx;
+                continue;
+            }
+            // Any other node kind means we're not in an import-equals entity name
+            return false;
+        }
+        false
+    }
+
     /// Returns `true` when the identifier is being evaluated inside a computed
     /// property name (`[expr]`) that belongs to a type-only or ambient context
     /// (interface member, type literal member, abstract member, `declare`

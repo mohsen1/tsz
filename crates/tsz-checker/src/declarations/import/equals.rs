@@ -903,7 +903,11 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if left_is_namespace {
-                    if !left_has_value && emits_export_import_ts2708 {
+                    // TS2708: Also require that the qualified member cannot be
+                    // resolved. When the member IS found (e.g., exported interface),
+                    // the import just creates a type alias — no TS2708.
+                    let member_resolves = self.resolve_qualified_symbol(module_ref).is_some();
+                    if !left_has_value && emits_export_import_ts2708 && !member_resolves {
                         self.error_namespace_used_as_value_at(&name, qn.left);
                     }
                     // If left is resolved, check if right member exists (TS2694)
