@@ -1655,6 +1655,14 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
+                    if self.is_js_expando_object_assignment(
+                        idx,
+                        access.expression,
+                        object_type_for_access,
+                        property_name,
+                    ) {
+                        return TypeId::ANY;
+                    }
 
                     // JavaScript files allow dynamic property assignment on 'this' without errors.
                     // In JS files, accessing a property on 'this' that doesn't exist should not error

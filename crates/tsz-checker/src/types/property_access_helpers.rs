@@ -227,6 +227,42 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(super) fn is_js_expando_object_assignment(
+        &self,
+        property_access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> bool {
+        if !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || !tsz_solver::visitor::is_object_like_type(self.ctx.types, object_type)
+        {
+            return false;
+        }
+
+        let parent_idx = match self.ctx.arena.get_extended(property_access_idx) {
+            Some(ext) if ext.parent.is_some() => ext.parent,
+            _ => return false,
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || binary.left != property_access_idx
+        {
+            return false;
+        }
+
+        self.is_expando_property_read(object_expr_idx, property_name)
+            || self
+                .current_file_commonjs_export_member_name(property_access_idx)
+                .is_some()
+    }
+
     /// Check if a property access reads an expando property assigned via `X.prop = value`.
     ///
     /// Checks the current file's binder first, then all other binders in multi-file
