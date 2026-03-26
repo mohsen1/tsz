@@ -269,6 +269,13 @@ impl JsExportSurface {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn commonjs_direct_export_supports_named_exports(
+        &self,
+        direct_export_type: TypeId,
+    ) -> bool {
+        commonjs_direct_export_supports_named_props(self.ctx.types, direct_export_type)
+    }
+
     fn last_direct_module_export_assignment_for_file(
         &self,
         target_file_idx: usize,
