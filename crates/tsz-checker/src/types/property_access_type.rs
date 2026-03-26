@@ -1630,26 +1630,11 @@ impl<'a> CheckerState<'a> {
                             property_name,
                         )
                     {
-                        if let Some(constraint) =
-                            crate::query_boundaries::property_access::type_parameter_constraint(
-                                self.ctx.types,
-                                object_type_for_access,
-                            )
-                        {
-                            let type_display =
-                                self.format_type_for_assignability_message(constraint);
-                            self.error_property_not_exist_with_apparent_type(
-                                property_name,
-                                &type_display,
-                                access.name_or_argument,
-                            );
-                        } else {
-                            self.error_property_not_exist_at(
-                                property_name,
-                                object_type_for_access,
-                                access.name_or_argument,
-                            );
-                        }
+                        self.error_property_not_exist_at(
+                            property_name,
+                            object_type_for_access,
+                            access.name_or_argument,
+                        );
                         return TypeId::ERROR;
                     }
 
