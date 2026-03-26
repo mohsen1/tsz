@@ -501,9 +501,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Fast path for enum member value access (`E.Member`).
+        // Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
         // This avoids the general property-access pipeline (accessibility checks,
         // type environment classification, etc.) for a very common hot path.
+        // For namespaces, this is also critical for correctness: when a namespace
+        // exports both an interface and a var with the same name (e.g., `Intl.DateTimeFormat`),
+        // the general property-access pipeline may resolve to the interface type instead
+        // of the var type, causing false TS2351 "not constructable" errors.
         if let Some(name_ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &name_ident.escaped_text;
             let is_identifier_base = self
@@ -517,13 +521,23 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .resolve_identifier(self.ctx.arena, access.expression)
                 && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
-                && base_symbol.flags & symbol_flags::ENUM != 0
+                && base_symbol.flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) != 0
                 && let Some(exports) = base_symbol.exports.as_ref()
                 && let Some(member_sym_id) = exports.get(property_name)
+                // For namespace members, only use the fast path when the export has
+                // value semantics (VARIABLE, CLASS, FUNCTION, etc.) or is an alias
+                // (export import). Type-only exports (interfaces, type aliases) must go
+                // through the general property-access path so that TS2708/TS2693
+                // diagnostics are properly emitted.
+                && self.ctx.binder.get_symbol(member_sym_id)
+                    .map_or(false, |s| s.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) != 0)
             {
+                let is_enum = base_symbol.flags & symbol_flags::ENUM != 0;
+
                 // TS1361/TS1362: Check if the base identifier is a type-only import.
-                // resolve_identifier follows aliases, so base_sym_id is the target enum,
+                // resolve_identifier follows aliases, so base_sym_id is the target,
                 // not the local import binding. Check the local symbol in file_locals.
+                // Applies to both enum and namespace member access.
                 if let Some(local_sym_id) = self.resolve_identifier_symbol(access.expression)
                     && self.alias_resolves_to_type_only(local_sym_id)
                 {
@@ -538,96 +552,105 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::ERROR;
                 }
-                // TS2450: Check if enum is used before its declaration (TDZ violation).
-                // Only non-const enums are flagged (const enums are always hoisted).
-                if let Some(base_node) = self.ctx.arena.get(access.expression)
-                    && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
-                {
-                    let base_name = &base_ident.escaped_text;
-                    if self.check_tdz_violation(base_sym_id, access.expression, base_name, true) {
-                        return TypeId::ERROR;
+
+                if is_enum {
+                    // TS2450: Check if enum is used before its declaration (TDZ violation).
+                    // Only non-const enums are flagged (const enums are always hoisted).
+                    if let Some(base_node) = self.ctx.arena.get(access.expression)
+                        && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+                    {
+                        let base_name = &base_ident.escaped_text;
+                        if self.check_tdz_violation(base_sym_id, access.expression, base_name, true)
+                        {
+                            return TypeId::ERROR;
+                        }
+                    }
+
+                    // TS2748: Cannot access ambient const enums when isolatedModules is enabled.
+                    if self.ctx.isolated_modules()
+                        && base_symbol.flags & symbol_flags::CONST_ENUM != 0
+                        && self.is_const_enum_ambient(base_symbol)
+                        && !self.is_in_type_only_position(idx)
+                    {
+                        let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
+                            "verbatimModuleSyntax"
+                        } else {
+                            "isolatedModules"
+                        };
+                        let msg = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                            &[option_name],
+                        );
+                        self.error_at_node(
+                            idx,
+                            &msg,
+                            crate::diagnostics::diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                        );
                     }
                 }
 
-                // TS2748: Cannot access ambient const enums when isolatedModules is enabled.
-                // Under isolatedModules (or verbatimModuleSyntax which implies it),
-                // ambient const enum values cannot be inlined because each file is
-                // transpiled independently without cross-file information.
-                // "Ambient" means declared with `declare` keyword or in a .d.ts file —
-                // such enums have no runtime representation and cannot be inlined.
-                // Skip type-only positions (e.g., computed property names in type
-                // literals) where values are resolved at compile time.
-                if self.ctx.isolated_modules()
-                    && base_symbol.flags & symbol_flags::CONST_ENUM != 0
-                    && self.is_const_enum_ambient(base_symbol)
-                    && !self.is_in_type_only_position(idx)
+                // TS2729 for namespace member access in static property initializers:
+                // `namespace Ns { export let A = 0 }` compiles to `var` (hoisted),
+                // but the IIFE that populates members runs at declaration position.
+                // Accessing `Ns.A` before the namespace body executes is a forward
+                // reference and tsc emits TS2729 at the property name site.
+                if base_symbol.flags & symbol_flags::VALUE_MODULE != 0
+                    && self.is_in_static_property_initializer_ast_context(access.expression)
+                    && self
+                        .find_enclosing_computed_property(access.expression)
+                        .is_none()
                 {
-                    let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
-                        "verbatimModuleSyntax"
+                    // Check if the namespace declaration is after the usage
+                    let decl_idx = if base_symbol.value_declaration.is_some() {
+                        base_symbol.value_declaration
+                    } else if let Some(&first_decl) = base_symbol.declarations.first() {
+                        first_decl
                     } else {
-                        "isolatedModules"
+                        NodeIndex::NONE
                     };
-                    let msg = crate::diagnostics::format_message(
-                        crate::diagnostics::diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                        &[option_name],
-                    );
-                    self.error_at_node(
-                        idx,
-                        &msg,
-                        crate::diagnostics::diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                    );
+                    if decl_idx.is_some()
+                        && let Some(usage_node) = self.ctx.arena.get(access.expression)
+                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && usage_node.pos < decl_node.pos
+                    {
+                        self.error_at_node(
+                            access.name_or_argument,
+                            &format!(
+                                "Property '{}' is used before its initialization.",
+                                name_ident.escaped_text
+                            ),
+                            tsz_common::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                        );
+                    }
                 }
 
                 // Enum members and namespace exports both resolve to the selected member symbol type.
                 // Namespace exports may represent functions, variables, etc., each with its own symbol type.
-                let member_type = self.get_type_of_symbol(member_sym_id);
+                //
+                // For merged symbols (e.g., `interface Foo` + `var Foo: FooConstructor` in a
+                // namespace), `get_type_of_symbol` returns the interface type. In value position
+                // (property access on namespace), we need the variable's type instead — otherwise
+                // `new Ns.Foo()` would fail with TS2351 because the interface has no construct
+                // signatures. Use the value declaration path for merged interface+variable symbols.
+                let member_sym = self.ctx.binder.get_symbol(member_sym_id);
+                let member_type = if let Some(member_sym) = member_sym
+                    && member_sym.flags & symbol_flags::INTERFACE != 0
+                    && member_sym.flags & symbol_flags::VARIABLE != 0
+                    && member_sym.value_declaration.is_some()
+                {
+                    self.type_of_value_declaration_for_symbol(
+                        member_sym_id,
+                        member_sym.value_declaration,
+                    )
+                } else {
+                    self.get_type_of_symbol(member_sym_id)
+                };
                 return self.finalize_property_access_result(
                     idx,
                     member_type,
                     skip_flow_narrowing,
                     false,
                 );
-            }
-
-            // TS2729 for namespace member access in static property initializers:
-            // `namespace Ns { export let A = 0 }` compiles to `var` (hoisted),
-            // but the IIFE that populates members runs at declaration position.
-            // Accessing `Ns.A` before the namespace body executes is a forward
-            // reference and tsc emits TS2729 at the property name site.
-            if is_identifier_base
-                && let Some(base_sym_id) = self
-                    .ctx
-                    .binder
-                    .resolve_identifier(self.ctx.arena, access.expression)
-                && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
-                && base_symbol.flags & symbol_flags::VALUE_MODULE != 0
-                && self.is_in_static_property_initializer_ast_context(access.expression)
-                && self
-                    .find_enclosing_computed_property(access.expression)
-                    .is_none()
-            {
-                // Check if the namespace declaration is after the usage
-                let decl_idx = if base_symbol.value_declaration.is_some() {
-                    base_symbol.value_declaration
-                } else if let Some(&first_decl) = base_symbol.declarations.first() {
-                    first_decl
-                } else {
-                    NodeIndex::NONE
-                };
-                if decl_idx.is_some()
-                    && let Some(usage_node) = self.ctx.arena.get(access.expression)
-                    && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                    && usage_node.pos < decl_node.pos
-                {
-                    self.error_at_node(
-                        access.name_or_argument,
-                        &format!(
-                            "Property '{}' is used before its initialization.",
-                            name_ident.escaped_text
-                        ),
-                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
-                    );
-                }
             }
         }
 
