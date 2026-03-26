@@ -75,9 +75,25 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if let Some(source_file) = self.ctx.arena.source_files.first() {
-            let comments = source_file.comments.clone();
-            let source_text = source_file.text.to_string();
+        let current_file_name = self.ctx.file_name.clone();
+        let mut current_arena_sources: Vec<_> = self
+            .ctx
+            .arena
+            .source_files
+            .iter()
+            .map(|source_file| {
+                (
+                    source_file.file_name.clone(),
+                    source_file.comments.clone(),
+                    source_file.text.to_string(),
+                )
+            })
+            .collect();
+        current_arena_sources.sort_by_key(|(file_name, _, _)| {
+            if *file_name == current_file_name { 0usize } else { 1usize }
+        });
+
+        for (_file_name, comments, source_text) in current_arena_sources {
             if let Some(info) = self.resolve_jsdoc_typedef_info(name, &comments, &source_text) {
                 return Some(info);
             }
@@ -91,28 +107,28 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(source_file) = arena.source_files.first() else {
-                continue;
-            };
+            for source_file in &arena.source_files {
+                let comments = source_file.comments.clone();
+                let source_text = source_file.text.to_string();
+                let mut checker = Box::new(CheckerState::with_parent_cache(
+                    arena.as_ref(),
+                    binder.as_ref(),
+                    self.ctx.types,
+                    source_file.file_name.clone(),
+                    self.ctx.compiler_options.clone(),
+                    self,
+                ));
+                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                checker.ctx.copy_cross_file_state_from(&self.ctx);
+                checker.ctx.current_file_idx = file_idx;
+                self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
-            let comments = source_file.comments.clone();
-            let source_text = source_file.text.to_string();
-            let mut checker = Box::new(CheckerState::with_parent_cache(
-                arena.as_ref(),
-                binder.as_ref(),
-                self.ctx.types,
-                source_file.file_name.clone(),
-                self.ctx.compiler_options.clone(),
-                self,
-            ));
-            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-            checker.ctx.copy_cross_file_state_from(&self.ctx);
-            checker.ctx.current_file_idx = file_idx;
-            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
-
-            if let Some(info) = checker.resolve_jsdoc_typedef_info(name, &comments, &source_text) {
-                self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-                return Some(info);
+                if let Some(info) =
+                    checker.resolve_jsdoc_typedef_info(name, &comments, &source_text)
+                {
+                    self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+                    return Some(info);
+                }
             }
         }
 

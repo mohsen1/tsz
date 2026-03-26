@@ -484,7 +484,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-        let compute_final_type = |checker: &mut CheckerState| -> TypeId {
+        let mut jsdoc_declared_type = None;
+        let mut compute_final_type = |checker: &mut CheckerState| -> TypeId {
             let mut has_type_annotation = var_decl.type_annotation.is_some();
             let mut declared_type = if has_type_annotation {
                 // Check for undefined type names in nested types (e.g., function type parameters)
@@ -519,6 +520,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(jsdoc_type) = checker.jsdoc_type_annotation_for_node(decl_idx)
             {
                 declared_type = jsdoc_type;
+                jsdoc_declared_type = Some(jsdoc_type);
                 has_type_annotation = true;
             }
             // If there's a type annotation, that determines the type (even for 'any')
@@ -1168,7 +1170,9 @@ impl<'a> CheckerState<'a> {
             // `compute_final_type` may return a cached type for for-in/for-of loops,
             // so we must override that for bare redeclarations.
             let is_in_for_in_or_for_of = self.is_var_decl_in_for_in_or_for_of(decl_idx);
-            let raw_declared_type = if var_decl.type_annotation.is_none()
+            let raw_declared_type = if let Some(jsdoc_type) = jsdoc_declared_type {
+                jsdoc_type
+            } else if var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
                 && !is_in_for_in_or_for_of
             {

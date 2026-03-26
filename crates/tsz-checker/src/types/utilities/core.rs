@@ -115,35 +115,18 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         member_name: &str,
     ) -> Option<SymbolId> {
-        if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) {
-            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-            if let Some(target_file_name) = target_arena
-                .source_files
-                .first()
-                .map(|sf| sf.file_name.as_str())
-                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
-                && let Some((sym_id, _)) = target_binder
-                    .resolve_import_with_reexports_type_only(target_file_name, member_name)
-            {
-                self.ctx.register_symbol_file_target(sym_id, target_idx);
-                return Some(sym_id);
-            }
-        }
-
-        if let Some((sym_id, _)) = self
-            .ctx
-            .binder
-            .resolve_import_with_reexports_type_only(module_specifier, member_name)
-        {
-            if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) {
-                self.ctx.register_symbol_file_target(sym_id, target_idx);
-            } else {
-                self.record_cross_file_symbol_if_needed(sym_id, member_name, module_specifier);
-            }
-            return Some(sym_id);
-        }
-
-        self.resolve_cross_file_export(module_specifier, member_name)
+        self.resolve_cross_file_export_from_file(
+            module_specifier,
+            member_name,
+            Some(self.ctx.current_file_idx),
+        )
+        .or_else(|| {
+            self.ctx
+                .binder
+                .resolve_import_with_reexports_type_only(module_specifier, member_name)
+                .map(|(sym_id, _)| sym_id)
+        })
+        .or_else(|| self.resolve_cross_file_export(module_specifier, member_name))
     }
 
     pub(crate) fn effective_class_property_declared_type(
