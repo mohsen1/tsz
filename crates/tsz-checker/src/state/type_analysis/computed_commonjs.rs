@@ -2255,6 +2255,8 @@ impl<'a> CheckerState<'a> {
                     }
                     props.push(PropertyInfo {
                         name: name_atom,
+                        // Cross-file augmentation declarations may live in a different
+                        // arena; use `any` here to preserve namespace member visibility.
                         type_id: TypeId::ANY,
                         write_type: TypeId::ANY,
                         optional: false,
@@ -2263,7 +2265,7 @@ impl<'a> CheckerState<'a> {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: props.len() as u32,
+                        declaration_order: 0,
                     });
                 }
             }
