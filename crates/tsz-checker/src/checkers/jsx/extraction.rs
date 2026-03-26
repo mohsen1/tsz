@@ -135,6 +135,53 @@ impl<'a> CheckerState<'a> {
 
     // JSX Component Props Extraction
 
+    fn apply_jsx_library_managed_attributes(
+        &mut self,
+        component_type: TypeId,
+        props_type: TypeId,
+    ) -> TypeId {
+        let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
+            return props_type;
+        };
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+        else {
+            return props_type;
+        };
+        let Some(exports) = symbol.exports.as_ref() else {
+            return props_type;
+        };
+        let Some(lma_sym_id) = exports.get("LibraryManagedAttributes") else {
+            return props_type;
+        };
+
+        let base = self.type_reference_symbol_type(lma_sym_id);
+        if matches!(base, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return props_type;
+        }
+
+        let managed = self
+            .ctx
+            .types
+            .factory()
+            .application(base, vec![component_type, props_type]);
+        let managed = self.evaluate_application_type(managed);
+        let managed = self.evaluate_type_with_env(managed);
+        let managed = self.resolve_type_for_property_access(managed);
+        let managed = self.resolve_lazy_type(managed);
+        let managed = self.evaluate_application_type(managed);
+        let managed = self.evaluate_type_with_env(managed);
+
+        if matches!(managed, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            props_type
+        } else {
+            managed
+        }
+    }
+
     /// Extract props type from a JSX component (SFC: first param of call sig;
     /// class: construct sig return -> `JSX.ElementAttributesProperty` member).
     /// Returns `(props_type, raw_has_type_params)` where `raw_has_type_params`
@@ -226,11 +273,13 @@ impl<'a> CheckerState<'a> {
 
         // Try SFC first: get call signatures -> first parameter is props type
         if let Some((props, raw_has_tp)) = self.get_sfc_props_type(component_type) {
+            let props = self.apply_jsx_library_managed_attributes(component_type, props);
             return Some((props, raw_has_tp));
         }
 
         // Try class component: get construct signatures -> instance type -> props
         if let Some(props) = self.get_class_component_props_type(component_type, element_idx) {
+            let props = self.apply_jsx_library_managed_attributes(component_type, props);
             return Some((props, false));
         }
 
@@ -635,78 +684,80 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Get instance type from the first construct signature
-        let sig = sigs.first()?;
-
-        let instantiated_sig = if sig.type_params.is_empty() {
-            sig.clone()
-        } else {
-            // Match tsc's JSX behavior for generic class components by
-            // instantiating missing type arguments from defaults/constraints.
-            // This lets `<MyComp />` use `P extends Prop` as the effective props
-            // surface instead of skipping checking entirely.
-            let type_args: Vec<_> = sig
-                .type_params
-                .iter()
-                .map(|param| {
-                    param
-                        .default
-                        .or(param.constraint)
-                        .unwrap_or(TypeId::UNKNOWN)
+        let first_sig = sigs.first()?;
+        let inferred_sig = Some(first_sig).and_then(|sig| {
+            if sig.type_params.is_empty() {
+                None
+            } else {
+                element_idx.and_then(|idx| {
+                    self.infer_jsx_generic_class_component_signature(idx, component_type)
                 })
-                .collect();
-            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                self.ctx.types,
-                &sig.type_params,
-                &type_args,
-            );
-            tsz_solver::CallSignature {
-                params: sig
-                    .params
+            }
+        });
+
+        let instance_type = if let Some(sig) = inferred_sig.as_ref() {
+            if !sig.type_params.is_empty() {
+                return None;
+            }
+            sig.return_type
+        } else {
+            if first_sig.type_params.is_empty() {
+                first_sig.return_type
+            } else {
+                let type_args: Vec<_> = first_sig
+                    .type_params
                     .iter()
-                    .map(|param| tsz_solver::ParamInfo {
-                        name: param.name,
-                        type_id: crate::query_boundaries::common::instantiate_type(
-                            self.ctx.types,
-                            param.type_id,
-                            &substitution,
-                        ),
-                        optional: param.optional,
-                        rest: param.rest,
+                    .map(|param| {
+                        param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN)
                     })
-                    .collect(),
-                return_type: crate::query_boundaries::common::instantiate_type(
+                    .collect();
+                let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                     self.ctx.types,
-                    sig.return_type,
+                    &first_sig.type_params,
+                    &type_args,
+                );
+                crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    first_sig.return_type,
                     &substitution,
-                ),
-                this_type: sig.this_type.map(|this_type| {
-                    crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        this_type,
-                        &substitution,
-                    )
-                }),
-                type_params: vec![],
-                type_predicate: sig.type_predicate.as_ref().map(|predicate| {
-                    tsz_solver::TypePredicate {
-                        asserts: predicate.asserts,
-                        target: predicate.target.clone(),
-                        parameter_index: predicate.parameter_index,
-                        type_id: predicate.type_id.map(|type_id| {
-                            crate::query_boundaries::common::instantiate_type(
-                                self.ctx.types,
-                                type_id,
-                                &substitution,
-                            )
-                        }),
-                    }
-                }),
-                is_method: sig.is_method,
+                )
             }
         };
 
-        let instance_type = instantiated_sig.return_type;
+        let first_param_type = inferred_sig
+            .as_ref()
+            .and_then(|sig| sig.params.first().map(|param| param.type_id))
+            .or_else(|| {
+                if first_sig.type_params.is_empty() {
+                    first_sig.params.first().map(|param| param.type_id)
+                } else {
+                    let type_args: Vec<_> = first_sig
+                        .type_params
+                        .iter()
+                        .map(|param| {
+                            param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN)
+                        })
+                        .collect();
+                    let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &first_sig.type_params,
+                        &type_args,
+                    );
+                    first_sig.params.first().map(|param| {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            param.type_id,
+                            &substitution,
+                        )
+                    })
+                }
+            });
         if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
             return None;
         }
@@ -759,8 +810,8 @@ impl<'a> CheckerState<'a> {
                     // emit TS2607.
                     _ => {
                         // Try first construct param as fallback (React-style: new(props: P))
-                        if let Some(first_param) = instantiated_sig.params.first() {
-                            let param_type = self.evaluate_type_with_env(first_param.type_id);
+                        if let Some(first_param_type) = first_param_type {
+                            let param_type = self.evaluate_type_with_env(first_param_type);
                             if param_type != TypeId::ANY
                                 && param_type != TypeId::ERROR
                                 && param_type != TypeId::STRING

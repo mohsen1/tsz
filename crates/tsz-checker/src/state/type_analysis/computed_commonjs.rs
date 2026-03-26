@@ -1648,7 +1648,7 @@ impl<'a> CheckerState<'a> {
         root_name: &str,
         base_type: TypeId,
     ) -> TypeId {
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
+        let Some(source_file) = self.ctx.arena.source_files.get(self.ctx.current_file_idx) else {
             return base_type;
         };
 

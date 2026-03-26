@@ -266,6 +266,124 @@ fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
     );
 }
 
+#[test]
+fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Defaultize<TProps, TDefaults> =
+            & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
+            & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
+            & Partial<TDefaults>;
+
+        declare class ReactComponent<P = {}, S = {}> {
+            props: P;
+        }
+
+        declare namespace JSX {
+            interface Element extends ReactComponent {}
+            interface IntrinsicElements {}
+            type LibraryManagedAttributes<TComponent, TProps> =
+                TComponent extends { defaultProps: infer D }
+                    ? Defaultize<TProps, D>
+                    : TProps;
+        }
+
+        interface Props {
+            foo: string;
+            bar: number;
+        }
+
+        class Component extends ReactComponent<Props> {
+            static defaultProps = {
+                foo: "ok",
+            };
+        }
+
+        <Component foo={123} bar={1} />;
+        <Component />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2322),
+        "Expected JSX.LibraryManagedAttributes to preserve prop type checking, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&2741),
+        "Expected missing non-defaulted prop to remain required, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_generic_class_component_infers_props_from_attributes() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { [key: string]: Element; }
+        }
+
+        interface BaseProps<T> {
+            initialValues: T;
+            nextValues: (cur: T) => T;
+        }
+
+        declare class ReactComponent<P = {}, S = {}> {
+            props: P;
+        }
+
+        declare class GenericComponent<Props = {}, Values = object> extends ReactComponent<Props & BaseProps<Values>, {}> {
+            iv: Values;
+        }
+
+        let a = <GenericComponent initialValues={{ x: "y" }} nextValues={a => a} />;
+        let b = <GenericComponent initialValues={12} nextValues={a => a} />;
+        let c = <GenericComponent initialValues={{ x: "y" }} nextValues={a => ({ x: a.x })} />;
+        let d = <GenericComponent initialValues={{ x: "y" }} nextValues={a => a.x} />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2322),
+        "Expected generic JSX class props inference to reject mismatched callback returns, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_namespaced_class_component_missing_props_reports_assignability() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicAttributes { ref?: string; }
+        }
+
+        declare class Component<P, S> {
+            constructor(props?: P, context?: any);
+            props: P;
+            state: S;
+            render(): JSX.Element;
+        }
+
+        interface ComponentClass<P> {
+            new (props?: P, context?: any): Component<P, any>;
+        }
+
+        declare namespace TestMod {
+            interface TestClass extends ComponentClass<{ reqd: any }> {}
+            var Test: TestClass;
+        }
+
+        var t1 = <TestMod.Test />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2322),
+        "Expected namespaced class-like JSX tags to report TS2322 for missing required props, got: {diagnostics:?}"
+    );
+}
+
 /// TS2786 should NOT fire for class components with synthesized default
 /// constructors (no params). The instance type may lack inherited members
 /// like `render()` from the base class.

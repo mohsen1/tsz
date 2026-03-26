@@ -13,6 +13,7 @@ CACHE_FILE="$REPO_ROOT/scripts/conformance/tsc-cache-full.json"
 
 # Build profile (dist-fast = fast build + good runtime perf)
 BUILD_PROFILE="dist-fast"
+TARGET_DIR="$REPO_ROOT/.target"
 
 # Binary paths (will be updated based on profile)
 TSZ_BIN="$REPO_ROOT/.target/dist-fast/tsz"
@@ -205,10 +206,20 @@ ensure_binaries() {
     if [[ "$BUILD_PROFILE" == "dist" || "$BUILD_PROFILE" == "dist-fast" ]]; then
         cargo_incremental="0"
     fi
-    CARGO_INCREMENTAL="$cargo_incremental" cargo build --profile "$BUILD_PROFILE" -p tsz-cli -p tsz-conformance
+    CARGO_TARGET_DIR="$TARGET_DIR" \
+    CARGO_INCREMENTAL="$cargo_incremental" \
+    cargo build --target-dir "$TARGET_DIR" --profile "$BUILD_PROFILE" -p tsz-cli -p tsz-conformance
     
     echo ""
 }
+
+    # Check whether the current conformance runner supports a CLI flag.
+    # This keeps the shell wrapper compatible with slightly older runner builds
+    # that may not expose newer optional arguments yet.
+    runner_supports_flag() {
+        local flag="$1"
+        "$RUNNER_BIN" --help 2>&1 | grep -q -- "$flag"
+    }
 
 # Ensure scripts/node_modules is installed (provides TypeScript lib files for type checking)
 ensure_scripts_deps() {
@@ -390,13 +401,17 @@ run_tests() {
     local last_run="$REPO_ROOT/scripts/conformance/conformance-last-run.txt"
     local tmpout
     tmpout=$(mktemp)
+    local runner_compat_flags=()
+    if runner_supports_flag "--server-binary"; then
+        runner_compat_flags+=(--server-binary "$SERVER_BIN")
+    fi
 
     # Run with --print-test to get PASS/FAIL per test line
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
-        --server-binary "$SERVER_BIN" \
+        "${runner_compat_flags[@]}" \
         --workers $WORKERS \
         --print-test \
         "${runner_flags[@]}" \
@@ -470,12 +485,16 @@ areas_analysis() {
     local tmpfile
     tmpfile=$(mktemp)
     trap "rm -f '$tmpfile'" EXIT
+    local runner_compat_flags=()
+    if runner_supports_flag "--server-binary"; then
+        runner_compat_flags+=(--server-binary "$SERVER_BIN")
+    fi
 
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
-        --server-binary "$SERVER_BIN" \
+        "${runner_compat_flags[@]}" \
         --workers $WORKERS \
         --print-test \
         "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
@@ -624,13 +643,17 @@ snapshot_tests() {
     local tmpfile
     tmpfile=$(mktemp)
     trap "rm -f '$tmpfile'" RETURN
+    local runner_compat_flags=()
+    if runner_supports_flag "--server-binary"; then
+        runner_compat_flags+=(--server-binary "$SERVER_BIN")
+    fi
 
     # Runner exits non-zero when any tests fail, which is expected
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
-        --server-binary "$SERVER_BIN" \
+        "${runner_compat_flags[@]}" \
         --workers $WORKERS \
         --print-test \
         "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null || true

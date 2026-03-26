@@ -422,6 +422,60 @@ impl<'a> CheckerState<'a> {
         Some(props_type)
     }
 
+    pub(super) fn infer_jsx_generic_class_component_signature(
+        &mut self,
+        element_idx: NodeIndex,
+        component_type: TypeId,
+    ) -> Option<tsz_solver::FunctionShape> {
+        let node = self.ctx.arena.get(element_idx)?;
+        let opening = self.ctx.arena.get_jsx_opening(node)?;
+        let call_sig =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?
+                .first()?
+                .clone();
+        let function_shape = tsz_solver::FunctionShape {
+            type_params: call_sig.type_params,
+            params: call_sig.params,
+            this_type: call_sig.this_type,
+            return_type: call_sig.return_type,
+            type_predicate: call_sig.type_predicate,
+            is_constructor: true,
+            is_method: call_sig.is_method,
+        };
+        if function_shape.type_params.is_empty() || function_shape.params.is_empty() {
+            return None;
+        }
+
+        let children_prop_name = self.get_jsx_children_prop_name();
+        let provided_attrs = self.collect_jsx_union_resolution_attrs(opening.attributes)?;
+        let provided_attrs: Vec<(String, TypeId)> = provided_attrs
+            .into_iter()
+            .filter_map(|(name, ty)| {
+                if name == children_prop_name {
+                    return None;
+                }
+                ty.map(|ty| (name, ty))
+            })
+            .collect();
+        if provided_attrs.is_empty() {
+            return None;
+        }
+
+        let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+        let substitution = {
+            let env = self.ctx.type_env.borrow();
+            crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
+                self.ctx.types,
+                &self.ctx,
+                &env,
+                &function_shape,
+                &[attrs_type],
+                None,
+            )
+        };
+        Some(self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution))
+    }
+
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
     #[allow(dead_code)]
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
