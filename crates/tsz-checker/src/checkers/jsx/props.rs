@@ -297,6 +297,25 @@ impl<'a> CheckerState<'a> {
         let resolved_props_type = self.normalize_jsx_required_props_target(props_type);
         tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
     }
+
+    fn normalize_jsx_function_context_type(&mut self, type_id: TypeId) -> TypeId {
+        let type_id = self.resolve_type_for_property_access(type_id);
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+            && shape.is_method
+        {
+            return self.ctx.types.factory().function(tsz_solver::FunctionShape {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: None,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate.clone(),
+                is_constructor: shape.is_constructor,
+                is_method: false,
+            });
+        }
+
+        type_id
+    }
     /// Fallback: check `IntrinsicAttributes` when component props couldn't be extracted.
     pub(super) fn check_jsx_intrinsic_attributes_only(
         &mut self,
@@ -855,9 +874,6 @@ impl<'a> CheckerState<'a> {
 
         // Deferred spread entries: (spread_type, expr_idx, attr_index) for TS2322.
         let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
-        let prefer_named_missing_props_diag = preferred_target_display.is_some_and(|display| {
-            !display.is_empty() && !display.starts_with('{') && !display.contains('&')
-        });
 
         // Check each attribute
         let attr_nodes = &attrs.properties.nodes;
@@ -1067,6 +1083,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         continue;
                     };
+                    let expected_type = self.normalize_jsx_function_context_type(expected_type);
 
                 // TS2783: Check if a later spread overwrites this attr (skip type check if so).
                 let overwritten = self.check_jsx_attr_overwritten_by_spread(
@@ -1084,6 +1101,37 @@ impl<'a> CheckerState<'a> {
                     let expected_context_type =
                         self.evaluate_application_type(expected_context_type);
                     let expected_context_type = self.evaluate_type_with_env(expected_context_type);
+                    let mut function_value_span = None;
+                    if let Some(value_node) = self.ctx.arena.get(value_node_idx)
+                        && matches!(
+                            value_node.kind,
+                            syntax_kind_ext::ARROW_FUNCTION
+                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                        )
+                    {
+                        let has_function_context = tsz_solver::type_queries::get_function_shape(
+                            self.ctx.types,
+                            expected_context_type,
+                        )
+                        .is_some()
+                            || tsz_solver::type_queries::get_call_signatures(
+                                self.ctx.types,
+                                expected_context_type,
+                            )
+                            .is_some_and(|sigs| !sigs.is_empty());
+                        if !has_function_context {
+                            if let Some(entry) = provided_attrs.last_mut() {
+                                entry.1 = TypeId::ANY;
+                            }
+                            continue;
+                        }
+                        self.ctx
+                            .implicit_any_contextual_closures
+                            .insert(value_node_idx);
+                        self.ctx.implicit_any_checked_closures.insert(value_node_idx);
+                        self.invalidate_function_like_for_contextual_retry(value_node_idx);
+                        function_value_span = Some((value_node.pos, value_node.end));
+                    }
                     let contextual_expected_type =
                         if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
                             node.kind == syntax_kind_ext::ARROW_FUNCTION
@@ -1094,6 +1142,8 @@ impl<'a> CheckerState<'a> {
                             expected_context_type
                         };
                     // Set contextual type to preserve narrow literal types.
+                    let diag_snap = function_value_span
+                        .map(|_| self.ctx.snapshot_diagnostics());
                     let actual_type = self.compute_type_of_node_with_request(
                         value_node_idx,
                         &request
@@ -1101,6 +1151,14 @@ impl<'a> CheckerState<'a> {
                             .normal_origin()
                             .contextual(contextual_expected_type),
                     );
+                    if let (Some((start, end)), Some(diag_snap)) = (function_value_span, diag_snap)
+                    {
+                        self.ctx.rollback_diagnostics_filtered(&diag_snap, |diag| {
+                            !(matches!(diag.code, 7006 | 7019 | 7031 | 7051)
+                                && diag.start >= start
+                                && diag.start < end)
+                        });
+                    }
 
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = actual_type;
@@ -1382,7 +1440,6 @@ impl<'a> CheckerState<'a> {
             && !spread_covers_all
             && !skip_prop_checks
             && !display_target.is_empty()
-            && !(prefer_named_missing_props_diag && provided_attrs.is_empty())
             && !has_prop_type_error
             && component_type.is_some_and(|comp| self.is_jsx_class_like_component_type(comp))
             && self.jsx_has_missing_required_props(props_type, &provided_attrs)
@@ -1401,7 +1458,8 @@ impl<'a> CheckerState<'a> {
         // TS2741: missing required properties.
         if !reported_custom_children_assignability
             && !reported_special_attr_assignability
-            && !reported_class_missing_props_assignability
+            && (!reported_class_missing_props_assignability
+                || (provided_attrs.is_empty() && raw_props_has_type_params))
             && !has_excess_property_error
             && !spread_covers_all
             && !skip_prop_checks

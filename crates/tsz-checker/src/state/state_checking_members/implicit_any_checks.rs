@@ -66,6 +66,9 @@ impl<'a> CheckerState<'a> {
         if self.is_parameter_in_iife(param.name) {
             return;
         }
+        if self.is_parameter_in_jsx_callback_context(param.name) {
+            return;
+        }
 
         let reserved_word_param = self.ctx.arena.get(param.name).and_then(|name_node| {
             self.ctx
@@ -299,6 +302,56 @@ impl<'a> CheckerState<'a> {
             }
         }
         param.name
+    }
+
+    fn is_parameter_in_jsx_callback_context(&self, name_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = Some(name_idx);
+        let mut function_idx = None;
+        while let Some(idx) = current {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                break;
+            };
+            if matches!(
+                node.kind,
+                syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+            ) {
+                function_idx = Some(idx);
+                break;
+            }
+            current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        }
+
+        let Some(function_idx) = function_idx else {
+            return false;
+        };
+        let Some(function_parent) = self.ctx.arena.get_extended(function_idx).map(|ext| ext.parent)
+        else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(function_parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::JSX_EXPRESSION {
+            return false;
+        }
+
+        let Some(jsx_parent) = self.ctx.arena.get_extended(function_parent).map(|ext| ext.parent)
+        else {
+            return false;
+        };
+        let Some(jsx_parent_node) = self.ctx.arena.get(jsx_parent) else {
+            return false;
+        };
+
+        matches!(
+            jsx_parent_node.kind,
+            syntax_kind_ext::JSX_ATTRIBUTE
+                | syntax_kind_ext::JSX_ELEMENT
+                | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                | syntax_kind_ext::JSX_FRAGMENT
+        )
     }
 
     /// Emit TS7006 errors for nested binding elements in destructuring parameters.

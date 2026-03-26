@@ -264,7 +264,9 @@ impl<'a> CheckerState<'a> {
         // Try class component: get construct signatures -> instance type -> props
         if let Some(props) = self.get_class_component_props_type(component_type, element_idx) {
             let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
-            return Some((props, false));
+            let raw_has_tp = self.is_generic_jsx_component(component_type)
+                || tsz_solver::contains_type_parameters(self.ctx.types, props);
+            return Some((props, raw_has_tp));
         }
 
         None
@@ -616,6 +618,101 @@ impl<'a> CheckerState<'a> {
             let managed_raw_has_type_params = raw_has_type_params
                 || tsz_solver::contains_type_parameters(self.ctx.types, managed);
             return Some((managed, managed_raw_has_type_params));
+        }
+
+        None
+    }
+
+    fn instantiate_jsx_generic_sfc_props_with_defaults(
+        &mut self,
+        component_type: TypeId,
+        props_type: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> Option<TypeId> {
+        use crate::computation::call_inference::should_preserve_contextual_application_shape;
+
+        if type_params.is_empty() {
+            return None;
+        }
+
+        let type_args: Vec<_> = type_params
+            .iter()
+            .map(|param| {
+                param
+                    .default
+                    .or(param.constraint)
+                    .unwrap_or(TypeId::UNKNOWN)
+            })
+            .collect();
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            type_params,
+            &type_args,
+        );
+        let instantiated = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            props_type,
+            &substitution,
+        );
+        let evaluated = if tsz_solver::is_union_type(self.ctx.types, instantiated)
+            || should_preserve_contextual_application_shape(self.ctx.types, instantiated)
+        {
+            instantiated
+        } else {
+            self.evaluate_type_with_env(instantiated)
+        };
+        let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
+        if managed == TypeId::ANY
+            || managed == TypeId::UNKNOWN
+            || managed == TypeId::ERROR
+            || tsz_solver::contains_type_parameters(self.ctx.types, managed)
+        {
+            return None;
+        }
+
+        Some(managed)
+    }
+
+    pub(super) fn get_default_instantiated_generic_sfc_props_type(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
+
+        if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            && !shape.is_constructor
+            && !shape.type_params.is_empty()
+        {
+            let props = shape
+                .params
+                .first()
+                .map(|param| param.type_id)
+                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            return self.instantiate_jsx_generic_sfc_props_with_defaults(
+                component_type,
+                props,
+                &shape.type_params,
+            );
+        }
+
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+        {
+            let generic: Vec<_> = sigs.iter().filter(|sig| !sig.type_params.is_empty()).collect();
+            if generic.len() == 1 {
+                let sig = generic[0];
+                let props = sig
+                    .params
+                    .first()
+                    .map(|param| param.type_id)
+                    .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+                return self.instantiate_jsx_generic_sfc_props_with_defaults(
+                    component_type,
+                    props,
+                    &sig.type_params,
+                );
+            }
         }
 
         None
