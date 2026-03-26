@@ -12614,6 +12614,34 @@ const result: A[] = Array.from(inputARand);
 }
 
 #[test]
+fn test_this_type_alias_inside_instance_method_does_not_emit_ts2526() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class MyClass {
+    t: number;
+
+    fn() {
+        type ContainingThis = this;
+        let value: ContainingThis = this;
+        return value.t;
+    }
+}
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2526),
+        "Expected `type T = this` inside an instance method to be valid. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_destructuring_union_with_undefined_reports_ts2339() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

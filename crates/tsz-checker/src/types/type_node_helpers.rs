@@ -447,7 +447,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 syntax_kind_ext::FUNCTION_DECLARATION
                 | syntax_kind_ext::FUNCTION_EXPRESSION
-                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
                 | syntax_kind_ext::MODULE_DECLARATION
                 | syntax_kind_ext::TYPE_LITERAL
                 | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
