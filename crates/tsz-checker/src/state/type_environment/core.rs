@@ -7,6 +7,7 @@ use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::MappedTypeId;
 use tsz_solver::SourceLocation;
 use tsz_solver::TypeId;
@@ -32,24 +33,36 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::{IndexSignature, ObjectShape, PropertyInfo};
 
         let factory = self.ctx.types.factory();
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
         if symbol.flags & symbol_flags::ENUM == 0 {
             return None;
         }
 
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let enum_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let enum_binder = self
+            .ctx
+            .get_binder_for_file(file_idx)
+            .unwrap_or(self.ctx.binder);
+
         let mut props: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
         for &decl_idx in &symbol.declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
+            let Some(node) = enum_arena.get(decl_idx) else {
                 continue;
             };
-            let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
+            let Some(enum_decl) = enum_arena.get_enum(node) else {
                 continue;
             };
             for &member_idx in &enum_decl.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                let Some(member_node) = enum_arena.get(member_idx) else {
                     continue;
                 };
-                let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+                let Some(member) = enum_arena.get_enum_member(member_node) else {
                     continue;
                 };
                 let Some(name) = self.get_property_name(member.name) else {
@@ -59,18 +72,42 @@ impl<'a> CheckerState<'a> {
 
                 // Fix: Create nominal enum member types for each member
                 // This preserves nominal identity so E.A is not assignable to E.B
-                let Some(member_sym_id) = self
-                    .ctx
-                    .binder
+                let Some(member_sym_id) = enum_binder
                     .get_node_symbol(member_idx)
-                    .or_else(|| self.ctx.binder.get_node_symbol(member.name))
+                    .or_else(|| enum_binder.get_node_symbol(member.name))
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .get_node_symbol(member_idx)
+                            .or_else(|| self.ctx.binder.get_node_symbol(member.name))
+                    })
                 else {
                     continue;
                 };
-                let Some(member_def_id) = self.ctx.get_existing_def_id(member_sym_id) else {
-                    continue;
+                let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                let literal_type = if std::ptr::eq(enum_arena, self.ctx.arena) {
+                    self.enum_member_type_from_decl(member_idx)
+                } else if member.initializer.is_some() {
+                    match enum_arena.get(member.initializer) {
+                        Some(init_node) => match init_node.kind {
+                            k if k == SyntaxKind::StringLiteral as u16 => enum_arena
+                                .get_literal(init_node)
+                                .map(|lit| factory.literal_string(&lit.text))
+                                .unwrap_or(TypeId::STRING),
+                            k if k == SyntaxKind::NumericLiteral as u16 => enum_arena
+                                .get_literal(init_node)
+                                .and_then(|lit| {
+                                    lit.value.or_else(|| lit.text.parse::<f64>().ok())
+                                })
+                                .map(|value| factory.literal_number(value))
+                                .unwrap_or(TypeId::NUMBER),
+                            _ => TypeId::NUMBER,
+                        },
+                        None => TypeId::NUMBER,
+                    }
+                } else {
+                    TypeId::NUMBER
                 };
-                let literal_type = self.enum_member_type_from_decl(member_idx);
                 let specific_member_type = factory.enum_type(member_def_id, literal_type);
 
                 props.entry(name_atom).or_insert(PropertyInfo {
@@ -112,7 +149,6 @@ impl<'a> CheckerState<'a> {
 
         Some(factory.object_with_flags_and_symbol(properties, flags, None))
     }
-
     /// Evaluate complex type constructs for assignability checking.
     ///
     /// This function pre-processes types before assignability checking to ensure

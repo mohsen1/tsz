@@ -10146,6 +10146,52 @@ var y = "ok";
 }
 
 #[test]
+fn compile_default_import_class_static_enum_object_keeps_enum_members() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["a.ts", "b.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        r#"enum SomeEnum {
+  one,
+}
+export default class SomeClass {
+  public static E = SomeEnum;
+}
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import {default as Def} from "./a"
+let a = Def.E.one;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected default-imported class static enum object to keep enum members, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn module_augmentation_method_type_params_and_members_resolve_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
