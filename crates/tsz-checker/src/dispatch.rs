@@ -934,25 +934,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     // and checks per-member overlap. For `X as A | B`, it
                                     // suffices if X overlaps with ANY member (A or B).
                                     let mut have_overlap = false;
-
-                                    // When both source and target are arrays and the
-                                    // target element type contains type parameters
-                                    // (e.g. `string[] as (keyof T)[]`), the element-
-                                    // level overlap cannot be meaningfully evaluated.
-                                    // TSC's isTypeComparableTo checks element-type
-                                    // comparability which succeeds when the generic
-                                    // element could include the source element type.
-                                    // Assume overlap to suppress false TS2352.
-                                    if array_like_generic_assertion_target
-                                        && let query_utils::ArrayLikeKind::Array(target_elem)
-                                        | query_utils::ArrayLikeKind::Readonly(target_elem) =
-                                            query_utils::classify_array_like(
-                                                self.checker.ctx.types,
-                                                effective_asserted,
-                                            )
-                                        && generic_query::contains_type_parameters(
+                                    if structured_generic_assertion_target
+                                        && tsz_solver::is_mapped_type(
                                             self.checker.ctx.types,
-                                            target_elem,
+                                            effective_asserted,
                                         )
                                     {
                                         let source_is_array = matches!(
@@ -965,6 +950,47 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                                 | query_utils::ArrayLikeKind::Readonly(_)
                                         );
                                         if source_is_array {
+                                            have_overlap = true;
+                                        }
+                                    }
+
+                                    // When both source and target are arrays and the
+                                    // target element type contains type parameters
+                                    // (e.g. `string[] as (keyof T)[]`), the element-
+                                    // level overlap cannot be meaningfully evaluated.
+                                    // TSC's isTypeComparableTo checks element-type
+                                    // comparability which succeeds when the generic
+                                    // element could include the source element type.
+                                    // Assume overlap to suppress false TS2352.
+                                    if array_like_generic_assertion_target
+                                    {
+                                        let source_is_array = matches!(
+                                            query_utils::classify_array_like(
+                                                self.checker.ctx.types,
+                                                expr_type,
+                                            ),
+                                            query_utils::ArrayLikeKind::Array(_)
+                                                | query_utils::ArrayLikeKind::Tuple
+                                                | query_utils::ArrayLikeKind::Readonly(_)
+                                        );
+                                        let target_is_generic_array_like = match
+                                            query_utils::classify_array_like(
+                                                self.checker.ctx.types,
+                                                effective_asserted,
+                                            ) {
+                                            query_utils::ArrayLikeKind::Array(target_elem)
+                                            | query_utils::ArrayLikeKind::Readonly(target_elem) => {
+                                                generic_query::contains_type_parameters(
+                                                    self.checker.ctx.types,
+                                                    target_elem,
+                                                )
+                                            }
+                                            query_utils::ArrayLikeKind::Tuple => true,
+                                            query_utils::ArrayLikeKind::Union(_)
+                                            | query_utils::ArrayLikeKind::Intersection(_)
+                                            | query_utils::ArrayLikeKind::Other => false,
+                                        };
+                                        if source_is_array && target_is_generic_array_like {
                                             have_overlap = true;
                                         }
                                     }

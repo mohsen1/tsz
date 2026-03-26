@@ -323,6 +323,37 @@ impl<'a> CheckerState<'a> {
         }
 
         let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
+        let keyof_target = query::keyof_target(self.ctx.types, mapped.constraint)
+            .or_else(|| query::keyof_target(self.ctx.types, constraint));
+
+        if prop_name.parse::<usize>().is_err()
+            && let Some(keyof_target) = keyof_target
+            && matches!(
+                self.resolve_property_access_with_env(keyof_target, "0"),
+                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            )
+            && matches!(
+                self.resolve_property_access_with_env(keyof_target, prop_name),
+                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            )
+        {
+            let zero_atom = self.ctx.types.intern_string("0");
+            let mapped_element = self.instantiate_mapped_property_template_with_env(&mapped, zero_atom);
+            let mapped_array = match mapped.readonly_modifier {
+                Some(tsz_solver::MappedModifier::Add) => {
+                    self.ctx.types.factory().readonly_type(self.ctx.types.factory().array(mapped_element))
+                }
+                _ => self.ctx.types.factory().array(mapped_element),
+            };
+            let array_result = self.resolve_property_access_with_env(mapped_array, prop_name);
+            if matches!(
+                array_result,
+                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            ) {
+                return Some(array_result);
+            }
+        }
+
         if let Some(property_type) =
             crate::query_boundaries::state::checking::get_finite_mapped_property_type(
                 self.ctx.types,
@@ -394,8 +425,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             if keys.is_empty() {
-                if let Some(keyof_target) = query::keyof_target(self.ctx.types, mapped.constraint)
-                    .or_else(|| query::keyof_target(self.ctx.types, constraint))
+                if let Some(keyof_target) = keyof_target
                 {
                     if matches!(
                         self.resolve_property_access_with_env(keyof_target, prop_name),

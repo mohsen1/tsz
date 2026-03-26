@@ -25,6 +25,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         let mapped = self.interner().mapped_type(mapped_id);
 
+        // SPECIAL CASE: Mapped types over array-like sources
+        // When a mapped type like Boxified<T> = { [P in keyof T]: Box<T[P]> } is applied
+        // to an array type, array methods (pop, push, concat, etc.) should NOT be mapped
+        // through the template. They should be resolved from the resulting array type.
+        //
+        // For example: Boxified<T> where T extends any[]
+        // - Numeric properties (0, 1, 2) → Box<T[number]>
+        // - Array methods (pop, push) → resolved from Array<Box<T[number]>>
+        if let Some(result) =
+            self.resolve_array_mapped_type_method(&mapped, mapped_id, prop_name, prop_atom)
+        {
+            return Some(result);
+        }
+
         if let Some(property_type) = crate::type_queries::get_finite_mapped_property_type(
             self.interner(),
             mapped_id,
@@ -41,20 +55,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 type_id: self.interner().mapped(*mapped.as_ref()),
                 property_name: prop_atom,
             });
-        }
-
-        // SPECIAL CASE: Mapped types over array-like sources
-        // When a mapped type like Boxified<T> = { [P in keyof T]: Box<T[P]> } is applied
-        // to an array type, array methods (pop, push, concat, etc.) should NOT be mapped
-        // through the template. They should be resolved from the resulting array type.
-        //
-        // For example: Boxified<T> where T extends any[]
-        // - Numeric properties (0, 1, 2) → Box<T[number]>
-        // - Array methods (pop, push) → resolved from Array<Box<T[number]>>
-        if let Some(result) =
-            self.resolve_array_mapped_type_method(&mapped, mapped_id, prop_name, prop_atom)
-        {
-            return Some(result);
         }
 
         // Step 1: Check if this property name is valid in the constraint
@@ -153,11 +153,26 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return None;
         }
 
-        // Check if constraint is `keyof T` where T might be array-like
-        let source_type = self.get_homomorphic_source(mapped)?;
+        let has_array_like_source = self.is_key_in_mapped_constraint(mapped.constraint, "0")
+            || self.is_key_in_mapped_constraint(mapped.constraint, "length")
+            || crate::visitor::collect_all_types(self.interner(), mapped.template)
+                .into_iter()
+                .filter_map(|candidate| match self.interner().lookup(candidate) {
+                    Some(TypeData::IndexAccess(source, idx)) => {
+                        match self.interner().lookup(idx) {
+                            Some(TypeData::TypeParameter(info))
+                                if info.name == mapped.type_param.name =>
+                            {
+                                Some(source)
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .any(|source| self.is_array_like_type(source));
 
-        // Check if source type is array-like (array, tuple, or type param with array constraint)
-        if !self.is_array_like_type(source_type) {
+        if !has_array_like_source {
             return None;
         }
 
@@ -187,21 +202,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         Some(result)
-    }
-
-    /// Get the homomorphic source type for a mapped type.
-    ///
-    /// For a mapped type like `{ [P in keyof T]: ... }`, returns `T`.
-    /// Returns `None` if the mapped type is not homomorphic.
-    fn get_homomorphic_source(&self, mapped: &MappedType) -> Option<TypeId> {
-        use crate::types::TypeData;
-
-        // Check if constraint is `keyof T`
-        if let Some(TypeData::KeyOf(source)) = self.interner().lookup(mapped.constraint) {
-            return Some(source);
-        }
-
-        None
     }
 
     /// Check if a type is array-like (array, tuple, or type parameter constrained to array).
