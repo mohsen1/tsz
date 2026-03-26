@@ -580,15 +580,24 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let delegate_file_name = decl_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+        let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena.as_ref());
+
         let mut checker = Box::new(CheckerState::with_parent_cache(
             decl_arena.as_ref(),
             self.ctx.binder,
             self.ctx.types,
-            self.ctx.file_name.clone(),
+            delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
         ));
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
         checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
         checker
@@ -659,15 +668,25 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                let delegate_file_name = decl_arena
+                    .source_files
+                    .first()
+                    .map(|sf| sf.file_name.clone())
+                    .unwrap_or_else(|| self.ctx.file_name.clone());
+                let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
+
                 let mut checker = Box::new(CheckerState::with_parent_cache(
                     decl_arena,
                     self.ctx.binder,
                     self.ctx.types,
-                    self.ctx.file_name.clone(),
+                    delegate_file_name,
                     self.ctx.compiler_options.clone(),
                     self,
                 ));
+                checker.ctx.copy_cross_file_state_from(&self.ctx);
                 checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                checker.ctx.current_file_idx =
+                    delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
                 checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
                 checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
                 checker
