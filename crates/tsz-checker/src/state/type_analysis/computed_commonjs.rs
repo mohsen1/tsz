@@ -560,7 +560,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_current_file_commonjs_export_base(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_current_file_commonjs_export_base(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
