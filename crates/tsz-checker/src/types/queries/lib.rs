@@ -844,6 +844,24 @@ impl<'a> CheckerState<'a> {
                     )
                 };
 
+                if (sym_flags & symbol_flags::MODULE) != 0 {
+                    let module_name = import_module.as_deref().unwrap_or(sym_name.as_str());
+                    if let Some(surface) = self.resolve_js_export_surface_for_module(
+                        module_name,
+                        Some(self.ctx.current_file_idx),
+                    ) && surface.has_commonjs_exports
+                    {
+                        if let Some(prop) = surface
+                            .named_exports
+                            .iter()
+                            .find(|prop| self.ctx.types.resolve_atom(prop.name) == property_name)
+                        {
+                            return Some(prop.type_id);
+                        }
+                        return None;
+                    }
+                }
+
                 if let Some(member_id) = direct_member_id {
                     return self.resolve_validated_namespace_member(
                         sym_id,
@@ -913,21 +931,65 @@ impl<'a> CheckerState<'a> {
             // Handle ModuleNamespace types (import * as ns / namespace value bindings)
             NamespaceMemberKind::ModuleNamespace(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
-                let symbol = self.get_cross_file_symbol(sym_id)?;
-                if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+                let (symbol_flags_value, module_name, direct_member_id, module_export_member_id) = {
+                    let symbol = self.get_cross_file_symbol(sym_id)?;
+                    if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+                        return None;
+                    }
+
+                    let module_name = symbol
+                        .import_module
+                        .as_deref()
+                        .unwrap_or(symbol.escaped_name.as_str())
+                        .to_string();
+
+                    let direct_member_id = symbol
+                        .exports
+                        .as_ref()
+                        .and_then(|exports| exports.get(property_name))
+                        .or_else(|| {
+                            symbol
+                                .members
+                                .as_ref()
+                                .and_then(|members| members.get(property_name))
+                        });
+
+                    let module_export_member_id = self
+                        .ctx
+                        .binder
+                        .module_exports
+                        .get(module_name.as_str())
+                        .and_then(|exports| exports.get(property_name))
+                        .or_else(|| {
+                            self.resolve_cross_file_namespace_exports(module_name.as_str())
+                                .and_then(|exports| exports.get(property_name))
+                        });
+
+                    (
+                        symbol.flags,
+                        module_name,
+                        direct_member_id,
+                        module_export_member_id,
+                    )
+                };
+
+                if symbol_flags_value & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
                     return None;
                 }
 
-                let direct_member_id = symbol
-                    .exports
-                    .as_ref()
-                    .and_then(|exports| exports.get(property_name))
-                    .or_else(|| {
-                        symbol
-                            .members
-                            .as_ref()
-                            .and_then(|members| members.get(property_name))
-                    });
+                if (symbol_flags_value & symbol_flags::MODULE) != 0
+                    && let Some(surface) = self.resolve_js_export_surface_for_module(
+                        module_name.as_str(),
+                        Some(self.ctx.current_file_idx),
+                    )
+                    && surface.has_commonjs_exports
+                {
+                    return surface
+                        .named_exports
+                        .iter()
+                        .find(|prop| self.ctx.types.resolve_atom(prop.name) == property_name)
+                        .map(|prop| prop.type_id);
+                }
 
                 if let Some(member_id) = direct_member_id {
                     return self.resolve_validated_namespace_member(
@@ -936,20 +998,6 @@ impl<'a> CheckerState<'a> {
                         property_name,
                     );
                 }
-
-                // Fallback for namespace symbols whose export table is stored by module name.
-                let module_export_member_id = {
-                    let module_name = symbol.escaped_name.as_str();
-                    self.ctx
-                        .binder
-                        .module_exports
-                        .get(module_name)
-                        .and_then(|exports| exports.get(property_name))
-                        .or_else(|| {
-                            self.resolve_cross_file_namespace_exports(module_name)
-                                .and_then(|exports| exports.get(property_name))
-                        })
-                };
 
                 if let Some(member_id) = module_export_member_id {
                     return self.resolve_validated_namespace_member(

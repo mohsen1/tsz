@@ -638,13 +638,74 @@ impl<'a> CheckerState<'a> {
         // Get instance type from the first construct signature
         let sig = sigs.first()?;
 
-        // G3: Skip generic class components — we can't infer type arguments
-        // without full generic type inference for JSX elements
-        if !sig.type_params.is_empty() {
-            return None;
-        }
+        let instantiated_sig = if sig.type_params.is_empty() {
+            sig.clone()
+        } else {
+            // Match tsc's JSX behavior for generic class components by
+            // instantiating missing type arguments from defaults/constraints.
+            // This lets `<MyComp />` use `P extends Prop` as the effective props
+            // surface instead of skipping checking entirely.
+            let type_args: Vec<_> = sig
+                .type_params
+                .iter()
+                .map(|param| {
+                    param.default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN)
+                })
+                .collect();
+            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &sig.type_params,
+                &type_args,
+            );
+            tsz_solver::CallSignature {
+                params: sig
+                    .params
+                    .iter()
+                    .map(|param| tsz_solver::ParamInfo {
+                        name: param.name,
+                        type_id: crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            param.type_id,
+                            &substitution,
+                        ),
+                        optional: param.optional,
+                        rest: param.rest,
+                    })
+                    .collect(),
+                return_type: crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    sig.return_type,
+                    &substitution,
+                ),
+                this_type: sig.this_type.map(|this_type| {
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        this_type,
+                        &substitution,
+                    )
+                }),
+                type_params: vec![],
+                type_predicate: sig.type_predicate.as_ref().map(|predicate| {
+                    tsz_solver::TypePredicate {
+                        asserts: predicate.asserts,
+                        target: predicate.target.clone(),
+                        parameter_index: predicate.parameter_index,
+                        type_id: predicate.type_id.map(|type_id| {
+                            crate::query_boundaries::common::instantiate_type(
+                                self.ctx.types,
+                                type_id,
+                                &substitution,
+                            )
+                        }),
+                    }
+                }),
+                is_method: sig.is_method,
+            }
+        };
 
-        let instance_type = sig.return_type;
+        let instance_type = instantiated_sig.return_type;
         if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
             return None;
         }
@@ -696,8 +757,8 @@ impl<'a> CheckerState<'a> {
                     // common React pattern: `new(props: P)`). If no suitable fallback,
                     // emit TS2607.
                     _ => {
-                        // Try first construct param as fallback (React-style: new(props: P))
-                        if let Some(first_param) = sig.params.first() {
+                    // Try first construct param as fallback (React-style: new(props: P))
+                        if let Some(first_param) = instantiated_sig.params.first() {
                             let param_type = self.evaluate_type_with_env(first_param.type_id);
                             if param_type != TypeId::ANY
                                 && param_type != TypeId::ERROR

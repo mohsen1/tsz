@@ -826,6 +826,98 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             })
         }
 
+        fn combine_function_shapes(
+            db: &dyn TypeDatabase,
+            shapes: Vec<FunctionShape>,
+            arg_count: Option<usize>,
+        ) -> Option<FunctionShape> {
+            let first = shapes.first()?;
+            if shapes.len() == 1 {
+                return Some(first.clone());
+            }
+
+            if shapes.iter().any(|shape| !shape.type_params.is_empty()) {
+                return None;
+            }
+
+            let effective_arg_count = arg_count.unwrap_or_else(|| {
+                shapes
+                    .iter()
+                    .map(|shape| shape.params.len())
+                    .max()
+                    .unwrap_or(0)
+            });
+
+            let params = (0..effective_arg_count)
+                .filter_map(|index| {
+                    let mut param_types: Vec<TypeId> = shapes
+                        .iter()
+                        .filter_map(|shape| {
+                            extract_param_type_at_for_call(
+                                db,
+                                &shape.params,
+                                index,
+                                effective_arg_count,
+                            )
+                        })
+                        .collect();
+                    if param_types.len() > 1 && param_types.iter().any(|&ty| ty != TypeId::ANY) {
+                        param_types.retain(|&ty| ty != TypeId::ANY);
+                    }
+                    match param_types.len() {
+                        0 => None,
+                        1 => Some(ParamInfo::unnamed(param_types[0])),
+                        _ => Some(ParamInfo::unnamed(db.union_literal_reduce(param_types))),
+                    }
+                })
+                .collect();
+
+            let mut return_types: Vec<TypeId> =
+                shapes.iter().map(|shape| shape.return_type).collect();
+            if return_types.len() > 1 && return_types.iter().any(|&ty| ty != TypeId::ANY) {
+                return_types.retain(|&ty| ty != TypeId::ANY);
+            }
+            let return_type = match return_types.len() {
+                0 => first.return_type,
+                1 => return_types[0],
+                _ => db.union_literal_reduce(return_types),
+            };
+
+            let this_type = if shapes
+                .iter()
+                .all(|shape| shape.this_type == first.this_type)
+            {
+                first.this_type
+            } else {
+                let this_types: Vec<_> =
+                    shapes.iter().filter_map(|shape| shape.this_type).collect();
+                match this_types.len() {
+                    0 => None,
+                    1 => Some(this_types[0]),
+                    _ => Some(db.union_literal_reduce(this_types)),
+                }
+            };
+
+            let type_predicate = if shapes
+                .iter()
+                .all(|shape| shape.type_predicate == first.type_predicate)
+            {
+                first.type_predicate.clone()
+            } else {
+                None
+            };
+
+            Some(FunctionShape {
+                type_params: Vec::new(),
+                params,
+                this_type,
+                return_type,
+                type_predicate,
+                is_constructor: shapes.iter().all(|shape| shape.is_constructor),
+                is_method: shapes.iter().all(|shape| shape.is_method),
+            })
+        }
+
         struct ContextualSignatureVisitor<'a> {
             db: &'a dyn TypeDatabase,
             arg_count: Option<usize>,
@@ -966,12 +1058,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
                 let members = self.db.type_list(TypeListId(list_id));
-                for &member in members.iter() {
-                    if let Some(shape) = self.visit_type(self.db, member) {
-                        return Some(shape);
-                    }
-                }
-                None
+                let shapes: Vec<_> = members
+                    .iter()
+                    .filter_map(|&member| self.visit_type(self.db, member))
+                    .collect();
+                combine_function_shapes(self.db, shapes, self.arg_count)
             }
 
             fn visit_union(&mut self, list_id: u32) -> Self::Output {
