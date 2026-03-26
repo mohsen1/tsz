@@ -774,13 +774,12 @@ impl<'a> CheckerState<'a> {
             && !self.has_satisfies_jsdoc_comment(expr_idx)
         {
             let snap = self.ctx.snapshot_diagnostics();
-            let wrapped_type = if let Some(val_type) =
-                self.resolve_property_access_value_type(expr_idx)
-            {
-                val_type
-            } else {
-                self.type_of_value_declaration_for_symbol(sym_id, expr_idx)
-            };
+            let wrapped_type =
+                if let Some(val_type) = self.resolve_property_access_value_type(expr_idx) {
+                    val_type
+                } else {
+                    self.type_of_value_declaration_for_symbol(sym_id, expr_idx)
+                };
 
             // Detect genuine circular self-reference for TS7022.
             //

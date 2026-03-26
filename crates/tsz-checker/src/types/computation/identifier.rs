@@ -1044,8 +1044,11 @@ impl<'a> CheckerState<'a> {
             );
 
             if let Some(preferred_cross_file_type) = preferred_cross_file_type {
-                return self
-                    .instantiate_callable_result_from_request(idx, preferred_cross_file_type, request);
+                return self.instantiate_callable_result_from_request(
+                    idx,
+                    preferred_cross_file_type,
+                    request,
+                );
             }
 
             // FIX: Preserve readonly and other type modifiers from declared_type.
@@ -1650,7 +1653,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let candidate_type = self.type_of_value_declaration(decl_idx);
-                if !matches!(candidate_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+                if !matches!(
+                    candidate_type,
+                    TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+                ) {
                     return Some(candidate_type);
                 }
             }
@@ -1743,7 +1749,10 @@ impl<'a> CheckerState<'a> {
 
             Self::leave_cross_arena_delegation();
 
-            if !matches!(candidate_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            if !matches!(
+                candidate_type,
+                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+            ) {
                 return Some(candidate_type);
             }
         }
