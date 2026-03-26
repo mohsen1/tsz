@@ -14291,6 +14291,28 @@ function g2<
 }
 
 #[test]
+fn test_no_false_ts2344_for_parameters_of_index_signature_constrained_funcs() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type IFuncs = { readonly [key: string]: (...p: any) => void };
+type IDestructuring<T extends IFuncs> = {
+    readonly [key in keyof T]?: (...p: Parameters<T[key]>) => void
+};
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Index-signature-constrained function maps should not trigger TS2344 for Parameters<T[key]>.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2344_for_mapped_type_preserving_record_constraint() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
