@@ -564,6 +564,13 @@ impl<'a> CheckerState<'a> {
                     if self.is_direct_heritage_type_reference(idx) {
                         return TypeId::ERROR;
                     }
+                    // Suppress TS2708 when the identifier is part of an
+                    // import-equals entity name (e.g., `import r = M.X`).
+                    // Namespace references in import aliases are not value
+                    // usages — they are just creating bindings.
+                    if self.is_in_import_equals_entity_name(idx) {
+                        return self.get_type_of_symbol(sym_id);
+                    }
                     if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
                         && parent_ext.parent.is_some()
                         && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
