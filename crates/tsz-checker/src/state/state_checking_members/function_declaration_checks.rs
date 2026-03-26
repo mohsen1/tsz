@@ -169,6 +169,9 @@ impl<'a> CheckerState<'a> {
 
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&func.type_parameters, func_idx);
+        if func.type_parameters.is_none() {
+            self.check_unused_jsdoc_template_type_params(func_idx);
+        }
 
         // TS7008: Check type parameter constraints for implicit any members
         // e.g., `function f<T extends { x, y }>(t: T)` — members x, y need type annotations

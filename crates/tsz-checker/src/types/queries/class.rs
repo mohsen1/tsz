@@ -298,6 +298,190 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check JSDoc `@template` type parameters for JS declarations that do not
+    /// have syntax-level `<T>` lists.
+    pub(crate) fn check_unused_jsdoc_template_type_params(&mut self, decl_idx: NodeIndex) {
+        use tsz_scanner::SyntaxKind;
+
+        if !self.ctx.no_unused_parameters() || !self.is_js_file() {
+            return;
+        }
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return;
+        };
+        let Some((_jsdoc, comment_pos)) =
+            self.try_leading_jsdoc_with_pos(comments, node.pos, source_text)
+        else {
+            return;
+        };
+
+        let comment_end = node.pos.min(source_text.len() as u32) as usize;
+        let raw_comment = &source_text[comment_pos as usize..comment_end];
+        let params = Self::jsdoc_template_param_declarations(raw_comment, comment_pos);
+        if params.is_empty() {
+            return;
+        }
+
+        let mut used = vec![false; params.len()];
+        let is_identifier_in_type_context =
+            |arena: &tsz_parser::parser::NodeArena, idx: NodeIndex, stop_at: NodeIndex| {
+                let mut current = idx;
+                for _ in 0..20 {
+                    let Some(ext) = arena.get_extended(current) else {
+                        return false;
+                    };
+                    let parent = ext.parent;
+                    if parent.is_none() || parent == stop_at {
+                        return false;
+                    }
+                    let Some(parent_node) = arena.get(parent) else {
+                        return false;
+                    };
+                    if parent_node.is_type_node()
+                        || parent_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                    {
+                        return true;
+                    }
+                    current = parent;
+                }
+                false
+            };
+
+        let arena_len = self.ctx.arena.len();
+        for i in 0..arena_len {
+            let idx = NodeIndex(i as u32);
+            let Some(candidate) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if candidate.pos < node.pos || candidate.end > node.end {
+                continue;
+            }
+            if candidate.kind == SyntaxKind::Identifier as u16
+                && is_identifier_in_type_context(self.ctx.arena, idx, decl_idx)
+                && let Some(ident) = self.ctx.arena.get_identifier(candidate)
+            {
+                let name_str = ident.escaped_text.as_str();
+                for (j, (param_name, _, _)) in params.iter().enumerate() {
+                    if !used[j] && param_name == name_str {
+                        used[j] = true;
+                    }
+                }
+            }
+        }
+
+        for type_expr in Self::jsdoc_type_expressions(raw_comment) {
+            for (j, (param_name, _, _)) in params.iter().enumerate() {
+                if !used[j] && Self::jsdoc_type_expr_mentions_name(type_expr, param_name) {
+                    used[j] = true;
+                }
+            }
+        }
+
+        for (j, (name, start, length)) in params.iter().enumerate() {
+            if !used[j] {
+                self.error_declared_but_never_read(name, *start, *length);
+            }
+        }
+    }
+
+    fn jsdoc_template_param_declarations(
+        raw_comment: &str,
+        comment_pos: u32,
+    ) -> Vec<(String, u32, u32)> {
+        let mut params = Vec::new();
+        let mut cursor = 0usize;
+        while let Some(rel) = raw_comment[cursor..].find("@template") {
+            let tag_start = cursor + rel;
+            let mut idx = cursor + rel + "@template".len();
+            while let Some(ch) = raw_comment[idx..].chars().next() {
+                if ch == ' ' || ch == '\t' || ch == '*' {
+                    idx += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            while let Some(ch) = raw_comment[idx..].chars().next() {
+                if ch == '\n' || ch == '\r' || ch == '@' || ch == '{' {
+                    break;
+                }
+                if ch == ',' || ch == ' ' || ch == '\t' || ch == '*' {
+                    idx += ch.len_utf8();
+                    continue;
+                }
+                if ch == '_' || ch == '$' || ch.is_ascii_alphabetic() {
+                    let start = idx;
+                    idx += ch.len_utf8();
+                    while let Some(next) = raw_comment[idx..].chars().next() {
+                        if next == '_' || next == '$' || next.is_ascii_alphanumeric() {
+                            idx += next.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                    let name = &raw_comment[start..idx];
+                    if !name.starts_with('_') {
+                        params.push((
+                            name.to_string(),
+                            comment_pos + tag_start as u32,
+                            idx.saturating_sub(tag_start) as u32,
+                        ));
+                    }
+                    continue;
+                }
+                break;
+            }
+
+            cursor = idx;
+        }
+        params
+    }
+
+    fn jsdoc_type_expressions(raw_comment: &str) -> Vec<&str> {
+        let mut exprs = Vec::new();
+        let mut cursor = 0usize;
+        while let Some(rel) = raw_comment[cursor..].find('{') {
+            let start = cursor + rel + 1;
+            let Some(end_rel) = raw_comment[start..].find('}') else {
+                break;
+            };
+            exprs.push(&raw_comment[start..start + end_rel]);
+            cursor = start + end_rel + 1;
+        }
+        exprs
+    }
+
+    fn jsdoc_type_expr_mentions_name(type_expr: &str, name: &str) -> bool {
+        fn is_ident_char(ch: char) -> bool {
+            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+        }
+
+        let mut cursor = 0usize;
+        while let Some(rel) = type_expr[cursor..].find(name) {
+            let start = cursor + rel;
+            let end = start + name.len();
+            let prev_ok = type_expr[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_ident_char(ch));
+            let next_ok = type_expr[end..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_ident_char(ch));
+            if prev_ok && next_ok {
+                return true;
+            }
+            cursor = end;
+        }
+        false
+    }
+
     /// Collect all `infer` type parameter names from a type node.
     /// This is used to add inferred type parameters to the scope when checking conditional types.
     pub(crate) fn collect_infer_type_parameters(&self, type_idx: NodeIndex) -> Vec<String> {
