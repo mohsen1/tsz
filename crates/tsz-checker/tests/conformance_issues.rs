@@ -14830,6 +14830,27 @@ class Foo {
 }
 
 #[test]
+fn test_js_as_assertion_reports_ts8016() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        r#"
+0 as number;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    let ts8016 = diagnostics.iter().filter(|d| d.0 == 8016).count();
+    assert_eq!(
+        ts8016, 1,
+        "Expected exactly one TS8016 for JS as-assertion syntax.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_for_in_key_assignment_preserves_extract_keyof_string_type() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

@@ -199,12 +199,24 @@ impl<'a> CheckerState<'a> {
     }
 
     fn check_js_grammar_expression(&mut self, expr_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return;
         };
 
         if node.is_function_like() {
             self.check_js_grammar_function(expr_idx, node);
+        }
+
+        if node.kind == syntax_kind_ext::AS_EXPRESSION
+            && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
+        {
+            self.error_at_node(
+                assertion.type_node,
+                diagnostic_messages::TYPE_ASSERTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                diagnostic_codes::TYPE_ASSERTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            );
         }
 
         for child_idx in self.ctx.arena.get_children(expr_idx) {
