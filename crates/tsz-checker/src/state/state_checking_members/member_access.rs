@@ -452,27 +452,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.ctx
-            .all_binders
-            .as_ref()
-            .is_some_and(|all_binders| {
-                all_binders.iter().enumerate().any(|(file_idx, binder)| {
-                    if file_idx == self.ctx.current_file_idx || binder.is_external_module() {
-                        return false;
-                    }
-                    binder
-                        .file_locals
-                        .get(name)
-                        .and_then(|sym_id| {
-                            binder
-                                .get_symbol(sym_id)
-                                .or_else(|| self.ctx.binder.get_symbol(sym_id))
-                        })
-                        .is_some_and(|symbol| {
-                            (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
-                        })
-                })
+        self.ctx.all_binders.as_ref().is_some_and(|all_binders| {
+            all_binders.iter().enumerate().any(|(file_idx, binder)| {
+                if file_idx == self.ctx.current_file_idx || binder.is_external_module() {
+                    return false;
+                }
+                binder
+                    .file_locals
+                    .get(name)
+                    .and_then(|sym_id| {
+                        binder
+                            .get_symbol(sym_id)
+                            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    })
+                    .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0)
             })
+        })
     }
 
     fn enclosing_instance_property_initializer_of_node(

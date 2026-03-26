@@ -1129,8 +1129,10 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .enumerate()
             .filter_map(|(idx, (member, _))| {
-                (best_mergeable.as_ref().is_none_or(|(best_idx, _, _)| idx != *best_idx))
-                    .then_some(member)
+                (best_mergeable
+                    .as_ref()
+                    .is_none_or(|(best_idx, _, _)| idx != *best_idx))
+                .then_some(member)
             })
             .collect();
 

@@ -266,8 +266,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::node_flags;
 
-        if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
-            || (flags & symbol_flags::VALUE) == 0
+        if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 || (flags & symbol_flags::VALUE) == 0
         {
             return false;
         }

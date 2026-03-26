@@ -1542,7 +1542,10 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
             let should_preinfer_candidate = !sig.type_params.is_empty()
-                && candidate_refresh_args.iter().copied().any(std::convert::identity);
+                && candidate_refresh_args
+                    .iter()
+                    .copied()
+                    .any(std::convert::identity);
 
             let prev_preserve_literals2 = self.ctx.preserve_literal_types;
             self.ctx.preserve_literal_types = true;

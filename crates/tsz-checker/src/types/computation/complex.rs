@@ -914,12 +914,8 @@ impl<'a> CheckerState<'a> {
         // Delegate to Solver for constructor resolution, passing contextual type
         // so generic constructors like `new Promise(...)` can infer type parameters
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
-        let result = self.resolve_new_with_checker_adapter(
-            constructor_type,
-            &arg_types,
-            false,
-            None,
-        );
+        let result =
+            self.resolve_new_with_checker_adapter(constructor_type, &arg_types, false, None);
 
         match result {
             CallResult::Success(return_type) => {

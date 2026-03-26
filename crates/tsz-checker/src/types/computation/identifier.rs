@@ -561,8 +561,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if !is_instantiated {
-                    if let Some(value_type) =
-                        self.non_js_cross_file_global_value_type_by_name(name)
+                    if let Some(value_type) = self.non_js_cross_file_global_value_type_by_name(name)
                     {
                         return value_type;
                     }
