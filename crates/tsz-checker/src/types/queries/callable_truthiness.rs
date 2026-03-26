@@ -510,54 +510,71 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.compiler_options.strict_null_checks {
             return;
         }
-        self.check_callable_truthiness_inner(cond_expr, cond_expr, body);
+        self.check_callable_truthiness_both(cond_expr, body);
     }
 
-    /// Inner helper that handles logical chains recursively.
-    fn check_callable_truthiness_inner(
+    fn check_callable_truthiness_both(&mut self, cond_expr: NodeIndex, body: Option<NodeIndex>) {
+        let mut current = self.skip_parenthesized_expression(cond_expr);
+        self.check_callable_truthiness_helper(current, body);
+
+        while let Some(node) = self.ctx.arena.get(current) {
+            let Some(bin) = self.ctx.arena.get_binary_expr(node) else {
+                break;
+            };
+            if bin.operator_token != SyntaxKind::BarBarToken as u16
+                && bin.operator_token != SyntaxKind::QuestionQuestionToken as u16
+            {
+                break;
+            }
+            current = self.skip_parenthesized_expression(bin.left);
+            self.check_callable_truthiness_helper(current, body);
+        }
+    }
+
+    fn skip_parenthesized_expression(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                return idx;
+            }
+            let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                return idx;
+            };
+            idx = paren.expression;
+        }
+    }
+
+    fn check_callable_truthiness_helper(
         &mut self,
         cond_expr: NodeIndex,
-        top_cond: NodeIndex,
         body: Option<NodeIndex>,
     ) {
-        let Some(node) = self.ctx.arena.get(cond_expr) else {
+        let cond_expr = self.skip_parenthesized_expression(cond_expr);
+        let location = if let Some(node) = self.ctx.arena.get(cond_expr) {
+            if let Some(bin) = self.ctx.arena.get_binary_expr(node)
+                && (bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                    || bin.operator_token == SyntaxKind::BarBarToken as u16
+                    || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16)
+            {
+                self.skip_parenthesized_expression(bin.right)
+            } else {
+                cond_expr
+            }
+        } else {
             return;
         };
 
-        // Skip parenthesized expressions
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                self.check_callable_truthiness_inner(paren.expression, top_cond, body);
-            }
+        if let Some(node) = self.ctx.arena.get(location)
+            && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+            && (bin.operator_token == SyntaxKind::BarBarToken as u16
+                || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16)
+        {
+            self.check_callable_truthiness_both(location, body);
             return;
         }
 
-        // For logical/coalescing binary expressions, recurse into operands
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
-                let op = bin.operator_token;
-                if op == SyntaxKind::AmpersandAmpersandToken as u16
-                    || op == SyntaxKind::BarBarToken as u16
-                    || op == SyntaxKind::QuestionQuestionToken as u16
-                {
-                    self.check_callable_truthiness_inner(bin.left, top_cond, body);
-                    self.check_callable_truthiness_inner(bin.right, top_cond, body);
-                }
-            }
-            return;
-        }
-
-        // Leaf expression — check if it's a callable type
-        self.check_callable_truthiness_leaf(cond_expr, top_cond, body);
-    }
-
-    /// Check a single leaf expression for TS2774 (callable) and TS2801 (awaitable/Promise).
-    fn check_callable_truthiness_leaf(
-        &mut self,
-        location: NodeIndex,
-        top_cond: NodeIndex,
-        body: Option<NodeIndex>,
-    ) {
         let ty = self.get_type_of_node(location);
 
         // Skip nullable/error/top types
@@ -625,13 +642,20 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if the tested expression is used in the body or binary chain
+        let chain_parent = self
+            .ctx
+            .arena
+            .get_extended(cond_expr)
+            .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
+            .unwrap_or(cond_expr);
+
         let is_used = if is_property_access {
             // For property accesses, use structural chain matching
-            self.is_prop_access_in_body_or_chain(location, top_cond, body)
+            self.is_prop_access_in_body_or_chain(location, chain_parent, body)
         } else {
             let sym_id =
                 tested_sym.expect("non-property-access path requires tested_sym to be Some");
-            self.is_callable_symbol_used(sym_id, location, top_cond, body)
+            self.is_callable_symbol_used(sym_id, chain_parent, body)
         };
 
         if !is_used {
@@ -681,8 +705,7 @@ impl<'a> CheckerState<'a> {
     fn is_callable_symbol_used(
         &self,
         sym_id: tsz_binder::SymbolId,
-        location: NodeIndex,
-        top_cond: NodeIndex,
+        chain_parent: NodeIndex,
         body: Option<NodeIndex>,
     ) -> bool {
         if let Some(body_idx) = body
@@ -690,7 +713,7 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        self.is_symbol_in_binary_chain_rhs(sym_id, location, top_cond)
+        self.is_symbol_in_binary_chain_rhs(sym_id, chain_parent)
     }
 
     /// For property access expressions, check if the same access chain appears
@@ -712,7 +735,7 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        self.is_access_chain_in_binary_rhs(&chain, location, top_cond)
+        self.is_access_chain_in_binary_rhs(&chain, top_cond)
     }
 
     /// Build a property access chain as a list of identifier names.
@@ -773,45 +796,27 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check binary chain RHS for property access chain matches.
-    fn is_access_chain_in_binary_rhs(
-        &self,
-        target: &[String],
-        location: NodeIndex,
-        top_cond: NodeIndex,
-    ) -> bool {
-        let Some(top_node) = self.ctx.arena.get(top_cond) else {
-            return false;
-        };
-
-        if top_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return false;
+    fn is_access_chain_in_binary_rhs(&self, target: &[String], mut node: NodeIndex) -> bool {
+        while let Some(bin_node) = self.ctx.arena.get(node) {
+            let Some(bin) = self.ctx.arena.get_binary_expr(bin_node) else {
+                return false;
+            };
+            if bin.operator_token != SyntaxKind::AmpersandAmpersandToken as u16 {
+                return false;
+            }
+            if self.is_access_chain_in_subtree(target, bin.right) {
+                return true;
+            }
+            let Some(parent) = self
+                .ctx
+                .arena
+                .get_extended(node)
+                .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
+            else {
+                return false;
+            };
+            node = parent;
         }
-
-        let Some(bin) = self.ctx.arena.get_binary_expr(top_node) else {
-            return false;
-        };
-
-        let op = bin.operator_token;
-        if op != SyntaxKind::AmpersandAmpersandToken as u16
-            && op != SyntaxKind::BarBarToken as u16
-            && op != SyntaxKind::QuestionQuestionToken as u16
-        {
-            return false;
-        }
-
-        if self.span_contains(bin.left, location)
-            && self.is_access_chain_in_subtree(target, bin.right)
-        {
-            return true;
-        }
-
-        let Some(left_node) = self.ctx.arena.get(bin.left) else {
-            return false;
-        };
-        if left_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            return self.is_access_chain_in_binary_rhs(target, location, bin.left);
-        }
-
         false
     }
 
@@ -884,54 +889,29 @@ impl<'a> CheckerState<'a> {
     fn is_symbol_in_binary_chain_rhs(
         &self,
         sym_id: tsz_binder::SymbolId,
-        location: NodeIndex,
-        top_cond: NodeIndex,
+        mut node: NodeIndex,
     ) -> bool {
-        let Some(top_node) = self.ctx.arena.get(top_cond) else {
-            return false;
-        };
-
-        if top_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return false;
+        while let Some(bin_node) = self.ctx.arena.get(node) {
+            let Some(bin) = self.ctx.arena.get_binary_expr(bin_node) else {
+                return false;
+            };
+            if bin.operator_token != SyntaxKind::AmpersandAmpersandToken as u16 {
+                return false;
+            }
+            if self.is_symbol_in_subtree(sym_id, bin.right) {
+                return true;
+            }
+            let Some(parent) = self
+                .ctx
+                .arena
+                .get_extended(node)
+                .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
+            else {
+                return false;
+            };
+            node = parent;
         }
-
-        let Some(bin) = self.ctx.arena.get_binary_expr(top_node) else {
-            return false;
-        };
-
-        let op = bin.operator_token;
-        if op != SyntaxKind::AmpersandAmpersandToken as u16
-            && op != SyntaxKind::BarBarToken as u16
-            && op != SyntaxKind::QuestionQuestionToken as u16
-        {
-            return false;
-        }
-
-        // If location is in the left subtree, check the right subtree
-        if self.span_contains(bin.left, location) && self.is_symbol_in_subtree(sym_id, bin.right) {
-            return true;
-        }
-
-        // Recurse into nested binary expressions on the left
-        let Some(left_node) = self.ctx.arena.get(bin.left) else {
-            return false;
-        };
-        if left_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            return self.is_symbol_in_binary_chain_rhs(sym_id, location, bin.left);
-        }
-
         false
-    }
-
-    /// Check if `outer` node's span contains `inner` node.
-    fn span_contains(&self, outer: NodeIndex, inner: NodeIndex) -> bool {
-        let Some(outer_node) = self.ctx.arena.get(outer) else {
-            return false;
-        };
-        let Some(inner_node) = self.ctx.arena.get(inner) else {
-            return false;
-        };
-        outer_node.pos <= inner_node.pos && inner_node.end <= outer_node.end
     }
 
     /// Check if an expression contains a type assertion (as, satisfies, or angle-bracket cast),
