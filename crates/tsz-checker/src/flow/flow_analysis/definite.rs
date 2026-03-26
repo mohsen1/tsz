@@ -182,7 +182,8 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_visited,
             &self.ctx.flow_results,
         )
-        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos);
+        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+        .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         // Strip `undefined` from the initial type for parameters with default values.
         // Matches tsc's getInitialType: a parameter like `x: string | undefined = "val"`

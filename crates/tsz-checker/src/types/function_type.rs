@@ -299,6 +299,7 @@ impl<'a> CheckerState<'a> {
             is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
         // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
+        let mut contextual_signature_shape = None;
         let mut contextual_signature_type_param_updates = Vec::new();
         let mut has_jsdoc_type_function = false;
         let mut ctx_helper = if let Some(ctx_type) = contextual_type {
@@ -327,7 +328,28 @@ impl<'a> CheckerState<'a> {
 
             // Evaluate Application types in rest params (solver's NoopResolver can't resolve these)
             let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
+            contextual_signature_shape =
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    evaluated_type,
+                );
             let evaluated_type = self.normalize_contextual_signature_with_env(evaluated_type);
+            if std::env::var_os("TSZ_DEBUG_FUNCTION_CONTEXT").is_some()
+                && self
+                    .ctx
+                    .file_name
+                    .contains("dependentDestructuredVariables")
+                && (node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            {
+                eprintln!(
+                    "function-context file={} idx={} request={} evaluated={}",
+                    self.ctx.file_name,
+                    idx.0,
+                    self.format_type(ctx_type),
+                    self.format_type(evaluated_type)
+                );
+            }
             let helper_probe = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 evaluated_type,
@@ -381,6 +403,8 @@ impl<'a> CheckerState<'a> {
         // explicit `<T>` syntax. This is required for parity with TypeScript in
         // cases like:
         //   const f: <T>(x: T) => void = x => {};
+        let inherited_contextual_generics =
+            is_closure && type_params.is_empty() && contextual_signature_type_params.is_some();
         if is_closure
             && type_params.is_empty()
             && let Some(contextual_type_params) = contextual_signature_type_params
@@ -684,6 +708,56 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
+                let param_label = self.parameter_name_for_error(param.name);
+                if std::env::var_os("TSZ_DEBUG_CONTEXTUAL_PARAMS").is_some()
+                    && matches!(
+                        param_label.as_str(),
+                        "kind" | "payload" | "op" | "args" | "event" | "shard"
+                    )
+                {
+                    let expected_debug = ctx_helper.as_ref().and_then(|helper| helper.expected());
+                    let direct_debug = ctx_helper.as_ref().and_then(|helper| {
+                        if param.dot_dot_dot_token {
+                            helper.get_rest_parameter_type(contextual_index)
+                        } else {
+                            helper.get_parameter_type(contextual_index)
+                        }
+                    });
+                    let from_expected_debug = expected_debug.and_then(|expected| {
+                        if param.dot_dot_dot_token {
+                            self.contextual_parameter_type_with_env_from_expected(
+                                expected,
+                                contextual_index,
+                                true,
+                            )
+                        } else {
+                            self.contextual_parameter_type_for_call_with_env_from_expected(
+                                expected,
+                                contextual_index,
+                                parameters.nodes.len(),
+                            )
+                            .or_else(|| {
+                                self.contextual_parameter_type_with_env_from_expected(
+                                    expected,
+                                    contextual_index,
+                                    false,
+                                )
+                            })
+                        }
+                    });
+                    eprintln!(
+                        "contextual-param file={} fn_idx={} param={} idx={} rest={} expected={:?} direct={:?} from_expected={:?} contextual={:?}",
+                        self.ctx.file_name,
+                        idx.0,
+                        param_label,
+                        contextual_index,
+                        param.dot_dot_dot_token,
+                        expected_debug,
+                        direct_debug,
+                        from_expected_debug,
+                        contextual_type,
+                    );
+                }
                 let has_unknown_expected_context = ctx_helper
                     .as_ref()
                     .and_then(tsz_solver::ContextualTypeContext::expected)
@@ -1321,10 +1395,8 @@ impl<'a> CheckerState<'a> {
                 // which were just set by cache_parameter_types above).
                 self.invalidate_function_body_for_param_retyping(body);
             }
-            self.record_destructured_parameter_binding_groups(
-                &parameters.nodes,
-                &destructuring_context_param_types,
-            );
+            self.record_destructured_parameter_binding_groups(&parameters.nodes, &param_types);
+            self.record_contextual_tuple_parameter_groups(&parameters.nodes, contextual_type);
 
             // Assign contextual types to destructuring parameters (binding patterns)
             // This allows destructuring patterns in callbacks to infer element types from contextual types
@@ -2281,13 +2353,41 @@ impl<'a> CheckerState<'a> {
 
         let shape = FunctionShape {
             type_params,
-            params,
+            params: if inherited_contextual_generics {
+                contextual_signature_shape
+                    .as_ref()
+                    .map(|shape| shape.params.clone())
+                    .unwrap_or(params)
+            } else {
+                params
+            },
             this_type,
             return_type: final_return_type,
             type_predicate,
             is_constructor: js_constructor_instance_type.is_some(),
             is_method: false,
         };
+        if std::env::var_os("TSZ_DEBUG_FUNCTION_SHAPE").is_some()
+            && (self
+                .ctx
+                .file_name
+                .contains("dependentDestructuredVariables")
+                || self.ctx.file_name.contains("controlFlowGenericTypes"))
+        {
+            let param_types: Vec<_> = shape
+                .params
+                .iter()
+                .map(|p| (self.format_type(p.type_id), p.rest))
+                .collect();
+            eprintln!(
+                "function-shape file={} fn_idx={} type_params={} params={:?} return={}",
+                self.ctx.file_name,
+                idx.0,
+                shape.type_params.len(),
+                param_types,
+                self.format_type(shape.return_type),
+            );
+        }
 
         let function_type = self.ctx.types.factory().function(shape);
 

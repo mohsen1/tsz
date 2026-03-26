@@ -1,5 +1,7 @@
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as query;
+use crate::query_boundaries::flow_analysis::{tuple_elements_for_type, union_members_for_type};
+use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -10,7 +12,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ParamInfo, QueryDatabase, TypeId, TypePredicate};
+use tsz_solver::{ParamInfo, QueryDatabase, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
@@ -38,6 +40,24 @@ const fn flow_step_budget(flow_node_count: usize) -> usize {
         FLOW_STEP_BUDGET_MAX
     } else {
         scaled
+    }
+}
+
+fn resolve_tuple_binding_type(
+    db: &dyn QueryDatabase,
+    elems: &[TupleElement],
+    element_index: usize,
+    is_rest: bool,
+) -> Option<TypeId> {
+    if is_rest {
+        let rest_elem = elems
+            .iter()
+            .skip(element_index)
+            .find(|e| e.rest)
+            .or_else(|| elems.get(element_index))?;
+        Some(db.factory().array(rest_elem.type_id))
+    } else {
+        elems.get(element_index).map(|e| e.type_id)
     }
 }
 
@@ -178,6 +198,8 @@ pub struct FlowAnalyzer<'a> {
     /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
     pub(crate) shared_symbol_last_assignment_pos:
         Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>>,
+    pub(crate) destructured_bindings:
+        Option<&'a FxHashMap<SymbolId, crate::context::DestructuredBindingInfo>>,
     pub(crate) concrete_this_type: Option<TypeId>,
 }
 
@@ -244,6 +266,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_visited: None,
             flow_results: None,
             shared_symbol_last_assignment_pos: None,
+            destructured_bindings: None,
             concrete_this_type: None,
         }
     }
@@ -277,6 +300,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_visited: None,
             flow_results: None,
             shared_symbol_last_assignment_pos: None,
+            destructured_bindings: None,
             concrete_this_type: None,
         }
     }
@@ -344,6 +368,14 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>,
     ) -> Self {
         self.shared_symbol_last_assignment_pos = Some(cache);
+        self
+    }
+
+    pub const fn with_destructured_bindings(
+        mut self,
+        bindings: &'a FxHashMap<SymbolId, crate::context::DestructuredBindingInfo>,
+    ) -> Self {
+        self.destructured_bindings = Some(bindings);
         self
     }
 
@@ -491,6 +523,16 @@ impl<'a> FlowAnalyzer<'a> {
         initial_type: TypeId,
         flow_node: FlowNodeId,
     ) -> TypeId {
+        let narrowed = self.get_flow_type_uncorrelated(reference, initial_type, flow_node);
+        self.apply_correlated_destructured_narrowing(reference, initial_type, narrowed, flow_node)
+    }
+
+    fn get_flow_type_uncorrelated(
+        &self,
+        reference: NodeIndex,
+        initial_type: TypeId,
+        flow_node: FlowNodeId,
+    ) -> TypeId {
         if flow_node.is_none() {
             return initial_type;
         }
@@ -511,6 +553,249 @@ impl<'a> FlowAnalyzer<'a> {
             &mut Vec::new(),
             symbol_id,
         )
+    }
+
+    fn apply_correlated_destructured_narrowing(
+        &self,
+        reference: NodeIndex,
+        _initial_type: TypeId,
+        narrowed_type: TypeId,
+        flow_node: FlowNodeId,
+    ) -> TypeId {
+        let Some(bindings) = self.destructured_bindings else {
+            return narrowed_type;
+        };
+        let Some(sym_id) = self
+            .binder
+            .resolve_identifier(self.arena, reference)
+            .or_else(|| self.reference_symbol(reference))
+        else {
+            return narrowed_type;
+        };
+        let Some(info) = bindings.get(&sym_id) else {
+            return narrowed_type;
+        };
+        let ref_name = self
+            .arena
+            .get(reference)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.to_string())
+            .unwrap_or_else(|| format!("#{}", reference.0));
+        if !info.is_const {
+            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+                eprintln!(
+                    "correlated-skip name={} sym={:?} reason=not_const group={}",
+                    ref_name, sym_id, info.group_id
+                );
+            }
+            return narrowed_type;
+        }
+
+        let Some(source_members) = union_members_for_type(self.interner, info.source_type) else {
+            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+                eprintln!(
+                    "correlated-skip name={} sym={:?} reason=no_union source={:?}",
+                    ref_name, sym_id, info.source_type
+                );
+            }
+            return narrowed_type;
+        };
+
+        let siblings: Vec<_> = bindings
+            .iter()
+            .filter(|(other_sym, other_info)| {
+                **other_sym != sym_id && other_info.group_id == info.group_id && other_info.is_const
+            })
+            .map(|(other_sym, other_info)| (*other_sym, other_info))
+            .collect();
+        if siblings.is_empty() {
+            return narrowed_type;
+        }
+
+        let mut remaining_members = source_members.clone();
+        let original_member_count = remaining_members.len();
+
+        for (sib_sym, sib_info) in siblings {
+            let Some(sib_ref) = self.symbol_identifier_ref(sib_sym) else {
+                if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+                    eprintln!(
+                        "correlated-skip sym={:?} sibling={:?} reason=no_ref",
+                        sym_id, sib_sym
+                    );
+                }
+                continue;
+            };
+            let Some(sib_initial) =
+                self.derive_binding_type_from_members(&source_members, sib_info)
+            else {
+                if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+                    eprintln!(
+                        "correlated-skip sym={:?} sibling={:?} reason=no_initial",
+                        sym_id, sib_sym
+                    );
+                }
+                continue;
+            };
+
+            let sib_narrowed = self.get_flow_type_uncorrelated(sib_ref, sib_initial, flow_node);
+            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+                eprintln!(
+                    "correlated-check sym={:?} sibling={:?} sib_initial={:?} sib_narrowed={:?}",
+                    sym_id, sib_sym, sib_initial, sib_narrowed
+                );
+            }
+            if sib_narrowed == sib_initial {
+                continue;
+            }
+
+            remaining_members.retain(|&member| {
+                self.binding_type_from_member(member, sib_info)
+                    .is_none_or(|member_ty| self.types_overlap(member_ty, sib_narrowed))
+            });
+        }
+
+        if remaining_members.len() == original_member_count {
+            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+                eprintln!(
+                    "correlated-nochange name={} sym={:?} group={} narrowed={:?}",
+                    ref_name, sym_id, info.group_id, narrowed_type
+                );
+            }
+            return narrowed_type;
+        }
+        if remaining_members.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        let Some(correlated) = self.derive_binding_type_from_members(&remaining_members, info)
+        else {
+            return narrowed_type;
+        };
+
+        if correlated == narrowed_type {
+            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+                eprintln!(
+                    "correlated-same name={} sym={:?} result={:?}",
+                    ref_name, sym_id, correlated
+                );
+            }
+            return correlated;
+        }
+
+        let final_ty = self
+            .intersect_types(correlated, narrowed_type)
+            .unwrap_or(correlated);
+        if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
+            eprintln!(
+                "correlated-result name={} sym={:?} correlated={:?} narrowed={:?} final={:?}",
+                ref_name, sym_id, correlated, narrowed_type, final_ty
+            );
+        }
+        final_ty
+    }
+
+    fn symbol_identifier_ref(&self, sym: SymbolId) -> Option<NodeIndex> {
+        let mut declaration_ident = None;
+        for (&node_id, &node_sym) in &self.binder.node_symbols {
+            if node_sym != sym {
+                continue;
+            }
+            let idx = NodeIndex(node_id);
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+
+            let is_declaration_ident = self
+                .arena
+                .get_extended(idx)
+                .and_then(|ext| self.arena.get(ext.parent))
+                .is_some_and(|parent| {
+                    parent.kind == syntax_kind_ext::BINDING_ELEMENT
+                        || parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                        || parent.kind == syntax_kind_ext::PARAMETER
+                });
+
+            if !is_declaration_ident {
+                return Some(idx);
+            }
+            declaration_ident = Some(idx);
+        }
+        declaration_ident
+    }
+
+    fn binding_type_from_member(
+        &self,
+        member: TypeId,
+        info: &crate::context::DestructuredBindingInfo,
+    ) -> Option<TypeId> {
+        if !info.property_name.is_empty() {
+            let mut current = member;
+            for segment in info.property_name.split('.') {
+                let prop = find_property_in_object_by_str(self.interner, current, segment)?;
+                current = prop.type_id;
+            }
+            Some(current)
+        } else if let Some(elements) = tuple_elements_for_type(self.interner, member) {
+            resolve_tuple_binding_type(
+                self.interner,
+                &elements,
+                info.element_index as usize,
+                info.is_rest,
+            )
+        } else {
+            None
+        }
+    }
+
+    fn derive_binding_type_from_members(
+        &self,
+        members: &[TypeId],
+        info: &crate::context::DestructuredBindingInfo,
+    ) -> Option<TypeId> {
+        let mut result_types = Vec::new();
+        for &member in members {
+            if let Some(member_ty) = self.binding_type_from_member(member, info) {
+                result_types.push(member_ty);
+            }
+        }
+        if result_types.is_empty() {
+            None
+        } else {
+            Some(tsz_solver::utils::union_or_single(
+                self.interner,
+                result_types,
+            ))
+        }
+    }
+
+    fn types_overlap(&self, left: TypeId, right: TypeId) -> bool {
+        left == right || self.is_assignable_to(left, right) || self.is_assignable_to(right, left)
+    }
+
+    fn intersect_types(&self, left: TypeId, right: TypeId) -> Option<TypeId> {
+        let left_members = union_members_for_type(self.interner, left);
+        let right_members = union_members_for_type(self.interner, right);
+
+        match (left_members, right_members) {
+            (Some(left_members), Some(right_members)) => {
+                let filtered: Vec<_> = left_members
+                    .iter()
+                    .filter(|member| right_members.contains(member))
+                    .copied()
+                    .collect();
+                if filtered.is_empty() {
+                    None
+                } else {
+                    Some(tsz_solver::utils::union_or_single(self.interner, filtered))
+                }
+            }
+            (Some(left_members), None) => left_members.contains(&right).then_some(right),
+            (None, Some(right_members)) => right_members.contains(&left).then_some(left),
+            (None, None) => (left == right).then_some(left),
+        }
     }
 
     /// Check if a reference is definitely assigned at a specific flow node.
@@ -1111,6 +1396,16 @@ impl<'a> FlowAnalyzer<'a> {
                                 } else {
                                     initial_type
                                 }
+                            } else if is_destructuring
+                                && self.arena.get(flow.node).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                })
+                            {
+                                // Destructuring-assignment writes already compute a
+                                // branch-sensitive assigned type for the specific target.
+                                // Re-reducing against the declared annotation can leak
+                                // unrelated union members from the old declared type.
+                                assigned_type
                             } else if is_control_flow_typed_any {
                                 // Unannotated mutable locals such as `let x;` evolve from
                                 // their writes rather than staying explicit `any`.

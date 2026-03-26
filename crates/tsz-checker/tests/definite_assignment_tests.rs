@@ -1143,12 +1143,16 @@ fn test_ts2454_optional_chain_rhs_assignment_not_definite() {
         a.toFixed();
 
         let b: number;
-        o?.(b = 1);
+        o?.x[b = 1];
         b.toFixed();
 
         let c: number;
-        o?.x(c = 1);
+        o?.(c = 1);
         c.toFixed();
+
+        let d: number;
+        o?.x(d = 1);
+        d.toFixed();
     ";
     let diags = diagnostics_with_options(
         source,
@@ -1157,12 +1161,17 @@ fn test_ts2454_optional_chain_rhs_assignment_not_definite() {
             ..Default::default()
         },
     );
+    let ts2454_vars: Vec<_> = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED)
+        .map(|(_, m)| m.clone())
+        .collect();
     assert!(
-        count_code(
-            &diags,
-            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
-        ) >= 3,
-        "Expected TS2454 for assignments guarded by optional chaining, got: {diags:?}"
+        ts2454_vars.iter().any(|m| m.contains("'a'"))
+            && ts2454_vars.iter().any(|m| m.contains("'b'"))
+            && ts2454_vars.iter().any(|m| m.contains("'c'"))
+            && ts2454_vars.iter().any(|m| m.contains("'d'")),
+        "Expected TS2454 for a/b/c/d assignments guarded by optional chaining, got: {diags:?}"
     );
 }
 

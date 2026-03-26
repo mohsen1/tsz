@@ -295,6 +295,37 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check whether `object_param[keyof key_source]` is valid because the
+    /// object's constraint is known to cover the other type parameter's keys.
+    ///
+    /// This accepts mutually-constrained generic pairs like:
+    /// `InternalSpec extends Record<keyof PublicSpec, any> | undefined`
+    /// used as `InternalSpec[keyof PublicSpec]`.
+    pub(crate) fn object_constraint_covers_keyof_source(
+        &mut self,
+        object_param: TypeId,
+        key_source: TypeId,
+    ) -> bool {
+        use tsz_solver::visitor;
+
+        let Some(object_info) = visitor::type_param_info(self.ctx.types, object_param) else {
+            return false;
+        };
+        let Some(object_constraint) = object_info.constraint else {
+            return false;
+        };
+
+        let object_constraint = self.evaluate_type_with_env(object_constraint);
+        let object_constraint = self
+            .split_nullish_type(object_constraint)
+            .0
+            .unwrap_or(object_constraint);
+
+        let object_key_space = self.ctx.types.evaluate_keyof(object_constraint);
+        let source_key_space = self.ctx.types.evaluate_keyof(key_source);
+        self.is_assignable_to(source_key_space, object_key_space)
+    }
+
     pub(crate) fn should_report_union_generic_key_mismatch_ts2536(
         &mut self,
         object_type: TypeId,

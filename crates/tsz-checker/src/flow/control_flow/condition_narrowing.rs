@@ -805,11 +805,18 @@ impl<'a> FlowAnalyzer<'a> {
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
                 let matches = self.is_matching_reference(condition_ref, target);
                 if matches {
-                    return narrowing.narrow_type(
+                    let narrowed = narrowing.narrow_type(
                         type_id,
                         &TypeGuard::Truthy,
                         GuardSense::from(is_true_branch),
                     );
+                    if std::env::var_os("TSZ_DEBUG_TRUTHY_NARROW").is_some() {
+                        eprintln!(
+                            "truthy-narrow cond={} target={} input={:?} result={:?} true_branch={}",
+                            condition_idx.0, target.0, type_id, narrowed, is_true_branch
+                        );
+                    }
+                    return narrowed;
                 }
             }
         }

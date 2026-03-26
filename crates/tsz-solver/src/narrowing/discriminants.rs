@@ -627,6 +627,22 @@ impl<'a> NarrowingContext<'a> {
         property_path: &[Atom],
         sense: bool,
     ) -> TypeId {
+        use crate::type_queries::{
+            TypeParameterConstraintKind, classify_for_type_parameter_constraint,
+        };
+
+        if let TypeParameterConstraintKind::TypeParameter {
+            constraint: Some(constraint),
+        } = classify_for_type_parameter_constraint(self.db, union_type)
+            && constraint != union_type
+        {
+            let narrowed_constraint =
+                self.narrow_by_property_truthiness(constraint, property_path, sense);
+            if narrowed_constraint != constraint {
+                return self.db.intersection2(union_type, narrowed_constraint);
+            }
+        }
+
         let _span = span!(
             Level::TRACE,
             "narrow_by_property_truthiness",

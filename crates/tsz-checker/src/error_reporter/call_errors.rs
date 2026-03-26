@@ -501,6 +501,10 @@ impl<'a> CheckerState<'a> {
         _arg_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
+        if let Some(display) = self.contextual_generic_call_parameter_display(param_type, arg_idx) {
+            return display;
+        }
+
         if let Some(display) = self.contextual_keyof_parameter_display(param_type, arg_idx) {
             return display;
         }
@@ -510,6 +514,195 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_type_for_assignability_message(param_type)
+    }
+
+    fn contextual_generic_call_parameter_display(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        if !crate::query_boundaries::common::contains_type_by_id(
+            self.ctx.types,
+            param_type,
+            TypeId::UNKNOWN,
+        ) {
+            return None;
+        }
+
+        let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+        let (callee_expr, args): (NodeIndex, &[NodeIndex]) = match parent.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let call = self.ctx.arena.get_call_expr(parent)?;
+                let args = call.arguments.as_ref()?;
+                (call.expression, &args.nodes)
+            }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                let new_expr = self.ctx.arena.get_call_expr(parent)?;
+                let args = new_expr.arguments.as_ref()?;
+                (new_expr.expression, &args.nodes)
+            }
+            _ => return None,
+        };
+        let arg_index = args.iter().position(|&candidate| candidate == arg_idx)?;
+        let callee_type = self.get_type_of_node(callee_expr);
+        let raw_param_type =
+            crate::query_boundaries::checkers::call::get_contextual_signature_for_arity(
+                self.ctx.types,
+                callee_type,
+                args.len(),
+            )
+            .and_then(|shape| {
+                shape
+                    .params
+                    .get(arg_index)
+                    .map(|param| param.type_id)
+                    .or_else(|| {
+                        let last = shape.params.last()?;
+                        last.rest.then_some(last.type_id)
+                    })
+            })?;
+
+        if std::env::var_os("TSZ_DEBUG_GENERIC_PARAM_DISPLAY").is_some()
+            && self.ctx.file_name.contains("controlFlowGenericTypes")
+        {
+            let raw_eval = self.evaluate_type_with_env(raw_param_type);
+            let param_display = self.format_type_for_assignability_message(param_type);
+            let raw_display = self.format_type_for_assignability_message(raw_param_type);
+            let raw_eval_display = self.format_type_for_assignability_message(raw_eval);
+            eprintln!(
+                "generic-param-display arg={} param={} raw={} raw_eval={}",
+                arg_idx.0, param_display, raw_display, raw_eval_display,
+            );
+        }
+
+        if !crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            raw_param_type,
+        ) {
+            return None;
+        }
+
+        if !self.should_preserve_raw_generic_call_parameter_display(arg_idx, raw_param_type) {
+            return None;
+        }
+
+        Some(self.format_type_for_assignability_message(raw_param_type))
+    }
+
+    fn should_preserve_raw_generic_call_parameter_display(
+        &mut self,
+        arg_idx: NodeIndex,
+        raw_param_type: TypeId,
+    ) -> bool {
+        let mut child = arg_idx;
+        let Some(mut current) = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent) else {
+            return false;
+        };
+
+        while current.is_some() {
+            let parent_idx = current;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::IF_STATEMENT {
+                let Some(if_stmt) = self.ctx.arena.get_if_statement(parent) else {
+                    return false;
+                };
+                if child != if_stmt.then_statement && child != if_stmt.else_statement {
+                    return false;
+                }
+
+                let mut positive_branch = child == if_stmt.then_statement;
+                let mut condition = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(if_stmt.expression);
+                if let Some(node) = self.ctx.arena.get(condition)
+                    && let Some(unary) = self.ctx.arena.get_unary_expr(node)
+                    && unary.operator == SyntaxKind::ExclamationToken as u16
+                {
+                    positive_branch = !positive_branch;
+                    condition = self
+                        .ctx
+                        .arena
+                        .skip_parenthesized_and_assertions(unary.operand);
+                }
+
+                if positive_branch {
+                    return false;
+                }
+
+                let Some(cond_node) = self.ctx.arena.get(condition) else {
+                    return false;
+                };
+                let Some(call) = self.ctx.arena.get_call_expr(cond_node) else {
+                    return false;
+                };
+                let Some(args) = call.arguments.as_ref() else {
+                    return false;
+                };
+                let callee_type = self.get_type_of_node(call.expression);
+                let Some(predicate) =
+                    crate::query_boundaries::checkers::call::extract_predicate_signature(
+                        self.ctx.types,
+                        callee_type,
+                    )
+                else {
+                    return false;
+                };
+                let Some(predicate_type) = predicate.predicate.type_id else {
+                    return false;
+                };
+                let Some(predicate_arg) = predicate
+                    .predicate
+                    .parameter_index
+                    .and_then(|index| args.nodes.get(index).copied())
+                else {
+                    return false;
+                };
+                if !self.same_reference_symbol(predicate_arg, arg_idx) {
+                    return false;
+                }
+
+                return self.types_overlap_for_diagnostic_display(predicate_type, raw_param_type);
+            }
+
+            child = parent_idx;
+            let Some(next) = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            current = next;
+        }
+
+        false
+    }
+
+    fn same_reference_symbol(&self, left: NodeIndex, right: NodeIndex) -> bool {
+        if left == right {
+            return true;
+        }
+
+        let left = self.ctx.arena.skip_parenthesized_and_assertions(left);
+        let right = self.ctx.arena.skip_parenthesized_and_assertions(right);
+        if left == right {
+            return true;
+        }
+
+        self.ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, left)
+            .zip(self.ctx.binder.resolve_identifier(self.ctx.arena, right))
+            .is_some_and(|(a, b)| a == b)
+    }
+
+    fn types_overlap_for_diagnostic_display(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.is_assignable_to(left, right) || self.is_assignable_to(right, left)
     }
 
     fn contextual_keyof_parameter_display(
@@ -1528,6 +1721,19 @@ impl<'a> CheckerState<'a> {
             || param_type == TypeId::UNKNOWN
         {
             return;
+        }
+
+        if std::env::var_os("TSZ_DEBUG_CALL_ARG_TYPES").is_some()
+            && self.ctx.file_name.contains("controlFlowGenericTypes")
+        {
+            eprintln!(
+                "call-arg-types idx={} arg={:?} arg_fmt={} param={:?} param_fmt={}",
+                idx.0,
+                arg_type,
+                self.format_type_for_assignability_message(arg_type),
+                param_type,
+                self.format_type_for_assignability_message(param_type),
+            );
         }
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
         if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {

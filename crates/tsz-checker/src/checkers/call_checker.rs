@@ -108,6 +108,47 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn callable_context_can_type_function_argument_despite_unresolved(
+        &self,
+        arg_idx: NodeIndex,
+        expected_context_type: Option<TypeId>,
+    ) -> bool {
+        let Some(expected_context_type) = expected_context_type else {
+            return false;
+        };
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+
+        if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+            self.ctx.types,
+            expected_context_type,
+        ) {
+            return shape
+                .params
+                .iter()
+                .all(|param| param.type_id != TypeId::UNKNOWN && param.type_id != TypeId::ERROR);
+        }
+
+        if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            expected_context_type,
+        ) {
+            return shape.call_signatures.iter().all(|sig| {
+                sig.params
+                    .iter()
+                    .all(|param| param.type_id != TypeId::UNKNOWN && param.type_id != TypeId::ERROR)
+            });
+        }
+
+        false
+    }
+
     pub(crate) const fn should_preserve_speculative_call_diagnostic(
         diag: &crate::diagnostics::Diagnostic,
     ) -> bool {
@@ -767,8 +808,6 @@ impl<'a> CheckerState<'a> {
                     || ty == TypeId::ERROR
                     || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty)
             });
-            let apply_contextual =
-                self.argument_needs_contextual_type(arg_idx) && !unresolved_refresh_context;
             let expected_context_type = self.contextual_type_option_for_call_argument_at(
                 expected_type,
                 arg_idx,
@@ -776,6 +815,13 @@ impl<'a> CheckerState<'a> {
                 Some(expanded_count),
                 callable_ctx,
             );
+            let can_apply_contextual_despite_unresolved = unresolved_refresh_context
+                && self.callable_context_can_type_function_argument_despite_unresolved(
+                    arg_idx,
+                    expected_context_type,
+                );
+            let apply_contextual = self.argument_needs_contextual_type(arg_idx)
+                && (!unresolved_refresh_context || can_apply_contextual_despite_unresolved);
             let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
                 tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
                     || crate::computation::call_inference::should_preserve_contextual_application_shape(

@@ -753,6 +753,23 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+        if !skip_flow_narrowing
+            && self.ctx.arena.get(access.expression).is_some_and(|expr| {
+                matches!(
+                    expr.kind,
+                    k if k == SyntaxKind::Identifier as u16
+                        || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                )
+            })
+            && let Some(flow_node) = self.flow_node_for_reference_usage(idx)
+        {
+            object_type = self.flow_analyzer_for_property_reads().get_flow_type(
+                access.expression,
+                object_type,
+                flow_node,
+            );
+        }
 
         if object_type == TypeId::ANY
             && self.is_js_file()
@@ -1411,6 +1428,48 @@ impl<'a> CheckerState<'a> {
                         )
                     {
                         return self.current_file_commonjs_module_exports_namespace_type();
+                    }
+
+                    // A bare type-parameter receiver can fall back to `any` here
+                    // when the constraint only exposes the property on some union
+                    // members. Preserve TS2339 for direct reads like `value.foo`
+                    // but avoid firing after control-flow has already refined the
+                    // receiver to a narrower view.
+                    if !skip_flow_narrowing
+                        && !from_index_signature
+                        && prop_type == TypeId::ANY
+                        && object_type == object_type_for_access
+                        && object_type_for_access == original_object_type
+                        && crate::query_boundaries::state::checking::is_type_parameter_like(
+                            self.ctx.types,
+                            object_type_for_access,
+                        )
+                        && !self.type_parameter_constraint_has_explicit_property(
+                            object_type_for_access,
+                            property_name,
+                        )
+                    {
+                        if let Some(constraint) =
+                            crate::query_boundaries::property_access::type_parameter_constraint(
+                                self.ctx.types,
+                                object_type_for_access,
+                            )
+                        {
+                            let type_display =
+                                self.format_type_for_assignability_message(constraint);
+                            self.error_property_not_exist_with_apparent_type(
+                                property_name,
+                                &type_display,
+                                access.name_or_argument,
+                            );
+                        } else {
+                            self.error_property_not_exist_at(
+                                property_name,
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                        }
+                        return TypeId::ERROR;
                     }
 
                     // Substitute polymorphic `this` type with the receiver type.

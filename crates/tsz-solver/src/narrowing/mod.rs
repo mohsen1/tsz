@@ -37,7 +37,7 @@ pub(crate) mod utils;
 // Re-export utility functions from the utils submodule
 pub use utils::{
     find_discriminants, is_definitely_nullish, is_nullish_type, narrow_by_discriminant,
-    narrow_by_typeof, remove_nullish, remove_undefined, split_nullish_type,
+    narrow_by_typeof, remove_nullish, remove_nullish_query, remove_undefined, split_nullish_type,
     type_contains_undefined,
 };
 

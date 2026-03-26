@@ -424,6 +424,19 @@ pub fn split_nullish_type(
         return (None, Some(normalize_nullish(type_id)));
     }
 
+    // Type parameters and `infer` variables can be nullable through their
+    // constraints even when the type itself is not a top-level `null | undefined`
+    // union. Preserve that for downstream diagnostics like TS18048 and carry a
+    // non-nullish view forward for the actual access.
+    if let Some(TypeData::TypeParameter(param) | TypeData::Infer(param)) = types.lookup(type_id)
+        && let Some(constraint) = param.constraint
+    {
+        let (_, nullish_cause) = split_nullish_type(types, constraint);
+        if let Some(cause) = nullish_cause {
+            return (Some(remove_nullish(types, type_id)), Some(cause));
+        }
+    }
+
     // Fast path: non-union, non-nullable types are entirely non-nullish
     if type_id.is_intrinsic() || top_level_union_members(types, type_id).is_none() {
         return (Some(type_id), None);
@@ -462,7 +475,98 @@ pub fn split_nullish_type(
 /// returns `T & {}` (`NonNullable`<T>) instead of `T`. This matches tsc's behavior where
 /// `x!` on a type parameter produces `T & {}`, ensuring proper assignability to the
 /// non-nullable part of the constraint.
-pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+fn remove_nullish_inner(
+    types: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+) -> TypeId {
+    if let Some(db) = query_db
+        && let Some(TypeData::Application(app_id)) = types.lookup(type_id)
+    {
+        let app = types.type_application(app_id);
+        let def_id = match types.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            Some(TypeData::TypeQuery(sym_ref)) => db.symbol_to_def_id(sym_ref),
+            _ => None,
+        };
+        if let Some(def_id) = def_id
+            && let Some(type_params) = db.get_lazy_type_params(def_id)
+            && let Some(resolved) = db.resolve_lazy(def_id, types)
+        {
+            let instantiated = crate::instantiate_generic(types, resolved, &type_params, &app.args);
+            if std::env::var_os("TSZ_DEBUG_REMOVE_NULLISH").is_some() {
+                eprintln!(
+                    "remove-nullish-app type={:?} base={:?} resolved={:?} instantiated={:?}",
+                    type_id, app.base, resolved, instantiated
+                );
+            }
+            if instantiated != type_id {
+                return remove_nullish_inner(types, query_db, instantiated);
+            }
+        }
+    }
+
+    if matches!(
+        types.lookup(type_id),
+        Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::TypeQuery(_))
+    ) {
+        let evaluated = query_db
+            .map(|db| db.evaluate_type(type_id))
+            .unwrap_or_else(|| crate::evaluation::evaluate::evaluate_type(types, type_id));
+        if evaluated != type_id {
+            return remove_nullish_inner(types, query_db, evaluated);
+        }
+    }
+
+    // Deferred conditional types need branch-aware nullish removal. This keeps
+    // generic relationships intact for patterns like:
+    //   Extract<T, string | undefined>
+    // where truthiness should narrow to `Extract<T, string>` rather than leave
+    // the deferred conditional untouched.
+    if let Some(TypeData::Conditional(cond_id)) = types.lookup(type_id) {
+        let cond = types.conditional_type(cond_id);
+        if std::env::var_os("TSZ_DEBUG_REMOVE_NULLISH").is_some() {
+            eprintln!(
+                "remove-nullish-cond type={:?} check={:?} extends={:?} true={:?} false={:?} true_eq_check={}",
+                type_id,
+                cond.check_type,
+                cond.extends_type,
+                cond.true_type,
+                cond.false_type,
+                cond.true_type == cond.check_type
+            );
+        }
+
+        // Common Extract-like shape: `T extends U ? T : never`.
+        // Truthiness / non-null removal should narrow the true branch through the
+        // constraint, yielding `T & NonNullable<U>`.
+        if cond.true_type == cond.check_type {
+            let non_null_extends = remove_nullish_inner(types, query_db, cond.extends_type);
+            let true_branch = types.intersection2(cond.check_type, non_null_extends);
+            let false_branch = remove_nullish_inner(types, query_db, cond.false_type);
+            let result = if false_branch == TypeId::NEVER {
+                true_branch
+            } else {
+                types.union2(true_branch, false_branch)
+            };
+            if std::env::var_os("TSZ_DEBUG_REMOVE_NULLISH").is_some() {
+                eprintln!(
+                    "remove-nullish-cond-result type={:?} non_null_extends={:?} true_branch={:?} false_branch={:?} result={:?}",
+                    type_id, non_null_extends, true_branch, false_branch, result
+                );
+            }
+            return result;
+        }
+
+        let true_branch = remove_nullish_inner(types, query_db, cond.true_type);
+        let false_branch = remove_nullish_inner(types, query_db, cond.false_type);
+        return match (true_branch, false_branch) {
+            (TypeId::NEVER, TypeId::NEVER) => TypeId::NEVER,
+            (TypeId::NEVER, other) | (other, TypeId::NEVER) => other,
+            (left, right) => types.union2(left, right),
+        };
+    }
+
     // Handle type parameters: if the constraint includes nullable types,
     // produce T & {} (NonNullable<T>) to properly narrow the type.
     if let Some(TypeData::TypeParameter(param)) = types.lookup(type_id) {
@@ -497,7 +601,7 @@ pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
             let processed: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&m| {
-                    let narrowed = remove_nullish(types, m);
+                    let narrowed = remove_nullish_inner(types, query_db, m);
                     if narrowed == TypeId::NEVER {
                         None
                     } else {
@@ -515,6 +619,14 @@ pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 
     let (non_nullish, _) = split_nullish_type(types, type_id);
     non_nullish.unwrap_or(TypeId::NEVER)
+}
+
+pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    remove_nullish_inner(types, None, type_id)
+}
+
+pub fn remove_nullish_query(types: &dyn QueryDatabase, type_id: TypeId) -> TypeId {
+    remove_nullish_inner(types, Some(types), type_id)
 }
 
 /// Remove `undefined` from a type while preserving `null` and other members.

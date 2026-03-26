@@ -94,10 +94,13 @@ impl<'a> CheckerState<'a> {
         // argument passing, return statements). Without this, instanceof
         // narrowing from an interface to a class with no common properties
         // would be incorrectly rejected.
+        let generic_narrowing_shape = self.contains_type_parameters_cached(declared_type)
+            || self.contains_type_parameters_cached(narrowed_type);
         if narrowed_type != declared_type
             && narrowed_type != TypeId::ERROR
             && declared_type != TypeId::ANY
             && declared_type != TypeId::UNKNOWN
+            && !generic_narrowing_shape
             && !self.is_assignable_to_no_weak_checks(narrowed_type, declared_type)
         {
             trace!("Flow narrowed to incompatible type, keeping declared type");
@@ -1120,7 +1123,8 @@ impl<'a> CheckerState<'a> {
         )
         .with_flow_cache(&self.ctx.flow_analysis_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_type_environment(Rc::clone(&self.ctx.type_environment));
+        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         // Pre-seed the reference symbol cache when the checker has already
         // resolved the symbol for this reference. This handles cases where

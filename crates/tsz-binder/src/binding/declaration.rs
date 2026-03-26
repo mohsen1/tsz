@@ -1666,6 +1666,79 @@ impl BinderState {
         )
     }
 
+    fn is_optional_chain_access(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let idx = arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                if let Some(access) = arena.get_access_expr(node) {
+                    access.question_dot_token
+                        || Self::is_optional_chain_access(arena, access.expression)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0 {
+                    return true;
+                }
+                if let Some(call) = arena.get_call_expr(node) {
+                    Self::is_optional_chain_access(arena, call.expression)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn continues_optional_chain(&self, arena: &NodeArena, idx: NodeIndex) -> bool {
+        let Some(ext) = arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+        let Some(parent_node) = arena.get(parent) else {
+            return false;
+        };
+        match parent_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                arena.get_access_expr(parent_node).is_some_and(|access| {
+                    access.expression == idx && Self::is_optional_chain_access(arena, parent)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                arena.get_call_expr(parent_node).is_some_and(|call| {
+                    call.expression == idx && Self::is_optional_chain_access(arena, parent)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn optional_chain_branch_base(&self) -> FlowNodeId {
+        let current = self.current_flow;
+        let Some(flow) = self.flow_nodes.get(current) else {
+            return current;
+        };
+        if (flow.flags & flow_flags::TRUE_CONDITION) != 0
+            && let Some(&antecedent) = flow.antecedent.first()
+            && antecedent.is_some()
+        {
+            return antecedent;
+        }
+        current
+    }
+
     // Avoid deep recursion on large left-associative binary expression chains.
     /// Bind a short-circuit binary expression (&&, ||, ??) with intermediate
     /// flow condition nodes.
@@ -1956,6 +2029,31 @@ impl BinderState {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = arena.get_access_expr(node) {
                     self.bind_expression(arena, access.expression);
+                    if access.question_dot_token && !self.continues_optional_chain(arena, idx) {
+                        let after_base = self.current_flow;
+                        let true_flow = self.create_flow_condition(
+                            flow_flags::TRUE_CONDITION,
+                            after_base,
+                            access.expression,
+                        );
+                        let false_flow = self.create_flow_condition(
+                            flow_flags::FALSE_CONDITION,
+                            after_base,
+                            access.expression,
+                        );
+                        let merge = self.create_branch_label();
+                        self.add_antecedent(merge, true_flow);
+                        self.add_antecedent(merge, false_flow);
+                        self.current_flow = merge;
+                    } else if access.question_dot_token {
+                        let after_base = self.current_flow;
+                        let true_flow = self.create_flow_condition(
+                            flow_flags::TRUE_CONDITION,
+                            after_base,
+                            access.expression,
+                        );
+                        self.current_flow = true_flow;
+                    }
                 }
                 return;
             }
@@ -1967,15 +2065,14 @@ impl BinderState {
 
                     // Optional chaining short-circuits RHS evaluation.
                     // For `obj?.[expr]`, `expr` is evaluated only when `obj` is present.
-                    let expr_has_optional_chain =
-                        arena.get(access.expression).is_some_and(|expr| {
-                            (u32::from(expr.flags) & node_flags::OPTIONAL_CHAIN) != 0
-                        });
-                    if access.question_dot_token
-                        || (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0
-                        || expr_has_optional_chain
-                    {
-                        let after_base = self.current_flow;
+                    if Self::is_optional_chain_access(arena, idx) {
+                        let after_base = if self.continues_optional_chain(arena, idx)
+                            || Self::is_optional_chain_access(arena, access.expression)
+                        {
+                            self.optional_chain_branch_base()
+                        } else {
+                            self.current_flow
+                        };
 
                         let true_flow = self.create_flow_condition(
                             flow_flags::TRUE_CONDITION,
@@ -1984,18 +2081,20 @@ impl BinderState {
                         );
                         self.current_flow = true_flow;
                         self.bind_expression(arena, access.name_or_argument);
-                        let after_element = self.current_flow;
+                        if !self.continues_optional_chain(arena, idx) {
+                            let after_element = self.current_flow;
 
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            after_base,
-                            access.expression,
-                        );
+                            let false_flow = self.create_flow_condition(
+                                flow_flags::FALSE_CONDITION,
+                                after_base,
+                                access.expression,
+                            );
 
-                        let merge = self.create_branch_label();
-                        self.add_antecedent(merge, after_element);
-                        self.add_antecedent(merge, false_flow);
-                        self.current_flow = merge;
+                            let merge = self.create_branch_label();
+                            self.add_antecedent(merge, after_element);
+                            self.add_antecedent(merge, false_flow);
+                            self.current_flow = merge;
+                        }
                     } else {
                         self.bind_expression(arena, access.name_or_argument);
                     }
@@ -2011,7 +2110,13 @@ impl BinderState {
                     let is_optional_call =
                         (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0;
                     if is_optional_call {
-                        let after_callee = self.current_flow;
+                        let after_callee = if self.continues_optional_chain(arena, idx)
+                            || Self::is_optional_chain_access(arena, call.expression)
+                        {
+                            self.optional_chain_branch_base()
+                        } else {
+                            self.current_flow
+                        };
 
                         // Optional calls short-circuit argument evaluation when callee is absent.
                         let true_flow = self.create_flow_condition(
@@ -2031,18 +2136,20 @@ impl BinderState {
                             let flow = self.create_flow_array_mutation(idx);
                             self.current_flow = flow;
                         }
-                        let after_call = self.current_flow;
+                        if !self.continues_optional_chain(arena, idx) {
+                            let after_call = self.current_flow;
 
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            after_callee,
-                            call.expression,
-                        );
+                            let false_flow = self.create_flow_condition(
+                                flow_flags::FALSE_CONDITION,
+                                after_callee,
+                                call.expression,
+                            );
 
-                        let merge = self.create_branch_label();
-                        self.add_antecedent(merge, after_call);
-                        self.add_antecedent(merge, false_flow);
-                        self.current_flow = merge;
+                            let merge = self.create_branch_label();
+                            self.add_antecedent(merge, after_call);
+                            self.add_antecedent(merge, false_flow);
+                            self.current_flow = merge;
+                        }
                     } else {
                         if let Some(args) = &call.arguments {
                             for &arg in &args.nodes {

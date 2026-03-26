@@ -286,6 +286,20 @@ impl<'a> CheckerState<'a> {
             } else {
                 object_type
             };
+        let object_type = if !skip_flow_narrowing
+            && self
+                .resolve_identifier_symbol(access.expression)
+                .is_some_and(|sym| self.ctx.destructured_bindings.contains_key(&sym))
+            && let Some(flow_node) = self.flow_node_for_reference_usage(idx)
+        {
+            self.flow_analyzer_for_property_reads().get_flow_type(
+                access.expression,
+                object_type,
+                flow_node,
+            )
+        } else {
+            object_type
+        };
 
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
@@ -1046,6 +1060,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(key_source) =
                     self.keyof_source_type_param(index_type, pre_resolution_object_type)
                     && !self.is_assignable_to(pre_resolution_object_type, key_source)
+                    && !self.object_constraint_covers_keyof_source(
+                        pre_resolution_object_type,
+                        key_source,
+                    )
                 {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,

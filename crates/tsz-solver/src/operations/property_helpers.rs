@@ -195,7 +195,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Resolve the property on the array type
         let result = self.resolve_array_property(array_type, prop_name, prop_atom);
-
         // If property not found on array, return None to fall through to normal handling
         if result.is_not_found() {
             return None;

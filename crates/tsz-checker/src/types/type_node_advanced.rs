@@ -504,7 +504,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         &self.ctx.flow_visited,
                         &self.ctx.flow_results,
                     )
-                    .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos);
+                    .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+                    .with_destructured_bindings(&self.ctx.destructured_bindings);
 
                     let narrowed =
                         analyzer.get_flow_type(type_query.expr_name, declared_type, flow_node);

@@ -406,6 +406,34 @@ impl<'a> CheckerState<'a> {
         instantiated_params: &[tsz_solver::ParamInfo],
         arg_count: usize,
     ) -> Vec<Option<TypeId>> {
+        let normalize_contextual_param = |this: &mut Self, ty: TypeId| {
+            let evaluated = this.evaluate_type_with_env(ty);
+            if crate::query_boundaries::checkers::call::get_contextual_signature(
+                this.ctx.types,
+                evaluated,
+            )
+            .is_some()
+            {
+                this.normalize_contextual_signature_with_env(evaluated)
+            } else {
+                evaluated
+            }
+        };
+        if std::env::var_os("TSZ_DEBUG_INSTANTIATED_CONTEXT").is_some()
+            && self
+                .ctx
+                .file_name
+                .contains("dependentDestructuredVariables")
+        {
+            let raw: Vec<_> = instantiated_params
+                .iter()
+                .map(|param| (self.format_type(param.type_id), param.rest))
+                .collect();
+            eprintln!(
+                "instantiated-context file={} arg_count={} params={:?}",
+                self.ctx.file_name, arg_count, raw
+            );
+        }
         let unpacked_params: Vec<_> = instantiated_params
             .iter()
             .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
@@ -416,23 +444,39 @@ impl<'a> CheckerState<'a> {
             unpacked_params.len()
         };
 
-        (0..arg_count)
+        let contextuals: Vec<_> = (0..arg_count)
             .map(|index| {
                 if index < rest_start {
                     unpacked_params
                         .get(index)
-                        .map(|param| self.evaluate_type_with_env(param.type_id))
+                        .map(|param| normalize_contextual_param(self, param.type_id))
                 } else {
                     unpacked_params
                         .last()
                         .filter(|param| param.rest)
                         .map(|param| {
-                            let rest_type = self.evaluate_type_with_env(param.type_id);
+                            let rest_type = normalize_contextual_param(self, param.type_id);
                             self.rest_argument_element_type_with_env(rest_type)
                         })
                 }
             })
-            .collect()
+            .collect();
+        if std::env::var_os("TSZ_DEBUG_INSTANTIATED_CONTEXT").is_some()
+            && self
+                .ctx
+                .file_name
+                .contains("dependentDestructuredVariables")
+        {
+            let formatted: Vec<_> = contextuals
+                .iter()
+                .map(|ty| ty.map(|ty| self.format_type(ty)))
+                .collect();
+            eprintln!(
+                "instantiated-context-result file={} arg_count={} contextuals={:?}",
+                self.ctx.file_name, arg_count, formatted
+            );
+        }
+        contextuals
     }
 
     pub(crate) fn refine_generic_function_args_against_instantiated_params(
@@ -1096,7 +1140,26 @@ impl<'a> CheckerState<'a> {
                 .or(shape_round2_param);
             let is_sensitive = i < sensitive_args.len() && sensitive_args[i];
             let round2_param = if is_sensitive {
-                shape_round2_param.or(round2_param)
+                match (shape_round2_param, round2_param) {
+                    (Some(shape_param), Some(instantiated_param)) => {
+                        let shape_is_genericish =
+                            common::contains_infer_types(self.ctx.types, shape_param.0)
+                                || common::contains_type_parameters(self.ctx.types, shape_param.0);
+                        let instantiated_is_concrete =
+                            !common::contains_infer_types(self.ctx.types, instantiated_param.0)
+                                && !common::contains_type_parameters(
+                                    self.ctx.types,
+                                    instantiated_param.0,
+                                );
+                        if shape_is_genericish && instantiated_is_concrete {
+                            Some(instantiated_param)
+                        } else {
+                            Some(shape_param)
+                        }
+                    }
+                    (shape_param, None) => shape_param,
+                    (None, instantiated_param) => instantiated_param,
+                }
             } else {
                 round2_param
             };
@@ -1298,6 +1361,24 @@ impl<'a> CheckerState<'a> {
                 || expected == TypeId::ERROR
                 || common::contains_infer_types(self.ctx.types, expected)
         });
+        if std::env::var_os("TSZ_DEBUG_CALL_ARG_CONTEXT").is_some()
+            && self
+                .ctx
+                .file_name
+                .contains("dependentDestructuredVariables")
+            && let Some(expected) = expected_type
+            && let Some(node) = self.ctx.arena.get(arg_idx)
+            && (node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+        {
+            eprintln!(
+                "call-arg-context file={} arg_idx={} expected={} callable_ctx={:?}",
+                self.ctx.file_name,
+                arg_idx.0,
+                self.format_type(expected),
+                callable_ctx.callable_type.map(|ty| self.format_type(ty))
+            );
+        }
         let needs_contextual_signature_instantiation =
             self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
         let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
@@ -1535,6 +1616,13 @@ impl<'a> CheckerState<'a> {
                         && diag.start >= node.pos
                         && diag.start < node.end
                 });
+                // Round-2/single-arg recomputes are speculative for direct callback
+                // arguments. Keep their diagnostics owned by the final contextual
+                // recheck so stale wide-generic errors (for example TS2339 from
+                // `ClientEvents[string]`) do not leak past the instantiated retry.
+                if is_function_arg_diag {
+                    return false;
+                }
                 if expected_is_unresolved
                     && (is_function_arg_diag
                         || (is_object_literal_diag && is_provisional_implicit_any))

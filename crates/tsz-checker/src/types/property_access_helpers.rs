@@ -931,7 +931,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn flow_node_for_reference_usage(&self, idx: NodeIndex) -> Option<tsz_binder::FlowNodeId> {
+    pub(super) fn flow_node_for_reference_usage(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<tsz_binder::FlowNodeId> {
         if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
             return Some(flow);
         }
@@ -950,7 +953,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn flow_analyzer_for_property_reads(&self) -> FlowAnalyzer<'_> {
+    pub(super) fn flow_analyzer_for_property_reads(&self) -> FlowAnalyzer<'_> {
         FlowAnalyzer::with_node_types(
             self.ctx.arena,
             self.ctx.binder,
@@ -970,6 +973,7 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_visited,
             &self.ctx.flow_results,
         )
+        .with_destructured_bindings(&self.ctx.destructured_bindings)
     }
 
     fn expando_read_is_within_initializing_scope(

@@ -576,6 +576,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let elements = self.interner.tuple_list(elements);
                 self.tuple_rest_element_type(&elements, offset, rest_arg_count)
             }
+            Some(TypeData::Union(members)) => {
+                let mut member_types = Vec::new();
+                for &member in self.interner.type_list(members).iter() {
+                    let member = self.unwrap_readonly(member);
+                    let member = self.evaluate_rest_param_type(member);
+                    match self.interner.lookup(member) {
+                        Some(TypeData::Array(elem)) => member_types.push(elem),
+                        Some(TypeData::Tuple(elements)) => {
+                            let elements = self.interner.tuple_list(elements);
+                            if let Some(ty) =
+                                self.tuple_rest_element_type(&elements, offset, rest_arg_count)
+                            {
+                                member_types.push(ty);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if !member_types.is_empty() {
+                    return Some(crate::utils::union_or_single(self.interner, member_types));
+                }
+                let extracted = crate::contextual::rest_argument_element_type(
+                    self.interner,
+                    self.checker.evaluate_type(rest_param_type),
+                );
+                if extracted != rest_param_type {
+                    return Some(extracted);
+                }
+                Some(rest_param_type)
+            }
             other => {
                 let extracted = crate::contextual::rest_argument_element_type(
                     self.interner,
@@ -720,7 +750,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 TypeData::Application(_)
                 | TypeData::Mapped(_)
                 | TypeData::Intersection(_)
-                | TypeData::Conditional(_),
+                | TypeData::Conditional(_)
+                | TypeData::Lazy(_),
             ) => {
                 let evaluated = self.checker.evaluate_type(type_id);
                 trace!(

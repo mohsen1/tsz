@@ -1063,7 +1063,6 @@ impl<'a> CheckerState<'a> {
                     request,
                 );
             }
-
             // FIX: Preserve readonly and other type modifiers from declared_type.
             // When declared_type has modifiers like ReadonlyType, we must preserve them
             // even if flow analysis infers a different type from the initializer.
@@ -1128,8 +1127,62 @@ impl<'a> CheckerState<'a> {
             // CRITICAL EXCEPTION: If flow_type is different from declared_type and not ERROR,
             // we should use flow_type. This allows discriminant narrowing to work for mutable
             // variables while preserving literal type widening in most cases.
-            let is_const = self.is_const_variable_declaration(value_decl);
-            let result_type = if !is_const {
+            let mut binding_element_decl = NodeIndex::NONE;
+            let mut enclosing_decl = value_decl;
+            for _ in 0..32 {
+                let Some(current_node) = self.ctx.arena.get(enclosing_decl) else {
+                    break;
+                };
+                if current_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                    && binding_element_decl.is_none()
+                {
+                    binding_element_decl = enclosing_decl;
+                }
+                if current_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                    || current_node.kind == syntax_kind_ext::PARAMETER
+                {
+                    break;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(enclosing_decl) else {
+                    break;
+                };
+                enclosing_decl = ext.parent;
+                if enclosing_decl.is_none() {
+                    break;
+                }
+            }
+            let is_const = enclosing_decl.is_some()
+                && self.ctx.arena.is_const_variable_declaration(enclosing_decl);
+            let is_parameter_binding = self
+                .ctx
+                .arena
+                .get(enclosing_decl)
+                .is_some_and(|decl_node| decl_node.kind == syntax_kind_ext::PARAMETER);
+            let has_enclosing_binding_default = binding_element_decl.is_some() && {
+                let mut current = binding_element_decl;
+                let mut found = false;
+                for _ in 0..32 {
+                    let Some(current_node) = self.ctx.arena.get(current) else {
+                        break;
+                    };
+                    if current_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                        && let Some(binding) = self.ctx.arena.get_binding_element(current_node)
+                        && binding.initializer.is_some()
+                    {
+                        found = true;
+                        break;
+                    }
+                    let Some(ext) = self.ctx.arena.get_extended(current) else {
+                        break;
+                    };
+                    current = ext.parent;
+                    if current.is_none() {
+                        break;
+                    }
+                }
+                found
+            };
+            let result_type = if !is_const && !is_parameter_binding {
                 // Mutable variable (let/var)
                 // If declared type has index signatures (either ObjectWithIndex or a resolved
                 // type with index signatures like from a type alias), always preserve it.
@@ -1182,19 +1235,22 @@ impl<'a> CheckerState<'a> {
                 // object shape after the initializer is analyzed, so flow can still see
                 // the original `{}` initializer while the symbol type has the richer
                 // property surface. Prefer the declared type in that case.
-                if self.ctx.is_js_file()
+                if (self.ctx.is_js_file()
                     && declared_type != TypeId::ANY
                     && declared_type != TypeId::ERROR
                     && flow_type != declared_type
                     && tsz_solver::type_queries::get_object_shape(self.ctx.types, declared_type)
-                        .is_some()
+                        .is_some())
+                    || (request.contextual_type.is_some()
+                        && has_enclosing_binding_default
+                        && flow_type != TypeId::ERROR
+                        && self.is_assignable_to(flow_type, declared_type))
                 {
                     declared_type
                 } else {
                     result_type
                 }
             };
-
             // FIX: Flow analysis may return the original fresh type from the initializer expression.
             // For variable references, we must respect the widening that was applied during variable
             // declaration. If the symbol was widened (non-fresh), the flow result should also be widened.
