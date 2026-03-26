@@ -19,6 +19,39 @@ pub(crate) fn is_declaration_file_name(file_name: &str) -> bool {
         || file_name.ends_with(".d.cts")
 }
 
+/// Check if a file name represents a JavaScript file (.js, .jsx, .mjs, .cjs).
+pub(crate) fn is_js_file_name(file_name: &str) -> bool {
+    file_name.ends_with(".js")
+        || file_name.ends_with(".jsx")
+        || file_name.ends_with(".mjs")
+        || file_name.ends_with(".cjs")
+}
+
+/// Decide whether JSDoc/checkJs semantics should apply for an arbitrary file.
+///
+/// This mirrors `CheckerContext::should_resolve_jsdoc()` but works for cross-file
+/// checks where we only have a file name + source text rather than the current
+/// context's file metadata.
+pub(crate) fn should_resolve_jsdoc_for_file(
+    file_name: &str,
+    source_text: &str,
+    compiler_options: &crate::context::CheckerOptions,
+) -> bool {
+    if !is_js_file_name(file_name) {
+        return true;
+    }
+    if compiler_options.check_js {
+        return true;
+    }
+    let ts_check = source_text.find("@ts-check");
+    let ts_no_check = source_text.find("@ts-nocheck");
+    match (ts_check, ts_no_check) {
+        (Some(check_idx), Some(no_check_idx)) => check_idx < no_check_idx,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 impl<'a> CheckerContext<'a> {
     // =========================================================================
     // Compiler Option Accessors
@@ -42,10 +75,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Check if the current file is a JavaScript file (.js, .jsx, .mjs, .cjs).
     pub fn is_js_file(&self) -> bool {
-        self.file_name.ends_with(".js")
-            || self.file_name.ends_with(".jsx")
-            || self.file_name.ends_with(".mjs")
-            || self.file_name.ends_with(".cjs")
+        is_js_file_name(&self.file_name)
     }
 
     /// Check whether JS strict-mode diagnostics should be enforced for the current file.
@@ -62,25 +92,17 @@ impl<'a> CheckerContext<'a> {
     /// Returns `true` for TypeScript files (always) and for JS files when either
     /// the global `--checkJs` flag is set or the file contains a `// @ts-check` pragma.
     pub fn should_resolve_jsdoc(&self) -> bool {
-        if !self.is_js_file() {
-            return true;
-        }
-        if self.compiler_options.check_js {
-            return true;
-        }
-        // Check for per-file @ts-check pragma
-        if let Some(sf) = self.arena.source_files.first() {
-            let text = sf.text.as_ref();
-            let ts_check = text.find("@ts-check");
-            let ts_no_check = text.find("@ts-nocheck");
-            match (ts_check, ts_no_check) {
-                (Some(check_idx), Some(no_check_idx)) => check_idx < no_check_idx,
-                (Some(_), None) => true,
-                _ => false,
-            }
-        } else {
-            false
-        }
+        self.arena
+            .source_files
+            .first()
+            .map(|sf| {
+                should_resolve_jsdoc_for_file(
+                    &self.file_name,
+                    sf.text.as_ref(),
+                    &self.compiler_options,
+                )
+            })
+            .unwrap_or_else(|| !self.is_js_file())
     }
 
     /// Check if noImplicitAny is enabled for the current file.
