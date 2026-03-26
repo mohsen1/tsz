@@ -265,6 +265,9 @@ impl<'a> CheckerState<'a> {
             self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);
             self.check_jsdoc_param_function_types_missing_return_type(jsdoc, func_idx);
         }
+        if !is_closure && self.is_js_file() {
+            self.check_jsdoc_overload_implicit_any_return(func_idx);
+        }
 
         // Check parameter initializer placement for implementation vs signature (TS2371)
         self.check_non_impl_parameter_initializers(

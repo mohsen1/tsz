@@ -53,13 +53,104 @@ impl<'a> CheckerState<'a> {
         Some((comment.pos + offset as u32 + 1, "overload".len() as u32))
     }
 
+    fn jsdoc_has_explicit_return_tag(jsdoc: &str) -> bool {
+        jsdoc.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed
+                .strip_prefix("@returns")
+                .or_else(|| trimmed.strip_prefix("@return"))
+                .is_some_and(|rest| rest.trim().starts_with('{'))
+        })
+    }
+
+    fn leading_jsdoc_comments_for_node(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Vec<tsz_common::comments::CommentRange> {
+        use tsz_common::comments::is_jsdoc_comment;
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return Vec::new();
+        };
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return Vec::new();
+        };
+
+        let mut current_pos = node.pos;
+        let mut result = Vec::new();
+        for comment in sf.comments.iter().rev() {
+            if comment.end > current_pos {
+                continue;
+            }
+
+            let Ok(start) = usize::try_from(comment.end) else {
+                break;
+            };
+            let Ok(end) = usize::try_from(current_pos) else {
+                break;
+            };
+            let Some(gap) = sf.text.get(start..end) else {
+                break;
+            };
+            if !gap.chars().all(char::is_whitespace) {
+                break;
+            }
+            if !is_jsdoc_comment(comment, &sf.text) {
+                break;
+            }
+
+            result.push(comment.clone());
+            current_pos = comment.pos;
+        }
+
+        result.reverse();
+        result
+    }
+
+    pub(crate) fn check_jsdoc_overload_implicit_any_return(&mut self, node_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::get_jsdoc_content;
+
+        if !self.ctx.no_implicit_any()
+            || !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || self.has_syntax_parse_errors()
+        {
+            return;
+        }
+
+        if self.ctx.arena.get(node_idx).is_none() {
+            return;
+        }
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        for comment in self.leading_jsdoc_comments_for_node(node_idx) {
+            let jsdoc = get_jsdoc_content(&comment, &sf.text);
+            if !jsdoc.contains("@overload") || Self::jsdoc_has_explicit_return_tag(&jsdoc) {
+                continue;
+            }
+
+            let (error_pos, error_len) = self
+                .jsdoc_overload_tag_span(&comment, &sf.text)
+                .unwrap_or((comment.pos, 0));
+            self.ctx.error(
+                error_pos,
+                error_len,
+                crate::diagnostics::format_message(
+                    diagnostic_messages::THIS_OVERLOAD_IMPLICITLY_RETURNS_THE_TYPE_BECAUSE_IT_LACKS_A_RETURN_TYPE_ANNOTAT,
+                    &["any"],
+                ),
+                diagnostic_codes::THIS_OVERLOAD_IMPLICITLY_RETURNS_THE_TYPE_BECAUSE_IT_LACKS_A_RETURN_TYPE_ANNOTAT,
+            );
+        }
+    }
+
     fn jsdoc_constructor_overload_types(
         &mut self,
         ctor_idx: NodeIndex,
     ) -> Vec<(tsz_solver::TypeId, u32, u32)> {
-        use tsz_common::comments::{
-            get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment,
-        };
+        use tsz_common::comments::get_jsdoc_content;
 
         if !self.is_js_file() {
             return Vec::new();
@@ -95,14 +186,9 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_default();
         let base_signature =
             self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &class_type_params);
-        let leading = get_leading_comments_from_cache(&sf.comments, node.pos, &sf.text);
         let mut overloads = Vec::new();
 
-        for comment in leading {
-            if !is_jsdoc_comment(&comment, &sf.text) {
-                continue;
-            }
-
+        for comment in self.leading_jsdoc_comments_for_node(ctor_idx) {
             let jsdoc = get_jsdoc_content(&comment, &sf.text);
             if !jsdoc.contains("@overload") {
                 continue;
