@@ -925,6 +925,34 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Merged namespace+value symbols (e.g. `declare namespace Foo { ... }`
+            // plus `declare const Foo: ...`) should use the concrete value declaration
+            // in value position. Falling back to `get_type_of_symbol` here can return
+            // the namespace side instead of the annotated callable/component value type.
+            let is_merged_namespace_value = has_value
+                && value_decl.is_some()
+                && (flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE))
+                    != 0
+                && (flags
+                    & (symbol_flags::INTERFACE
+                        | symbol_flags::CLASS
+                        | symbol_flags::ENUM
+                        | symbol_flags::TYPE_ALIAS))
+                    == 0;
+            if is_merged_namespace_value
+                && let Some(preferred_value_decl) =
+                    self.preferred_value_declaration(sym_id, value_decl, &symbol_declarations)
+            {
+                let value_type =
+                    self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, value_type, sym_id);
+                }
+            }
+
             // Merged TYPE_ALIAS + VALUE symbols: when a user-defined value (e.g.,
             // `declare const Readonly: unique symbol`) shares a name with a global
             // type alias (e.g., `type Readonly<T> = ...` from lib.d.ts), the binder

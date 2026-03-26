@@ -1882,6 +1882,72 @@ const ExplicitChild = (
 }
 
 #[test]
+fn test_jsx_children_presence_narrows_namespace_merged_component_type_wrappers() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<T = any> {{}}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
+    interface Component<P, S = {{}}> {{
+        readonly props: Readonly<{{ children?: ReactNode }}> & Readonly<P>;
+        readonly state: Readonly<S>;
+    }}
+    interface ComponentClass<P = {{}}> {{ new(props: P, context?: any): Component<P, any>; }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+declare namespace DropdownMenu {{
+    interface BaseProps {{
+        icon: string;
+        label: string;
+    }}
+    interface PropsWithChildren extends BaseProps {{
+        children(props: {{ onClose: () => void }}): JSX.Element;
+        controls?: never;
+    }}
+    interface PropsWithControls extends BaseProps {{
+        controls: {{ title: string }}[];
+        children?: never;
+    }}
+    type Props = PropsWithChildren | PropsWithControls;
+}}
+declare const DropdownMenu: React.ComponentType<DropdownMenu.Props>;
+const BodyChild = (
+    <DropdownMenu icon="move" label="Select a direction">
+        {{({{ onClose }}) => <div />}}
+    </DropdownMenu>
+);
+const ExplicitChild = (
+    <DropdownMenu
+        icon="move"
+        label="Select a direction"
+        children={{({{ onClose }}) => <div />}}
+    />
+);
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "Merged namespace/value React.ComponentType wrappers should preserve callback contextual typing, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+        ),
+        "Merged namespace/value wrappers should contextually type destructured children callbacks, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Merged namespace/value wrapper normalization should avoid downstream TS2322 here, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_children_no_contextual_type_for_generic_sfc() {
     // Generic SFCs can't provide children contextual types (type params unresolved)
     // — TS7006 is expected for the callback parameter.
