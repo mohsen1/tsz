@@ -1373,6 +1373,26 @@ impl<'a> CheckerState<'a> {
         Vec::new()
     }
 
+    pub(crate) fn get_display_type_params_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let params = self.get_type_params_for_symbol(sym_id);
+        if !params.is_empty() {
+            return params;
+        }
+
+        self.get_type_param_names_for_symbol_from_ast(sym_id)
+            .into_iter()
+            .map(|name| tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: None,
+                is_const: false,
+            })
+            .collect()
+    }
+
     /// Count the number of required type parameters for a symbol.
     ///
     /// A type parameter is "required" if it doesn't have a default value.
@@ -1505,6 +1525,68 @@ impl<'a> CheckerState<'a> {
         best_required
     }
 
+    fn get_type_param_names_for_symbol_from_ast(&self, sym_id: SymbolId) -> Vec<String> {
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return Vec::new();
+        };
+
+        let flags = symbol.flags;
+        let decl_candidates: Vec<_> =
+            if symbol.value_declaration != tsz_parser::parser::NodeIndex::NONE {
+                std::iter::once(symbol.value_declaration)
+                    .chain(symbol.declarations.iter().copied())
+                    .collect()
+            } else {
+                symbol.declarations.clone()
+            };
+
+        for decl_idx in decl_candidates {
+            if let Some(names) = Self::type_param_names_in_arena(
+                self.ctx.arena,
+                flags,
+                decl_idx,
+                &symbol.escaped_name,
+            ) && !names.is_empty()
+            {
+                return names;
+            }
+
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena in arenas {
+                    if let Some(names) = Self::type_param_names_in_arena(
+                        arena.as_ref(),
+                        flags,
+                        decl_idx,
+                        &symbol.escaped_name,
+                    ) && !names.is_empty()
+                    {
+                        return names;
+                    }
+                }
+            }
+
+            if let Some(names) = self
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .and_then(|arena| {
+                    Self::type_param_names_in_arena(
+                        arena.as_ref(),
+                        flags,
+                        decl_idx,
+                        &symbol.escaped_name,
+                    )
+                }) && !names.is_empty()
+            {
+                return names;
+            }
+        }
+
+        Vec::new()
+    }
+
     /// Count required type params for a single declaration in a specific arena.
     fn count_required_params_in_arena(
         arena: &tsz_parser::parser::NodeArena,
@@ -1542,6 +1624,47 @@ impl<'a> CheckerState<'a> {
             return Some(required);
         }
         None
+    }
+
+    fn type_param_names_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        flags: u32,
+        decl_idx: NodeIndex,
+        sym_escaped_name: &str,
+    ) -> Option<Vec<String>> {
+        let node = arena.get(decl_idx)?;
+        let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
+            let iface = arena.get_interface(node)?;
+            if let Some(name_node) = arena.get(iface.name)
+                && let Some(name_ident) = arena.get_identifier(name_node)
+                && name_ident.escaped_text.as_str() != sym_escaped_name
+            {
+                return None;
+            }
+            iface.type_parameters.as_ref()
+        } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
+            arena
+                .get_type_alias(node)
+                .and_then(|ta| ta.type_parameters.as_ref())
+        } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
+            arena.get_class(node).and_then(|c| c.type_parameters.as_ref())
+        } else {
+            None
+        }?;
+
+        let names = type_params_list
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param_node = arena.get(param_idx)?;
+                let param = arena.get_type_parameter(param_node)?;
+                let name_node = arena.get(param.name)?;
+                let ident = arena.get_identifier(name_node)?;
+                Some(arena.resolve_identifier_text(ident).to_string())
+            })
+            .collect::<Vec<_>>();
+
+        Some(names)
     }
 
     /// Create a union type from multiple types.

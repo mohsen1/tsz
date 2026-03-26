@@ -466,7 +466,7 @@ impl<'a> CheckerState<'a> {
                     .map(|s| s.escaped_name.clone())
                     .or_else(|| self.entity_name_text(type_name_idx))
                     .unwrap_or_else(|| "<unknown>".to_string());
-                let type_params = self.get_type_params_for_symbol(sym_id);
+                let type_params = self.get_display_type_params_for_symbol(sym_id);
                 let display_name = Self::format_generic_display_name_with_interner(
                     &name,
                     &type_params,

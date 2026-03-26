@@ -64,7 +64,7 @@ impl<'a> CheckerState<'a> {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
                     }
-                    let mut type_params = self.get_type_params_for_symbol(sym_id);
+                    let mut type_params = self.get_display_type_params_for_symbol(sym_id);
                     if type_params.is_empty() {
                         type_params =
                             self.extract_declared_type_params_for_reference_symbol(sym_id, name);
