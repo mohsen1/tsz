@@ -539,8 +539,54 @@ impl BinderState {
             return true;
         }
 
+        // Declaration files that only contain `declare global { ... }` still need
+        // to behave as importable modules. Otherwise package entrypoints like
+        // `@types/react/index.d.ts` spuriously trigger TS2306 despite explicitly
+        // opting into global augmentation semantics.
+        if source.file_name.ends_with(".d.ts")
+            && Self::source_file_has_top_level_global_augmentation(arena, &source.statements.nodes)
+        {
+            return true;
+        }
+
         // Check for CommonJS module indicator: `module.exports = ...` or `exports.x = ...`
         Self::source_file_has_commonjs_indicator(arena, &source.statements.nodes)
+    }
+
+    fn source_file_has_top_level_global_augmentation(
+        arena: &NodeArena,
+        stmts: &[NodeIndex],
+    ) -> bool {
+        for &stmt_idx in stmts {
+            if stmt_idx.is_none() {
+                continue;
+            }
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            if (stmt.flags as u32) & tsz_parser::parser::node_flags::GLOBAL_AUGMENTATION != 0 {
+                return true;
+            }
+            let Some(module) = arena.get_module(stmt) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::GlobalKeyword as u16 {
+                return true;
+            }
+            if let Some(ident) = arena.get_identifier(name_node)
+                && ident.escaped_text == "global"
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check if any top-level statement is a CommonJS module.exports or exports.x assignment.
