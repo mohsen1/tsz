@@ -4,6 +4,14 @@
 
 use super::*;
 
+#[derive(Clone, Copy)]
+struct TslibHelperRequirement {
+    name: &'static str,
+    start: u32,
+    length: u32,
+    required_parameter_count: Option<usize>,
+}
+
 pub(super) fn detect_missing_tslib_helper_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
@@ -33,7 +41,12 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             .is_none_or(tsz_binder::SymbolTable::is_empty);
 
         if !tslib_exports_empty {
-            return Vec::new();
+            return emit_tslib_helper_diagnostics(
+                program,
+                options,
+                &tslib_file.file_name,
+                file_is_esm_map,
+            );
         }
 
         // When the file is a `tslib.d.ts` that contains `declare module "tslib" { ... }`,
@@ -47,7 +60,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                 .get("tslib")
                 .is_some_and(|exports| !exports.is_empty());
             if tslib_ambient_has_exports {
-                return Vec::new();
+                return emit_tslib_helper_diagnostics(program, options, "tslib", file_is_esm_map);
             }
             // Scan the source text for helper function declarations.
             // A `declare module "tslib" { export {}; }` with no helpers will not match.
@@ -68,7 +81,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             }
         }
 
-        return emit_ts2343_for_missing_helpers(
+        return emit_tslib_helper_diagnostics(
             program,
             options,
             &tslib_file.file_name,
@@ -85,10 +98,10 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
             .is_none_or(tsz_binder::SymbolTable::is_empty);
 
         if !tslib_exports_empty {
-            return Vec::new();
+            return emit_tslib_helper_diagnostics(program, options, "tslib", file_is_esm_map);
         }
 
-        return emit_ts2343_for_missing_helpers(program, options, "tslib", file_is_esm_map);
+        return emit_tslib_helper_diagnostics(program, options, "tslib", file_is_esm_map);
     }
 
     // Check the filesystem only when the program appears to be backed by real
@@ -97,8 +110,17 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
     // must not inherit tslib availability from the host workspace.
     if !options.checker.no_types_and_symbols
         && program_appears_filesystem_backed(program)
-        && tslib_exists_on_filesystem(base_dir)
+        && let Some(tslib_path) = filesystem_tslib_declaration(base_dir)
     {
+        if let Some(helper_parameter_counts) = filesystem_tslib_helper_parameter_counts(&tslib_path)
+        {
+            return emit_tslib_helper_diagnostics_from_counts(
+                program,
+                options,
+                &helper_parameter_counts,
+                file_is_esm_map,
+            );
+        }
         return Vec::new();
     }
 
@@ -132,14 +154,18 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
     result
 }
 
-/// Emit TS2343 for each file that needs helpers but tslib lacks them.
-fn emit_ts2343_for_missing_helpers(
+/// Emit helper diagnostics for each file that needs imported tslib helpers.
+///
+/// - TS2343 when the helper export does not exist in `tslib`
+/// - TS2807 when the helper exists but its declaration is too old
+fn emit_tslib_helper_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
     tslib_key: &str,
     file_is_esm_map: &rustc_hash::FxHashMap<String, bool>,
 ) -> Vec<Diagnostic> {
     let mut result = Vec::new();
+    let tslib_exports = program.module_exports.get(tslib_key);
     for file in &program.files {
         if file.file_name == tslib_key || file.file_name.ends_with(".d.ts") {
             continue;
@@ -149,39 +175,271 @@ fn emit_ts2343_for_missing_helpers(
             .get(&file.file_name)
             .copied()
             .unwrap_or(false);
-        for (helper_name, start, length) in required_helpers(
+        for helper in required_tslib_helpers(
             file,
             options.checker.target,
             options.es_module_interop,
             is_esm,
         ) {
-            result.push(Diagnostic::error(
-                file.file_name.clone(),
-                start,
-                length,
-                format!(
-                    "This syntax requires an imported helper named '{helper_name}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'."
-                ),
-                2343,
-            ));
+            let export_sym_id = tslib_exports.and_then(|exports| exports.get(helper.name));
+            match export_sym_id {
+                Some(sym_id) => {
+                    let actual_parameter_count =
+                        helper_parameter_count_for_symbol(program, sym_id).unwrap_or(usize::MAX);
+                    if let Some(required_parameter_count) = helper.required_parameter_count
+                        && actual_parameter_count < required_parameter_count
+                    {
+                        let message = tsz_common::diagnostics::format_message(
+                            tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_REQUIRES_AN_IMPORTED_HELPER_NAMED_WITH_PARAMETERS_WHICH_IS_NOT_COMPA,
+                            &[
+                                "tslib",
+                                helper.name,
+                                &required_parameter_count.to_string(),
+                            ],
+                        );
+                        result.push(Diagnostic::error(
+                            file.file_name.clone(),
+                            helper.start,
+                            helper.length,
+                            message,
+                            tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_REQUIRES_AN_IMPORTED_HELPER_NAMED_WITH_PARAMETERS_WHICH_IS_NOT_COMPA,
+                        ));
+                    }
+                }
+                None => {
+                    result.push(Diagnostic::error(
+                        file.file_name.clone(),
+                        helper.start,
+                        helper.length,
+                        format!(
+                            "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
+                            helper.name
+                        ),
+                        2343,
+                    ));
+                }
+            }
+        }
+    }
+    result
+}
+
+fn helper_parameter_count_for_symbol(program: &MergedProgram, sym_id: SymbolId) -> Option<usize> {
+    let symbol = program.symbols.get(sym_id)?;
+    for &decl_idx in &symbol.declarations {
+        if let Some(arenas) = program.declaration_arenas.get(&(sym_id, decl_idx)) {
+            for arena in arenas {
+                let node = arena.get(decl_idx)?;
+                if let Some(func) = arena.get_function(node) {
+                    return Some(func.parameters.nodes.len());
+                }
+            }
+        }
+        if let Some(arena) = program.symbol_arenas.get(&sym_id) {
+            let node = arena.get(decl_idx)?;
+            if let Some(func) = arena.get_function(node) {
+                return Some(func.parameters.nodes.len());
+            }
+        }
+    }
+    None
+}
+
+fn emit_tslib_helper_diagnostics_from_counts(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    helper_parameter_counts: &rustc_hash::FxHashMap<String, usize>,
+    file_is_esm_map: &rustc_hash::FxHashMap<String, bool>,
+) -> Vec<Diagnostic> {
+    let mut result = Vec::new();
+    for file in &program.files {
+        if file.file_name.ends_with(".d.ts") {
+            continue;
+        }
+
+        let is_esm = file_is_esm_map
+            .get(&file.file_name)
+            .copied()
+            .unwrap_or(false);
+        for helper in required_tslib_helpers(
+            file,
+            options.checker.target,
+            options.es_module_interop,
+            is_esm,
+        ) {
+            match helper_parameter_counts.get(helper.name) {
+                Some(&actual_parameter_count) => {
+                    if let Some(required_parameter_count) = helper.required_parameter_count
+                        && actual_parameter_count < required_parameter_count
+                    {
+                        let message = tsz_common::diagnostics::format_message(
+                            tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_REQUIRES_AN_IMPORTED_HELPER_NAMED_WITH_PARAMETERS_WHICH_IS_NOT_COMPA,
+                            &[
+                                "tslib",
+                                helper.name,
+                                &required_parameter_count.to_string(),
+                            ],
+                        );
+                        result.push(Diagnostic::error(
+                            file.file_name.clone(),
+                            helper.start,
+                            helper.length,
+                            message,
+                            tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_REQUIRES_AN_IMPORTED_HELPER_NAMED_WITH_PARAMETERS_WHICH_IS_NOT_COMPA,
+                        ));
+                    }
+                }
+                None => {
+                    result.push(Diagnostic::error(
+                        file.file_name.clone(),
+                        helper.start,
+                        helper.length,
+                        format!(
+                            "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
+                            helper.name
+                        ),
+                        2343,
+                    ));
+                }
+            }
         }
     }
     result
 }
 
 /// Walk up from `base_dir` looking for `node_modules/tslib`.
-fn tslib_exists_on_filesystem(base_dir: &Path) -> bool {
+fn filesystem_tslib_declaration(base_dir: &Path) -> Option<std::path::PathBuf> {
     let mut dir = base_dir;
     loop {
         let candidate = dir.join("node_modules").join("tslib");
         if candidate.is_dir() {
-            return true;
+            let tslib_d_ts = candidate.join("tslib.d.ts");
+            if tslib_d_ts.is_file() {
+                return Some(tslib_d_ts);
+            }
+            let index_d_ts = candidate.join("index.d.ts");
+            if index_d_ts.is_file() {
+                return Some(index_d_ts);
+            }
+            return None;
         }
         match dir.parent() {
             Some(parent) => dir = parent,
-            None => return false,
+            None => return None,
         }
     }
+}
+
+fn filesystem_tslib_helper_parameter_counts(
+    tslib_path: &Path,
+) -> Option<rustc_hash::FxHashMap<String, usize>> {
+    let source = std::fs::read_to_string(tslib_path).ok()?;
+    let mut counts = rustc_hash::FxHashMap::default();
+    for helper_name in [
+        "__extends",
+        "__asyncGenerator",
+        "__classPrivateFieldGet",
+        "__classPrivateFieldSet",
+        "__importStar",
+        "__importDefault",
+        "__exportStar",
+    ] {
+        if let Some(param_count) = extract_declared_function_parameter_count(&source, helper_name) {
+            counts.insert(helper_name.to_string(), param_count);
+        }
+    }
+    Some(counts)
+}
+
+fn extract_declared_function_parameter_count(source: &str, helper_name: &str) -> Option<usize> {
+    let marker = format!("function {helper_name}");
+    let marker_idx = source.find(&marker)?;
+    let mut idx = marker_idx + marker.len();
+
+    while let Some(ch) = source[idx..].chars().next() {
+        if ch.is_whitespace() {
+            idx += ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+
+    if source[idx..].starts_with('<') {
+        let mut depth = 0usize;
+        for (rel_idx, ch) in source[idx..].char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        idx += rel_idx + ch.len_utf8();
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    while let Some(ch) = source[idx..].chars().next() {
+        if ch.is_whitespace() {
+            idx += ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+
+    if !source[idx..].starts_with('(') {
+        return None;
+    }
+    idx += 1;
+    let params_start = idx;
+    let mut depth = 1usize;
+    for (rel_idx, ch) in source[idx..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let params = &source[params_start..idx + rel_idx];
+                    let trimmed = params.trim();
+                    if trimmed.is_empty() {
+                        return Some(0);
+                    }
+                    let mut count = 1usize;
+                    let mut angle_depth = 0usize;
+                    let mut paren_depth = 0usize;
+                    let mut bracket_depth = 0usize;
+                    let mut brace_depth = 0usize;
+                    for ch in trimmed.chars() {
+                        match ch {
+                            '<' => angle_depth += 1,
+                            '>' => angle_depth = angle_depth.saturating_sub(1),
+                            '(' => paren_depth += 1,
+                            ')' => paren_depth = paren_depth.saturating_sub(1),
+                            '[' => bracket_depth += 1,
+                            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                            '{' => brace_depth += 1,
+                            '}' => brace_depth = brace_depth.saturating_sub(1),
+                            ','
+                                if angle_depth == 0
+                                    && paren_depth == 0
+                                    && bracket_depth == 0
+                                    && brace_depth == 0 =>
+                            {
+                                count += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Some(count);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 fn program_appears_filesystem_backed(program: &MergedProgram) -> bool {
@@ -257,6 +515,168 @@ pub(super) fn required_helpers(
         let helpers = detect_module_transform_helpers(file, es_module_interop);
         if !helpers.is_empty() {
             return helpers;
+        }
+    }
+
+    Vec::new()
+}
+
+fn required_tslib_helpers(
+    file: &BoundFile,
+    target: tsz_common::ScriptTarget,
+    es_module_interop: bool,
+    is_esm: bool,
+) -> Vec<TslibHelperRequirement> {
+    let mut saw_await: Option<(u32, u32)> = None;
+    let mut saw_yield: Option<(u32, u32)> = None;
+    let mut first_decorator: Option<(u32, u32)> = None;
+    let mut first_private_id: Option<(u32, u32)> = None;
+    let mut first_private_get: Option<(u32, u32)> = None;
+    let mut first_private_set: Option<(u32, u32)> = None;
+
+    let needs_extends_helper = !target.supports_es2015();
+    let needs_private_lowering = !target.supports_es2022();
+
+    for node_idx_raw in 0..file.arena.len() {
+        let node_idx = NodeIndex(node_idx_raw as u32);
+        let Some(node) = file.arena.get(node_idx) else {
+            continue;
+        };
+
+        if node.kind == SyntaxKind::PrivateIdentifier as u16 && first_private_id.is_none() {
+            first_private_id = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+
+        if node.kind == syntax_kind_ext::DECORATOR && first_decorator.is_none() {
+            first_decorator = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+
+        if needs_extends_helper
+            && node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class_data) = file.arena.get_class(node)
+            && class_data.heritage_clauses.is_some()
+            && first_decorator.is_none()
+            && first_private_id.is_none()
+        {
+            return vec![TslibHelperRequirement {
+                name: "__extends",
+                start: node.pos,
+                length: node.end.saturating_sub(node.pos),
+                required_parameter_count: None,
+            }];
+        }
+
+        if needs_private_lowering
+            && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = file.arena.get_access_expr(node)
+                && file
+                    .arena
+                    .get(access.name_or_argument)
+                    .is_some_and(|name| name.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                let span = (node.pos, node.end.saturating_sub(node.pos));
+                let parent_idx = file
+                    .arena
+                    .get_extended(node_idx)
+                    .map(|ext| ext.parent)
+                    .unwrap_or(NodeIndex::NONE);
+                let parent_node = if parent_idx != NodeIndex::NONE {
+                    file.arena.get(parent_idx)
+                } else {
+                    None
+                };
+
+                let mut is_plain_assignment_lhs = false;
+                let mut is_read_modify_write = false;
+                if let Some(parent_node) = parent_node
+                    && parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(binary) = file.arena.get_binary_expr(parent_node)
+                    && binary.left == node_idx
+                {
+                    is_plain_assignment_lhs = binary.operator_token == SyntaxKind::EqualsToken as u16;
+                    is_read_modify_write = !is_plain_assignment_lhs;
+                }
+
+                if is_read_modify_write {
+                    first_private_get.get_or_insert(span);
+                    first_private_set.get_or_insert(span);
+                } else if is_plain_assignment_lhs {
+                    first_private_set.get_or_insert(span);
+                } else if parent_node.is_some_and(|parent| {
+                    parent.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        || parent.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                }) {
+                    first_private_get.get_or_insert(span);
+                    first_private_set.get_or_insert(span);
+                } else {
+                    first_private_get.get_or_insert(span);
+                }
+            }
+
+        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+            saw_await = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+        if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
+            saw_yield = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+    }
+
+    if let Some((start, length)) = first_decorator {
+        return es_decorator_helpers(file, start, length)
+            .into_iter()
+            .map(|(name, start, length)| TslibHelperRequirement {
+                name,
+                start,
+                length,
+                required_parameter_count: None,
+            })
+            .collect();
+    }
+
+    if needs_private_lowering && first_private_id.is_some() {
+        let mut helpers = Vec::new();
+        if let Some((set_start, set_length)) = first_private_set {
+            helpers.push(TslibHelperRequirement {
+                name: "__classPrivateFieldSet",
+                start: set_start,
+                length: set_length,
+                required_parameter_count: Some(5),
+            });
+        }
+        if let Some((get_start, get_length)) = first_private_get {
+            helpers.push(TslibHelperRequirement {
+                name: "__classPrivateFieldGet",
+                start: get_start,
+                length: get_length,
+                required_parameter_count: Some(4),
+            });
+        }
+        if !helpers.is_empty() {
+            return helpers;
+        }
+    }
+
+    if let (Some((start, length)), Some(_)) = (saw_await, saw_yield) {
+        return vec![TslibHelperRequirement {
+            name: "__asyncGenerator",
+            start,
+            length,
+            required_parameter_count: None,
+        }];
+    }
+
+    if !is_esm {
+        let helpers = detect_module_transform_helpers(file, es_module_interop);
+        if !helpers.is_empty() {
+            return helpers
+                .into_iter()
+                .map(|(name, start, length)| TslibHelperRequirement {
+                    name,
+                    start,
+                    length,
+                    required_parameter_count: None,
+                })
+                .collect();
         }
     }
 
@@ -1543,6 +1963,110 @@ mod tests {
                         == "This syntax requires an imported helper but module 'tslib' cannot be found."
             }),
             "Expected TS2354 for virtual program without tslib. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn old_tslib_private_instance_helpers_report_ts2807_for_get_and_set() {
+        let program = merged_program(&[
+            (
+                "main.ts",
+                r#"
+export class C {
+    #a = 1;
+    #b() { this.#c = 42; }
+    set #c(v: number) { this.#a += v; }
+}
+"#,
+            ),
+            (
+                "node_modules/tslib/index.d.ts",
+                r#"
+export declare function __classPrivateFieldGet<T extends object, V>(receiver: T, state: any): V;
+export declare function __classPrivateFieldSet<T extends object, V>(receiver: T, state: any, value: V): V;
+"#,
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions::default();
+        options.import_helpers = true;
+        options.checker.target = tsz_common::ScriptTarget::ES2015;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2807
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__classPrivateFieldSet")
+                    && diag.message_text.contains("5 parameters")
+            }),
+            "Expected TS2807 for old __classPrivateFieldSet helper. Got: {diagnostics:#?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2807
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__classPrivateFieldGet")
+                    && diag.message_text.contains("4 parameters")
+            }),
+            "Expected TS2807 for old __classPrivateFieldGet helper. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn old_tslib_private_static_helpers_report_ts2807_for_get_and_set() {
+        let program = merged_program(&[
+            (
+                "main.ts",
+                r#"
+export class S {
+    static #a = 1;
+    static #b() { this.#a = 42; }
+    static get #c() { return S.#b(); }
+}
+"#,
+            ),
+            (
+                "node_modules/tslib/index.d.ts",
+                r#"
+export declare function __classPrivateFieldGet<T extends object, V>(receiver: T, state: any): V;
+export declare function __classPrivateFieldSet<T extends object, V>(receiver: T, state: any, value: V): V;
+"#,
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions::default();
+        options.import_helpers = true;
+        options.checker.target = tsz_common::ScriptTarget::ES2015;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2807
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__classPrivateFieldSet")
+                    && diag.message_text.contains("5 parameters")
+            }),
+            "Expected TS2807 for old static __classPrivateFieldSet helper. Got: {diagnostics:#?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2807
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__classPrivateFieldGet")
+                    && diag.message_text.contains("4 parameters")
+            }),
+            "Expected TS2807 for old static __classPrivateFieldGet helper. Got: {diagnostics:#?}"
         );
     }
 
