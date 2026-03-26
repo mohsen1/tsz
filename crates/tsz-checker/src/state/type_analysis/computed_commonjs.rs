@@ -710,33 +710,29 @@ impl<'a> CheckerState<'a> {
                 .flatten();
             let module_exports = arena.get(left_access.expression).and_then(|target_node| {
                 let target_access = arena.get_access_expr(target_node)?;
-                let is_module_exports = if target_node.kind
-                    == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                {
-                    arena
-                        .get_identifier_at(target_access.expression)
-                        .is_some_and(|ident| ident.escaped_text == "module")
-                        && arena
-                            .get_identifier_at(target_access.name_or_argument)
-                            .is_some_and(|ident| ident.escaped_text == "exports")
-                } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-                    arena
-                        .get_identifier_at(target_access.expression)
-                        .is_some_and(|ident| ident.escaped_text == "module")
-                        && Self::commonjs_static_member_name_in_arena(
-                            arena,
-                            target_access.name_or_argument,
-                        )
-                        .is_some_and(|name| name == "exports")
-                } else {
-                    false
-                };
+                let is_module_exports =
+                    if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                        arena
+                            .get_identifier_at(target_access.expression)
+                            .is_some_and(|ident| ident.escaped_text == "module")
+                            && arena
+                                .get_identifier_at(target_access.name_or_argument)
+                                .is_some_and(|ident| ident.escaped_text == "exports")
+                    } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                        arena
+                            .get_identifier_at(target_access.expression)
+                            .is_some_and(|ident| ident.escaped_text == "module")
+                            && Self::commonjs_static_member_name_in_arena(
+                                arena,
+                                target_access.name_or_argument,
+                            )
+                            .is_some_and(|name| name == "exports")
+                    } else {
+                        false
+                    };
                 is_module_exports.then(|| {
-                    Self::commonjs_static_member_name_in_arena(
-                        arena,
-                        left_access.name_or_argument,
-                    )
-                    .map(|name| (name.clone(), Some(format!("module.exports.{name}"))))
+                    Self::commonjs_static_member_name_in_arena(arena, left_access.name_or_argument)
+                        .map(|name| (name.clone(), Some(format!("module.exports.{name}"))))
                 })?
             });
 

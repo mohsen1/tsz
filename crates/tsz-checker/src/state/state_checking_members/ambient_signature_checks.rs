@@ -89,9 +89,10 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     &["declare"],
                 );
-                if let Some(declare_idx) =
-                    self.get_modifier_index(&prop.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword as u16)
-                {
+                if let Some(declare_idx) = self.get_modifier_index(
+                    &prop.modifiers,
+                    tsz_scanner::SyntaxKind::DeclareKeyword as u16,
+                ) {
                     self.error_at_node(
                         declare_idx,
                         &message,
