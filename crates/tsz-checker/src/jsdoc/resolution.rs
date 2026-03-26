@@ -68,6 +68,41 @@ impl<'a> CheckerState<'a> {
         trimmed.eq_ignore_ascii_case("function") || trimmed.eq_ignore_ascii_case("Function")
     }
 
+    fn strip_jsdoc_outer_parens(type_expr: &str) -> &str {
+        let mut expr = type_expr.trim();
+        loop {
+            if expr.len() < 2 || !expr.starts_with('(') || !expr.ends_with(')') {
+                return expr;
+            }
+
+            let mut depth = 0u32;
+            let mut wraps_entire_expr = true;
+            for (idx, ch) in expr.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        if depth == 0 {
+                            wraps_entire_expr = false;
+                            break;
+                        }
+                        depth -= 1;
+                        if depth == 0 && idx + ch.len_utf8() != expr.len() {
+                            wraps_entire_expr = false;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if !wraps_entire_expr || depth != 0 {
+                return expr;
+            }
+
+            expr = expr[1..expr.len() - 1].trim();
+        }
+    }
+
     pub(crate) fn resolve_jsdoc_type_from_comment(
         &mut self,
         jsdoc: &str,
@@ -754,7 +789,7 @@ impl<'a> CheckerState<'a> {
     /// Callers must NOT add their own fallback chains after calling this function.
     /// If a resolution path is missing, it should be added HERE.
     pub(crate) fn resolve_jsdoc_reference(&mut self, type_expr: &str) -> Option<TypeId> {
-        let type_expr = type_expr.trim();
+        let type_expr = Self::strip_jsdoc_outer_parens(type_expr);
         if type_expr.is_empty() {
             return None;
         }
