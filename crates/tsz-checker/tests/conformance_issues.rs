@@ -5444,7 +5444,10 @@ export class Test1 {
 fn test_instance_member_initializer_cross_file_global_script_name_reports_ts2301() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
-            ("classMemberInitializerWithLamdaScoping3_0.ts", "var field1: string;"),
+            (
+                "classMemberInitializerWithLamdaScoping3_0.ts",
+                "var field1: string;",
+            ),
             (
                 "classMemberInitializerWithLamdaScoping3_1.ts",
                 r"

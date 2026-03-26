@@ -888,16 +888,17 @@ impl<'a> CheckerState<'a> {
                     let is_umd_global_value_conflict = decl_is_local
                         && other_is_local
                         && ((self.is_namespace_export_declaration_name_in_current_file(decl_idx)
-                            && self.is_block_scoped_global_augmentation_value_decl_in_current_file(
-                                other_idx,
-                                other_flags,
-                            ))
-                            || (self.is_namespace_export_declaration_name_in_current_file(
-                                other_idx,
-                            ) && self
+                            && self
                                 .is_block_scoped_global_augmentation_value_decl_in_current_file(
-                                    decl_idx, decl_flags,
-                                )));
+                                    other_idx,
+                                    other_flags,
+                                ))
+                            || (self
+                                .is_namespace_export_declaration_name_in_current_file(other_idx)
+                                && self
+                                    .is_block_scoped_global_augmentation_value_decl_in_current_file(
+                                        decl_idx, decl_flags,
+                                    )));
                     if is_umd_global_value_conflict {
                         has_umd_global_value_conflict = true;
                         conflicts.insert(decl_idx);

@@ -1514,8 +1514,7 @@ fn compile_inner(
 
             if let Err(e) = build_info.save(&build_info_path) {
                 let build_info_path_text = build_info_path.display().to_string();
-                let formatted_error =
-                    format_file_write_error_for_diagnostic(&build_info_path, &e);
+                let formatted_error = format_file_write_error_for_diagnostic(&build_info_path, &e);
                 diagnostics.push(Diagnostic::from_code(
                     diagnostic_codes::COULD_NOT_WRITE_FILE,
                     "",

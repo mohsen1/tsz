@@ -1449,8 +1449,7 @@ impl<'a> CheckerState<'a> {
                 use tsz_parser::parser::syntax_kind_ext;
                 if matches!(
                     node.kind,
-                    syntax_kind_ext::CALL_EXPRESSION
-                        | syntax_kind_ext::NON_NULL_EXPRESSION
+                    syntax_kind_ext::CALL_EXPRESSION | syntax_kind_ext::NON_NULL_EXPRESSION
                 ) {
                     self.ctx.node_types.insert(idx.0, result);
                 }
