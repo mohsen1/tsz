@@ -1505,6 +1505,7 @@ impl<'a> CheckerState<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
 
         let Some((_type_idx, expr_idx, has_type_args)) =
             self.first_extends_clause_expression_info(class_data)
@@ -1529,6 +1530,9 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| "<expression>".to_string());
         if (self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(heritage_sym))
             || self.ctx.is_known_global_type(&name)
+            || self
+                .get_cross_file_symbol(heritage_sym)
+                .is_some_and(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
         {
             return;
         }

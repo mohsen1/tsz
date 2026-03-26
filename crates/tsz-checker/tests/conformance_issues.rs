@@ -18290,6 +18290,54 @@ class MyFoo extends Foo {
 }
 
 #[test]
+fn test_js_default_lib_collection_extends_does_not_emit_ts8026() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.js",
+        r#"
+class MySet extends Set {
+    constructor() {
+        super();
+    }
+}
+
+class MyWeakSet extends WeakSet {
+    constructor() {
+        super();
+    }
+}
+
+class MyMap extends Map {
+    constructor() {
+        super();
+    }
+}
+
+class MyWeakMap extends WeakMap {
+    constructor() {
+        super();
+    }
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 8026),
+        "Did not expect TS8026 for default-lib collection bases in JS. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_unbounded_generic_constraint_mismatch_preserves_record_alias_display() {
     if !lib_files_available() {
         return;
