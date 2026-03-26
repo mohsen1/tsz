@@ -221,6 +221,12 @@ impl<'a> CheckerState<'a> {
             if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
                 continue;
             }
+            // Parent object patterns with nested binding patterns do not get TS6198.
+            // TSC reports nested-pattern diagnostics instead of collapsing the outer
+            // pattern into "all destructured elements are unused".
+            if self.object_binding_pattern_has_nested_pattern_elements(*pattern_idx) {
+                continue;
+            }
             // Skip patterns that contain a rest element — TS6198 never applies to them.
             // Individual unused elements (including the rest element itself) will get TS6133.
             if let Some(pattern_data) = self.ctx.arena.get_binding_pattern(node) {
@@ -240,10 +246,16 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
-            let total_count = elements.len();
+            let total_count = elements
+                .iter()
+                .filter(|&&idx| !self.is_ignored_object_binding_alias(idx))
+                .count();
             let unused_count = elements
                 .iter()
-                .filter(|n| unused_pattern_elements.contains(n))
+                .filter(|&&idx| {
+                    !self.is_ignored_object_binding_alias(idx)
+                        && unused_pattern_elements.contains(&idx)
+                })
                 .count();
             destructuring_patterns.insert(*pattern_idx, (total_count, unused_count));
         }
@@ -488,8 +500,7 @@ impl<'a> CheckerState<'a> {
                         // destructuring pattern (e.g., `const [_a, b] = arr` or `const { x: _x } = obj`).
                         // Regular declarations like `let _a = 1` are NOT suppressed.
                         if is_variable
-                            && name.starts_with('_')
-                            && self.find_parent_binding_pattern(decl_idx).is_some()
+                            && self.is_intentionally_unused_destructuring_binding(decl_idx, &name)
                         {
                             continue;
                         }
@@ -768,6 +779,87 @@ impl<'a> CheckerState<'a> {
             kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
         })
+    }
+
+    fn object_binding_pattern_has_nested_pattern_elements(&self, pattern_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return false;
+        };
+        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+        pattern_data.elements.nodes.iter().any(|&elem_idx| {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            if elem_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                return false;
+            }
+            let Some(elem_data) = self.ctx.arena.get_binding_element(elem_node) else {
+                return false;
+            };
+            self.ctx.arena.get(elem_data.name).is_some_and(|name_node| {
+                name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            })
+        })
+    }
+
+    fn is_ignored_object_binding_alias(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(name) = self.get_identifier_text_from_idx(idx) else {
+            return false;
+        };
+        if !name.starts_with('_') {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let Some(binding_element_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        if binding_element_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return false;
+        }
+        let Some(binding_element) = self.ctx.arena.get_binding_element(binding_element_node) else {
+            return false;
+        };
+        if !binding_element.property_name.is_some() {
+            return false;
+        }
+
+        let Some(binding_element_ext) = self.ctx.arena.get_extended(ext.parent) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(binding_element_ext.parent)
+            .is_some_and(|pattern_node| {
+                pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            })
+    }
+
+    fn is_intentionally_unused_destructuring_binding(&self, idx: NodeIndex, name: &str) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        if !name.starts_with('_') {
+            return false;
+        }
+        let Some(pattern_idx) = self.find_parent_binding_pattern(idx) else {
+            return false;
+        };
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return false;
+        };
+        if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return true;
+        }
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return false;
+        }
+        self.is_ignored_object_binding_alias(idx)
     }
 
     /// Check if a declaration node is a parameter declaration.

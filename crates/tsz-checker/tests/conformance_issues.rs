@@ -9397,6 +9397,97 @@ function f() {
     );
 }
 
+#[test]
+fn test_ts6198_object_destructuring_ignores_explicit_underscore_aliases() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    const { a1: _a1, b1 } = { a1: 1, b1: 1 };
+    const { a2, b2: _b2 } = { a2: 1, b2: 1 };
+    const { a3: _a3, b3: _b3 } = { a3: 1, b3: 1 };
+    const { _a4, _b4 } = { _a4: 1, _b4: 1 };
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+    let ts6198_count = diagnostics.iter().filter(|(code, _)| *code == 6198).count();
+
+    assert!(
+        ts6133_names.contains(&"b1"),
+        "Should flag 'b1' instead of collapsing to TS6198. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"a2"),
+        "Should flag 'a2' instead of collapsing to TS6198. Got: {diagnostics:?}"
+    );
+    assert!(
+        !ts6133_names.contains(&"_a1")
+            && !ts6133_names.contains(&"_b2")
+            && !ts6133_names.contains(&"_a3")
+            && !ts6133_names.contains(&"_b3"),
+        "Explicit underscore aliases should stay suppressed. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts6198_count, 1,
+        "Only the shorthand underscore object pattern should emit TS6198. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts6198_nested_object_destructuring_only_reports_inner_pattern() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    const {
+        a3,
+        b3: {
+            b31: {
+                b311, b312
+            }
+        },
+        c3,
+        d3
+    } = { a3: 1, b3: { b31: { b311: 1, b312: 1 } }, c3: 1, d3: 1 };
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+    let ts6198_count = diagnostics.iter().filter(|(code, _)| *code == 6198).count();
+
+    assert!(
+        ts6133_names.contains(&"a3")
+            && ts6133_names.contains(&"c3")
+            && ts6133_names.contains(&"d3"),
+        "Outer direct bindings should still get TS6133. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts6198_count, 1,
+        "Only the nested object pattern should emit TS6198. Got: {diagnostics:?}"
+    );
+}
+
 /// Test that underscore-prefixed parameters still work (regression guard).
 #[test]
 fn test_ts6133_underscore_params_still_suppressed() {
