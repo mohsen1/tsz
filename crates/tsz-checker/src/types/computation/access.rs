@@ -109,6 +109,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn is_direct_expando_element_write_base(&self, object_expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
+            return false;
+        };
+        node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
     fn is_expando_element_access_read(
         &mut self,
         object_expr_idx: NodeIndex,
@@ -309,6 +317,23 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+
+        let static_member_name = literal_string
+            .clone()
+            .or_else(|| self.current_file_commonjs_static_member_name(access.name_or_argument));
+        if self.is_js_file()
+            && self.is_this_expression(access.expression)
+            && !self.property_access_is_direct_write_target(idx)
+            && let Some(member_name) = static_member_name.as_deref()
+            && let Some(prior_type) =
+                self.prior_js_this_property_assignment_type(idx, member_name)
+        {
+            return if skip_flow_narrowing {
+                prior_type
+            } else {
+                self.apply_flow_narrowing(idx, prior_type)
+            };
+        }
 
         let is_this_global = self.is_this_resolving_to_global(access.expression);
         if let Some(name) = literal_string.as_deref()
@@ -1254,6 +1279,7 @@ impl<'a> CheckerState<'a> {
                 .contains_key(&object_type_for_access);
             let is_js_expando_object_write = self.ctx.is_js_file()
                 && tsz_solver::visitor::is_object_like_type(self.ctx.types, object_type_for_access)
+                && self.is_direct_expando_element_write_base(access.expression)
                 // JS expando-style element writes only suppress TS7053 when the key is a
                 // simple literal/identifier shape the binder/checker can track. Arbitrary
                 // computed expressions like `this["a" + "b"] = 0` should still report.
