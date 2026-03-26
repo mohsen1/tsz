@@ -641,6 +641,36 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    pub fn error_excess_property_at_no_suggestion(
+        &mut self,
+        prop_name: &str,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        if self.ctx.compiler_options.suppress_excess_property_errors {
+            return;
+        }
+        if target == TypeId::ERROR || target == TypeId::ANY || target == TypeId::UNKNOWN {
+            return;
+        }
+        if self.should_suppress_excess_property_for_target(target) {
+            return;
+        }
+
+        let type_str = self.excess_property_target_display_for_site(target, idx);
+        let message = format!(
+            "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
+        );
+        self.emit_render_request(
+            idx,
+            DiagnosticRenderRequest::simple(
+                DiagnosticAnchorKind::PropertyToken,
+                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+                message,
+            ),
+        );
+    }
+
     /// Report a "Cannot assign to readonly property" error using solver diagnostics with source tracking.
     pub fn error_readonly_property_at(&mut self, prop_name: &str, idx: NodeIndex) {
         if let Some(anchor) =

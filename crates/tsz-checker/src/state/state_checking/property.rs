@@ -1219,7 +1219,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Keep this narrow: if the pattern has rest or computed names, leave behavior to
+        // Keep this narrow: if the pattern has rest, leave behavior to
         // the general relation path.
         for &element_idx in &pattern.elements.nodes {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
@@ -1229,12 +1229,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if element.dot_dot_dot_token {
-                return;
-            }
-            if element.property_name.is_some()
-                && let Some(prop_name_node) = self.ctx.arena.get(element.property_name)
-                && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-            {
                 return;
             }
         }
@@ -1316,7 +1310,11 @@ impl<'a> CheckerState<'a> {
             // Check if the property exists in the target type
             let target_prop = target_props.iter().find(|p| p.name == prop_atom);
             if target_prop.is_none() {
-                self.error_excess_property_at(&prop_name, effective_target_type, elem_idx);
+                self.error_excess_property_at_no_suggestion(
+                    &prop_name,
+                    effective_target_type,
+                    elem_idx,
+                );
                 self.check_excess_property_initializer_implicit_any(
                     elem_idx,
                     effective_target_type,
@@ -1329,6 +1327,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         pattern_idx: NodeIndex,
     ) -> Option<TypeId> {
+        use tsz_common::interner::Atom;
+
         let pattern_node = self.ctx.arena.get(pattern_idx)?;
         if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
             return None;
@@ -1341,6 +1341,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let mut prop_names: Vec<Atom> = Vec::new();
         for &element_idx in &pattern.elements.nodes {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
                 continue;
@@ -1353,27 +1354,68 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            let property_name = if element.property_name.is_some() {
+            let property_names: Vec<Atom> = if element.property_name.is_some() {
                 let Some(property_name_node) = self.ctx.arena.get(element.property_name) else {
                     continue;
                 };
                 if property_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    return None;
+                    let computed = self.ctx.arena.get_computed_property(property_name_node)?;
+                    let key_type = self.get_type_of_node(computed.expression);
+                    let (string_keys, number_keys) = self.get_literal_key_union_from_type(key_type)?;
+                    if string_keys.is_empty() && number_keys.is_empty() {
+                        return None;
+                    }
+
+                    let mut names = Vec::with_capacity(string_keys.len() + number_keys.len());
+                    names.extend(string_keys);
+                    names.extend(
+                        number_keys
+                            .into_iter()
+                            .map(|num| {
+                                self.ctx.types.intern_string(
+                                    &tsz_solver::utils::canonicalize_numeric_name(&num.to_string())
+                                        .unwrap_or_else(|| num.to_string()),
+                                )
+                            }),
+                    );
+                    names
+                } else {
+                    vec![self.ctx.types.intern_string(&self.get_property_name(element.property_name)?)]
                 }
-                self.get_property_name(element.property_name)
             } else {
-                self.get_identifier_text_from_idx(element.name)
+                vec![self.ctx.types.intern_string(&self.get_identifier_text_from_idx(element.name)?)]
             };
 
-            property_name.as_ref()?;
+            prop_names.extend(property_names);
         }
 
-        let synthetic_type = self.infer_type_from_binding_pattern(pattern_idx, TypeId::ANY);
-        if synthetic_type == TypeId::ANY || synthetic_type == TypeId::ERROR {
-            None
-        } else {
-            Some(synthetic_type)
+        if prop_names.is_empty() {
+            return None;
         }
+
+        let mut props = Vec::with_capacity(prop_names.len());
+        for name in prop_names {
+            if props
+                .iter()
+                .any(|prop: &tsz_solver::PropertyInfo| prop.name == name)
+            {
+                continue;
+            }
+            props.push(tsz_solver::PropertyInfo {
+                name,
+                type_id: TypeId::ANY,
+                write_type: TypeId::ANY,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: tsz_common::Visibility::Public,
+                parent_id: None,
+                declaration_order: props.len() as u32,
+            });
+        }
+
+        Some(self.ctx.types.factory().object(props))
     }
 }
 

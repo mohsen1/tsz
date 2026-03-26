@@ -1315,7 +1315,22 @@ impl<'a> CheckerState<'a> {
                         if !emitted_ts2538 {
                             // In tsc, destructuring from `object` uses the apparent type `{}`
                             // in error messages (getApparentType(object) = {}).
-                            if parent_type == TypeId::OBJECT {
+                            if let Some(ce) = computed_expr {
+                                let type_str = if parent_type == TypeId::OBJECT {
+                                    "{}".to_string()
+                                } else {
+                                    self.format_type_for_assignability_message(parent_type)
+                                };
+                                let message = format!(
+                                    "Property '{}' does not exist on type '{}'.",
+                                    prop_name_str, type_str
+                                );
+                                self.error_at_node(
+                                    ce,
+                                    &message,
+                                    crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                                );
+                            } else if parent_type == TypeId::OBJECT {
                                 self.error_property_not_exist_with_apparent_type(
                                     prop_name_str,
                                     "{}",
