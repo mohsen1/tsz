@@ -338,7 +338,10 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
                     && let Some(display_member) = members.into_iter().find(|&member| {
                         !self.ctx.namespace_module_names.contains_key(&member)
-                            && !self.commonjs_direct_export_supports_named_exports(member)
+                            && !crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                                self.ctx.types,
+                                member,
+                            )
                     })
                 {
                     let type_str = self.format_type(display_member);
