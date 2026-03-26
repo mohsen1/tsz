@@ -376,6 +376,10 @@ pub(super) fn collect_type_root_files(
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
 ) -> (Vec<PathBuf>, Vec<String>) {
+    if options.checker.no_types_and_symbols {
+        return (Vec::new(), Vec::new());
+    }
+
     let roots = match options.type_roots.as_ref() {
         Some(roots) => roots.clone(),
         None => default_type_roots(base_dir),
@@ -546,7 +550,7 @@ pub(super) fn read_source_files(
         }
 
         // Resolve /// <reference types="..." /> directives
-        if !type_refs.is_empty() && !options.no_resolve {
+        if !type_refs.is_empty() && !options.no_resolve && !options.checker.no_types_and_symbols {
             let type_roots = options
                 .type_roots
                 .clone()

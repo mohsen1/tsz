@@ -533,11 +533,7 @@ impl<'a> CheckerState<'a> {
                         (error.message.clone(), error.code)
                     }
                 };
-                let module_key = module_name.to_string();
-                if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                    self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                    self.error_at_node(specifier_node, &error_message, error_code);
-                }
+                self.error_at_node(specifier_node, &error_message, error_code);
             }
             return TypeId::ERROR;
         }
@@ -548,12 +544,8 @@ impl<'a> CheckerState<'a> {
         let is_relative = module_name.starts_with("./") || module_name.starts_with("../");
         if !is_relative {
             if report_unresolved_imports {
-                let module_key = module_name.to_string();
-                if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                    self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                    let (message, code) = self.module_not_found_diagnostic(&module_name);
-                    self.error_at_node(specifier_node, &message, code);
-                }
+                let (message, code) = self.module_not_found_diagnostic(&module_name);
+                self.error_at_node(specifier_node, &message, code);
             }
             return TypeId::ERROR;
         }

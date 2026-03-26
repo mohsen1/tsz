@@ -315,6 +315,60 @@ fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
     );
 }
 
+#[test]
+fn test_prepare_test_dir_threads_no_types_and_symbols_into_generated_tsconfig() {
+    let content = "";
+    let filenames = vec![("usage.ts".to_string(), "export {};".to_string())];
+    let options: HashMap<String, String> =
+        HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let compiler_options = tsconfig_json
+        .get("compilerOptions")
+        .and_then(serde_json::Value::as_object)
+        .expect("compilerOptions object should exist");
+
+    assert_eq!(
+        compiler_options.get("noTypesAndSymbols"),
+        Some(&serde_json::Value::Bool(true))
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_threads_no_types_and_symbols_into_root_tsconfig_merge() {
+    let content = "";
+    let filenames = vec![
+        (
+            "tsconfig.json".to_string(),
+            r#"{"compilerOptions":{"module":"commonjs"}}"#.to_string(),
+        ),
+        ("usage.ts".to_string(), "export {};".to_string()),
+    ];
+    let options: HashMap<String, String> =
+        HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let compiler_options = tsconfig_json
+        .get("compilerOptions")
+        .and_then(serde_json::Value::as_object)
+        .expect("compilerOptions object should exist");
+
+    assert_eq!(
+        compiler_options.get("module"),
+        Some(&serde_json::Value::String("commonjs".to_string()))
+    );
+    assert_eq!(
+        compiler_options.get("noTypesAndSymbols"),
+        Some(&serde_json::Value::Bool(true))
+    );
+}
+
 fn find_tsz_binary() -> String {
     // Try common build locations relative to workspace root
     let candidates = [

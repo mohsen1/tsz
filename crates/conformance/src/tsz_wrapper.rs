@@ -259,6 +259,7 @@ pub fn prepare_test_dir(
         .get("noImplicitReferences")
         .or_else(|| options.get("noimplicitreferences"))
         .is_some_and(|v| v == "true");
+    let no_types_and_symbols = no_types_and_symbols_enabled(options);
     let harness_root_file = if no_implicit_references && !filenames.is_empty() {
         filenames.iter().rev().find_map(|(name, _)| {
             if name.replace('\\', "/").ends_with("tsconfig.json") {
@@ -359,6 +360,12 @@ pub fn prepare_test_dir(
             if has_lib_files && !explicit_skip_lib_check {
                 map.entry("skipLibCheck".to_string())
                     .or_insert(serde_json::Value::Bool(true));
+            }
+            if no_types_and_symbols {
+                map.insert(
+                    "noTypesAndSymbols".to_string(),
+                    serde_json::Value::Bool(true),
+                );
             }
         }
         let tsconfig_content = if let Some(root_file) = harness_root_file {
@@ -891,6 +898,13 @@ const LIST_OPTIONS: &[&str] = &[
     "customConditions",
 ];
 
+fn no_types_and_symbols_enabled(options: &HashMap<String, String>) -> bool {
+    options
+        .get("noTypesAndSymbols")
+        .or_else(|| options.get("notypesandsymbols"))
+        .is_some_and(|value| value == "true")
+}
+
 /// Convert test directive options to tsconfig compiler options
 ///
 /// Handles:
@@ -1167,10 +1181,11 @@ fn copy_tsconfig_to_root_if_needed(
         .to_string();
     let is_root_tsconfig = sanitized_source == "tsconfig.json";
     let directive_opts = convert_options_to_tsconfig(options, &[]);
+    let no_types_and_symbols = no_types_and_symbols_enabled(options);
     let has_directive_opts = if let serde_json::Value::Object(ref opts) = directive_opts {
-        !opts.is_empty()
+        !opts.is_empty() || no_types_and_symbols
     } else {
-        false
+        no_types_and_symbols
     };
 
     // Keep authored root tsconfig as-is when no directive overrides are needed.
@@ -1201,6 +1216,12 @@ fn copy_tsconfig_to_root_if_needed(
                     for (key, value) in directive_map {
                         opts.insert(key.clone(), value.clone());
                     }
+                }
+                if no_types_and_symbols {
+                    opts.insert(
+                        "noTypesAndSymbols".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
                 }
             }
         }

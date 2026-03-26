@@ -8500,6 +8500,68 @@ const value = 1;
 }
 
 #[test]
+fn test_no_types_and_symbols_tsconfig_disables_automatic_node_types() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "esnext",
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "noTypesAndSymbols": true
+          },
+          "files": ["usage1.ts", "usage2.ts", "usage3.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("usage1.ts"),
+        r#"export { parse } from "url";
+"#,
+    );
+    write_file(
+        &base.join("usage2.ts"),
+        r#"import { parse } from "url";
+export const thing: import("url").Url = parse();
+"#,
+    );
+    write_file(
+        &base.join("usage3.ts"),
+        r#"import { parse } from "url";
+export const thing = parse();
+"#,
+    );
+    write_file(
+        &base.join("node_modules/@types/node/index.d.ts"),
+        r#"declare module "url" {
+  export class Url {}
+  export function parse(): Url;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2591_errors: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2
+        })
+        .collect();
+    assert!(
+        ts2591_errors.len() == 4,
+        "Expected noTypesAndSymbols tsconfig to suppress automatic @types/node loading and emit four TS2591 diagnostics, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_binary_file_reports_errors() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
