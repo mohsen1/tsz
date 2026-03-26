@@ -2288,15 +2288,22 @@ impl<'a> CheckerState<'a> {
             let has_named_props = !props.is_empty();
             let namespace_type = has_named_props.then(|| {
                 let namespace_type = factory.object(props);
-                let display_module_name =
-                    self.resolve_namespace_display_module_name(&exports_table, module_name);
-                self.ctx
-                    .namespace_module_names
-                    .insert(namespace_type, display_module_name);
+                let preserve_namespace_display = !(module_is_non_module_entity
+                    && self.ctx.allow_synthetic_default_imports());
+                if preserve_namespace_display {
+                    let display_module_name =
+                        self.resolve_namespace_display_module_name(&exports_table, module_name);
+                    self.ctx
+                        .namespace_module_names
+                        .insert(namespace_type, display_module_name);
+                }
                 namespace_type
             });
             if let Some(export_equals_type) = export_equals_type {
                 if module_is_non_module_entity {
+                    if self.ctx.allow_synthetic_default_imports() {
+                        return Some(namespace_type.unwrap_or(export_equals_type));
+                    }
                     return Some(export_equals_type);
                 }
                 return Some(
