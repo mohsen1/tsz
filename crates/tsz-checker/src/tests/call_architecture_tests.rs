@@ -3,7 +3,7 @@
 //! These tests verify that the call expression module (`call.rs`) correctly uses
 //! solver query APIs instead of direct TypeData/lookup inspection.
 
-use crate::test_utils::check_source_diagnostics;
+use crate::test_utils::{check_source, check_source_diagnostics};
 
 /// Verify `ThisType` extraction through type alias applications works correctly
 /// via `get_this_type_from_marker_expanding` (previously used raw TypeData
@@ -342,6 +342,72 @@ function g<T>(queue: Enqueue<T>, value: T) {
         0,
         "Expected generic inference to preserve outer type parameter evidence for contravariant object members, got: {:?}",
         errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_call_this_mapped_type_explicit_generic_callback_has_no_false_ts2345() {
+    let diags = check_source(
+        r#"
+declare const EffectTypeId: unique symbol;
+
+interface Variance<out A, out E, out R> {
+  readonly [EffectTypeId]: VarianceStruct<A, E, R>;
+}
+
+type Covariant<A> = (_: never) => A;
+
+interface VarianceStruct<out A, out E, out R> {
+  readonly _V: string;
+  readonly _A: Covariant<A>;
+  readonly _E: Covariant<E>;
+  readonly _R: Covariant<R>;
+}
+
+interface Effect<out A, out E = never, out R = never>
+  extends Variance<A, E, R> {}
+
+declare const succeed: <A>(value: A) => Effect<A>;
+
+type F<X, Y> = Y extends { _type: infer Z }
+  ? X extends Effect<infer A, infer E, infer R>
+    ? Effect<A, E, R | Z>
+    : X
+  : X;
+
+type ProxyMap<Service> = {
+  [K in keyof Service]: (Service & { _type: Service })[K];
+};
+
+declare const implement: <T>() => <I extends any[], X>(
+  x: (...i: I) => X,
+) => (...i: I) => F<X, T>;
+
+class XXX {
+  log = implement<this>()(<N extends number>(n: N) => succeed(n));
+}
+
+export declare const inner: XXX;
+export declare const outer: ProxyMap<XXX>;
+
+export const a = inner.log(100);
+export const b = outer.log(100);
+"#,
+        "test.ts",
+        crate::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 18046)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected no false TS2345/TS18046 for explicit generic callback through this-mapped type, got: {diags:?}"
     );
 }
 

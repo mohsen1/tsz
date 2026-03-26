@@ -710,6 +710,18 @@ impl<'a> CheckerState<'a> {
             k if k == tsz_scanner::SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {}
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                if self
+                    .ctx
+                    .arena
+                    .get_function(node)
+                    .and_then(|func| func.type_parameters.as_ref()).is_none_or(|params| params.nodes.is_empty())
+                {
+                    return false;
+                }
+            }
             _ => return false,
         }
 
