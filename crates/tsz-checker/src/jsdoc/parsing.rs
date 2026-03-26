@@ -479,12 +479,47 @@ impl<'a> CheckerState<'a> {
             template_params: Vec::new(),
             callback: None,
         };
+        let mut wrapped_typedef_body: Option<Vec<String>> = None;
         let template_params: Vec<JsdocTemplateParamInfo> = Self::jsdoc_template_constraints(jsdoc)
             .into_iter()
             .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
             .collect();
         for raw_line in jsdoc.lines() {
             let line = raw_line.trim_start_matches('*').trim();
+            if let Some(body_lines) = wrapped_typedef_body.as_mut() {
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("}}") {
+                    let name = rest.trim();
+                    if !name.is_empty() {
+                        if let Some(previous_name) = current_name.take() {
+                            typedefs.push((previous_name, current_info));
+                            current_info = JsdocTypedefInfo {
+                                base_type: None,
+                                properties: Vec::new(),
+                                template_params: Vec::new(),
+                                callback: None,
+                            };
+                        }
+                        let base_type = format!("{{ {} }}", body_lines.join(", "));
+                        current_name = Some(name.to_string());
+                        current_info.base_type = Some(base_type);
+                        current_info.properties.clear();
+                        current_info.template_params = template_params.clone();
+                        current_info.callback = None;
+                    }
+                    wrapped_typedef_body = None;
+                    continue;
+                }
+
+                let body_line = line.trim_end_matches(',').trim_end_matches(';').trim();
+                if !body_line.is_empty() {
+                    body_lines.push(body_line.to_string());
+                }
+                continue;
+            }
+
             if line.is_empty() || !line.starts_with('@') {
                 continue;
             }
@@ -517,6 +552,34 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if let Some(rest) = line.strip_prefix("@typedef") {
+                let rest = rest.trim();
+                if rest.starts_with("{{") && !rest.contains("}}") {
+                    if let Some(previous_name) = current_name.take() {
+                        typedefs.push((previous_name, current_info));
+                        current_info = JsdocTypedefInfo {
+                            base_type: None,
+                            properties: Vec::new(),
+                            template_params: Vec::new(),
+                            callback: None,
+                        };
+                    }
+                    wrapped_typedef_body = Some(Vec::new());
+                    let initial_body = rest.trim_start_matches("{{").trim();
+                    if !initial_body.is_empty() {
+                        wrapped_typedef_body
+                            .as_mut()
+                            .expect("wrapped typedef body just initialized")
+                            .push(
+                                initial_body
+                                    .trim_end_matches(',')
+                                    .trim_end_matches(';')
+                                    .trim()
+                                    .to_string(),
+                            );
+                    }
+                    continue;
+                }
+
                 if let Some((name, base_type)) = Self::parse_jsdoc_typedef_definition(rest) {
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
