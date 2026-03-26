@@ -155,7 +155,8 @@ impl<'a> CheckerState<'a> {
                 let obj_type = self.ctx.types.factory().object(properties);
                 self.format_type(obj_type)
             };
-            let target_type = self.format_type(props_type);
+            let normalized_target = self.normalize_jsx_required_props_target(props_type);
+            let target_type = self.format_jsx_required_props_target(normalized_target);
             let message = format!(
                 "Property '{prop_name}' is missing in type '{source_type}' but required in type '{target_type}'."
             );
@@ -191,6 +192,26 @@ impl<'a> CheckerState<'a> {
     ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
         let resolved_props_type = self.normalize_jsx_required_props_target(props_type);
         tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
+    }
+
+    fn format_jsx_required_props_target(&mut self, type_id: TypeId) -> String {
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+            && let Some(sym_id) = shape.symbol
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+        {
+            let symbol_name = symbol.escaped_name.clone();
+            let type_params = self.get_type_params_for_symbol(sym_id);
+            if !type_params.is_empty() {
+                let params = type_params
+                    .iter()
+                    .map(|param| self.ctx.types.resolve_atom(param.name).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return format!("{symbol_name}<{params}>");
+            }
+        }
+
+        self.format_type(type_id)
     }
     /// Fallback: check `IntrinsicAttributes` when component props couldn't be extracted.
     pub(super) fn check_jsx_intrinsic_attributes_only(
