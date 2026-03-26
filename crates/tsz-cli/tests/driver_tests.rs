@@ -8751,10 +8751,15 @@ fn bare_import_type_reports_ts1340() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts1340_diags: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 1340).collect();
+    let ts1340_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1340)
+        .collect();
     assert!(
         ts1340_diags.iter().any(|diag| {
-            diag.message_text.contains("Module './test' does not refer to a type")
+            diag.message_text
+                .contains("Module './test' does not refer to a type")
                 && diag.message_text.contains("typeof import('./test')")
         }),
         "Expected TS1340 for bare import type, got: {result:?}"
