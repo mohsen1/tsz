@@ -71,6 +71,24 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         };
 
+        if (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+            && let Some(name) = self.get_identifier_text_from_idx(tag_name_idx)
+        {
+            let expando_props = self.collect_expando_properties_for_root(&name);
+            let mut metadata_props = Vec::new();
+            for prop_name in ["defaultProps", "propTypes"] {
+                if expando_props.contains(prop_name) {
+                    let atom = self.ctx.types.intern_string(prop_name);
+                    let type_id =
+                        self.declared_expando_property_type_for_root(sym_id, &name, prop_name);
+                    metadata_props.push(tsz_solver::PropertyInfo::new(atom, type_id));
+                }
+            }
+            if !metadata_props.is_empty() {
+                return self.ctx.types.factory().object(metadata_props);
+            }
+        }
+
         let mut decls = Vec::new();
         if symbol.value_declaration.is_some() {
             decls.push(symbol.value_declaration);

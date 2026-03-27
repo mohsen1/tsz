@@ -348,6 +348,45 @@ fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
 }
 
 #[test]
+fn jsx_library_managed_attributes_preserves_function_default_props_in_jsx() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Defaultize<TProps, TDefaults> =
+            & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
+            & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
+            & Partial<TDefaults>;
+
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements { div: {}; }
+            type LibraryManagedAttributes<TComponent, TProps> =
+                TComponent extends { defaultProps: infer D }
+                    ? Defaultize<TProps, D>
+                    : TProps;
+        }
+
+        interface Props {
+            text: string;
+        }
+
+        function BackButton(_props: Props) {
+            return <div />;
+        }
+
+        BackButton.defaultProps = {
+            text: "Go Back",
+        };
+
+        let element = <BackButton />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2741),
+        "Expected function component defaultProps to flow through JSX.LibraryManagedAttributes, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_generic_class_component_infers_props_from_attributes() {
     let diagnostics = check_jsx_codes(
         r#"
