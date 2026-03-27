@@ -435,13 +435,6 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
         };
-        // Use Atom (Copy, u32) instead of String clone to avoid heap allocation.
-        // Resolved to &str via the type interner when needed.
-        let property_name_for_probe = self
-            .ctx
-            .arena
-            .get_identifier(name_node)
-            .map(|ident| ident.escaped_text.clone());
         if let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && ident.escaped_text.is_empty()
         {
@@ -675,6 +668,11 @@ impl<'a> CheckerState<'a> {
             let object_type_no_flow =
                 self.get_type_of_write_target_base_expression(access.expression);
 
+            let property_name_for_probe = self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone());
             let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
                 let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
                 let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
@@ -721,6 +719,11 @@ impl<'a> CheckerState<'a> {
             let object_type_no_flow =
                 self.get_type_of_write_target_base_expression(access.expression);
 
+            let property_name_for_probe = self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone());
             let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
                 let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
                 let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
@@ -760,31 +763,6 @@ impl<'a> CheckerState<'a> {
                 type_id
             }
         };
-
-        // Compute a display type for error messages that preserves literal types.
-        // When `get_type_of_node` widens literals (e.g., "" -> string, 42 -> number),
-        // tsc still shows the literal type in error messages like TS2339.
-        // Try to recover the literal type from the expression node for display purposes.
-        let mut display_object_type = if matches!(
-            original_object_type,
-            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
-        ) {
-            self.literal_type_from_initializer(access.expression)
-                .unwrap_or(original_object_type)
-        } else {
-            self.enum_member_initializer_display_type(access.expression)
-                .unwrap_or(original_object_type)
-        };
-
-        if self.ctx.is_js_file()
-            && self.ctx.should_resolve_jsdoc()
-            && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
-            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
-            && let Some(preferred_type) =
-                self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
-        {
-            display_object_type = preferred_type;
-        }
 
         // Evaluate Application types to resolve generic type aliases/interfaces.
         // But preserve original for error messages to maintain nominal identity (e.g., D<string>).
@@ -861,6 +839,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        let mut commonjs_namespace_override: Option<TypeId> = None;
         if object_type == TypeId::ANY
             && self.is_js_file()
             && self
@@ -874,7 +853,7 @@ impl<'a> CheckerState<'a> {
         {
             let namespace_type = self.current_file_commonjs_namespace_type();
             object_type = namespace_type;
-            display_object_type = namespace_type;
+            commonjs_namespace_override = Some(namespace_type);
         }
 
         // Fast path for optional chaining on non-class receivers when the
@@ -1052,6 +1031,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        // Deferred display_object_type computation: now that the optional-chain
+        // fast path has been exhausted, compute the proper display type for error
+        // messages. This preserves literal types that get_type_of_node widens.
+        let mut display_object_type = if let Some(ns_type) = commonjs_namespace_override {
+            ns_type
+        } else if matches!(
+            original_object_type,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
+        ) {
+            self.literal_type_from_initializer(access.expression)
+                .unwrap_or(original_object_type)
+        } else {
+            self.enum_member_initializer_display_type(access.expression)
+                .unwrap_or(original_object_type)
+        };
+
+        if self.ctx.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
+            && let Some(preferred_type) =
+                self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
+        {
+            display_object_type = preferred_type;
         }
 
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
