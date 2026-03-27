@@ -12,8 +12,7 @@ use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::{
-    collect_class_computed_name_this_references, contains_super_reference,
-    contains_this_reference,
+    collect_class_computed_name_this_references, contains_super_reference, contains_this_reference,
 };
 use tsz_scanner::SyntaxKind;
 
@@ -2435,9 +2434,9 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
-                        self.with_scoped_static_initializer_context_cleared(|this| {
-                            this.emit_expression(*init_idx);
-                        });
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
