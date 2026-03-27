@@ -227,6 +227,53 @@ fn test_compile_emits_ts18003_with_explicit_default_include_and_only_mts_input()
 }
 
 #[test]
+fn test_compile_project_module_esnext_verbatim_const_enum_is_not_treated_as_commonjs() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "esnext",
+    "verbatimModuleSyntax": true,
+    "noEmit": true
+  },
+  "files": ["index.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("index.ts"),
+        "export const enum E {
+  A = 1,
+}
+",
+    )
+    .expect("write source");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--pretty",
+        "false",
+    ])
+    .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&1287),
+        "did not expect TS1287 for module=esnext verbatimModuleSyntax project: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1295),
+        "did not expect TS1295 for module=esnext verbatimModuleSyntax project: {codes:?}"
+    );
+}
+
+#[test]
 fn test_compile_emits_ts18003_in_batch_style_project_mode() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
