@@ -2526,6 +2526,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.check_js = true;
         options.checker.check_js = true;
     }
+    if let Some(depth) = args.max_node_module_js_depth {
+        options.max_node_module_js_depth = depth;
+    }
     if args.isolated_declarations {
         options.isolated_declarations = true;
         options.checker.isolated_declarations = true;
