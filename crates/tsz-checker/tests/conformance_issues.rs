@@ -20198,7 +20198,6 @@ Point.zero = (): Point => Point(0, 0);
     );
 }
 
-
 #[test]
 fn test_relative_module_augmentation_namespace_import_member_resolves_in_type_position() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
@@ -20243,7 +20242,9 @@ model.cache;
     );
 
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2503 || *code == 2694),
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2503 || *code == 2694),
         "Expected module augmentation member on namespace import to resolve in type position, got: {diagnostics:#?}"
     );
 }
