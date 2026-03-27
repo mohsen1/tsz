@@ -1036,7 +1036,7 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_base_alias = prev_super_alias;
     }
 
-    fn with_scoped_static_initializer_context_cleared<R>(
+    pub(in crate::emitter) fn with_scoped_static_initializer_context_cleared<R>(
         &mut self,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
@@ -1355,9 +1355,7 @@ impl<'a> Printer<'a> {
 
             // Class expression (e.g., `return class extends Base { ... }`)
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
-                self.with_scoped_static_initializer_context_cleared(|this| {
-                    this.emit_class_declaration(node, idx);
-                });
+                self.emit_class_expression_with_captured_computed_names(node, idx);
             }
 
             // Property assignment

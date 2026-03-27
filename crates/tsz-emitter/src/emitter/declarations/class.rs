@@ -1,6 +1,7 @@
 #![allow(clippy::nonminimal_bool, clippy::type_complexity)]
 
 use super::super::{Printer, ScriptTarget};
+use crate::context::transform::TransformDirective;
 use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
@@ -10,7 +11,10 @@ use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_parser::syntax::transform_utils::{contains_super_reference, contains_this_reference};
+use tsz_parser::syntax::transform_utils::{
+    collect_class_computed_name_this_references, contains_super_reference,
+    contains_this_reference,
+};
 use tsz_scanner::SyntaxKind;
 
 use super::super::core::PropertyNameEmit;
@@ -176,6 +180,30 @@ impl<'a> Printer<'a> {
                     .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
             })
             .collect()
+    }
+
+    pub(in crate::emitter) fn emit_class_expression_with_captured_computed_names(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+    ) {
+        let saved_transforms = self.transforms.clone();
+
+        if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
+            for this_ref in collect_class_computed_name_this_references(self.arena, idx) {
+                self.transforms.insert(
+                    this_ref,
+                    TransformDirective::SubstituteThis {
+                        capture_name: alias.clone(),
+                    },
+                );
+            }
+        }
+
+        self.with_scoped_static_initializer_context_cleared(|this| {
+            this.emit_class_declaration(node, idx);
+        });
+        self.transforms = saved_transforms;
     }
 
     /// Get the name of a class member for use in `__decorate` calls.
@@ -1819,6 +1847,52 @@ impl<'a> Printer<'a> {
         let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
+        // For class expressions with static field initializers, we need to wrap
+        // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
+        // Allocate the class-expression temp before any computed-name temps so the
+        // generated `_a`, `_b`, `_c` ordering matches tsc.
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (tsz_common::ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let needs_static_comma_expr = is_class_expression
+            && target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|m| {
+                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(m).is_some_and(|p| {
+                            self.arena
+                                .has_modifier(&p.modifiers, SyntaxKind::StaticKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&p.modifiers, SyntaxKind::DeclareKeyword)
+                                && !(needs_private_field_lowering
+                                    && is_private_identifier(self.arena, p.name))
+                        })
+                })
+            });
+        let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
+        let class_expr_temp = if needs_any_comma_expr {
+            let temp = if let Some(ref alias) = private_class_alias {
+                alias.clone()
+            } else {
+                self.make_unique_name_hoisted()
+            };
+            self.write("(");
+            self.write(&temp);
+            self.write(" = ");
+            Some(temp)
+        } else {
+            None
+        };
+        let class_expr_static_temp = if needs_static_comma_expr {
+            class_expr_temp.clone()
+        } else {
+            None
+        };
+
         // Computed property name hoisting for targets < ES2022.
         // tsc hoists non-constant computed property name expressions to temp variables
         // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
@@ -1896,61 +1970,6 @@ impl<'a> Printer<'a> {
                 }
             }
         }
-
-        // For class expressions with static field initializers, we need to wrap
-        // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`
-        // Pre-detect this case before emitting the class keyword.
-        let target_needs_field_lowering = (self.ctx.options.target as u32)
-            < (tsz_common::ScriptTarget::ES2022 as u32)
-            || !self.ctx.options.use_define_for_class_fields;
-        let needs_static_comma_expr = is_class_expression
-            && target_needs_field_lowering
-            && class.members.nodes.iter().any(|&member_idx| {
-                self.arena.get(member_idx).is_some_and(|m| {
-                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        && self.arena.get_property_decl(m).is_some_and(|p| {
-                            self.arena
-                                .has_modifier(&p.modifiers, SyntaxKind::StaticKeyword)
-                                && !self
-                                    .arena
-                                    .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
-                                && !self
-                                    .arena
-                                    .has_modifier(&p.modifiers, SyntaxKind::DeclareKeyword)
-                                // Exclude private static fields when private field lowering
-                                // is active — they're handled via the private comma expr path.
-                                && !(needs_private_field_lowering
-                                    && is_private_identifier(self.arena, p.name))
-                        })
-                })
-            });
-
-        // Determine if we need a comma expression wrapper for this class expression.
-        // Either static fields or private field lowering (or both) triggers it.
-        let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
-        let class_expr_temp = if needs_any_comma_expr {
-            // When the class expression already has a private_class_alias (for static
-            // private fields), reuse it as the temp var. tsc uses the same `_a` for both.
-            let temp = if let Some(ref alias) = private_class_alias {
-                // The alias is already in hoisted_assignment_temps from the private
-                // lowering setup. Just reuse it.
-                alias.clone()
-            } else {
-                self.make_unique_name_hoisted()
-            };
-            self.write("(");
-            self.write(&temp);
-            self.write(" = ");
-            Some(temp)
-        } else {
-            None
-        };
-        // Alias for static field comma expr path (preserves existing variable name)
-        let class_expr_static_temp = if needs_static_comma_expr {
-            class_expr_temp.clone()
-        } else {
-            None
-        };
 
         let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
             clauses.nodes.iter().any(|&idx| {
@@ -2381,7 +2400,11 @@ impl<'a> Printer<'a> {
                     self.write(storage_name);
                     self.write(".set(this, ");
                     match init_idx {
-                        Some(init) => self.emit_expression(*init),
+                        Some(init) => {
+                            self.with_scoped_static_initializer_context_cleared(|this| {
+                                this.emit_expression(*init);
+                            });
+                        }
                         None => self.write("void 0"),
                     }
                     self.write(");");
@@ -2397,7 +2420,11 @@ impl<'a> Printer<'a> {
                 }
                 if self.ctx.options.use_define_for_class_fields {
                     self.write("Object.defineProperty(this, ");
-                    self.emit_string_literal_text(name);
+                    if name.starts_with('[') && name.ends_with(']') {
+                        self.write(&name[1..name.len() - 1]);
+                    } else {
+                        self.emit_string_literal_text(name);
+                    }
                     self.write(", {");
                     self.write_line();
                     self.increase_indent();
@@ -2408,7 +2435,9 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
-                    self.emit_expression(*init_idx);
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_expression(*init_idx);
+                        });
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
@@ -2421,7 +2450,9 @@ impl<'a> Printer<'a> {
                         self.write(name);
                     }
                     self.write(" = ");
-                    self.emit_expression(*init_idx);
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
                     self.write(";");
                     if !trailing.is_empty() {
                         for comment in trailing {
@@ -3038,27 +3069,49 @@ impl<'a> Printer<'a> {
 
         // Emit computed property name hoisting comma expression or standalone side effects.
         if !computed_prop_entries.is_empty() {
-            // Emit as a single comma expression: `_a = expr1, sideEffect, _b = expr2;`
-            self.write_line();
-            for (i, (temp_name, expr_idx)) in computed_prop_entries.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
+            if class_expr_temp.is_some() {
+                for (temp_name, expr_idx) in computed_prop_entries.iter() {
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    if let Some(temp) = temp_name {
+                        self.write(temp);
+                        self.write(" = ");
+                    }
+                    self.emit_expression(*expr_idx);
+                    self.decrease_indent();
                 }
-                if let Some(temp) = temp_name {
-                    self.write(temp);
-                    self.write(" = ");
+            } else {
+                // Emit as a single comma expression: `_a = expr1, sideEffect, _b = expr2;`
+                self.write_line();
+                for (i, (temp_name, expr_idx)) in computed_prop_entries.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    if let Some(temp) = temp_name {
+                        self.write(temp);
+                        self.write(" = ");
+                    }
+                    self.emit_expression(*expr_idx);
                 }
-                self.emit_expression(*expr_idx);
+                self.write(";");
             }
-            self.write(";");
         } else {
             // Emit computed property name side-effect statements for erased members
             // (when hoisting is not active, e.g., ES2022+ targets).
             // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`
             for expr_idx in &computed_property_side_effects {
-                self.write_line();
-                self.emit_expression(*expr_idx);
-                self.write(";");
+                if class_expr_temp.is_some() {
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_expression(*expr_idx);
+                    self.decrease_indent();
+                } else {
+                    self.write_line();
+                    self.emit_expression(*expr_idx);
+                    self.write(";");
+                }
             }
         }
 
@@ -3095,30 +3148,74 @@ impl<'a> Printer<'a> {
                 self.write(",");
                 self.write_line();
                 self.increase_indent();
-                self.write(temp);
-                match name_emit {
-                    PropertyNameEmit::Dot(name) => {
-                        self.write(".");
-                        self.write(name);
+                if self.ctx.options.use_define_for_class_fields {
+                    let define_name = match name_emit {
+                        PropertyNameEmit::Dot(s) => format!("\"{s}\""),
+                        PropertyNameEmit::Bracket(s) | PropertyNameEmit::BracketNumeric(s) => {
+                            s.clone()
+                        }
+                    };
+                    self.write("Object.defineProperty(");
+                    self.write(temp);
+                    self.write(", ");
+                    self.write(&define_name);
+                    self.write(", {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write("enumerable: true,");
+                    self.write_line();
+                    self.write("configurable: true,");
+                    self.write_line();
+                    self.write("writable: true,");
+                    self.write_line();
+                    self.write("value: ");
+                    // Emit the initializer, then substitute class name with temp var
+                    let before = self.writer.len();
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
+                    let after = self.writer.len();
+                    if !class_name.is_empty() && class_name != *temp {
+                        let full = self.writer.get_output().to_string();
+                        let segment = &full[before..after];
+                        let replaced = replace_identifier(segment, &class_name, temp);
+                        if replaced != segment {
+                            self.writer.truncate(before);
+                            self.write(&replaced);
+                        }
                     }
-                    PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
-                        self.write("[");
-                        self.write(name);
-                        self.write("]");
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("})");
+                } else {
+                    self.write(temp);
+                    match name_emit {
+                        PropertyNameEmit::Dot(name) => {
+                            self.write(".");
+                            self.write(name);
+                        }
+                        PropertyNameEmit::Bracket(name)
+                        | PropertyNameEmit::BracketNumeric(name) => {
+                            self.write("[");
+                            self.write(name);
+                            self.write("]");
+                        }
                     }
-                }
-                self.write(" = ");
-                // Emit the initializer, then substitute class name with temp var
-                let before = self.writer.len();
-                self.emit_expression(*init_idx);
-                let after = self.writer.len();
-                if !class_name.is_empty() && class_name != *temp {
-                    let full = self.writer.get_output().to_string();
-                    let segment = &full[before..after];
-                    let replaced = replace_identifier(segment, &class_name, temp);
-                    if replaced != segment {
-                        self.writer.truncate(before);
-                        self.write(&replaced);
+                    self.write(" = ");
+                    // Emit the initializer, then substitute class name with temp var
+                    let before = self.writer.len();
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
+                    let after = self.writer.len();
+                    if !class_name.is_empty() && class_name != *temp {
+                        let full = self.writer.get_output().to_string();
+                        let segment = &full[before..after];
+                        let replaced = replace_identifier(segment, &class_name, temp);
+                        if replaced != segment {
+                            self.writer.truncate(before);
+                            self.write(&replaced);
+                        }
                     }
                 }
                 self.decrease_indent();
