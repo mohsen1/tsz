@@ -810,12 +810,6 @@ impl<'a> FlowAnalyzer<'a> {
                         &TypeGuard::Truthy,
                         GuardSense::from(is_true_branch),
                     );
-                    if std::env::var_os("TSZ_DEBUG_TRUTHY_NARROW").is_some() {
-                        eprintln!(
-                            "truthy-narrow cond={} target={} input={:?} result={:?} true_branch={}",
-                            condition_idx.0, target.0, type_id, narrowed, is_true_branch
-                        );
-                    }
                     return narrowed;
                 }
             }

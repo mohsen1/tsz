@@ -582,19 +582,6 @@ impl<'a> CheckerState<'a> {
                     })
             })?;
 
-        if std::env::var_os("TSZ_DEBUG_GENERIC_PARAM_DISPLAY").is_some()
-            && self.ctx.file_name.contains("controlFlowGenericTypes")
-        {
-            let raw_eval = self.evaluate_type_with_env(raw_param_type);
-            let param_display = self.format_type_for_assignability_message(param_type);
-            let raw_display = self.format_type_for_assignability_message(raw_param_type);
-            let raw_eval_display = self.format_type_for_assignability_message(raw_eval);
-            eprintln!(
-                "generic-param-display arg={} param={} raw={} raw_eval={}",
-                arg_idx.0, param_display, raw_display, raw_eval_display,
-            );
-        }
-
         if !crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
             raw_param_type,
@@ -1906,18 +1893,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if std::env::var_os("TSZ_DEBUG_CALL_ARG_TYPES").is_some()
-            && self.ctx.file_name.contains("controlFlowGenericTypes")
-        {
-            eprintln!(
-                "call-arg-types idx={} arg={:?} arg_fmt={} param={:?} param_fmt={}",
-                idx.0,
-                arg_type,
-                self.format_type_for_assignability_message(arg_type),
-                param_type,
-                self.format_type_for_assignability_message(param_type),
-            );
-        }
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
         if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {
             let arg_end = anchor.start.saturating_add(anchor.length);

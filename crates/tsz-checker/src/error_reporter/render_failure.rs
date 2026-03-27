@@ -1357,18 +1357,6 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_type_for_assignability_message(target)
         };
-        if std::env::var_os("TSZ_DEBUG_RENDER_MISMATCH").is_some()
-            && self
-                .ctx
-                .file_name
-                .contains("dependentDestructuredVariables")
-        {
-            eprintln!(
-                "render-mismatch file={} source={:?} target={:?} source_str={} target_str={} depth={} idx={}",
-                self.ctx.file_name, source, target, source_str, target_str, depth, idx.0
-            );
-        }
-
         if depth == 0
             && (target_str == "Callable" || target_str == "Applicable")
             && !tsz_solver::is_primitive_type(self.ctx.types, source)

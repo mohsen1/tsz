@@ -1417,22 +1417,6 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
-        if std::env::var_os("TSZ_DEBUG_ASSIGNMENT_SOURCE_FMT").is_some()
-            && self
-                .ctx
-                .file_name
-                .contains("dependentDestructuredVariables")
-        {
-            eprintln!(
-                "assignment-source-enter file={} anchor={} source={:?} source_fmt={} target={:?} target_fmt={}",
-                self.ctx.file_name,
-                anchor_idx.0,
-                source,
-                self.format_type_diagnostic(source),
-                target,
-                self.format_type_diagnostic(target)
-            );
-        }
         if source == TypeId::UNDEFINED
             && self.ctx.arena.get(anchor_idx).is_some_and(|node| {
                 node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
