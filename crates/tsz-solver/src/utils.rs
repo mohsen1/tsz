@@ -206,6 +206,7 @@ impl TypeIdExt for TypeId {
 ///
 /// This consolidates the duplicated `lookup_property` implementations from
 /// `subtype_rules/objects.rs` and `infer_bct.rs`.
+#[inline]
 pub(crate) fn lookup_property<'props>(
     db: &dyn TypeDatabase,
     props: &'props [PropertyInfo],

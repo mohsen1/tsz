@@ -54,6 +54,7 @@ where
     }
 }
 
+#[inline]
 fn extract_type_data<T, F>(types: &dyn TypeDatabase, type_id: TypeId, extractor: F) -> Option<T>
 where
     F: Fn(&TypeData) -> Option<T>,
@@ -63,6 +64,7 @@ where
 }
 
 /// Extract the union list id if this is a union type.
+#[inline]
 pub fn union_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeListId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Union(list_id) => Some(*list_id),
@@ -71,6 +73,7 @@ pub fn union_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeLi
 }
 
 /// Extract the intersection list id if this is an intersection type.
+#[inline]
 pub fn intersection_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeListId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Intersection(list_id) => Some(*list_id),
@@ -79,6 +82,7 @@ pub fn intersection_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option
 }
 
 /// Extract the object shape id if this is an object type.
+#[inline]
 pub fn object_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<ObjectShapeId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Object(shape_id) => Some(*shape_id),
@@ -87,6 +91,7 @@ pub fn object_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Obje
 }
 
 /// Extract the object-with-index shape id if this is an indexed object type.
+#[inline]
 pub fn object_with_index_shape_id(
     types: &dyn TypeDatabase,
     type_id: TypeId,
@@ -98,6 +103,7 @@ pub fn object_with_index_shape_id(
 }
 
 /// Extract the array element type if this is an array type.
+#[inline]
 pub fn array_element_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Array(element) => Some(*element),
@@ -106,6 +112,7 @@ pub fn array_element_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<T
 }
 
 /// Extract the tuple list id if this is a tuple type.
+#[inline]
 pub fn tuple_list_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TupleListId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Tuple(list_id) => Some(*list_id),
@@ -122,6 +129,7 @@ pub fn intrinsic_kind(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Intri
 }
 
 /// Extract the literal value if this is a literal type.
+#[inline]
 pub fn literal_value(types: &dyn TypeDatabase, type_id: TypeId) -> Option<LiteralValue> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Literal(value) => Some(*value),
@@ -130,6 +138,7 @@ pub fn literal_value(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Litera
 }
 
 /// Extract the string literal atom if this is a string literal type.
+#[inline]
 pub fn literal_string(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
     match literal_value(types, type_id) {
         Some(LiteralValue::String(atom)) => Some(atom),
@@ -138,6 +147,7 @@ pub fn literal_string(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom>
 }
 
 /// Extract the numeric literal if this is a number literal type.
+#[inline]
 pub fn literal_number(types: &dyn TypeDatabase, type_id: TypeId) -> Option<OrderedFloat> {
     match literal_value(types, type_id) {
         Some(LiteralValue::Number(value)) => Some(value),
@@ -233,6 +243,7 @@ pub fn enum_components(types: &dyn TypeDatabase, type_id: TypeId) -> Option<(Def
 }
 
 /// Extract the application id if this is a generic application type.
+#[inline]
 pub fn application_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeApplicationId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Application(app_id) => Some(*app_id),
