@@ -270,6 +270,105 @@ useMapper(["a", "b"], combine(wrap(s => s.length), wrap(n => n > 10)));
 }
 
 #[test]
+fn class_tag_contextual_generator_callback_does_not_force_stale_ts2345() {
+    let source = r#"
+type Covariant<A> = (_: never) => A;
+
+interface Effect<out A, out E = never, out R = never> {
+  readonly _A: Covariant<A>;
+  readonly _E: Covariant<E>;
+  readonly _R: Covariant<R>;
+}
+
+declare function effectGen<Eff extends Effect<any, any, any>, AEff>(
+  f: () => Generator<Eff, AEff, never>
+): Effect<
+  AEff,
+  [Eff] extends [never]
+    ? never
+    : [Eff] extends [Effect<infer _A, infer E, infer _R>]
+    ? E
+    : never,
+  [Eff] extends [never]
+    ? never
+    : [Eff] extends [Effect<infer _A, infer _E, infer R>]
+    ? R
+    : never
+>;
+
+declare function effectFn<
+  Eff extends Effect<any, any, any>,
+  AEff,
+  Args extends Array<any>
+>(
+  body: (...args: Args) => Generator<Eff, AEff, never>
+): (
+  ...args: Args
+) => Effect<
+  AEff,
+  [Eff] extends [never]
+    ? never
+    : [Eff] extends [Effect<infer _A, infer E, infer _R>]
+    ? E
+    : never,
+  [Eff] extends [never]
+    ? never
+    : [Eff] extends [Effect<infer _A, infer _E, infer R>]
+    ? R
+    : never
+>;
+
+interface Tag<in out Id, in out Value> {
+  readonly _op: "Tag";
+  readonly Service: Value;
+  readonly Identifier: Id;
+}
+
+interface TagClassShape<Id, Shape> {
+  readonly Type: Shape;
+  readonly Id: Id;
+}
+
+interface TagClass<Self, Id extends string, Type> extends Tag<Self, Type> {
+  new (_: never): TagClassShape<Id, Type>;
+  readonly key: Id;
+}
+
+declare function layerEffect<I, S, E, R>(
+  tag: Tag<I, S>,
+  effect: Effect<S, E, R>
+): unknown;
+
+declare function Tag<const Id extends string>(
+  id: Id
+): <Self, Shape>() => TagClass<Self, Id, Shape>;
+
+class Foo extends Tag("Foo")<
+  Foo,
+  {
+    fn: (a: string) => Effect<void>;
+  }
+>() {}
+
+layerEffect(
+  Foo,
+  effectGen(function* () {
+    return {
+      fn: effectFn(function* (a) {
+        a;
+      }),
+    };
+  })
+);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "Expected no stale TS2345 for class-tag contextual generator callback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn speculative_tuple_listener_recheck_drops_stale_property_errors() {
     let source = r#"
 interface CloseEvent {
