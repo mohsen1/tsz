@@ -1383,6 +1383,40 @@ mm.get();
     );
 }
 
+#[test]
+fn test_jsdoc_constructor_tag_on_object_literal_method_keeps_object_literal_this_closed() {
+    let source = r#"
+const obj = {
+    /** @constructor */
+    Foo() { this.bar = "bar"; }
+};
+(new obj.Foo()).bar;
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2339_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+    assert!(
+        ts2339_messages
+            .iter()
+            .any(|msg| msg.contains("Property 'bar' does not exist on type '{ Foo(): void; }'.")),
+        "Expected TS2339 on object-literal-owned `this.bar` inside JSDoc constructor-tagged method, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new obj.Foo()` in object literal JSDoc constructor case, got: {diagnostics:?}"
+    );
+}
+
 // === Computed property (element access) tests ===
 
 /// this[symbolKey] = value in JS class constructor → no false TS2322
