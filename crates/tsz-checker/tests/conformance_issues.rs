@@ -160,6 +160,50 @@ self.console;
 }
 
 #[test]
+fn test_array_is_array_false_branch_keeps_original_union_surface() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+var maybeArray: number | number[];
+
+if (Array.isArray(maybeArray)) {
+    maybeArray.length;
+} else {
+    maybeArray.toFixed();
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        }
+        .apply_strict_defaults(),
+    );
+
+    let ts2339_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2339_messages.len(),
+        1,
+        "Expected exactly one TS2339 on the false branch of Array.isArray, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2339_messages[0].contains("toFixed")
+            && ts2339_messages[0].contains("number | number[]"),
+        "Expected TS2339 to preserve the original union surface, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("length")),
+        "Did not expect the true branch to lose Array.isArray narrowing, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unresolved_computed_class_method_contributes_indexed_callable_type() {
     let source = r#"
 declare var something: string;
