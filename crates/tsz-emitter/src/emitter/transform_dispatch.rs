@@ -819,8 +819,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_indent_level(self.writer.indent_level());
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
-        es5_emitter
-            .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
         }

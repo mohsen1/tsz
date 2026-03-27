@@ -637,8 +637,7 @@ impl<'a> Printer<'a> {
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
         }
-        es5_emitter
-            .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
 
         let (class_name, es5_output) = if class_data.name.is_some() {
             let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
