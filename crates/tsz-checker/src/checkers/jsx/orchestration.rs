@@ -452,9 +452,9 @@ impl<'a> CheckerState<'a> {
 
         let children_prop_name = self.get_jsx_children_prop_name();
         let provided_attrs = self.collect_jsx_union_resolution_attrs(attributes_idx)?;
-        let has_concrete_attr = provided_attrs.iter().any(|(name, ty)| {
-            name != &children_prop_name && ty.is_some()
-        });
+        let has_concrete_attr = provided_attrs
+            .iter()
+            .any(|(name, ty)| name != &children_prop_name && ty.is_some());
         let provided_attrs: Vec<(String, Option<TypeId>)> = provided_attrs
             .into_iter()
             .filter_map(|(name, ty)| {

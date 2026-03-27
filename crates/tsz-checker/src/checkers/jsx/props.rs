@@ -962,11 +962,12 @@ impl<'a> CheckerState<'a> {
                 let is_data_or_aria =
                     attr_name.starts_with("data-") || attr_name.starts_with("aria-");
                 let is_special_named_attr = attr_name.contains('-') || attr_name.contains(':');
-                let direct_prop_access = self.resolve_property_access_with_env(props_type, &attr_name);
+                let direct_prop_access =
+                    self.resolve_property_access_with_env(props_type, &attr_name);
                 let attr_prop_access = match direct_prop_access {
-                    crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
-                        if attr_name != "as" =>
-                    {
+                    crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound {
+                        ..
+                    } if attr_name != "as" => {
                         if let Some(intrinsic_props) = as_intrinsic_props {
                             match self.resolve_property_access_with_env(intrinsic_props, &attr_name) {
                                 crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. } => direct_prop_access,
