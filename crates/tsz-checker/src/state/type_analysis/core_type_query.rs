@@ -154,9 +154,26 @@ impl<'a> CheckerState<'a> {
                         {
                             let prop_name = ident.escaped_text.clone();
                             let object_type = self.resolve_type_for_property_access(left_type);
+                            if object_type == TypeId::ANY || object_type == TypeId::ERROR {
+                                return object_type;
+                            }
+                            let (object_type_for_access, nullish_cause) =
+                                self.split_nullish_type(object_type);
+                            let Some(object_type_for_access) = object_type_for_access else {
+                                if let Some(cause) = nullish_cause {
+                                    self.report_nullish_object(left_idx, cause, true);
+                                }
+                                return TypeId::ERROR;
+                            };
+                            if let Some(cause) = nullish_cause {
+                                self.report_nullish_object(left_idx, cause, false);
+                            }
                             trace!(object_type = ?object_type, prop_name = %prop_name, "type_query qualified: property access");
                             use crate::query_boundaries::common::PropertyAccessResult;
-                            match self.resolve_property_access_with_env(object_type, &prop_name) {
+                            match self.resolve_property_access_with_env(
+                                object_type_for_access,
+                                &prop_name,
+                            ) {
                                 PropertyAccessResult::Success { type_id, .. }
                                     if type_id != TypeId::ANY && type_id != TypeId::ERROR =>
                                 {

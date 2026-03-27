@@ -2275,6 +2275,42 @@ exports.y = 2;
 }
 
 #[test]
+fn test_type_query_qualified_name_reports_possibly_undefined_on_optional_midpoint() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface DeepOptional {
+    a?: {
+        b?: {
+            c?: string;
+        };
+    };
+}
+
+function init2(foo: DeepOptional) {
+    if (foo.a) {
+        type C = typeof foo.a.b.c;
+
+        for (const _ of [1]) {
+            type NestedC = typeof foo.a.b.c;
+        }
+    }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2532_count = diagnostics.iter().filter(|(code, _)| *code == 2532).count();
+    assert_eq!(
+        ts2532_count, 2,
+        "Expected two TS2532 diagnostics for typeof-qualified access through optional b. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_constructor_instance_missing_property_does_not_use_variable_typeof_display() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",

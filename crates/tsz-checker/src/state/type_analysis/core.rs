@@ -1121,11 +1121,31 @@ impl<'a> CheckerState<'a> {
             if let Some(rn) = self.ctx.arena.get(qn.right)
                 && let Some(ident) = self.ctx.arena.get_identifier(rn)
             {
-                let obj = self.resolve_type_for_property_access(left_type);
+                let object_type = self.resolve_type_for_property_access(left_type);
+                if object_type == TypeId::ANY || object_type == TypeId::ERROR {
+                    return object_type;
+                }
+                let (object_type_for_access, nullish_cause) = self.split_nullish_type(object_type);
+                let Some(object_type_for_access) = object_type_for_access else {
+                    if let Some(cause) = nullish_cause {
+                        self.report_nullish_object(qn.left, cause, true);
+                    }
+                    return TypeId::ERROR;
+                };
+                if let Some(cause) = nullish_cause {
+                    self.report_nullish_object(qn.left, cause, false);
+                }
                 use crate::query_boundaries::common::PropertyAccessResult;
-                match self.resolve_property_access_with_env(obj, &ident.escaped_text) {
+                match self
+                    .resolve_property_access_with_env(object_type_for_access, &ident.escaped_text)
+                {
                     PropertyAccessResult::Success { type_id, .. } => {
-                        self.resolve_type_query_type(type_id)
+                        let resolved = self.resolve_type_query_type(type_id);
+                        if use_flow {
+                            self.apply_flow_narrowing(idx, resolved)
+                        } else {
+                            resolved
+                        }
                     }
                     _ => TypeId::ERROR,
                 }
