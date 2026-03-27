@@ -392,7 +392,11 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        // Import aliases (ALIAS) are narrowable just like variables. In TSC,
+        // imported bindings are treated as const-like references that can be
+        // narrowed through control flow (e.g., `if (a1)` narrows `number | undefined`
+        // to `number`). Since imports cannot be reassigned, narrowing is safe.
+        if (symbol.flags & (symbol_flags::VARIABLE | symbol_flags::ALIAS)) == 0 {
             return false;
         }
 
