@@ -1892,6 +1892,41 @@ class Baz {
 }
 
 #[test]
+fn test_malformed_jsdoc_satisfies_does_not_emit_duplicate_tag_error() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+/**
+ * @typedef {Object} T1
+ * @property {number} a
+ */
+
+/**
+ * @satisfies T1
+ */
+const t1 = { a: 1 };
+const t2 = /** @satisfies T1 */ ({ a: 1 });
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 1223),
+        "Did not expect TS1223 for malformed @satisfies tags.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.0 == 1005).count(),
+        4,
+        "Expected only the four parse-shaped TS1005 diagnostics for malformed @satisfies tags.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_param_function_type_without_return_reports_ts7014() {
     let source = r#"
 /** @param {function(...[*])} callback */
