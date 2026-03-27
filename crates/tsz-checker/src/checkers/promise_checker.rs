@@ -194,6 +194,33 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Extract a Promise member from a contextual type that may be a union.
+    ///
+    /// When the contextual type for a `new Promise(...)` expression is a union like
+    /// `void | PromiseLike<void> | Promise<void>` (as constructed for async function
+    /// return expressions), this method finds and returns the `Promise<T>` member.
+    /// If the type is already a direct Promise type, returns it as-is.
+    /// Returns `None` if no Promise member is found.
+    pub fn find_promise_in_contextual_type(&self, type_id: TypeId) -> Option<TypeId> {
+        // Fast path: type is already a Promise type
+        if self.is_promise_type(type_id) {
+            return Some(type_id);
+        }
+
+        // Check union members for a Promise type
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            for member in &members {
+                if self.is_promise_type(*member) {
+                    return Some(*member);
+                }
+            }
+        }
+
+        None
+    }
+
     /// Check if the global Promise type is available, emit TS2318 if not.
     ///
     /// Called when processing async functions to ensure Promise is available.
