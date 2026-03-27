@@ -840,6 +840,10 @@ impl<'a> CheckerState<'a> {
             object_type
         };
         if !skip_flow_narrowing
+            // When TS2454 already forced the receiver read back to its declared type,
+            // a second property-read flow pass would incorrectly reapply narrowing
+            // and hide follow-on property errors like TS2339.
+            && !self.ctx.daa_error_nodes.contains(&access.expression.0)
             && self.ctx.arena.get(access.expression).is_some_and(|expr| {
                 matches!(
                     expr.kind,
