@@ -15,7 +15,11 @@ impl<'a> CheckerState<'a> {
         spread_expr_idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        let spread_type = self.compute_type_of_node_with_request(spread_expr_idx, request);
+        if request.contextual_type.is_some() {
+            self.invalidate_expression_for_contextual_retry(spread_expr_idx);
+        }
+
+        let spread_type = self.get_type_of_node_with_request(spread_expr_idx, request);
         let spread_type = self.evaluate_type_with_env(spread_type);
         self.resolve_type_for_property_access(spread_type)
     }

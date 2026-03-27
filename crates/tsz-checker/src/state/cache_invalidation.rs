@@ -267,6 +267,19 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.invalidate_node_type_cache(idx);
+                if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                    self.invalidate_expression_for_contextual_retry(access.expression);
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.invalidate_node_type_cache(idx);
+                if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                    self.invalidate_expression_for_contextual_retry(access.expression);
+                    self.invalidate_expression_for_contextual_retry(access.name_or_argument);
+                }
+            }
             // ---- Wrapper expressions: recurse into inner ----
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 self.invalidate_node_type_cache(idx);
