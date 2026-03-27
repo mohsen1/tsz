@@ -59,8 +59,13 @@ use crate::types::{
 use crate::types::{PropertyInfo, Visibility};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tsz_common::interner::Atom;
+
+/// Pre-allocated empty Arc<Vec> singletons to avoid repeated heap allocations
+/// in trait method implementations that return `Arc<Vec<T>>` for empty results.
+static EMPTY_MEMBERS: LazyLock<Arc<Vec<(Atom, TypeId)>>> = LazyLock::new(|| Arc::new(Vec::new()));
+static EMPTY_CALL_SIGS: LazyLock<Arc<Vec<CallSignature>>> = LazyLock::new(|| Arc::new(Vec::new()));
 
 // =============================================================================
 // Classification Enums
@@ -906,7 +911,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         let evaluated = self.evaluate(type_id);
         let key = match self.db.lookup(evaluated) {
             Some(k) => k,
-            None => return Arc::new(Vec::new()),
+            None => return Arc::clone(&EMPTY_MEMBERS),
         };
 
         match key {
@@ -930,7 +935,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                         .collect(),
                 )
             }
-            _ => Arc::new(Vec::new()),
+            _ => Arc::clone(&EMPTY_MEMBERS),
         }
     }
 
@@ -938,14 +943,14 @@ impl<'a> Judge for DefaultJudge<'a> {
         let evaluated = self.evaluate(type_id);
         let key = match self.db.lookup(evaluated) {
             Some(k) => k,
-            None => return Arc::new(Vec::new()),
+            None => return Arc::clone(&EMPTY_CALL_SIGS),
         };
 
         match key {
             TypeData::Function(fn_id) => {
                 let shape = self.db.function_shape(fn_id);
                 if shape.is_constructor {
-                    return Arc::new(Vec::new());
+                    return Arc::clone(&EMPTY_CALL_SIGS);
                 }
                 Arc::new(vec![CallSignature {
                     type_params: shape.type_params.clone(),
@@ -960,7 +965,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                 let shape = self.db.callable_shape(callable_id);
                 Arc::new(shape.call_signatures.clone())
             }
-            _ => Arc::new(Vec::new()),
+            _ => Arc::clone(&EMPTY_CALL_SIGS),
         }
     }
 
@@ -968,14 +973,14 @@ impl<'a> Judge for DefaultJudge<'a> {
         let evaluated = self.evaluate(type_id);
         let key = match self.db.lookup(evaluated) {
             Some(k) => k,
-            None => return Arc::new(Vec::new()),
+            None => return Arc::clone(&EMPTY_CALL_SIGS),
         };
 
         match key {
             TypeData::Function(fn_id) => {
                 let shape = self.db.function_shape(fn_id);
                 if !shape.is_constructor {
-                    return Arc::new(Vec::new());
+                    return Arc::clone(&EMPTY_CALL_SIGS);
                 }
                 Arc::new(vec![CallSignature {
                     type_params: shape.type_params.clone(),
@@ -990,7 +995,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                 let shape = self.db.callable_shape(callable_id);
                 Arc::new(shape.construct_signatures.clone())
             }
-            _ => Arc::new(Vec::new()),
+            _ => Arc::clone(&EMPTY_CALL_SIGS),
         }
     }
 
