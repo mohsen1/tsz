@@ -63,6 +63,50 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Generic callable property reads should keep their declared read type.
+        // A prior write like `obj.fn = otherFn` can be assignable while still being
+        // a narrower generic signature than the property's declared type. Replaying
+        // that write through access-node flow narrowing rewrites later reads to the
+        // last assigned subtype, which is not how tsc treats declared callable
+        // properties on interfaces/classes.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+        {
+            let function_shape = tsz_solver::type_queries::get_function_shape(
+                self.ctx.types,
+                declared_type,
+            );
+            let has_generic_call_signatures =
+                crate::query_boundaries::flow_analysis::call_signatures_for_type(
+                    self.ctx.types,
+                    declared_type,
+                )
+                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()));
+            let construct_signatures =
+                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, declared_type);
+            let has_any_construct_signatures = construct_signatures
+                .as_ref()
+                .is_some_and(|sigs| !sigs.is_empty());
+            let has_generic_construct_signatures = construct_signatures
+                .as_ref()
+                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()));
+            let is_generic_function_shape = function_shape
+                .as_ref()
+                .is_some_and(|shape| !shape.type_params.is_empty());
+            let is_constructor_function_shape =
+                function_shape.as_ref().is_some_and(|shape| shape.is_constructor);
+
+            if is_generic_function_shape
+                || has_generic_call_signatures
+                || has_generic_construct_signatures
+                || is_constructor_function_shape
+                || has_any_construct_signatures
+            {
+                return declared_type;
+            }
+        }
+
         // Get the flow node for this expression usage FIRST
         // If there's no flow info, no narrowing is possible regardless of node type
         let flow_node = if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
