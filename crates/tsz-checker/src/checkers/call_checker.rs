@@ -264,10 +264,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     expected,
                 )
-                && !crate::query_boundaries::common::contains_infer_types(
-                    self.ctx.types,
-                    expected,
-                );
+                && !crate::query_boundaries::common::contains_infer_types(self.ctx.types, expected);
             let snap = self.ctx.snapshot_full();
             self.invalidate_expression_for_contextual_retry(arg_idx);
             self.ctx.daa_error_nodes.remove(&arg_idx.0);
