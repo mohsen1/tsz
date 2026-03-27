@@ -374,8 +374,7 @@ impl<'a> CheckerState<'a> {
 
     /// Same as `check_assignable_or_report_at`, but skips deep assignment
     /// source elaboration so failures are reported at the enclosing source
-    /// context (for example, return statements) rather than a nested
-    /// property/element node.
+    /// context rather than a nested property/element node.
     pub(crate) fn check_assignable_or_report_at_without_source_elaboration(
         &mut self,
         source: TypeId,
