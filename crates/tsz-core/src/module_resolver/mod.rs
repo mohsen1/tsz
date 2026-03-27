@@ -211,9 +211,9 @@ impl ModuleResolver {
         let importing_module_kind =
             importing_module_kind_override.unwrap_or_else(|| match self.module_kind {
                 ModuleKind::Preserve => match import_kind {
-                    ImportKind::EsmImport
-                    | ImportKind::DynamicImport
-                    | ImportKind::EsmReExport => ImportingModuleKind::Esm,
+                    ImportKind::EsmImport | ImportKind::DynamicImport | ImportKind::EsmReExport => {
+                        ImportingModuleKind::Esm
+                    }
                     ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
                 },
                 _ => self.get_importing_module_kind(containing_file),
