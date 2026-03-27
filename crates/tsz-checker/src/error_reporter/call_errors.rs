@@ -320,17 +320,16 @@ impl<'a> CheckerState<'a> {
         let normalized_arg_type = self.resolve_type_for_property_access(normalized_arg_type);
         let normalized_arg_type = self.resolve_lazy_type(normalized_arg_type);
         let normalized_arg_type = self.evaluate_application_type(normalized_arg_type);
-        let shape =
+        let shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            normalized_arg_type,
+        )
+        .or_else(|| {
             crate::query_boundaries::checkers::call::get_contextual_signature(
                 self.ctx.types,
-                normalized_arg_type,
+                arg_type,
             )
-            .or_else(|| {
-                crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    arg_type,
-                )
-            })?;
+        })?;
         let expected = self.evaluate_application_type(param_type);
         let expected = self.normalize_contextual_signature_with_env(expected);
 
@@ -419,7 +418,8 @@ impl<'a> CheckerState<'a> {
                 self.format_type_for_assignability_message(next_type)
             )
         } else {
-            let return_display_type = tsz_solver::widen_literal_type(self.ctx.types, shape.return_type);
+            let return_display_type =
+                tsz_solver::widen_literal_type(self.ctx.types, shape.return_type);
             self.format_type_for_assignability_message(return_display_type)
         };
         let type_param_prefix = if shape.type_params.is_empty() {

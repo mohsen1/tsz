@@ -263,7 +263,9 @@ impl<'a> CheckerState<'a> {
             self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
             let diag_snap = self.ctx.snapshot_diagnostics();
             let actual = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
-            let refined_actual = if self.target_has_concrete_return_context_for_generic_refinement(expected) {
+            let refined_actual = if self
+                .target_has_concrete_return_context_for_generic_refinement(expected)
+            {
                 self.instantiate_generic_function_argument_against_target_for_refinement(
                     actual, expected,
                 )

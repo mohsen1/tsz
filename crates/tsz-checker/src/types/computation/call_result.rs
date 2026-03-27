@@ -710,7 +710,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if callable_mismatch {
-            let refined_actual = if self.target_has_concrete_return_context_for_generic_refinement(expected) {
+            let refined_actual = if self
+                .target_has_concrete_return_context_for_generic_refinement(expected)
+            {
                 self.instantiate_generic_function_argument_against_target_for_refinement(
                     actual, expected,
                 )

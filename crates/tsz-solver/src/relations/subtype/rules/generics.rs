@@ -32,13 +32,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let iterator_mismatch = |checker: &mut Self, is_async: bool| {
             let source_info = crate::operations::get_iterator_info(query_db, source_type, is_async);
             let target_info = crate::operations::get_iterator_info(query_db, target_type, is_async);
-            source_info.zip(target_info).is_some_and(|(source, target)| {
-                !checker.check_subtype(source.yield_type, target.yield_type).is_true()
-                    || !checker
-                        .check_subtype(source.return_type, target.return_type)
+            source_info
+                .zip(target_info)
+                .is_some_and(|(source, target)| {
+                    !checker
+                        .check_subtype(source.yield_type, target.yield_type)
                         .is_true()
-                    || !checker.check_subtype(target.next_type, source.next_type).is_true()
-            })
+                        || !checker
+                            .check_subtype(source.return_type, target.return_type)
+                            .is_true()
+                        || !checker
+                            .check_subtype(target.next_type, source.next_type)
+                            .is_true()
+                })
         };
 
         iterator_mismatch(self, false) || iterator_mismatch(self, true)
@@ -539,12 +545,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_expanded = self.try_expand_application(t_app_id);
         let result = match (s_expanded, t_expanded) {
             (Some(s_struct), Some(t_struct)) => self.check_subtype(s_struct, t_struct),
-            (Some(s_struct), None) => {
-                self.check_subtype(s_struct, target_type)
-            }
-            (None, Some(t_struct)) => {
-                self.check_subtype(source_type, t_struct)
-            }
+            (Some(s_struct), None) => self.check_subtype(s_struct, target_type),
+            (None, Some(t_struct)) => self.check_subtype(source_type, t_struct),
             (None, None) => {
                 // Evaluation fallback: when try_expand_application fails for both sides
                 // (common for lib type aliases like Partial<T>, Required<T>, Readonly<T>
