@@ -1682,7 +1682,7 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
 fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
-    use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
+    use tsz_cli::fs::{FileDiscoveryOptions, default_include_patterns, discover_ts_files};
 
     // --ignoreConfig: skip tsconfig loading
     let tsconfig_path = if args.ignore_config {
@@ -1823,7 +1823,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // If no input files found, emit TS18003 error and exit 1
     if discovered_files.is_empty() && config.is_some() {
-        // tsc formats include/exclude as JSON arrays: '["**/*"]' and '[]'
+        // tsc formats include/exclude as JSON arrays. When `include` is omitted,
+        // it reports the implicit discovery set rather than `[]`.
         let include_json = config
             .as_ref()
             .and_then(|c| c.include.as_ref())
@@ -1831,7 +1832,13 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                 let inner: Vec<String> = items.iter().map(|s| format!("\"{s}\"")).collect();
                 format!("[{}]", inner.join(","))
             })
-            .unwrap_or_else(|| "[]".to_string());
+            .unwrap_or_else(|| {
+                let inner: Vec<String> = default_include_patterns(allow_js)
+                    .into_iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect();
+                format!("[{}]", inner.join(","))
+            });
         let exclude_json = config
             .as_ref()
             .and_then(|c| c.exclude.as_ref())
@@ -2100,6 +2107,7 @@ fn show_config_compiler_options_to_json(
     );
     set_bool!(no_implicit_override, "noImplicitOverride");
     set_bool!(always_strict, "alwaysStrict");
+    set_bool!(preserve_symlinks, "preserveSymlinks");
     set_bool!(use_define_for_class_fields, "useDefineForClassFields");
     set_bool!(experimental_decorators, "experimentalDecorators");
     set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");

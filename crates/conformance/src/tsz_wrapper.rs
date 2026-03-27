@@ -271,14 +271,16 @@ pub fn prepare_test_dir(
     } else {
         None
     };
-    // Match TSC's default include patterns exactly. TSC always includes
-    // *.ts, *.tsx, *.js, *.jsx — it does NOT include .cts/.mts/.cjs/.mjs.
-    // Those files are discovered through import-following from .ts entry
-    // points. Tests with only .cts/.mts files (no .ts imports) get TS18003
-    // from TSC, which we must match.
-    let include = serde_json::json!([
-        "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
-    ]);
+    // Match tsc's implicit include defaults.
+    // Unimported `.mts`/`.cts`/`.mjs`/`.cjs` roots are not discovered via the
+    // default include globs; they only participate when explicitly referenced.
+    let include = if allow_js || check_js {
+        serde_json::json!([
+            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+        ])
+    } else {
+        serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
+    };
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
@@ -460,13 +462,10 @@ pub fn prepare_binary_test_dir(
                 .is_some_and(|value| value == "true");
         let include = if allow_js {
             serde_json::json!([
-                "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
-                "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+                "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
             ])
         } else {
-            serde_json::json!([
-                "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
-            ])
+            serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
         };
 
         let compiler_options = convert_options_to_tsconfig(options, &[]);

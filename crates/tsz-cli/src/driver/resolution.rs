@@ -352,7 +352,7 @@ pub(crate) fn resolve_type_package_entry(
             for ext in restricted_extensions {
                 let candidate = path.with_extension(ext);
                 if candidate.is_file() && is_declaration_file(&candidate) {
-                    return Some(canonicalize_or_owned(&candidate));
+                    return Some(normalize_resolved_path(&candidate, options));
                 }
             }
         }
@@ -402,12 +402,12 @@ pub(crate) fn resolve_type_package_entry_with_mode(
         let package_type = package_type_from_json(Some(package_json));
         for candidate in expand_module_path_candidates(&target_path, options, package_type) {
             if candidate.is_file() && is_declaration_file(&candidate) {
-                return Some(canonicalize_or_owned(&candidate));
+                return Some(normalize_resolved_path(&candidate, options));
             }
         }
         // Try exact path
         if target_path.is_file() && is_declaration_file(&target_path) {
-            return Some(canonicalize_or_owned(&target_path));
+            return Some(normalize_resolved_path(&target_path, options));
         }
     }
 
@@ -1119,7 +1119,7 @@ pub(crate) fn resolve_module_specifier(
         }
 
         if exists {
-            return Some(canonicalize_or_owned(&candidate));
+            return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
@@ -1138,7 +1138,7 @@ pub(crate) fn resolve_module_specifier(
                     tracing::debug!("classic-fallback candidate={candidate:?} exists={exists}");
                 }
                 if exists {
-                    return Some(canonicalize_or_owned(&candidate));
+                    return Some(normalize_resolved_path(&candidate, options));
                 }
             }
 
@@ -1374,7 +1374,7 @@ const fn extension_candidates_for_resolution(
     }
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
 
     for component in path.components() {
@@ -1392,6 +1392,14 @@ fn normalize_path(path: &Path) -> PathBuf {
     }
 
     normalized
+}
+
+pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
+    if options.preserve_symlinks {
+        normalize_path(path)
+    } else {
+        canonicalize_or_owned(path)
+    }
 }
 
 const KNOWN_EXTENSIONS: [&str; 12] = [
@@ -1612,7 +1620,7 @@ fn resolve_node_module_specifier(
             let candidates = expand_module_path_candidates(&package_root, options, None);
             for candidate in candidates {
                 if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
-                    return Some(canonicalize_or_owned(&candidate));
+                    return Some(normalize_resolved_path(&candidate, options));
                 }
             }
         }
@@ -1843,12 +1851,12 @@ fn resolve_declaration_package_entry(
 
     for candidate in expand_module_path_candidates(&path, options, package_type) {
         if candidate.is_file() && is_declaration_file(&candidate) {
-            return Some(canonicalize_or_owned(&candidate));
+            return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
     if path.is_file() && is_declaration_file(&path) {
-        return Some(canonicalize_or_owned(&path));
+        return Some(normalize_resolved_path(&path, options));
     }
 
     if path.is_dir()
@@ -1909,7 +1917,7 @@ fn resolve_package_entry(
             continue;
         }
         if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
-            return Some(canonicalize_or_owned(&candidate));
+            return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
@@ -1935,7 +1943,7 @@ fn resolve_package_entry(
             let main_path = path.join(main);
             for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
                 if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
-                    return Some(canonicalize_or_owned(&candidate));
+                    return Some(normalize_resolved_path(&candidate, options));
                 }
             }
         }
@@ -1963,7 +1971,7 @@ fn resolve_export_entry(
 
     for candidate in expand_export_path_candidates(&path, options, package_type) {
         if candidate.is_file() && is_valid_module_file(&candidate) {
-            return Some(canonicalize_or_owned(&candidate));
+            return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
@@ -1990,13 +1998,14 @@ fn try_remap_output_to_source(
         package_root: &Path,
         canon_package_root: &Path,
         _from_file: &Path,
+        options: &ResolvedCompilerOptions,
     ) -> PathBuf {
         if configured.is_absolute() {
             if let Ok(relative) = configured.strip_prefix(package_root) {
                 return canon_package_root.join(relative);
             }
 
-            let canonical = canonicalize_or_owned(configured);
+            let canonical = normalize_resolved_path(configured, options);
             if canonical.exists() {
                 return canonical;
             }
@@ -2032,7 +2041,7 @@ fn try_remap_output_to_source(
     let target = target.trim_start_matches("./");
     // Canonicalize package_root first (it exists) so that symlinks are resolved
     // before joining the target (which may not exist on disk).
-    let canon_root = canonicalize_or_owned(package_root);
+    let canon_root = normalize_resolved_path(package_root, options);
     let target_path = canon_root.join(target);
 
     // Compute the source directory: the root from which source files are organized.
@@ -2048,6 +2057,7 @@ fn try_remap_output_to_source(
             package_root,
             &canon_root,
             _from_file,
+            options,
         );
         source_dir_owned.as_path()
     } else {
@@ -2073,6 +2083,7 @@ fn try_remap_output_to_source(
             package_root,
             &canon_root,
             _from_file,
+            options,
         );
 
         // Check if the target path falls inside the output directory.
@@ -2100,7 +2111,7 @@ fn try_remap_output_to_source(
                     for src_ext in *src_exts {
                         let candidate = PathBuf::from(format!("{base}{src_ext}"));
                         if candidate.is_file() {
-                            return Some(canonicalize_or_owned(&candidate));
+                            return Some(normalize_resolved_path(&candidate, options));
                         }
                     }
                 }
@@ -2108,7 +2119,7 @@ fn try_remap_output_to_source(
 
             // Also try the path as-is (it might be a .ts file already)
             if source_base.is_file() {
-                return Some(canonicalize_or_owned(&source_base));
+                return Some(normalize_resolved_path(&source_base, options));
             }
         }
     }

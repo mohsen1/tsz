@@ -144,12 +144,30 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
             // `"files"`. A solution-style config like `{ "files": [], "references": [...] }`
             // must not trigger a full directory walk — tsc treats it as zero input files.
             if options.files.is_empty() && !options.files_explicitly_set {
-                vec!["**/*".to_string()]
+                default_include_patterns(options.allow_js)
             } else {
                 Vec::new()
             }
         }
     }
+}
+
+pub fn default_include_patterns(allow_js: bool) -> Vec<String> {
+    let mut patterns = vec![
+        "*.ts".to_string(),
+        "*.tsx".to_string(),
+        "**/*.ts".to_string(),
+        "**/*.tsx".to_string(),
+    ];
+    if allow_js {
+        patterns.extend([
+            "*.js".to_string(),
+            "*.jsx".to_string(),
+            "**/*.js".to_string(),
+            "**/*.jsx".to_string(),
+        ]);
+    }
+    patterns
 }
 
 /// Expand include patterns to match files in directories.
@@ -403,7 +421,10 @@ mod tests {
             allow_js: false,
             resolve_json_module: false,
         };
-        assert_eq!(build_include_patterns(&implicit_options), vec!["**/*"]);
+        assert_eq!(
+            build_include_patterns(&implicit_options),
+            vec!["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"]
+        );
 
         let explicit_options = FileDiscoveryOptions {
             files_explicitly_set: true,
@@ -697,6 +718,74 @@ mod tests {
         assert!(
             !result.iter().any(|p| p.ends_with("jsconfig.json")),
             "jsconfig.json must not be included as program input"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_default_discovery_excludes_mts_cts_and_module_js_variants() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_default_include_extensions");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.mts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("index.cts"), "export = 1;").unwrap();
+        fs::write(dir.join("index.mjs"), "export const x = 1;").unwrap();
+        fs::write(dir.join("index.cjs"), "module.exports = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.is_empty(),
+            "default include discovery should ignore .mts/.cts/.mjs/.cjs roots, got: {result:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_explicit_default_include_excludes_mts_root() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_explicit_default_include_mts");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.mts"), "export const x = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(vec![
+                "*.ts".to_string(),
+                "*.tsx".to_string(),
+                "*.js".to_string(),
+                "*.jsx".to_string(),
+                "**/*.ts".to_string(),
+                "**/*.tsx".to_string(),
+                "**/*.js".to_string(),
+                "**/*.jsx".to_string(),
+            ]),
+            exclude: Some(vec!["node_modules".to_string()]),
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.is_empty(),
+            "explicit default include should ignore a lone .mts root, got: {result:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);

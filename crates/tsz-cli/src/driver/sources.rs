@@ -258,9 +258,7 @@ pub(super) struct SourceReadResult {
 
 pub(crate) fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
     let candidate = cwd.join("tsconfig.json");
-    candidate
-        .is_file()
-        .then(|| canonicalize_or_owned(&candidate))
+    candidate.is_file().then(|| normalize_path(&candidate))
 }
 
 pub(crate) fn resolve_tsconfig_path(cwd: &Path, project: Option<&Path>) -> Result<Option<PathBuf>> {
@@ -286,7 +284,7 @@ pub(crate) fn resolve_tsconfig_path(cwd: &Path, project: Option<&Path>) -> Resul
         bail!("project path is not a file: {}", candidate.display());
     }
 
-    Ok(Some(canonicalize_or_owned(&candidate)))
+    Ok(Some(normalize_path(&candidate)))
 }
 
 pub(crate) fn load_config(path: Option<&Path>) -> Result<Option<TsConfig>> {
@@ -342,7 +340,7 @@ pub(super) fn build_discovery_options(
     out_dir: Option<&Path>,
     resolved: &ResolvedCompilerOptions,
 ) -> Result<FileDiscoveryOptions> {
-    let follow_links = env_flag("TSZ_FOLLOW_SYMLINKS");
+    let follow_links = env_flag("TSZ_FOLLOW_SYMLINKS") && !resolved.preserve_symlinks;
     if !args.files.is_empty() {
         return Ok(FileDiscoveryOptions {
             base_dir: base_dir.to_path_buf(),
@@ -473,7 +471,7 @@ pub(super) fn read_source_files(
     let use_cache = cache.is_some() && changed_paths.is_some();
 
     for path in paths {
-        let canonical = canonicalize_or_owned(path);
+        let canonical = normalize_resolved_path(path, options);
         if seen.insert(canonical.clone()) {
             pending.push_back(canonical);
         }
@@ -540,7 +538,7 @@ pub(super) fn read_source_files(
                     &mut resolution_cache,
                     &seen,
                 ) {
-                    let canonical = canonicalize_or_owned(&resolved);
+                    let canonical = normalize_resolved_path(&resolved, options);
                     entry.insert(canonical.clone());
                     if seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
@@ -617,7 +615,7 @@ pub(super) fn read_source_files(
                     )
                 });
                 if let Some(resolved) = resolved {
-                    let canonical = canonicalize_or_owned(&resolved);
+                    let canonical = normalize_resolved_path(&resolved, options);
                     entry.insert(canonical.clone());
                     if seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
@@ -644,7 +642,7 @@ pub(super) fn read_source_files(
                                 options,
                             )
                         {
-                            let canonical = canonicalize_or_owned(&alt);
+                            let canonical = normalize_resolved_path(&alt, options);
                             entry.insert(canonical.clone());
                             if seen.insert(canonical.clone()) {
                                 pending.push_back(canonical);
@@ -674,7 +672,7 @@ pub(super) fn read_source_files(
                 let Some(resolved_reference) = candidates
                     .iter()
                     .find(|candidate| candidate.is_file())
-                    .map(|candidate| canonicalize_or_owned(candidate))
+                    .map(|candidate| normalize_resolved_path(candidate, options))
                 else {
                     continue;
                 };

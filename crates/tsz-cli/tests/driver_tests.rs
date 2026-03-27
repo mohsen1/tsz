@@ -10406,6 +10406,61 @@ fn ts18003_not_emitted_when_inputs_exist_with_ts5110() {
     );
 }
 
+#[test]
+fn ts18003_emitted_when_only_mts_is_present_under_implicit_include() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "nodenext",
+            "allowJs": true
+          }
+        }"#,
+    );
+    write_file(&base.join("index.mts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&18003),
+        "Should emit TS18003 for implicit include with only .mts input, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts18003_emitted_when_only_mts_is_present_under_explicit_default_include() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "node16",
+            "allowJs": true
+          },
+          "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+          "exclude": ["node_modules"]
+        }"#,
+    );
+    write_file(&base.join("index.mts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&5110), "Should emit TS5110, got: {codes:?}");
+    assert!(
+        codes.contains(&18003),
+        "Should emit TS18003 for explicit default include with only .mts input, got: {codes:?}"
+    );
+}
+
 // TS6059: File not under rootDir should produce diagnostic
 #[test]
 fn ts6059_file_not_under_root_dir() {

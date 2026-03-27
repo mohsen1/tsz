@@ -182,6 +182,9 @@ pub struct CompilerOptions {
     pub no_emit: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_resolve: Option<bool>,
+    /// Do not resolve symlinks to their real path.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub preserve_symlinks: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit_on_error: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
@@ -381,6 +384,8 @@ pub struct ResolvedCompilerOptions {
     pub no_emit_on_error: bool,
     /// Skip module graph expansion from imports/references when checking.
     pub no_resolve: bool,
+    /// Preserve symlink paths instead of canonicalizing to real paths.
+    pub preserve_symlinks: bool,
     pub isolated_declarations: bool,
     pub import_helpers: bool,
     /// Disable full type checking (only parse and emit errors reported).
@@ -855,6 +860,9 @@ pub fn resolve_compiler_options(
     if let Some(no_resolve) = options.no_resolve {
         resolved.no_resolve = no_resolve;
         resolved.checker.no_resolve = no_resolve;
+    }
+    if let Some(preserve_symlinks) = options.preserve_symlinks {
+        resolved.preserve_symlinks = preserve_symlinks;
     }
 
     if let Some(no_emit_on_error) = options.no_emit_on_error {
@@ -5125,6 +5133,20 @@ mod tests {
             !resolved.checker.implied_classic_resolution,
             "Explicit moduleResolution: bundler should override Classic inference"
         );
+    }
+
+    #[test]
+    fn test_preserve_symlinks_defaults_false() {
+        let resolved = resolve_compiler_options(None).unwrap();
+        assert!(!resolved.preserve_symlinks);
+    }
+
+    #[test]
+    fn test_preserve_symlinks_resolved_from_tsconfig() {
+        let json = r#"{"compilerOptions":{"preserveSymlinks":true}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(resolved.preserve_symlinks);
     }
 
     #[test]

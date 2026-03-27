@@ -436,7 +436,7 @@ fn collect_type_root_ambient_module_import_conflict_diagnostics(
         if !is_declaration_file(&file.file_name) {
             continue;
         }
-        let canonical_file = canonicalize_or_owned(Path::new(&file.file_name));
+        let canonical_file = normalize_resolved_path(Path::new(&file.file_name), options);
         if !type_roots
             .iter()
             .any(|root| canonical_file.starts_with(root))
@@ -532,7 +532,7 @@ pub(super) fn collect_diagnostics(
     {
         let _span = tracing::info_span!("build_program_path_maps").entered();
         for (idx, file) in program.files.iter().enumerate() {
-            let canonical = canonicalize_or_owned(Path::new(&file.file_name));
+            let canonical = normalize_resolved_path(Path::new(&file.file_name), options);
             program_paths.insert(canonical.clone());
             canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
             canonical_to_file_idx.insert(canonical, idx);
@@ -667,7 +667,7 @@ pub(super) fn collect_diagnostics(
                 // Map resolved path to file index
                 if let Some(ref resolved_path) = outcome.resolved_path {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                    let canonical = canonicalize_or_owned(resolved_path);
+                    let canonical = normalize_resolved_path(resolved_path, options);
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                         resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                     }
@@ -1037,7 +1037,7 @@ pub(super) fn collect_diagnostics(
                     &mut resolution_cache,
                     &program_paths,
                 ) {
-                    let canonical = canonicalize_or_owned(&resolved);
+                    let canonical = normalize_resolved_path(&resolved, options);
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                         propagate_module_export_maps(
                             &mut binder,
@@ -2252,6 +2252,113 @@ let x2: string = f;
             codes.iter().filter(|&&code| code == 2322).count(),
             2,
             "Expected the import to still resolve and produce two downstream TS2322 diagnostics. Diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_collect_diagnostics_preserve_symlinks_keeps_original_target_error() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("linked")).unwrap();
+        fs::create_dir_all(dir.path().join("app/node_modules/real")).unwrap();
+        fs::create_dir_all(dir.path().join("app/node_modules/linked")).unwrap();
+        fs::create_dir_all(dir.path().join("app/node_modules/linked2")).unwrap();
+
+        fs::write(
+            dir.path().join("linked/index.d.ts"),
+            "export { real } from \"real\";\nexport class C { private x; }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("app/node_modules/real/index.d.ts"),
+            "export const real: string;\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("app/app.ts"),
+            "/// <reference types=\"linked\" />\nimport { C as C1 } from \"linked\";\nimport { C as C2 } from \"linked2\";\nlet x = new C1();\nx = new C2();\n",
+        )
+        .unwrap();
+        symlink(
+            dir.path().join("linked/index.d.ts"),
+            dir.path().join("app/node_modules/linked/index.d.ts"),
+        )
+        .unwrap();
+        symlink(
+            dir.path().join("linked/index.d.ts"),
+            dir.path().join("app/node_modules/linked2/index.d.ts"),
+        )
+        .unwrap();
+
+        let resolved = ResolvedCompilerOptions {
+            module_resolution: Some(crate::config::ModuleResolutionKind::Bundler),
+            preserve_symlinks: true,
+            module_suffixes: vec![String::new()],
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::ES2015,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::ES2015,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let file_paths = vec![dir.path().join("linked/index.d.ts"), dir.path().join("app/app.ts")];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let source_paths: FxHashSet<PathBuf> =
+            sources.iter().map(|source| source.path.clone()).collect();
+        assert!(source_paths.contains(&dir.path().join("linked/index.d.ts")));
+        assert!(source_paths.contains(&dir.path().join("app/node_modules/linked/index.d.ts")));
+        assert!(source_paths.contains(&dir.path().join("app/node_modules/linked2/index.d.ts")));
+
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &[],
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &[],
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                    && diag.file.contains("linked/index.d.ts")
+            }),
+            "expected TS2307 for original linked target, got: {diagnostics:?}"
         );
     }
 
