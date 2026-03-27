@@ -1016,6 +1016,17 @@ impl<'a> TypeFormatter<'a> {
         let mut shared_enum_name: Option<String> = None;
         let mut saw_enum_member = false;
         let mut enum_member_count = 0usize;
+        // Track bare literals that weren't recognized as enum members.
+        // After narrowing, the union may contain plain Literal types alongside
+        // Enum types from the same parent (e.g., `Literal(1) | Enum(E1.b)`)
+        // or alongside the full enum type (e.g., `Literal(1) | Literal(2) | Enum(E1)`).
+        let mut unresolved_literals: Vec<TypeId> = Vec::new();
+        // Track a recognized enum member's DefId so we can look up the parent.
+        let mut any_enum_member_def_id: Option<crate::def::DefId> = None;
+        // Track a full (parent-level) enum for case where the union contains
+        // the enum type itself alongside bare literals.
+        let mut parent_enum_structural_type: Option<TypeId> = None;
+        let mut parent_enum_name: Option<String> = None;
 
         for &member in members {
             if member == TypeId::NULL || member == TypeId::UNDEFINED {
@@ -1023,24 +1034,197 @@ impl<'a> TypeFormatter<'a> {
                 continue;
             }
 
-            let Some(enum_name) = self.enum_member_parent_name_for_display(member) else {
-                rendered.push(self.format_union_member(member));
+            // First try: recognize as an enum member (has ENUM_MEMBER flag).
+            if let Some(enum_name) = self.enum_member_parent_name_for_display(member) {
+                saw_enum_member = true;
+                enum_member_count += 1;
+                if any_enum_member_def_id.is_none() {
+                    any_enum_member_def_id =
+                        crate::type_queries::get_enum_def_id(self.interner, member);
+                }
+                match shared_enum_name.as_ref() {
+                    Some(existing) if existing == &enum_name => {}
+                    Some(_) => return None,
+                    None => {
+                        shared_enum_name = Some(enum_name.clone());
+                        rendered.push(enum_name);
+                    }
+                }
                 continue;
+            }
+
+            // Second try: recognize as a full (parent-level) enum type.
+            if let Some(info) = self.enum_parent_name_for_display(member) {
+                saw_enum_member = true;
+                enum_member_count += 1;
+                parent_enum_structural_type = Some(info.1);
+                let enum_name = info.2;
+                match shared_enum_name.as_ref() {
+                    Some(existing) if existing == &enum_name => {}
+                    Some(_) => return None,
+                    None => {
+                        parent_enum_name = Some(enum_name.clone());
+                        shared_enum_name = Some(enum_name.clone());
+                        rendered.push(enum_name);
+                    }
+                }
+                continue;
+            }
+
+            // Check if this is a bare literal — it may be an enum member value
+            // that lost its Enum wrapper during narrowing.
+            if matches!(self.interner.lookup(member), Some(TypeData::Literal(_))) {
+                unresolved_literals.push(member);
+            } else {
+                rendered.push(self.format_union_member(member));
+            }
+        }
+
+        // If we have unresolved bare literals and a single shared enum parent,
+        // check if those literals correspond to values of the same enum.
+        if !unresolved_literals.is_empty() {
+            let resolved = if let Some(structural) = parent_enum_structural_type {
+                // We have the parent enum's structural type — check literals against it.
+                self.literal_values_covered_by_structural_type(structural, &unresolved_literals)
+            } else if let Some(member_def) = any_enum_member_def_id {
+                // Navigate from member to parent to check.
+                self.literal_values_belong_to_enum_of_member(member_def, &unresolved_literals)
+            } else {
+                false
             };
 
-            saw_enum_member = true;
-            enum_member_count += 1;
-            match shared_enum_name.as_ref() {
-                Some(existing) if existing == &enum_name => {}
-                Some(_) => return None,
-                None => {
-                    shared_enum_name = Some(enum_name.clone());
-                    rendered.push(enum_name);
+            if resolved {
+                // All bare literals are values from the same enum — count them.
+                enum_member_count += unresolved_literals.len();
+            } else {
+                // Can't collapse: render bare literals normally.
+                for &lit in &unresolved_literals {
+                    rendered.push(self.format_union_member(lit));
                 }
             }
         }
 
+        // If a parent-level enum absorbed all literals, just show the enum name.
+        if parent_enum_name.is_some() && enum_member_count > 1 && rendered.len() == 1 {
+            return Some(rendered.into_iter().next().unwrap());
+        }
+
         (saw_enum_member && enum_member_count > 1).then_some(rendered.join(" | "))
+    }
+
+    /// Recognize a full (parent-level) enum type — `TypeData::Enum(def_id, structural_type)`
+    /// where the symbol has the ENUM flag (not ENUM_MEMBER).
+    /// Returns `(DefId, structural_type, name)`.
+    fn enum_parent_name_for_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<(crate::def::DefId, TypeId, String)> {
+        let def_id = crate::type_queries::get_enum_def_id(self.interner, type_id)?;
+        let structural_type = crate::type_queries::get_enum_member_type(self.interner, type_id)?;
+        let def_store = self.def_store?;
+        let def_info = def_store.get(def_id)?;
+        let sym_id = def_info.symbol_id?;
+        let arena = self.symbol_arena?;
+        let symbol = arena.get(SymbolId(sym_id))?;
+        use tsz_binder::symbol_flags;
+        // This is the enum declaration itself, not a member.
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+        if !symbol.has_any_flags(symbol_flags::ENUM) {
+            return None;
+        }
+        Some((def_id, structural_type, symbol.escaped_name.to_string()))
+    }
+
+    /// Check if all bare literal TypeIds are covered by the enum's structural type.
+    ///
+    /// Uses the `structural_type` from `TypeData::Enum(def_id, structural_type)`, which
+    /// contains the actual resolved member type IDs (a union of literals or Enum members).
+    /// This works even when `DefinitionInfo::enum_members` values are `Computed`.
+    fn literal_values_covered_by_structural_type(
+        &self,
+        structural_type: TypeId,
+        literals: &[TypeId],
+    ) -> bool {
+        // Collect the leaf literal TypeIds from the structural type.
+        let structural_members = self.collect_leaf_literal_ids(structural_type);
+        if structural_members.is_empty() {
+            return false;
+        }
+
+        // Each bare literal must match one of the structural type's leaf literals
+        // by TypeId equality (guaranteed by interning).
+        for &lit_id in literals {
+            if !structural_members.contains(&lit_id) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Collect the leaf literal TypeIds from a type, recursing through unions
+    /// and Enum wrappers to find the actual literal values.
+    fn collect_leaf_literal_ids(&self, type_id: TypeId) -> Vec<TypeId> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                let mut result = Vec::new();
+                for &m in members.iter() {
+                    result.extend(self.collect_leaf_literal_ids(m));
+                }
+                result
+            }
+            Some(TypeData::Enum(_, member_type)) => self.collect_leaf_literal_ids(member_type),
+            Some(TypeData::Literal(_)) => vec![type_id],
+            _ => vec![],
+        }
+    }
+
+    /// Check if all bare literals belong to the same parent enum as `member_def_id`.
+    /// Navigates from a member to its parent enum's structural type.
+    fn literal_values_belong_to_enum_of_member(
+        &self,
+        member_def_id: crate::def::DefId,
+        literals: &[TypeId],
+    ) -> bool {
+        let def_store = match self.def_store {
+            Some(ds) => ds,
+            None => return false,
+        };
+        let arena = match self.symbol_arena {
+            Some(a) => a,
+            None => return false,
+        };
+
+        // Navigate: member DefId -> member symbol -> parent symbol -> parent DefId.
+        let member_info = match def_store.get(member_def_id) {
+            Some(info) => info,
+            None => return false,
+        };
+        let sym_id = match member_info.symbol_id {
+            Some(id) => id,
+            None => return false,
+        };
+        let symbol = match arena.get(SymbolId(sym_id)) {
+            Some(s) => s,
+            None => return false,
+        };
+        let parent_def_id = match def_store.find_def_by_symbol(symbol.parent.0) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Use the parent's body TypeId as the structural type.
+        let parent_info = match def_store.get(parent_def_id) {
+            Some(info) => info,
+            None => return false,
+        };
+        let structural_type = match parent_info.body {
+            Some(body) => body,
+            None => return false,
+        };
+        self.literal_values_covered_by_structural_type(structural_type, literals)
     }
 
     fn enum_member_parent_name_for_display(&mut self, type_id: TypeId) -> Option<String> {
