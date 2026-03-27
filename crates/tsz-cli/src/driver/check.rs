@@ -744,17 +744,18 @@ pub(super) fn collect_diagnostics(
     let resolved_module_errors = Arc::new(resolved_module_errors);
     let resolved_module_request_errors = Arc::new(resolved_module_request_errors);
 
-    // Pre-compute per-file ESM/CJS module kind for Node16/NodeNext resolution.
-    // In these modes, .js/.ts files may be ESM based on package.json "type" field.
-    // The checker needs this to correctly emit TS1479 (CJS importing ESM).
+    // Pre-compute per-file ESM/CJS module kind for resolution modes that honor
+    // package.json "type" semantics. The checker uses this shared map for
+    // ESM-vs-CJS-sensitive diagnostics such as TS1479 and TS1192 suppression.
     let file_is_esm_map: Arc<FxHashMap<String, bool>> = Arc::new({
         let resolution_kind = options.effective_module_resolution();
-        let is_node_resolution = matches!(
+        let uses_package_type_module_kind = matches!(
             resolution_kind,
-            crate::config::ModuleResolutionKind::Node16
+            crate::config::ModuleResolutionKind::Bundler
+                | crate::config::ModuleResolutionKind::Node16
                 | crate::config::ModuleResolutionKind::NodeNext
         );
-        if is_node_resolution {
+        if uses_package_type_module_kind {
             program
                 .files
                 .iter()
