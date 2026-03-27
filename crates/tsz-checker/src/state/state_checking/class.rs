@@ -908,10 +908,12 @@ impl<'a> CheckerState<'a> {
             let Some(key) = field.key.as_ref() else {
                 continue;
             };
-            // Property is assigned if it's in the assigned set OR it's a parameter property
-            if summary.constructor_assigned_fields.contains(key)
-                || summary.parameter_property_keys.contains(key)
-            {
+            // Property is assigned if it's in the constructor-assigned set.
+            // Note: parameter properties (e.g. `constructor(public y: number)`) do NOT
+            // count as initialization of a separate explicit property declaration with
+            // the same name. In tsc, `y: number;` + `constructor(public y: number)`
+            // produces both TS2300 (duplicate) AND TS2564 (not initialized).
+            if summary.constructor_assigned_fields.contains(key) {
                 continue;
             }
             use crate::diagnostics::format_message;

@@ -27,7 +27,6 @@ pub(crate) struct ClassInitializationSummary {
     pub(crate) has_super_call_position_sensitive_members: bool,
     pub(crate) all_instance_field_keys: FxHashSet<PropertyKey>,
     pub(crate) required_instance_field_keys: FxHashSet<PropertyKey>,
-    pub(crate) parameter_property_keys: FxHashSet<PropertyKey>,
     pub(crate) parameter_property_names: FxHashSet<String>,
     pub(crate) field_initializer_keys: FxHashSet<PropertyKey>,
     pub(crate) constructor_assigned_fields: FxHashSet<PropertyKey>,
@@ -332,9 +331,6 @@ impl<'a> CheckerState<'a> {
                     summary
                         .initialization
                         .has_super_call_position_sensitive_members = true;
-                    if let Some(key) = self.property_key_from_name(param.name) {
-                        summary.initialization.parameter_property_keys.insert(key);
-                    }
                     if let Some(name) = self.get_property_name(param.name) {
                         summary.initialization.parameter_property_names.insert(name);
                     }
