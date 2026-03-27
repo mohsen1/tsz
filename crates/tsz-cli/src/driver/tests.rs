@@ -1,9 +1,13 @@
 use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
+use super::compile;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
+use crate::args::CliArgs;
 use crate::config::ResolvedCompilerOptions;
+use clap::Parser;
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
@@ -191,9 +195,143 @@ fn test_no_input_diagnostics_preserve_config_errors() {
         Some(Path::new("tsconfig.json")),
         Some(&["*.ts".to_string()]),
         Some(&["node_modules".to_string()]),
+        false,
     );
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert_eq!(codes, vec![5052, 18003]);
+}
+
+#[test]
+fn test_compile_emits_ts18003_with_explicit_default_include_and_only_mts_input() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(
+                dir.path().join("tsconfig.json"),
+                r#"{
+    "compilerOptions": {
+        "module": "esnext",
+        "moduleResolution": "node16",
+        "allowJs": true
+    },
+    "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+    "exclude": ["node_modules"]
+}"#,
+        )
+        .expect("write tsconfig");
+        fs::write(dir.path().join("index.mts"), "export const x = 1;\n").expect("write mts");
+
+        let args = CliArgs::try_parse_from(["tsz"]).expect("default args");
+        let result = compile(&args, dir.path()).expect("compile succeeds");
+        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&5110), "expected TS5110, got: {codes:?}");
+        assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
+}
+
+    #[test]
+    fn test_compile_emits_ts18003_in_batch_style_project_mode() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            dir.path().join("tsconfig.json"),
+            r#"{
+      "compilerOptions": {
+        "module": "esnext",
+        "moduleResolution": "node16",
+        "allowJs": true
+      },
+      "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+      "exclude": ["node_modules"]
+    }"#,
+        )
+        .expect("write tsconfig");
+        fs::write(dir.path().join("index.mts"), "export const x = 1;\n").expect("write mts");
+
+        let project = dir.path().to_string_lossy().to_string();
+        let args = CliArgs::try_parse_from([
+            "tsz",
+            "--project",
+            project.as_str(),
+            "--noEmit",
+            "--pretty",
+            "false",
+        ])
+        .expect("batch-style args");
+        let result = compile(&args, dir.path()).expect("compile succeeds");
+        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&5110), "expected TS5110, got: {codes:?}");
+        assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
+    }
+
+#[cfg(unix)]
+#[test]
+fn test_compile_preserve_symlinks_emits_ts2307_for_original_target() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::create_dir_all(dir.path().join("linked")).expect("create linked dir");
+    fs::create_dir_all(dir.path().join("app/node_modules/real")).expect("create real dir");
+    fs::create_dir_all(dir.path().join("app/node_modules/linked")).expect("create linked alias dir");
+    fs::create_dir_all(dir.path().join("app/node_modules/linked2")).expect("create linked2 alias dir");
+
+    fs::write(
+        dir.path().join("linked/index.d.ts"),
+        "export { real } from \"real\";\nexport class C { private x; }\n",
+    )
+    .expect("write linked declaration");
+    fs::write(
+        dir.path().join("app/node_modules/real/index.d.ts"),
+        "export const real: string;\n",
+    )
+    .expect("write real declaration");
+    fs::write(
+        dir.path().join("app/app.ts"),
+        "/// <reference types=\"linked\" />\nimport { C as C1 } from \"linked\";\nimport { C as C2 } from \"linked2\";\nlet x = new C1();\nx = new C2();\n",
+    )
+    .expect("write app");
+    symlink(
+        dir.path().join("linked/index.d.ts"),
+        dir.path().join("app/node_modules/linked/index.d.ts"),
+    )
+    .expect("symlink linked");
+    symlink(
+        dir.path().join("linked/index.d.ts"),
+        dir.path().join("app/node_modules/linked2/index.d.ts"),
+    )
+    .expect("symlink linked2");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "moduleResolution": "bundler",
+    "preserveSymlinks": true
+  },
+  "include": ["**/*"],
+  "exclude": ["node_modules"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz"]).expect("default args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&2307), "expected TS2307, got: {codes:?}");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let batch_args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("batch args");
+    let batch_result = compile(&batch_args, Path::new(env!("CARGO_MANIFEST_DIR")))
+        .expect("batch compile succeeds");
+    let batch_codes: Vec<u32> = batch_result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        batch_codes.contains(&2307),
+        "expected batch-style compile to include TS2307, got: {batch_codes:?}"
+    );
 }
 
 /// TS17009 ("super before this") is a checker-level semantic error,

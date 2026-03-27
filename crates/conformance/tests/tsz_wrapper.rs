@@ -76,16 +76,13 @@ fn compile_test(
         .map(|v| v == "true")
         .unwrap_or(false);
     let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
-    // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
+    // Match tsc's implicit include defaults: no .mts/.cts/.mjs/.cjs roots.
     let include = if allow_js {
         serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
-            "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
         ])
     } else {
-        serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
-        ])
+        serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
     };
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, &[]);
@@ -630,6 +627,34 @@ fn test_rewrite_bare_specifiers_skips_self_name_package_imports() {
 }
 
 #[test]
+fn test_rewrite_bare_specifiers_skips_package_root_self_name_with_ts_variants() {
+    let filenames = vec![
+        (
+            "index.ts".to_string(),
+            r#"import * as self from "package";"#.to_string(),
+        ),
+        (
+            "index.mts".to_string(),
+            r#"import * as self from "package";"#.to_string(),
+        ),
+        (
+            "index.cts".to_string(),
+            r#"import * as self from "package";"#.to_string(),
+        ),
+        (
+            "package.json".to_string(),
+            r#"{"name":"package","private":true,"type":"module","exports":"./index.js"}"#
+                .to_string(),
+        ),
+    ];
+
+    let content = r#"import * as self from "package";"#;
+    assert_eq!(rewrite_bare_specifiers(content, "index.ts", &filenames), content);
+    assert_eq!(rewrite_bare_specifiers(content, "index.mts", &filenames), content);
+    assert_eq!(rewrite_bare_specifiers(content, "index.cts", &filenames), content);
+}
+
+#[test]
 fn test_prepare_test_dir_preserves_tsconfig() {
     let filenames = vec![
         (
@@ -655,7 +680,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
 }
 
 #[test]
-fn test_prepare_test_dir_matches_tsc_default_include_patterns() {
+fn test_prepare_test_dir_implicit_include_excludes_module_js_entry_extensions() {
     let filenames = vec![
         ("/index.js".to_string(), "export {};".to_string()),
         ("/index.mjs".to_string(), "export {};".to_string()),
@@ -682,8 +707,42 @@ fn test_prepare_test_dir_matches_tsc_default_include_patterns() {
     assert!(include_values.contains(&"*.jsx"));
     assert!(!include_values.contains(&"*.mjs"));
     assert!(!include_values.contains(&"*.cjs"));
+    assert!(!include_values.contains(&"**/*.mjs"));
+    assert!(!include_values.contains(&"**/*.cjs"));
     assert!(!include_values.contains(&"*.mts"));
     assert!(!include_values.contains(&"*.cts"));
+}
+
+#[test]
+#[ignore = "requires tsz binary: cargo build --profile dist-fast -p tsz-cli"]
+fn test_compile_prepared_dir_emits_ts18003_for_only_mts_input() {
+    let content = r#"
+// @target: es2015
+// @module: esnext
+// @moduleResolution: node16
+// @allowJs: true
+// @noEmit: true
+
+// @Filename: /index.mts
+export const x = 1;
+"#;
+    let filenames = vec![(
+        "/index.mts".to_string(),
+        "export const x = 1;".to_string(),
+    )];
+    let options = HashMap::from([
+        ("target".to_string(), "es2015".to_string()),
+        ("module".to_string(), "esnext".to_string()),
+        ("moduleresolution".to_string(), "node16".to_string()),
+        ("allowJs".to_string(), "true".to_string()),
+        ("noEmit".to_string(), "true".to_string()),
+    ]);
+
+    let tsz = find_tsz_binary();
+    let result = compile_test(content, &filenames, &options, &tsz).unwrap();
+
+    assert!(result.error_codes.contains(&5110), "got: {:?}", result.error_codes);
+    assert!(result.error_codes.contains(&18003), "got: {:?}", result.error_codes);
 }
 
 #[test]

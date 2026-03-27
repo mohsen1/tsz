@@ -34,10 +34,10 @@ use super::resolution::{
     ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
     collect_import_bindings, collect_module_specifiers, collect_module_specifiers_from_text,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
-    is_declaration_file, resolve_module_specifier, resolve_type_package_entry,
+    is_declaration_file, normalize_path, normalize_resolved_path, resolve_module_specifier, resolve_type_package_entry,
     resolve_type_package_from_roots,
 };
-use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
+use crate::fs::{FileDiscoveryOptions, default_include_patterns, discover_ts_files, is_js_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
 #[cfg(test)]
@@ -857,7 +857,7 @@ fn compile_inner(
         }
     };
 
-    let cwd = canonicalize_or_owned(cwd);
+    let cwd = normalize_path(cwd);
     let tsconfig_path = if args.ignore_config {
         // --ignoreConfig: skip tsconfig.json discovery and loading entirely
         None
@@ -977,7 +977,11 @@ fn compile_inner(
     }
 
     let base_dir = config_base_dir(&cwd, tsconfig_path.as_deref());
-    let base_dir = canonicalize_or_owned(&base_dir);
+    let base_dir = if resolved.preserve_symlinks {
+        normalize_path(&base_dir)
+    } else {
+        canonicalize_or_owned(&base_dir)
+    };
     let root_dir_display = resolved.root_dir.clone();
     let root_dir = normalize_root_dir(&base_dir, resolved.root_dir.clone());
     let out_dir = normalize_output_dir(&base_dir, resolved.out_dir.clone());
@@ -1013,6 +1017,7 @@ fn compile_inner(
                 tsconfig_path.as_deref(),
                 discovery.include.as_deref(),
                 discovery.exclude.as_deref(),
+                discovery.allow_js,
             )
         } else {
             config_diagnostics
@@ -1090,6 +1095,7 @@ fn compile_inner(
                 tsconfig_path.as_deref(),
                 discovery.include.as_deref(),
                 discovery.exclude.as_deref(),
+                discovery.allow_js,
             )
         };
         return Ok(CompilationResult {
@@ -1716,6 +1722,7 @@ pub(super) fn no_input_diagnostics_for_config(
     tsconfig_path: Option<&Path>,
     include: Option<&[String]>,
     exclude: Option<&[String]>,
+    allow_js: bool,
 ) -> Vec<Diagnostic> {
     // Emit TS18003: No inputs were found in config file.
     // Match tsc: use the resolved config path shown to the compiler.
@@ -1729,7 +1736,11 @@ pub(super) fn no_input_diagnostics_for_config(
             .collect::<Vec<_>>()
             .join(","),
         Some(_) => String::new(),
-        None => "\"**/*\"".to_string(),
+        None => default_include_patterns(allow_js)
+            .into_iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(","),
     };
     let exclude_str = exclude
         .filter(|v| !v.is_empty())
@@ -2227,7 +2238,7 @@ fn update_import_symbol_ids(
             let Some(resolved) = resolved else {
                 continue;
             };
-            let canonical = canonicalize_or_owned(&resolved);
+            let canonical = normalize_resolved_path(&resolved, options);
             let entry = by_dep.entry(canonical).or_default();
             if let Some(file_locals) = program.file_locals.get(file_idx) {
                 for name in local_names {
@@ -2251,7 +2262,7 @@ fn update_import_symbol_ids(
             let Some(resolved) = resolved else {
                 continue;
             };
-            let canonical = canonicalize_or_owned(&resolved);
+            let canonical = normalize_resolved_path(&resolved, options);
             let entry = by_dep.entry(canonical).or_default();
             for node_idx in binding_nodes {
                 if let Some(sym_id) = file.node_symbols.get(&node_idx.0).copied() {
@@ -2271,7 +2282,7 @@ fn update_import_symbol_ids(
             let Some(resolved) = resolved else {
                 continue;
             };
-            let canonical = canonicalize_or_owned(&resolved);
+            let canonical = normalize_resolved_path(&resolved, options);
             star_exports.insert(canonical);
         }
         for symbols in by_dep.values_mut() {
@@ -2497,6 +2508,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_resolve {
         options.no_resolve = true;
         options.checker.no_resolve = true;
+    }
+    if args.preserve_symlinks {
+        options.preserve_symlinks = true;
     }
     if args.no_check {
         options.no_check = true;

@@ -4,6 +4,81 @@ use tsz::config::{CompilerOptions, resolve_compiler_options};
 use tsz::emitter::ModuleKind;
 
 #[test]
+fn test_preserve_symlinks_keeps_symlink_path_identity() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_preserve_symlinks");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("real")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(dir.join("real/index.d.ts"), "export interface Box {}").unwrap();
+    symlink(dir.join("real"), dir.join("linked")).unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import type { Box } from '../linked';\nexport type T = Box;",
+    )
+    .unwrap();
+
+    let symlink_path = dir.join("linked/index.d.ts");
+    let real_path = canonicalize_or_owned(&dir.join("real/index.d.ts"));
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    let preserve_options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut preserve_cache = ModuleResolutionCache::default();
+    let preserved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "../linked",
+        &preserve_options,
+        &dir,
+        &mut preserve_cache,
+        &known_files,
+    );
+    assert_eq!(preserved, Some(symlink_path.clone()));
+
+    let realpath_options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks: false,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut realpath_cache = ModuleResolutionCache::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "../linked",
+        &realpath_options,
+        &dir,
+        &mut realpath_cache,
+        &known_files,
+    );
+    assert_eq!(resolved, Some(real_path));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_exports_js_target_substitutes_dts() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_js_target");
@@ -1183,3 +1258,4 @@ fn test_self_name_resolution_remaps_virtual_absolute_output_paths_from_package_r
 
     let _ = fs::remove_dir_all(&dir);
 }
+
