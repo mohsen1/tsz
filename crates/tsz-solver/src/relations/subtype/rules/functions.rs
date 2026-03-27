@@ -957,6 +957,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
     ) -> SubtypeResult {
+        let allow_constructor_bivariance =
+            !Self::constructor_signatures_need_strict_params(source, target);
+        self.check_function_subtype_impl(source, target, allow_constructor_bivariance)
+    }
+
+    fn check_function_subtype_impl(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+        allow_constructor_bivariance: bool,
+    ) -> SubtypeResult {
         // Constructor vs non-constructor
         if source.is_constructor != target.is_constructor {
             return SubtypeResult::False;
@@ -1126,7 +1137,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             ) {
                 let inferred_source =
                     self.instantiate_function_shape(&source_instantiated, &substitution);
-                let result = self.check_function_subtype(&inferred_source, &target_instantiated);
+                let result = self.check_function_subtype_impl(
+                    &inferred_source,
+                    &target_instantiated,
+                    allow_constructor_bivariance,
+                );
                 self.type_param_equivalences.truncate(equiv_start);
                 return result;
             }
@@ -1296,10 +1311,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Method/constructor bivariance: strictFunctionTypes only applies to function
         // type literals, not to methods or construct signatures (new (...) => T).
+        let constructor_param_bivariance = allow_constructor_bivariance
+            && (source_instantiated.is_constructor || target_instantiated.is_constructor);
         let is_method = source_instantiated.is_method
             || target_instantiated.is_method
-            || source_instantiated.is_constructor
-            || target_instantiated.is_constructor;
+            || constructor_param_bivariance;
 
         // The lib iterator/generator declarations encode `next(value?)` as a single
         // rest parameter with tuple-list type `[] | [TNext]`. Compare that whole
@@ -1876,7 +1892,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for t_sig in &target.construct_signatures {
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
-                let result = self.check_call_signature_subtype(s_sig, t_sig);
+                let result = self.check_call_signature_subtype_as_constructor(s_sig, t_sig);
                 if result.is_true() {
                     found_match = true;
                     break;
@@ -1972,6 +1988,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_call_signature_subtype_impl(source, target, false)
     }
 
+    pub(crate) fn check_call_signature_subtype_as_constructor(
+        &mut self,
+        source: &CallSignature,
+        target: &CallSignature,
+    ) -> SubtypeResult {
+        self.check_call_signature_subtype_impl(source, target, true)
+    }
+
     fn check_call_signature_subtype_impl(
         &mut self,
         source: &CallSignature,
@@ -1997,6 +2021,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             is_method: target.is_method,
         };
         self.check_function_subtype(&source_fn, &target_fn)
+    }
+
+    fn constructor_signatures_need_strict_params(
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> bool {
+        if !(source.is_constructor || target.is_constructor) {
+            return false;
+        }
+
+        let source_generic = !source.type_params.is_empty();
+        let target_generic = !target.type_params.is_empty();
+        if !source_generic && !target_generic {
+            return false;
+        }
+
+        source.type_params.len() != target.type_params.len()
+            || source
+                .type_params
+                .iter()
+                .chain(target.type_params.iter())
+                .any(|tp| tp.constraint.is_some())
+            || source.params.len() != 1
+            || target.params.len() != 1
     }
 
     /// Check call signature subtype to function shape.

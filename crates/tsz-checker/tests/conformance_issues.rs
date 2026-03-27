@@ -7320,6 +7320,32 @@ if (x === 42) {
     );
 }
 
+#[test]
+fn test_constructor_only_object_signatures_remain_comparable() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare let a6: { new <T>(x: T, y: T): T };
+declare let b6: { new (x: string, y: number): {} };
+
+let lt1 = a6 < b6;
+let lt2 = b6 < a6;
+let eq1 = a6 == b6;
+let eq2 = b6 === a6;
+        "#,
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant_diagnostics, 2365) && !has_error(&relevant_diagnostics, 2367),
+        "Constructor-only object signature comparisons should stay comparable. Actual errors: {relevant_diagnostics:#?}"
+    );
+}
+
 /// Issue: Computed property destructuring produces false TS2349
 ///
 /// From: computed-property-destructuring.md

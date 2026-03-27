@@ -1337,10 +1337,7 @@ impl<'a> FlowAnalyzer<'a> {
                                     query::widen_literal_to_primitive(self.interner, assigned_type);
                                 let callable_read_preserves_declared_type = |type_id| {
                                     let function_shape =
-                                        tsz_solver::type_queries::get_function_shape(
-                                            self.interner,
-                                            type_id,
-                                        );
+                                        query::function_shape_for_type(self.interner, type_id);
                                     let has_generic_call_signatures =
                                         query::call_signatures_for_type(self.interner, type_id)
                                             .is_some_and(|sigs| {
@@ -1348,7 +1345,7 @@ impl<'a> FlowAnalyzer<'a> {
                                                     .any(|sig| !sig.type_params.is_empty())
                                             });
                                     let construct_signatures =
-                                        tsz_solver::type_queries::get_construct_signatures(
+                                        query::construct_signatures_for_type(
                                             self.interner,
                                             type_id,
                                         );
