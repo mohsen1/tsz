@@ -159,6 +159,7 @@ impl<'a> LoweringPass<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::CLASS_DECLARATION => self.visit_class_declaration(node, idx),
+            k if k == syntax_kind_ext::CLASS_EXPRESSION => self.visit_class_expression(idx),
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.visit_function_declaration(node, idx);
             }
@@ -279,6 +280,18 @@ impl<'a> LoweringPass<'a> {
     /// Visit a class declaration
     fn visit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
         self.lower_class_declaration(node, idx, false, false);
+    }
+
+    /// Visit a class expression.
+    fn visit_class_expression(&mut self, idx: NodeIndex) {
+        let prev_in_static = self.in_static_context;
+        let prev_class_alias = self.current_class_alias.take();
+
+        self.in_static_context = false;
+        self.visit_children(idx);
+
+        self.in_static_context = prev_in_static;
+        self.current_class_alias = prev_class_alias;
     }
 
     fn visit_enum_declaration(&mut self, node: &Node, idx: NodeIndex) {
@@ -902,6 +915,11 @@ impl<'a> LoweringPass<'a> {
         let prev_in_static = self.in_static_context;
         let prev_class_alias = self.current_class_alias.take();
 
+        // Nested classes create a fresh `this`/class-alias boundary. Only the nested
+        // class's own static members should re-enable static context while traversing.
+        self.in_static_context = false;
+        self.current_class_alias = None;
+
         // In ES5 mode, class members are emitted inside a class IIFE.
         // Arrow functions in property initializers/methods should NOT propagate
         // _this capture to the enclosing scope — the class_es5_ir handles
@@ -983,7 +1001,10 @@ impl<'a> LoweringPass<'a> {
         // Save and reset in_constructor state for nested function scope
         // Regular functions create a new scope, so in_constructor should be false inside them
         let prev_in_constructor = self.in_constructor;
+        let prev_in_static = self.in_static_context;
+        let prev_class_alias = self.current_class_alias.take();
         self.in_constructor = false;
+        self.in_static_context = false;
 
         if let Some(mods) = &func.modifiers {
             for &mod_idx in &mods.nodes {
@@ -1103,6 +1124,8 @@ impl<'a> LoweringPass<'a> {
 
         // Restore in_constructor state
         self.in_constructor = prev_in_constructor;
+        self.in_static_context = prev_in_static;
+        self.current_class_alias = prev_class_alias;
     }
 
     fn lower_enum_declaration(&mut self, node: &Node, idx: NodeIndex, force_export: bool) {
@@ -1590,7 +1613,10 @@ impl<'a> LoweringPass<'a> {
 
         // Save and reset in_constructor state for nested function scope
         let prev_in_constructor = self.in_constructor;
+        let prev_in_static = self.in_static_context;
+        let prev_class_alias = self.current_class_alias.take();
         self.in_constructor = false;
+        self.in_static_context = false;
 
         if self.ctx.target_es5 {
             if func.is_async {
@@ -1643,6 +1669,8 @@ impl<'a> LoweringPass<'a> {
 
         // Restore in_constructor state
         self.in_constructor = prev_in_constructor;
+        self.in_static_context = prev_in_static;
+        self.current_class_alias = prev_class_alias;
     }
 }
 

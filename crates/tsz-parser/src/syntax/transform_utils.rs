@@ -9,6 +9,7 @@ use tsz_scanner::SyntaxKind;
 enum ReferenceTarget {
     Arguments,
     This,
+    Super,
 }
 
 impl ReferenceTarget {
@@ -16,11 +17,12 @@ impl ReferenceTarget {
         match self {
             Self::Arguments => "arguments",
             Self::This => "this",
+            Self::Super => "super",
         }
     }
 
     const fn include_keyword_check(self) -> bool {
-        matches!(self, Self::This)
+        matches!(self, Self::This | Self::Super)
     }
 }
 
@@ -28,6 +30,12 @@ impl ReferenceTarget {
 #[must_use]
 pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     contains_target_reference(arena, node_idx, ReferenceTarget::This)
+}
+
+/// Check if an AST node contains a reference to `super`.
+#[must_use]
+pub fn contains_super_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    contains_target_reference(arena, node_idx, ReferenceTarget::Super)
 }
 
 /// Check if a node contains a reference to `arguments`.
@@ -51,11 +59,19 @@ fn contains_target_reference(
         return false;
     };
 
-    if target.include_keyword_check()
-        && (node.kind == SyntaxKind::ThisKeyword as u16
-            || node.kind == SyntaxKind::SuperKeyword as u16)
-    {
-        return true;
+    if target.include_keyword_check() {
+        match target {
+            ReferenceTarget::This
+                if node.kind == SyntaxKind::ThisKeyword as u16
+                    || node.kind == SyntaxKind::SuperKeyword as u16 =>
+            {
+                return true;
+            }
+            ReferenceTarget::Super if node.kind == SyntaxKind::SuperKeyword as u16 => {
+                return true;
+            }
+            _ => {}
+        }
     }
 
     if node.kind == SyntaxKind::Identifier as u16
@@ -107,6 +123,7 @@ fn target_reference_children(
             if let Some(method) = arena.get_method_decl(node) {
                 let mut children = Vec::new();
                 if target == ReferenceTarget::This
+                    || target == ReferenceTarget::Super
                     || arena
                         .get(method.name)
                         .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
@@ -122,6 +139,7 @@ fn target_reference_children(
             if let Some(accessor) = arena.get_accessor(node) {
                 let mut children = Vec::new();
                 if target == ReferenceTarget::This
+                    || target == ReferenceTarget::Super
                     || arena
                         .get(accessor.name)
                         .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)

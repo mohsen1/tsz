@@ -2,16 +2,68 @@ use super::super::Printer;
 use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::{
     NodeIndex,
-    node::{AccessExprData, Node},
+    node::{AccessExprData, Node, NodeAccess},
     syntax_kind_ext,
 };
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(super) fn emit_scoped_static_super_receiver(&mut self) {
+        if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
+            self.write(&alias);
+        } else {
+            self.write("this");
+        }
+    }
+
+    pub(super) fn emit_scoped_static_super_property_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            self.write("\"\"");
+            return;
+        };
+
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(identifier) = self.arena.get_identifier(name_node) {
+                    self.emit_string_literal_text(&identifier.escaped_text);
+                } else {
+                    self.write("\"\"");
+                }
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                if let Some(text) = self.arena.get_literal_text(name_idx) {
+                    self.emit_string_literal_text(text);
+                } else {
+                    self.write("\"\"");
+                }
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                self.emit(name_idx);
+            }
+            _ => self.emit(name_idx),
+        }
+    }
+
     pub(in crate::emitter) fn emit_property_access(&mut self, node: &Node) {
         let Some(access) = self.arena.get_access_expr(node) else {
             return;
         };
+
+        if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write("Reflect.get(");
+            self.write(&base_alias);
+            self.write(", ");
+            self.emit_scoped_static_super_property_name(access.name_or_argument);
+            self.write(", ");
+            self.emit_scoped_static_super_receiver();
+            self.write(")");
+            return;
+        }
 
         // Private field lowering: `this.#field` → `__classPrivateFieldGet(this, _C_field, "f")`
         if !self.private_field_weakmaps.is_empty()
@@ -263,6 +315,20 @@ impl<'a> Printer<'a> {
         let Some(access) = self.arena.get_access_expr(node) else {
             return;
         };
+
+        if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write("Reflect.get(");
+            self.write(&base_alias);
+            self.write(", ");
+            self.emit(access.name_or_argument);
+            self.write(", ");
+            self.emit_scoped_static_super_receiver();
+            self.write(")");
+            return;
+        }
 
         // Const enum inlining: replace `EnumName["Member"]` with `value /* EnumName["Member"] */`
         if !self.const_enum_values.is_empty()

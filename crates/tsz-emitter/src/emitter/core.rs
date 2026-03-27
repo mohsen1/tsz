@@ -564,6 +564,14 @@ pub struct Printer<'a> {
     /// computed property name with a non-constant expression, the expression is hoisted
     /// to a temp variable and the class body uses the temp instead of the expression.
     pub(crate) computed_prop_temp_map: FxHashMap<NodeIndex, String>,
+
+    /// Temporary alias for outer static `this` while emitting a static field initializer.
+    /// This must not flow into nested non-arrow function or class scopes.
+    pub(crate) scoped_static_this_alias: Option<Arc<str>>,
+
+    /// Temporary base-class alias for outer static `super` while emitting a static field
+    /// initializer. This is cleared at the same nested scope boundaries as static `this`.
+    pub(crate) scoped_static_super_base_alias: Option<Arc<str>>,
 }
 
 impl<'a> Printer<'a> {
@@ -716,6 +724,8 @@ impl<'a> Printer<'a> {
             jsx_dev_file_name: None,
             source_is_js_file: false,
             computed_prop_temp_map: FxHashMap::default(),
+            scoped_static_this_alias: None,
+            scoped_static_super_base_alias: None,
         }
     }
 
@@ -985,6 +995,35 @@ impl<'a> Printer<'a> {
         self.emit_node(node, idx);
     }
 
+    pub(crate) fn emit_expression_with_scoped_static_initializer(
+        &mut self,
+        idx: NodeIndex,
+        this_alias: Option<&str>,
+        super_base_alias: Option<&str>,
+    ) {
+        let prev_this_alias = self.scoped_static_this_alias.clone();
+        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+
+        self.scoped_static_this_alias = this_alias.map(Arc::from);
+        self.scoped_static_super_base_alias = super_base_alias.map(Arc::from);
+
+        self.emit_expression(idx);
+        self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_base_alias = prev_super_alias;
+    }
+
+    fn with_scoped_static_initializer_context_cleared<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let prev_this_alias = self.scoped_static_this_alias.take();
+        let prev_super_alias = self.scoped_static_super_base_alias.take();
+        let result = f(self);
+        self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_base_alias = prev_super_alias;
+        result
+    }
+
     /// Emit a node.
     fn emit_node(&mut self, node: &Node, idx: NodeIndex) {
         // Recursion depth check to prevent infinite loops
@@ -1203,12 +1242,16 @@ impl<'a> Printer<'a> {
 
             // Function expression
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                self.emit_function_expression(node, idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_function_expression(node, idx);
+                });
             }
 
             // Function declaration
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.emit_function_declaration(node, idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_function_declaration(node, idx);
+                });
             }
 
             // Variable declaration
@@ -1278,12 +1321,16 @@ impl<'a> Printer<'a> {
 
             // Class declaration
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                self.emit_class_declaration(node, idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_class_declaration(node, idx);
+                });
             }
 
             // Class expression (e.g., `return class extends Base { ... }`)
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
-                self.emit_class_declaration(node, idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_class_declaration(node, idx);
+                });
             }
 
             // Property assignment
@@ -1622,19 +1669,27 @@ impl<'a> Printer<'a> {
 
             // Class members
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.emit_method_declaration(node);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_method_declaration(node);
+                });
             }
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 self.emit_property_declaration(node);
             }
             k if k == syntax_kind_ext::CONSTRUCTOR => {
-                self.emit_constructor_declaration(node);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_constructor_declaration(node);
+                });
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
-                self.emit_get_accessor(node, idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_get_accessor(node, idx);
+                });
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
-                self.emit_set_accessor(node, idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_set_accessor(node, idx);
+                });
             }
             k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => {
                 self.write(";");
@@ -1717,6 +1772,8 @@ impl<'a> Printer<'a> {
                 {
                     let name = std::sync::Arc::clone(capture_name);
                     self.write(&name);
+                } else if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
+                    self.write(&alias);
                 } else {
                     self.write("this");
                 }

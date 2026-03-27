@@ -10,7 +10,7 @@ use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_parser::syntax::transform_utils::contains_this_reference;
+use tsz_parser::syntax::transform_utils::{contains_super_reference, contains_this_reference};
 use tsz_scanner::SyntaxKind;
 
 use super::super::core::PropertyNameEmit;
@@ -1952,6 +1952,72 @@ impl<'a> Printer<'a> {
             None
         };
 
+        let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
+            clauses.nodes.iter().any(|&idx| {
+                self.arena
+                    .get(idx)
+                    .and_then(|n| self.arena.get_heritage(n))
+                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+            })
+        });
+        let extends_null = crate::transforms::emit_utils::extends_null_literal(
+            self.arena,
+            &class.heritage_clauses,
+        );
+
+        let static_initializer_nodes: Vec<NodeIndex> =
+            if is_class_expression || !target_needs_field_lowering {
+                Vec::new()
+            } else {
+                class
+                    .members
+                    .nodes
+                    .iter()
+                    .filter_map(|&member_idx| {
+                        let member_node = self.arena.get(member_idx)?;
+                        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                            return None;
+                        }
+                        let prop = self.arena.get_property_decl(member_node)?;
+                        if !self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                            || prop.initializer.is_none()
+                        {
+                            return None;
+                        }
+                        Some(prop.initializer)
+                    })
+                    .collect()
+            };
+
+        let static_initializer_needs_this_alias = !static_initializer_nodes.is_empty()
+            && static_initializer_nodes
+                .iter()
+                .any(|init_idx| contains_this_reference(self.arena, *init_idx));
+        let static_this_alias = if static_initializer_needs_this_alias {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+        let static_super_base_alias = if has_extends
+            && !extends_null
+            && !static_initializer_nodes.is_empty()
+            && static_initializer_nodes
+                .iter()
+                .any(|init_idx| contains_super_reference(self.arena, *init_idx))
+        {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+
         self.write("class");
 
         // Determine the class expression name.
@@ -1991,7 +2057,15 @@ impl<'a> Printer<'a> {
                         if i > 0 {
                             self.write(", ");
                         }
-                        self.emit_heritage_expression(extends_type);
+                        if let Some(base_alias) = static_super_base_alias.as_ref() {
+                            self.write("(");
+                            self.write(base_alias);
+                            self.write(" = ");
+                            self.emit_heritage_expression(extends_type);
+                            self.write(")");
+                        } else {
+                            self.emit_heritage_expression(extends_type);
+                        }
                     }
                 } else {
                     // Error recovery: source has `extends` with no base type.
@@ -2214,19 +2288,6 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Check if any static field initializer references `this`.
-        // tsc transforms `this` in static field initializers to use a temp alias
-        // (`var _a; ... _a = C; C.foo = _a;`), even for ES2022+ targets.
-        let static_this_alias = if !static_field_inits.is_empty()
-            && static_field_inits
-                .iter()
-                .any(|(_, init_idx, _, _, _)| contains_this_reference(self.arena, *init_idx))
-        {
-            Some(self.make_unique_name_hoisted())
-        } else {
-            None
-        };
-
         // Check if class has an explicit constructor with a body.
         // A constructor without a body (e.g., broken syntax `constructor` with no
         // parens/braces) should not prevent synthesis of a constructor for field
@@ -2240,20 +2301,6 @@ impl<'a> Printer<'a> {
                         .is_some_and(|ctor| ctor.body.is_some())
             })
         });
-
-        // Check if class has extends clause and whether it extends null
-        let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
-            clauses.nodes.iter().any(|&idx| {
-                self.arena
-                    .get(idx)
-                    .and_then(|n| self.arena.get_heritage(n))
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
-            })
-        });
-        let extends_null = crate::transforms::emit_utils::extends_null_literal(
-            self.arena,
-            &class.heritage_clauses,
-        );
 
         // Store field inits for constructor emission
         let prev_field_inits = std::mem::take(&mut self.pending_class_field_inits);
@@ -3099,19 +3146,11 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
-                    self.emit_expression(*init_idx);
-                    // Replace `this` with alias in the emitted expression
-                    if let Some(ref alias) = static_this_alias {
-                        let full = self.writer.get_output().to_string();
-                        // Find the "value: " we just emitted and replace `this` in it
-                        let value_start = full.rfind("value: ").unwrap_or(full.len());
-                        let segment = &full[value_start..];
-                        let replaced = replace_identifier(segment, "this", alias);
-                        if replaced != segment {
-                            self.writer.truncate(value_start);
-                            self.write(&replaced);
-                        }
-                    }
+                    self.emit_expression_with_scoped_static_initializer(
+                        *init_idx,
+                        static_this_alias.as_deref(),
+                        static_super_base_alias.as_deref(),
+                    );
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
@@ -3130,19 +3169,11 @@ impl<'a> Printer<'a> {
                         }
                     }
                     self.write(" = ");
-                    // Emit the initializer, then substitute `this` with alias if needed
-                    let before = self.writer.len();
-                    self.emit_expression(*init_idx);
-                    if let Some(ref alias) = static_this_alias {
-                        let after = self.writer.len();
-                        let full = self.writer.get_output().to_string();
-                        let segment = &full[before..after];
-                        let replaced = replace_identifier(segment, "this", alias);
-                        if replaced != segment {
-                            self.writer.truncate(before);
-                            self.write(&replaced);
-                        }
-                    }
+                    self.emit_expression_with_scoped_static_initializer(
+                        *init_idx,
+                        static_this_alias.as_deref(),
+                        static_super_base_alias.as_deref(),
+                    );
                     self.write(";");
                 }
                 // Emit saved trailing comments (e.g. `// ok` from

@@ -167,6 +167,11 @@ impl<'a> Printer<'a> {
             .get(func.body)
             .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
 
+        // Arrow functions introduce their own temp scope. Without this, hoisted temps
+        // created by the enclosing scope can be spuriously injected into single-line
+        // arrow bodies during block emission.
+        self.push_temp_scope();
+
         // If we have pending object rest params and a concise body, convert to block body
         if !body_is_block && !self.pending_object_rest_params.is_empty() {
             let rest_params: Vec<(String, NodeIndex)> =
@@ -213,6 +218,8 @@ impl<'a> Printer<'a> {
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         }
+
+        self.pop_temp_scope();
     }
 
     /// Emit an async arrow function lowered for ES2015/ES2016 targets.
