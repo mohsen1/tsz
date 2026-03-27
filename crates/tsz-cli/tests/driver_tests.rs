@@ -10306,6 +10306,70 @@ function process(image) {
 }
 
 #[test]
+fn compile_jsdoc_arrow_expression_body_preserves_template_scope_for_nested_cast() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["mytest.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("mytest.js"),
+        r#"/**
+ * @template T
+ * @param {T|undefined} value value or not
+ * @returns {T} result value
+ */
+const foo1 = value => /** @type {string} */({ ...value });
+
+/**
+ * @template T
+ * @param {T|undefined} value value or not
+ * @returns {T} result value
+ */
+const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2304: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2304.is_empty(),
+        "Expected inline JSDoc nested cast to keep arrow @template scope in project mode, got TS2304 diagnostics: {:?}\nAll diagnostics: {:?}",
+        ts2304,
+        result.diagnostics
+    );
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected the two existing TS2322 diagnostics from the cast mismatch shape, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_default_import_class_static_enum_object_keeps_enum_members() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
