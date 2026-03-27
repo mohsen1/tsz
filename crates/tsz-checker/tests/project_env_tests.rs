@@ -29,7 +29,9 @@ fn empty_project_env() -> ProjectEnv {
         global_module_binder_index: None,
         global_arena_index: None,
         resolved_module_paths: Arc::new(FxHashMap::default()),
+        resolved_module_request_paths: Arc::new(FxHashMap::default()),
         resolved_module_errors: Arc::new(FxHashMap::default()),
+        resolved_module_request_errors: Arc::new(FxHashMap::default()),
         is_external_module_by_file: Arc::new(FxHashMap::default()),
         file_is_esm_map: Arc::new(FxHashMap::default()),
         typescript_dom_replacement_globals: (false, false, false),
@@ -70,7 +72,9 @@ fn apply_to_sets_core_shared_state() {
     assert!(checker.ctx.is_external_module_by_file.is_some());
     assert!(checker.ctx.file_is_esm_map.is_some());
     assert!(checker.ctx.resolved_module_paths.is_some());
+    assert!(checker.ctx.resolved_module_request_paths.is_some());
     assert!(checker.ctx.resolved_module_errors.is_some());
+    assert!(checker.ctx.resolved_module_request_errors.is_some());
 }
 
 #[test]

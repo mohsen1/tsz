@@ -12,6 +12,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         member_name: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<tsz_binder::SymbolId> {
         let from_file = self.ctx.current_file_idx;
 
@@ -19,10 +20,11 @@ impl<'a> CheckerState<'a> {
             && let Some((sym_id, _)) =
                 source_binder.resolve_import_with_reexports_type_only(module_specifier, member_name)
         {
-            if let Some(target_idx) = self
-                .ctx
-                .resolve_import_target_from_file(from_file, module_specifier)
-            {
+            if let Some(target_idx) = self.ctx.resolve_import_target_from_file_with_mode(
+                from_file,
+                module_specifier,
+                resolution_mode_override,
+            ) {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);
             }
             return Some(sym_id);
@@ -30,7 +32,11 @@ impl<'a> CheckerState<'a> {
 
         let target_file_idx = self
             .ctx
-            .resolve_import_target_from_file(from_file, module_specifier)
+            .resolve_import_target_from_file_with_mode(
+                from_file,
+                module_specifier,
+                resolution_mode_override,
+            )
             .or_else(|| self.ctx.resolve_import_target(module_specifier))?;
 
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
@@ -163,20 +169,27 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_name: &str,
         type_name_idx: NodeIndex,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<TypeId> {
         let segments = self.import_type_member_segments(type_name_idx)?;
         if segments.is_empty() {
             return None;
         }
         if segments.len() == 1
-            && let Some(jsdoc_typedef_type) =
-                self.resolve_import_type_jsdoc_typedef(module_name, &segments[0])
+            && let Some(jsdoc_typedef_type) = self.resolve_import_type_jsdoc_typedef(
+                module_name,
+                &segments[0],
+                resolution_mode_override,
+            )
         {
             return Some(jsdoc_typedef_type);
         }
 
-        let mut current_sym =
-            self.resolve_ts_import_type_member_symbol(module_name, &segments[0])?;
+        let mut current_sym = self.resolve_ts_import_type_member_symbol(
+            module_name,
+            &segments[0],
+            resolution_mode_override,
+        )?;
         for segment in segments.iter().skip(1) {
             let symbol = self
                 .get_cross_file_symbol(current_sym)
@@ -221,10 +234,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_name: &str,
         typedef_name: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<TypeId> {
         let target_file_idx = self
             .ctx
-            .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode_override,
+            )
             .or_else(|| self.ctx.resolve_import_target(module_name))?;
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?.clone();
@@ -315,6 +333,66 @@ impl<'a> CheckerState<'a> {
         Some((literal.text.clone(), first_arg))
     }
 
+    fn get_import_type_resolution_mode_override(
+        &self,
+        call_idx: NodeIndex,
+    ) -> Option<crate::context::ResolutionModeOverride> {
+        use crate::context::ResolutionModeOverride;
+
+        let call_node = self.ctx.arena.get(call_idx)?;
+        let call = self.ctx.arena.get_call_expr(call_node)?;
+        let args = call.arguments.as_ref()?.nodes.as_slice();
+        let &options_idx = args.get(1)?;
+
+        fn property_initializer_by_name(
+            arena: &tsz_parser::parser::node::NodeArena,
+            object_idx: NodeIndex,
+            name: &str,
+        ) -> Option<NodeIndex> {
+            use tsz_parser::parser::syntax_kind_ext;
+
+            let object_node = arena.get(object_idx)?;
+            if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+
+            for child_idx in arena.get_children(object_idx) {
+                let child_node = arena.get(child_idx)?;
+                if child_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    continue;
+                }
+                let prop = arena.get_property_assignment(child_node)?;
+                let prop_name = if let Some(ident_node) = arena.get(prop.name) {
+                    if let Some(ident) = arena.get_identifier(ident_node) {
+                        ident.escaped_text.as_str()
+                    } else if let Some(text) = arena.get_literal_text(prop.name) {
+                        text.trim_matches('"').trim_matches('\'')
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                };
+
+                if prop_name == name {
+                    return Some(prop.initializer);
+                }
+            }
+
+            None
+        }
+
+        let with_idx = property_initializer_by_name(self.ctx.arena, options_idx, "with")?;
+        let resolution_mode_idx =
+            property_initializer_by_name(self.ctx.arena, with_idx, "resolution-mode")?;
+        let value = self.ctx.arena.get_literal_text(resolution_mode_idx)?;
+        match value.trim_matches('"').trim_matches('\'') {
+            "import" => Some(ResolutionModeOverride::Import),
+            "require" => Some(ResolutionModeOverride::Require),
+            _ => None,
+        }
+    }
+
     /// Check an import type expression for module resolution and emit TS2307 if needed.
     /// Returns the resolved type or `TypeId::ERROR`.
     pub(crate) fn check_import_type_and_resolve(
@@ -331,6 +409,7 @@ impl<'a> CheckerState<'a> {
         else {
             return TypeId::ERROR;
         };
+        let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
         let is_bare_import_type = call_idx == type_name_idx;
         let has_import_type_options = self.ctx.arena.get(call_idx).is_some_and(|call_node| {
             self.ctx
@@ -374,7 +453,11 @@ impl<'a> CheckerState<'a> {
                 });
             let file_export_equals = self
                 .ctx
-                .resolve_import_target(&module_name)
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    &module_name,
+                    resolution_mode_override,
+                )
                 .and_then(|target_idx| {
                     self.ctx
                         .get_binder_for_file(target_idx)
@@ -431,7 +514,11 @@ impl<'a> CheckerState<'a> {
         let report_unresolved_imports = self.ctx.report_unresolved_imports;
         let member_segments = self.import_type_member_segments(type_name_idx);
 
-        if let Some(resolved) = self.resolve_import_type_reference(&module_name, type_name_idx) {
+        if let Some(resolved) = self.resolve_import_type_reference(
+            &module_name,
+            type_name_idx,
+            resolution_mode_override,
+        ) {
             return resolved;
         }
 
@@ -521,7 +608,10 @@ impl<'a> CheckerState<'a> {
 
         // 5. Check if the driver has a resolution error for this specifier
         //    (positive evidence of failed resolution)
-        if let Some(error) = self.ctx.get_resolution_error(&module_name) {
+        if let Some(error) = self
+            .ctx
+            .get_resolution_error_with_mode(&module_name, resolution_mode_override)
+        {
             // For Node.js built-in modules, use TS2591 instead of TS2307
             // (tsc emits "Cannot find name 'X'. Install @types/node" for these)
             if report_unresolved_imports {

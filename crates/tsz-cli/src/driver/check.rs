@@ -4,6 +4,20 @@ use super::check_utils::*;
 use super::*;
 use tsz::checker::context::RequestCacheCounters;
 
+fn checker_resolution_mode_override(
+    mode: Option<tsz::module_resolver::ImportingModuleKind>,
+) -> Option<tsz::checker::context::ResolutionModeOverride> {
+    match mode {
+        Some(tsz::module_resolver::ImportingModuleKind::Esm) => {
+            Some(tsz::checker::context::ResolutionModeOverride::Import)
+        }
+        Some(tsz::module_resolver::ImportingModuleKind::CommonJs) => {
+            Some(tsz::checker::context::ResolutionModeOverride::Require)
+        }
+        None => None,
+    }
+}
+
 pub(super) struct CollectDiagnosticsResult {
     pub diagnostics: Vec<Diagnostic>,
     pub request_cache_counters: RequestCacheCounters,
@@ -590,9 +604,25 @@ pub(super) fn collect_diagnostics(
     // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
     // Also build resolved_module_errors map for specific error codes
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    let mut resolved_module_request_paths: FxHashMap<
+        (
+            usize,
+            String,
+            Option<tsz::checker::context::ResolutionModeOverride>,
+        ),
+        usize,
+    > = FxHashMap::default();
     let mut resolved_module_specifiers: FxHashSet<(usize, String)> = FxHashSet::default();
     let mut resolved_module_errors: FxHashMap<
         (usize, String),
+        tsz::checker::context::ResolutionError,
+    > = FxHashMap::default();
+    let mut resolved_module_request_errors: FxHashMap<
+        (
+            usize,
+            String,
+            Option<tsz::checker::context::ResolutionModeOverride>,
+        ),
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
 
@@ -670,6 +700,14 @@ pub(super) fn collect_diagnostics(
                     let canonical = normalize_resolved_path(resolved_path, options);
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                         resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                        resolved_module_request_paths.insert(
+                            (
+                                file_idx,
+                                specifier.clone(),
+                                checker_resolution_mode_override(*resolution_mode_override),
+                            ),
+                            target_idx,
+                        );
                     }
                 } else if outcome.is_resolved {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
@@ -684,14 +722,27 @@ pub(super) fn collect_diagnostics(
                             message: error.message.clone(),
                         },
                     );
+                    resolved_module_request_errors.insert(
+                        (
+                            file_idx,
+                            specifier.clone(),
+                            checker_resolution_mode_override(*resolution_mode_override),
+                        ),
+                        tsz::checker::context::ResolutionError {
+                            code: error.code,
+                            message: error.message.clone(),
+                        },
+                    );
                 }
             }
         }
     }
 
     let resolved_module_paths = Arc::new(resolved_module_paths);
+    let resolved_module_request_paths = Arc::new(resolved_module_request_paths);
     let resolved_module_specifiers = Arc::new(resolved_module_specifiers);
     let resolved_module_errors = Arc::new(resolved_module_errors);
+    let resolved_module_request_errors = Arc::new(resolved_module_request_errors);
 
     // Pre-compute per-file ESM/CJS module kind for Node16/NodeNext resolution.
     // In these modes, .js/.ts files may be ESM based on package.json "type" field.
@@ -761,7 +812,9 @@ pub(super) fn collect_diagnostics(
         skeleton_expando_index,
         symbol_file_targets: Arc::clone(&symbol_file_targets),
         resolved_module_paths: Arc::clone(&resolved_module_paths),
+        resolved_module_request_paths: Arc::clone(&resolved_module_request_paths),
         resolved_module_errors: Arc::clone(&resolved_module_errors),
+        resolved_module_request_errors: Arc::clone(&resolved_module_request_errors),
         is_external_module_by_file: Arc::clone(&is_external_module_by_file),
         file_is_esm_map: Arc::clone(&file_is_esm_map),
         typescript_dom_replacement_globals,

@@ -57,12 +57,23 @@ pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
 
 type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
 type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
+type ResolvedModuleRequestPathMap =
+    FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>;
+type ResolvedModuleRequestErrorMap =
+    FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
 
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]
 pub struct ResolutionError {
     pub code: u32,
     pub message: String,
+}
+
+/// Explicit module-resolution override carried by import attributes / import types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResolutionModeOverride {
+    Import,
+    Require,
 }
 
 /// Pre-built global index of all declared/ambient module names across all binders.
@@ -908,6 +919,9 @@ pub struct CheckerContext<'a> {
     /// Key invariant: all specifier lookups should use
     /// `module_resolution::module_specifier_candidates` for canonical variants.
     pub resolved_module_paths: Option<Arc<ResolvedModulePathMap>>,
+    /// Resolved module paths keyed by the full driver request, including any
+    /// explicit `resolution-mode` override from import attributes / import types.
+    pub resolved_module_request_paths: Option<Arc<ResolvedModuleRequestPathMap>>,
 
     /// Current file index in multi-file mode (index into `all_arenas/all_binders`).
     /// Used with `resolved_module_paths` to look up cross-file imports.
@@ -937,6 +951,9 @@ pub struct CheckerContext<'a> {
     /// Diagnostic-source invariant: module-not-found-family code/message selection
     /// should come from resolver outcomes when present.
     pub resolved_module_errors: Option<Arc<ResolvedModuleErrorMap>>,
+    /// Resolution errors keyed by the full driver request, including any
+    /// explicit `resolution-mode` override from import attributes / import types.
+    pub resolved_module_request_errors: Option<Arc<ResolvedModuleRequestErrorMap>>,
 
     /// Import resolution stack for circular import detection.
     /// Tracks the chain of modules being resolved to detect circular dependencies.
@@ -1132,8 +1149,12 @@ pub struct ProjectEnv {
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
+    /// Resolved module paths keyed by (`source_file_idx`, specifier, resolution-mode override).
+    pub resolved_module_request_paths: Arc<ResolvedModuleRequestPathMap>,
     /// Resolved module errors: (`source_file_idx`, specifier) -> error details.
     pub resolved_module_errors: Arc<ResolvedModuleErrorMap>,
+    /// Resolved module errors keyed by (`source_file_idx`, specifier, resolution-mode override).
+    pub resolved_module_request_errors: Arc<ResolvedModuleRequestErrorMap>,
     /// Per-file external module status.
     pub is_external_module_by_file: Arc<FxHashMap<String, bool>>,
     /// Per-file ESM/CJS determination.
@@ -1167,7 +1188,9 @@ impl Default for ProjectEnv {
             global_module_binder_index: None,
             global_arena_index: None,
             resolved_module_paths: Arc::new(FxHashMap::default()),
+            resolved_module_request_paths: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
+            resolved_module_request_errors: Arc::new(FxHashMap::default()),
             is_external_module_by_file: Arc::new(FxHashMap::default()),
             file_is_esm_map: Arc::new(FxHashMap::default()),
             typescript_dom_replacement_globals: (false, false, false),
@@ -1243,7 +1266,9 @@ impl ProjectEnv {
             }
         }
         ctx.set_resolved_module_paths(Arc::clone(&self.resolved_module_paths));
+        ctx.set_resolved_module_request_paths(Arc::clone(&self.resolved_module_request_paths));
         ctx.set_resolved_module_errors(Arc::clone(&self.resolved_module_errors));
+        ctx.set_resolved_module_request_errors(Arc::clone(&self.resolved_module_request_errors));
         ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));
         ctx.file_is_esm_map = Some(Arc::clone(&self.file_is_esm_map));
     }

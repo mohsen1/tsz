@@ -433,7 +433,22 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
     roots
 }
 
+#[allow(dead_code)]
 pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Vec<String> {
+    collect_module_requests_from_text(path, text)
+        .into_iter()
+        .map(|(specifier, _, _)| specifier)
+        .collect()
+}
+
+pub(crate) fn collect_module_requests_from_text(
+    path: &Path,
+    text: &str,
+) -> Vec<(
+    String,
+    tsz::module_resolver::ImportKind,
+    Option<tsz::module_resolver::ImportingModuleKind>,
+)> {
     // Fast path: skip the full parse if the text cannot contain any module specifiers.
     // This avoids a redundant parse for files that will be parsed again in build_program.
     if !text_may_contain_module_specifiers(text) {
@@ -445,7 +460,9 @@ pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Ve
     let (arena, _diagnostics) = parser.into_parts();
     collect_module_specifiers(&arena, source_file)
         .into_iter()
-        .map(|(specifier, _, _, _)| specifier)
+        .map(|(specifier, _, import_kind, resolution_mode_override)| {
+            (specifier, import_kind, resolution_mode_override)
+        })
         .collect()
 }
 
@@ -644,8 +661,69 @@ fn collect_import_type_specifiers(
             continue;
         };
         if let Some(text) = arena.get_literal_text(arg_idx) {
-            specifiers.push((strip_quotes(text), arg_idx, ImportKind::EsmImport, None));
+            specifiers.push((
+                strip_quotes(text),
+                arg_idx,
+                ImportKind::EsmImport,
+                import_type_resolution_mode_override(arena, call),
+            ));
         }
+    }
+}
+
+fn import_type_resolution_mode_override(
+    arena: &NodeArena,
+    call: &tsz_parser::parser::node::CallExprData,
+) -> Option<tsz::module_resolver::ImportingModuleKind> {
+    use tsz::module_resolver::ImportingModuleKind;
+    use tsz::parser::syntax_kind_ext;
+
+    fn object_literal_property_initializer_by_name(
+        arena: &NodeArena,
+        object_idx: NodeIndex,
+        name: &str,
+    ) -> Option<NodeIndex> {
+        let object_node = arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        for child_idx in arena.get_children(object_idx) {
+            let child_node = arena.get(child_idx)?;
+            if child_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let prop = arena.get_property_assignment(child_node)?;
+            let prop_name = if let Some(name_node) = arena.get(prop.name) {
+                if let Some(ident) = arena.get_identifier(name_node) {
+                    ident.escaped_text.as_str()
+                } else if let Some(text) = arena.get_literal_text(prop.name) {
+                    text.trim_matches('"').trim_matches('\'')
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+
+            if prop_name == name {
+                return Some(prop.initializer);
+            }
+        }
+
+        None
+    }
+
+    let args = call.arguments.as_ref()?.nodes.as_slice();
+    let &options_idx = args.get(1)?;
+    let with_idx = object_literal_property_initializer_by_name(arena, options_idx, "with")?;
+    let resolution_mode_idx =
+        object_literal_property_initializer_by_name(arena, with_idx, "resolution-mode")?;
+    let value_text = arena.get_literal_text(resolution_mode_idx)?;
+    match value_text.trim_matches('"').trim_matches('\'') {
+        "import" => Some(ImportingModuleKind::Esm),
+        "require" => Some(ImportingModuleKind::CommonJs),
+        _ => None,
     }
 }
 
