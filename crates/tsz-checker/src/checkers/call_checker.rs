@@ -263,6 +263,13 @@ impl<'a> CheckerState<'a> {
             self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
             let diag_snap = self.ctx.snapshot_diagnostics();
             let actual = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
+            let refined_actual = if self.target_has_concrete_return_context_for_generic_refinement(expected) {
+                self.instantiate_generic_function_argument_against_target_for_refinement(
+                    actual, expected,
+                )
+            } else {
+                self.instantiate_generic_function_argument_against_target_params(actual, expected)
+            };
             let has_callback_body_diagnostic =
                 self.callback_body_span(arg_idx)
                     .is_some_and(|(start, end)| {
@@ -272,13 +279,41 @@ impl<'a> CheckerState<'a> {
                             .any(|diag| diag.start >= start && diag.start < end)
                     });
             self.ctx.rollback_full(&snap);
-            let has_return_type_mismatch = stable_call_recovery_return_type(self.ctx.types, actual)
-                .zip(stable_call_recovery_return_type(self.ctx.types, expected))
-                .is_some_and(|(actual_return, expected_return)| {
-                    !self.is_assignable_to(actual_return, expected_return)
-                });
-            (has_callback_body_diagnostic && has_return_type_mismatch)
-                .then_some((index, actual, expected))
+            let is_generator_callback = func.asterisk_token;
+            let (has_return_type_mismatch, has_generator_component_mismatch) =
+                stable_call_recovery_return_type(self.ctx.types, refined_actual)
+                    .zip(stable_call_recovery_return_type(self.ctx.types, expected))
+                    .map(|(actual_return, expected_return)| {
+                        let generator_component_mismatch = self
+                            .get_generator_yield_type_argument(actual_return)
+                            .zip(self.get_generator_yield_type_argument(expected_return))
+                            .is_some_and(|(actual_yield, expected_yield)| {
+                                !self.is_assignable_to(actual_yield, expected_yield)
+                            })
+                            || self
+                                .get_generator_return_type_argument(actual_return)
+                                .zip(self.get_generator_return_type_argument(expected_return))
+                                .is_some_and(|(actual_gen_return, expected_gen_return)| {
+                                    !self.is_assignable_to(actual_gen_return, expected_gen_return)
+                                })
+                            || self
+                                .get_generator_next_type_argument(actual_return)
+                                .zip(self.get_generator_next_type_argument(expected_return))
+                                .is_some_and(|(actual_next, expected_next)| {
+                                    !self.is_assignable_to(expected_next, actual_next)
+                                });
+
+                        (
+                            generator_component_mismatch
+                                || !self.is_assignable_to(actual_return, expected_return),
+                            generator_component_mismatch,
+                        )
+                    })
+                    .unwrap_or((false, false));
+            ((has_callback_body_diagnostic
+                || (is_generator_callback && has_generator_component_mismatch))
+                && has_return_type_mismatch)
+                .then_some((index, refined_actual, expected))
         })
     }
 

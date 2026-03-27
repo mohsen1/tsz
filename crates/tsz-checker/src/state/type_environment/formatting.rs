@@ -100,6 +100,60 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type for diagnostics while suppressing function-type parameter
+    /// binders in the displayed surface.
+    ///
+    /// This matches tsc's iterator-protocol diagnostics, which commonly print
+    /// `() => T` instead of `<T>() => T`.
+    pub fn format_type_diagnostic_without_function_type_params(
+        &mut self,
+        type_id: TypeId,
+    ) -> String {
+        let type_id = self.evaluate_type_with_env(type_id);
+        let type_id = self.resolve_type_for_property_access(type_id);
+        let type_id = self.resolve_lazy_type(type_id);
+        let type_id = self.evaluate_application_type(type_id);
+
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+            && !shape.type_params.is_empty()
+        {
+            let display_type = self.ctx.types.factory().function(tsz_solver::FunctionShape {
+                type_params: Vec::new(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate.clone(),
+                is_constructor: shape.is_constructor,
+                is_method: shape.is_method,
+            });
+            return self.format_type_diagnostic(display_type);
+        }
+
+        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+            && shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.construct_signatures.is_empty()
+            && shape.call_signatures.len() == 1
+        {
+            let sig = &shape.call_signatures[0];
+            if !sig.type_params.is_empty() {
+                let display_type = self.ctx.types.factory().function(tsz_solver::FunctionShape {
+                    type_params: Vec::new(),
+                    params: sig.params.clone(),
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate.clone(),
+                    is_constructor: false,
+                    is_method: sig.is_method,
+                });
+                return self.format_type_diagnostic(display_type);
+            }
+        }
+
+        self.format_type_diagnostic(type_id)
+    }
+
     /// Format a type for diagnostics with display properties enabled.
     /// Uses pre-widened literal types from the freshness model side table.
     pub fn format_type_diagnostic_with_display(&self, type_id: TypeId) -> String {

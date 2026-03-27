@@ -709,6 +709,25 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        if callable_mismatch {
+            let refined_actual = if self.target_has_concrete_return_context_for_generic_refinement(expected) {
+                self.instantiate_generic_function_argument_against_target_for_refinement(
+                    actual, expected,
+                )
+            } else {
+                self.instantiate_generic_function_argument_against_target_params(actual, expected)
+            };
+            let refined_actual = self.normalize_contextual_signature_with_env(refined_actual);
+            let refined_expected = self.normalize_contextual_signature_with_env(expected);
+            let refined_still_has_holes =
+                assign_query::contains_infer_types(self.ctx.types, refined_actual)
+                    || assign_query::contains_infer_types(self.ctx.types, refined_expected)
+                    || assign_query::contains_type_parameters(self.ctx.types, refined_actual)
+                    || assign_query::contains_type_parameters(self.ctx.types, refined_expected);
+            if !refined_still_has_holes {
+                return false;
+            }
+        }
         if callable_mismatch
             && (assign_query::contains_type_parameters(self.ctx.types, actual)
                 || assign_query::contains_type_parameters(self.ctx.types, expected))
