@@ -3725,6 +3725,32 @@ const test3: (arg: number) => void = (arg = 1) => {};
 }
 
 #[test]
+fn test_jsdoc_param_type_reference_to_ambient_constructor_value_is_constructable() {
+    let diagnostics = without_missing_global_type_errors(
+        compile_and_get_diagnostics_named_with_lib_and_options(
+            "foo.js",
+            r#"
+/** @param {Image} image */
+function process(image) {
+    return new image(1, 1);
+}
+"#,
+            CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        ),
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2351),
+        "Expected no TS2351 when a JSDoc param references ambient constructor value `Image`. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_expression_default_parameter_does_not_emit_false_ts2322() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
