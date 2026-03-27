@@ -457,13 +457,13 @@ pub fn split_nullish_type(
     } else if non_nullish.len() == 1 {
         Some(non_nullish[0])
     } else {
-        Some(types.union(non_nullish.to_vec()))
+        Some(types.union(non_nullish.into_vec()))
     };
 
     let nullish_type = if nullish.len() == 1 {
         Some(nullish[0])
     } else {
-        Some(types.union(nullish.to_vec()))
+        Some(types.union(nullish.into_vec()))
     };
 
     (non_nullish_type, nullish_type)
