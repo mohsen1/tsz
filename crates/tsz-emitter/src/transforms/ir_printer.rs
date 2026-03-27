@@ -1078,6 +1078,22 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     "false"
                 });
+                if let Some(value) = &descriptor.value {
+                    self.write(",");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("writable: ");
+                    self.write(if descriptor.writable {
+                        "true"
+                    } else {
+                        "false"
+                    });
+                    self.write(",");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("value: ");
+                    self.emit_node(value);
+                }
                 self.write_line();
 
                 self.decrease_indent();

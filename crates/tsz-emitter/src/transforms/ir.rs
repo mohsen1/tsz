@@ -563,8 +563,10 @@ pub struct IRCatchClause {
 pub struct IRPropertyDescriptor {
     pub get: Option<Box<IRNode>>,
     pub set: Option<Box<IRNode>>,
+    pub value: Option<Box<IRNode>>,
     pub enumerable: bool,
     pub configurable: bool,
+    pub writable: bool,
     /// Optional trailing comment to emit after the getter function in
     /// `Object.defineProperty(..., { get: ..., ... })` shapes.
     pub trailing_comment: Option<String>,

@@ -1030,6 +1030,7 @@ impl<'a> Printer<'a> {
 
             if self.ctx.target_es5 {
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
                 es5_emitter.set_indent_level(self.writer.indent_level());
                 es5_emitter.set_transforms(self.transforms.clone());
                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
@@ -1044,6 +1045,8 @@ impl<'a> Printer<'a> {
                 if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
                     es5_emitter.set_tslib_prefix(true);
                 }
+                es5_emitter
+                    .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
                 // Pass decorator info to the ES5 emitter so __decorate calls
                 // are emitted INSIDE the IIFE (before `return ClassName;`)
                 es5_emitter.set_decorator_info(ClassDecoratorInfo {
@@ -1052,6 +1055,7 @@ impl<'a> Printer<'a> {
                     emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
                 });
                 let output = es5_emitter.emit_class_with_name(idx, &class_name);
+                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
                 let mappings = es5_emitter.take_mappings();
                 if !mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
@@ -1291,6 +1295,7 @@ impl<'a> Printer<'a> {
 
         if self.ctx.target_es5 {
             let mut es5_emitter = ClassES5Emitter::new(self.arena);
+            es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
             es5_emitter.set_indent_level(self.writer.indent_level());
             // Pass transform directives to the ClassES5Emitter
             es5_emitter.set_transforms(self.transforms.clone());
@@ -1305,7 +1310,10 @@ impl<'a> Printer<'a> {
             if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
                 es5_emitter.set_tslib_prefix(true);
             }
+            es5_emitter
+                .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
             let output = es5_emitter.emit_class(idx);
+            self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
             let mappings = es5_emitter.take_mappings();
             if !mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");

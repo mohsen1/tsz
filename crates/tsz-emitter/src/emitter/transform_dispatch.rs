@@ -257,6 +257,7 @@ impl<'a> Printer<'a> {
                     es5_emitter.set_leading_comment(comment);
                 }
                 let es5_output = es5_emitter.emit_class(class_node);
+                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
                 debug!(
                     "Printer ES5Class end (idx={}, class_node={}, output_len={})",
                     idx.0,
@@ -814,9 +815,12 @@ impl<'a> Printer<'a> {
         class_node: NodeIndex,
     ) -> ClassES5Emitter<'a> {
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter.set_indent_level(self.writer.indent_level());
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter
+            .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
         }
@@ -966,6 +970,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
                 let es5_output = es5_emitter.emit_class(*class_node);
+                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
@@ -1165,6 +1170,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
                 let es5_output = es5_emitter.emit_class(*class_node);
+                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");

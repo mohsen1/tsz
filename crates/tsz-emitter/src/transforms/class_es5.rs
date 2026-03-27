@@ -98,6 +98,18 @@ impl<'a> ClassES5Emitter<'a> {
         self.tslib_prefix = enable;
     }
 
+    pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
+        self.transformer.set_use_define_for_class_fields(enable);
+    }
+
+    pub const fn set_temp_var_counter(&mut self, counter: u32) {
+        self.transformer.set_temp_var_counter(counter);
+    }
+
+    pub const fn temp_var_counter(&self) -> u32 {
+        self.transformer.temp_var_counter()
+    }
+
     /// Set transform directives for `ASTRef` nodes
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms.clone());
