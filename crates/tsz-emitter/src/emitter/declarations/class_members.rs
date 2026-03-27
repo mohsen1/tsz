@@ -452,7 +452,9 @@ impl<'a> Printer<'a> {
                 self.emit(prop.name);
                 self.write(" = ");
             }
-            self.emit(prop.initializer);
+            self.with_scoped_static_initializer_context_cleared(|this| {
+                this.emit(prop.initializer);
+            });
             self.write("; }");
             return;
         }
@@ -466,7 +468,9 @@ impl<'a> Printer<'a> {
 
         if prop.initializer.is_some() {
             self.write(" = ");
-            self.emit(prop.initializer);
+            self.with_scoped_static_initializer_context_cleared(|this| {
+                this.emit(prop.initializer);
+            });
         }
 
         self.write_semicolon();
@@ -920,7 +924,11 @@ impl<'a> Printer<'a> {
             }
             if self.ctx.options.use_define_for_class_fields {
                 self.write("Object.defineProperty(this, ");
-                self.emit_string_literal_text(name);
+                if name.starts_with('[') && name.ends_with(']') {
+                    self.write(&name[1..name.len() - 1]);
+                } else {
+                    self.emit_string_literal_text(name);
+                }
                 self.write(", {");
                 self.write_line();
                 self.increase_indent();
@@ -931,7 +939,9 @@ impl<'a> Printer<'a> {
                 self.write("writable: true,");
                 self.write_line();
                 self.write("value: ");
-                self.emit_expression(*init_idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_expression(*init_idx);
+                });
                 self.write_line();
                 self.decrease_indent();
                 self.write("});");
@@ -945,7 +955,9 @@ impl<'a> Printer<'a> {
                     self.write(name);
                 }
                 self.write(" = ");
-                self.emit_expression(*init_idx);
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_expression(*init_idx);
+                });
                 self.write(";");
                 // Emit trailing comments from the original class field.
                 // If pre-collected (field appeared before constructor in source), use them.

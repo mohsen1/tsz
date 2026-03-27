@@ -32,6 +32,56 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     contains_target_reference(arena, node_idx, ReferenceTarget::This)
 }
 
+/// Collect `this` references that appear in computed member names of a class.
+///
+/// This follows the same scope rules as `contains_this_reference`: nested non-arrow
+/// functions stop lexical `this` propagation, while computed member names remain
+/// part of class-evaluation semantics.
+#[must_use]
+pub fn collect_class_computed_name_this_references(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+) -> Vec<NodeIndex> {
+    let Some(class_node) = arena.get(class_idx) else {
+        return Vec::new();
+    };
+    let Some(class_data) = arena.get_class(class_node) else {
+        return Vec::new();
+    };
+
+    let mut refs = Vec::new();
+    for &member_idx in &class_data.members.nodes {
+        let Some(member) = arena.get(member_idx) else {
+            continue;
+        };
+
+        let name_idx = match member.kind {
+            kind if kind == syntax_kind_ext::PROPERTY_DECLARATION => {
+                arena.get_property_decl(member).map(|prop| prop.name)
+            }
+            kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+                arena.get_method_decl(member).map(|method| method.name)
+            }
+            kind if kind == syntax_kind_ext::GET_ACCESSOR
+                || kind == syntax_kind_ext::SET_ACCESSOR =>
+            {
+                arena.get_accessor(member).map(|accessor| accessor.name)
+            }
+            _ => None,
+        };
+
+        if let Some(name_idx) = name_idx
+            && arena
+                .get(name_idx)
+                .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        {
+            collect_target_references(arena, name_idx, ReferenceTarget::This, &mut refs);
+        }
+    }
+
+    refs
+}
+
 /// Check if an AST node contains a reference to `super`.
 #[must_use]
 pub fn contains_super_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
@@ -83,6 +133,43 @@ fn contains_target_reference(
     target_reference_children(arena, node_idx, target)
         .into_iter()
         .any(|child_idx| contains_target_reference(arena, child_idx, target))
+}
+
+fn collect_target_references(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    target: ReferenceTarget,
+    refs: &mut Vec<NodeIndex>,
+) {
+    let Some(node) = arena.get(node_idx) else {
+        return;
+    };
+
+    if target.include_keyword_check() {
+        match target {
+            ReferenceTarget::This if node.kind == SyntaxKind::ThisKeyword as u16 => {
+                refs.push(node_idx);
+                return;
+            }
+            ReferenceTarget::Super if node.kind == SyntaxKind::SuperKeyword as u16 => {
+                refs.push(node_idx);
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    if node.kind == SyntaxKind::Identifier as u16
+        && let Some(identifier) = arena.get_identifier(node)
+        && identifier.escaped_text == target.identifier_name()
+    {
+        refs.push(node_idx);
+        return;
+    }
+
+    for child_idx in target_reference_children(arena, node_idx, target) {
+        collect_target_references(arena, child_idx, target, refs);
+    }
 }
 
 fn target_reference_children(
