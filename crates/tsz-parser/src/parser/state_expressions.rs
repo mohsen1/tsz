@@ -1978,7 +1978,7 @@ impl ParserState {
                         .is_some_and(|node| node.kind == SyntaxKind::SuperKeyword as u16)
                     {
                         let type_arg_start = self.token_pos();
-                        let _ = self.parse_type_arguments();
+                        let type_args = self.parse_type_arguments();
                         let type_arg_end = self.token_full_start();
                         self.parse_error_at(
                             type_arg_start,
@@ -1986,6 +1986,22 @@ impl ParserState {
                             tsz_common::diagnostics::diagnostic_messages::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
                             tsz_common::diagnostics::diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
                         );
+                        if self.is_token(SyntaxKind::OpenParenToken) {
+                            self.next_token();
+                            let arguments = self.parse_argument_list();
+                            let end_pos = self.token_end();
+                            self.parse_expected(SyntaxKind::CloseParenToken);
+                            expr = self.arena.add_call_expr(
+                                syntax_kind_ext::CALL_EXPRESSION,
+                                start_pos,
+                                end_pos,
+                                CallExprData {
+                                    expression: expr,
+                                    type_arguments: Some(type_args),
+                                    arguments: Some(arguments),
+                                },
+                            );
+                        }
                         continue;
                     }
 
