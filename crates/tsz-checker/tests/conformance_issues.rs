@@ -191,8 +191,7 @@ if (Array.isArray(maybeArray)) {
         "Expected exactly one TS2339 on the false branch of Array.isArray, got: {diagnostics:?}"
     );
     assert!(
-        ts2339_messages[0].contains("toFixed")
-            && ts2339_messages[0].contains("number | number[]"),
+        ts2339_messages[0].contains("toFixed") && ts2339_messages[0].contains("number | number[]"),
         "Expected TS2339 to preserve the original union surface, got: {diagnostics:?}"
     );
     assert!(
