@@ -1185,6 +1185,7 @@ impl<'a> CheckerState<'a> {
 
         if skip_flow_narrowing
             && self.is_js_file()
+            && self.property_access_is_direct_write_target(idx)
             && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
         {
             let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
@@ -1195,6 +1196,25 @@ impl<'a> CheckerState<'a> {
                 )
             });
             if can_add_named_props {
+                return TypeId::ANY;
+            }
+        }
+
+        if skip_flow_narrowing
+            && self.is_js_file()
+            && self.property_access_is_direct_write_target(idx)
+            && let Some(base_export_name) =
+                self.current_file_commonjs_export_member_name(access.expression)
+        {
+            let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
+            if let Some(base_type) = surface.lookup_named_export(&base_export_name, self.ctx.types)
+                && (tsz_solver::visitor::is_object_like_type(self.ctx.types, base_type)
+                    || crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        base_type,
+                    )
+                    .is_some())
+            {
                 return TypeId::ANY;
             }
         }
@@ -2047,6 +2067,7 @@ impl<'a> CheckerState<'a> {
                         {
                             let export_namespace_type =
                                 self.current_file_commonjs_module_exports_namespace_type();
+                            display_object_type = export_namespace_type;
                             if let PropertyAccessResult::Success {
                                 type_id,
                                 write_type,

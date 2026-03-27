@@ -1785,6 +1785,49 @@ exports.K = NS.K;
     );
 }
 
+#[test]
+fn test_commonjs_module_exports_nested_namespace_keeps_nested_constructor_side() {
+    let diagnostics = check_commonjs_two_files(
+        "mod.js",
+        r#"
+module.exports.n = {};
+module.exports.n.K = function C() {
+    this.x = 10;
+};
+module.exports.Classic = class {
+    constructor() {
+        this.p = 1;
+    }
+};
+"#,
+        "use.js",
+        r#"
+import * as s from "./mod";
+
+var k = new s.n.K();
+k.x;
+var classic = new s.Classic();
+
+/** @param {s.n.K} c
+    @param {s.Classic} classic */
+function f(c, classic) {
+    c.x;
+    classic.p;
+}
+"#,
+        "./mod",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339 | 2351 | 2741))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected nested CommonJS module.exports namespace constructor access to stay typed, got: {relevant:#?}"
+    );
+}
+
 // --- Surface caching correctness ---
 
 #[test]
