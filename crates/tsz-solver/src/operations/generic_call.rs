@@ -1868,9 +1868,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let type_param_name = self.interner.resolve_atom(tp.name);
             let ty = if let Some(contextual_ty) = structural_return_subst.get(tp.name) {
-                if self.can_apply_contextual_return_substitution(&mut infer_ctx, var, ty, &var_map)
-                    && self.should_use_contextual_return_substitution(ty, contextual_ty, &var_map)
-                {
+                let can_apply = self.can_apply_contextual_return_substitution(
+                    &mut infer_ctx,
+                    var,
+                    ty,
+                    &var_map,
+                );
+                let should_use =
+                    self.should_use_contextual_return_substitution(ty, contextual_ty, &var_map);
+                // When the variable was NOT inferred from a direct parameter match
+                // (i.e., it was inferred structurally from e.g. callback return types),
+                // allow the contextual return substitution to override even when
+                // can_apply would normally block it. This handles cases like:
+                //   let xx: 0 | 1 | 2 = invoke(() => 1);
+                // where T gets NakedTypeVariable candidate `number` from the lambda
+                // return type, but the contextual type `0 | 1 | 2` is strictly narrower
+                // and should take priority. Direct parameter vars (e.g., `foo<T>(x: T)`)
+                // are excluded because their inference is authoritative.
+                let indirect_narrowing_override =
+                    !direct_param_vars.contains(&var) && should_use && !can_apply;
+                if (can_apply && should_use) || indirect_narrowing_override {
                     contextual_ty
                 } else {
                     ty
