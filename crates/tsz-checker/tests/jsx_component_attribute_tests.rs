@@ -1757,6 +1757,31 @@ var obj7 = { x: 'foo' };
     );
 }
 
+#[test]
+fn test_intrinsic_jsx_spread_callback_property_uses_method_signature_context() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        test1: { x?: (n: { len: number }) => number };
+    }
+}
+
+<test1 {...{ x: (n) => 0 }} />;
+<test1 {...{ x: (n) => n.len }} />;
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "JSX spread callback props should contextually type parameters, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "JSX spread callback props should preserve callback member access, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // JSX Children Contextual Typing
 // =============================================================================
