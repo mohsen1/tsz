@@ -146,8 +146,7 @@ impl<'a> CheckerState<'a> {
 
                         match element.kind {
                             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                                let Some(prop) =
-                                    checker.ctx.arena.get_property_assignment(element)
+                                let Some(prop) = checker.ctx.arena.get_property_assignment(element)
                                 else {
                                     continue;
                                 };
