@@ -1660,6 +1660,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Elide non-exported import equals declarations that are not used by the public API
         if !is_exported && !already_exported {
+            if self.inside_non_ambient_namespace && !self.is_ns_member_used_by_exports(import_idx) {
+                return;
+            }
+
             // When no usage tracking is available, non-exported `import = require(...)`
             // declarations are almost always value-level and not needed in .d.ts output.
             if self.used_symbols.is_none() {

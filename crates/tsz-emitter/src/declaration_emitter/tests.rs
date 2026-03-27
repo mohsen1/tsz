@@ -5762,6 +5762,45 @@ namespace M {
     );
 }
 
+#[test]
+fn test_non_ambient_namespace_unused_aliases_are_elided() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare namespace External {
+    interface Thing {}
+}
+
+namespace M {
+    import Alias = External;
+    class Hidden {
+        value: string;
+    }
+
+    export interface Visible {
+        value: string;
+    }
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("import Alias = External;"),
+        "Expected unused non-exported import alias to be elided inside namespace: {output}"
+    );
+    assert!(
+        !output.contains("class Hidden"),
+        "Expected unused non-exported class to be elided inside namespace: {output}"
+    );
+    assert!(
+        output.contains("declare namespace M"),
+        "Expected namespace to be preserved: {output}"
+    );
+    assert!(
+        output.contains("interface Visible"),
+        "Expected exported interface body member to be preserved: {output}"
+    );
+}
+
 // =============================================================================
 // Systematic DTS emit probes
 // =============================================================================
