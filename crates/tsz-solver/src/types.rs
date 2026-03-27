@@ -153,22 +153,27 @@ impl TypeId {
     /// First user-defined type ID (after built-in intrinsics)
     pub const FIRST_USER: u32 = 100;
 
+    #[inline]
     pub const fn is_intrinsic(self) -> bool {
         self.0 < Self::FIRST_USER
     }
 
+    #[inline]
     pub fn is_error(self) -> bool {
         self == Self::ERROR
     }
 
+    #[inline]
     pub fn is_any(self) -> bool {
         self == Self::ANY
     }
 
+    #[inline]
     pub fn is_unknown(self) -> bool {
         self == Self::UNKNOWN
     }
 
+    #[inline]
     pub fn is_never(self) -> bool {
         self == Self::NEVER
     }
