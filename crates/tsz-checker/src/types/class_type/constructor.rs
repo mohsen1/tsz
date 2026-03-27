@@ -294,9 +294,14 @@ impl<'a> CheckerState<'a> {
             .into_values()
             .collect();
 
-        let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let mut methods: FxHashMap<Atom, MethodAggregate> = FxHashMap::default();
-        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
+        // PERF: Pre-size maps based on member count to avoid rehashing
+        let member_count = class.members.nodes.len();
+        let mut properties: FxHashMap<Atom, PropertyInfo> =
+            FxHashMap::with_capacity_and_hasher(member_count, Default::default());
+        let mut methods: FxHashMap<Atom, MethodAggregate> =
+            FxHashMap::with_capacity_and_hasher(member_count / 2, Default::default());
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> =
+            FxHashMap::with_capacity_and_hasher(4, Default::default());
         let mut static_string_index: Option<IndexSignature> = None;
         let mut static_number_index: Option<IndexSignature> = None;
         let mut has_static_late_bound_members = false;
@@ -306,7 +311,7 @@ impl<'a> CheckerState<'a> {
         // members as `any`-typed placeholders. Without this, references like
         // `Class.laterMember` inside an earlier static initializer would get a
         // false TS2339 instead of resolving to `any`.
-        let mut all_static_member_names: Vec<Atom> = Vec::new();
+        let mut all_static_member_names: Vec<Atom> = Vec::with_capacity(member_count);
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -344,7 +349,7 @@ impl<'a> CheckerState<'a> {
         // that type inference for generic functions can extract type arguments from
         // construct-signature constraints (e.g., `make<P>(x: { new(): { props: P } })`).
         let rough_instance_return_type = {
-            let mut inst_props: Vec<PropertyInfo> = Vec::new();
+            let mut inst_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
@@ -406,7 +411,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
             }
-            let mut sigs = Vec::new();
+            let mut sigs = Vec::with_capacity(4);
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
@@ -1067,7 +1072,8 @@ impl<'a> CheckerState<'a> {
                 // ── Partial CONSTRUCTOR type (for VALUE references) ──
                 // Build from already-processed static members + inherited base statics.
                 let mut partial_ctor_props: Vec<PropertyInfo> =
-                    properties.values().cloned().collect();
+                    Vec::with_capacity(properties.len() + 8);
+                partial_ctor_props.extend(properties.values().cloned());
 
                 // Include inherited static properties from base class if available
                 if let Some(ref heritage_clauses) = class.heritage_clauses {
@@ -1098,7 +1104,7 @@ impl<'a> CheckerState<'a> {
                             && let Some(&base_type) = self.ctx.symbol_types.get(&base_sym_id)
                         {
                             let base_props = self.static_properties_from_type(base_type);
-                            let own_names: std::collections::HashSet<_> =
+                            let own_names: FxHashSet<_> =
                                 partial_ctor_props.iter().map(|p| p.name).collect();
                             for (name, prop) in base_props {
                                 if !own_names.contains(&name) {
@@ -1126,7 +1132,7 @@ impl<'a> CheckerState<'a> {
                 // This allows type references to the class being constructed to resolve
                 // correctly, preventing false TS2339 on property access (e.g.,
                 // `(this as Bar<any>).num` where `num!: number` is declared).
-                let mut inst_props: Vec<PropertyInfo> = Vec::new();
+                let mut inst_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
                 for &member_idx in &class.members.nodes {
                     let Some(member_node) = self.ctx.arena.get(member_idx) else {
                         continue;
@@ -1283,7 +1289,7 @@ impl<'a> CheckerState<'a> {
                                     return None;
                                 }
 
-                                let mut type_args = Vec::new();
+                                let mut type_args = Vec::with_capacity(base_type_params.len());
                                 for &arg_idx in &args.nodes {
                                     type_args.push(self.get_type_from_type_node(arg_idx));
                                 }
@@ -1392,7 +1398,7 @@ impl<'a> CheckerState<'a> {
                                 return None;
                             }
 
-                            let mut type_args_vec = Vec::new();
+                            let mut type_args_vec = Vec::with_capacity(base_type_params.len());
                             for &arg_idx in &args.nodes {
                                 type_args_vec.push(self.get_type_from_type_node(arg_idx));
                             }
@@ -1447,7 +1453,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
 
-                let mut type_args = Vec::new();
+                let mut type_args = Vec::with_capacity(type_arguments.map_or(0, |a| a.nodes.len()));
                 if let Some(args) = type_arguments {
                     for &arg_idx in &args.nodes {
                         type_args.push(self.get_type_from_type_node(arg_idx));
@@ -1558,7 +1564,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut construct_signatures = Vec::new();
+        let mut construct_signatures = Vec::with_capacity(4);
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -1729,7 +1735,14 @@ impl<'a> CheckerState<'a> {
         construct_signatures: &[CallSignature],
     ) -> TypeId {
         let factory = self.ctx.types.factory();
-        let mut partial_ctor_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+        let estimated_cap = properties.len()
+            + methods.len()
+            + accessors.len()
+            + inherited_static_props.len()
+            + all_static_member_names.len()
+            + 1;
+        let mut partial_ctor_props: Vec<PropertyInfo> = Vec::with_capacity(estimated_cap);
+        partial_ctor_props.extend(properties.values().cloned());
 
         for (&name, method) in methods {
             let (signatures, optional) = if !method.overload_signatures.is_empty() {
@@ -1799,8 +1812,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Include inherited static properties from base class
-        let own_names: std::collections::HashSet<_> =
-            partial_ctor_props.iter().map(|p| p.name).collect();
+        let own_names: FxHashSet<_> = partial_ctor_props.iter().map(|p| p.name).collect();
         for prop in inherited_static_props {
             if !own_names.contains(&prop.name) {
                 partial_ctor_props.push(prop.clone());

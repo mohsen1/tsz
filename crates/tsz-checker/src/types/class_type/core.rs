@@ -408,8 +408,8 @@ impl<'a> CheckerState<'a> {
         // Methods are deferred to phase 2 so that a partial instance type (with property types)
         // can be pushed as `this`, allowing method body inference to resolve `this.x` references.
         let mut deferred_methods: Vec<(NodeIndex, &tsz_parser::parser::node::MethodDeclData)> =
-            Vec::new();
-        let mut deferred_accessors: Vec<DeferredAccessor<'_>> = Vec::new();
+            Vec::with_capacity(member_count / 2);
+        let mut deferred_accessors: Vec<DeferredAccessor<'_>> = Vec::with_capacity(4);
 
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -834,7 +834,10 @@ impl<'a> CheckerState<'a> {
             // including placeholder entries for ALL deferred methods so that
             // methods can reference each other via `this` (e.g. `typeof a`
             // in return type where `a` defaults to `this.getNumber()`).
-            let mut partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+            let mut partial_props: Vec<PropertyInfo> = Vec::with_capacity(
+                properties.len() + deferred_methods.len() + deferred_accessors.len(),
+            );
+            partial_props.extend(properties.values().cloned());
             for (_, method) in &deferred_methods {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -999,7 +1002,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if !deferred_accessors.is_empty() {
-            let mut partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+            let mut partial_props: Vec<PropertyInfo> =
+                Vec::with_capacity(properties.len() + methods.len());
+            partial_props.extend(properties.values().cloned());
             for (&name, method) in &methods {
                 let (signatures, optional) = if !method.overload_signatures.is_empty() {
                     (&method.overload_signatures, method.overload_optional)
@@ -1396,7 +1401,7 @@ impl<'a> CheckerState<'a> {
                     // Otherwise, continue - the forward reference might resolve later
                 }
 
-                let mut type_args = Vec::new();
+                let mut type_args = Vec::with_capacity(type_arguments.map_or(0, |a| a.nodes.len()));
                 if let Some(args) = type_arguments {
                     for &arg_idx in &args.nodes {
                         type_args.push(self.get_type_from_type_node(arg_idx));
