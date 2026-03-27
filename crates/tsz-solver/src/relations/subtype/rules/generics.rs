@@ -20,6 +20,30 @@ use crate::visitor::{
 use crate::visitors::visitor_predicates::is_primitive_type;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn iterator_protocol_mismatch_for_same_application_family(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> bool {
+        let Some(query_db) = self.query_db else {
+            return false;
+        };
+
+        let iterator_mismatch = |checker: &mut Self, is_async: bool| {
+            let source_info = crate::operations::get_iterator_info(query_db, source_type, is_async);
+            let target_info = crate::operations::get_iterator_info(query_db, target_type, is_async);
+            source_info.zip(target_info).is_some_and(|(source, target)| {
+                !checker.check_subtype(source.yield_type, target.yield_type).is_true()
+                    || !checker
+                        .check_subtype(source.return_type, target.return_type)
+                        .is_true()
+                    || !checker.check_subtype(target.next_type, source.next_type).is_true()
+            })
+        };
+
+        iterator_mismatch(self, false) || iterator_mismatch(self, true)
+    }
+
     fn application_cycle_with_concrete_differing_args_is_unsound(
         &self,
         s_app: &crate::types::TypeApplication,
@@ -324,6 +348,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             shared_base_def
         };
+        let source_type = self.interner.application(s_app.base, s_app.args.clone());
+        let target_type = self.interner.application(t_app.base, t_app.args.clone());
+
+        if same_application_family
+            && self.iterator_protocol_mismatch_for_same_application_family(source_type, target_type)
+        {
+            return SubtypeResult::False;
+        }
 
         // =======================================================================
         // VARIANCE-AWARE FAST PATH: Same base type with variance checking
@@ -434,10 +466,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         // Partial<{a, b}> where both expand to all-optional objects
                         // that are mutually assignable despite differing type arguments.
                         if any_checked && !all_ok && needs_structural_fallback {
-                            let source_type =
-                                self.interner.application(s_app.base, s_app.args.clone());
-                            let target_type =
-                                self.interner.application(t_app.base, t_app.args.clone());
                             let s_eval = self.evaluate_type(source_type);
                             let t_eval = self.evaluate_type(target_type);
                             if s_eval != source_type || t_eval != target_type {
@@ -512,15 +540,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let result = match (s_expanded, t_expanded) {
             (Some(s_struct), Some(t_struct)) => self.check_subtype(s_struct, t_struct),
             (Some(s_struct), None) => {
-                // Re-intern the target application for comparison
-                let t_app = self.interner.type_application(t_app_id);
-                let target = self.interner.application(t_app.base, t_app.args.clone());
-                self.check_subtype(s_struct, target)
+                self.check_subtype(s_struct, target_type)
             }
             (None, Some(t_struct)) => {
-                let s_app = self.interner.type_application(s_app_id);
-                let source = self.interner.application(s_app.base, s_app.args.clone());
-                self.check_subtype(source, t_struct)
+                self.check_subtype(source_type, t_struct)
             }
             (None, None) => {
                 // Evaluation fallback: when try_expand_application fails for both sides
@@ -528,8 +551,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // where the resolver can't resolve the definition body), try full type
                 // evaluation. This can resolve Application types through the evaluation
                 // pipeline (including mapped type expansion) to produce concrete objects.
-                let source_type = self.interner.application(s_app.base, s_app.args.clone());
-                let target_type = self.interner.application(t_app.base, t_app.args.clone());
                 let s_eval = self.evaluate_type(source_type);
                 let t_eval = self.evaluate_type(target_type);
                 if s_eval != source_type || t_eval != target_type {

@@ -316,8 +316,21 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
-
-        let shape = tsz_solver::type_queries::get_function_shape(self.ctx.types, arg_type)?;
+        let normalized_arg_type = self.evaluate_type_with_env(arg_type);
+        let normalized_arg_type = self.resolve_type_for_property_access(normalized_arg_type);
+        let normalized_arg_type = self.resolve_lazy_type(normalized_arg_type);
+        let normalized_arg_type = self.evaluate_application_type(normalized_arg_type);
+        let shape =
+            crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                normalized_arg_type,
+            )
+            .or_else(|| {
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    arg_type,
+                )
+            })?;
         let expected = self.evaluate_application_type(param_type);
         let expected = self.normalize_contextual_signature_with_env(expected);
 
@@ -380,16 +393,52 @@ impl<'a> CheckerState<'a> {
             ));
         }
 
-        let return_display_type = if func.type_annotation.is_some() {
-            shape.return_type
+        let return_display = if func.type_annotation.is_some() {
+            self.format_type_for_assignability_message(shape.return_type)
+        } else if func.asterisk_token {
+            let generator_name = if func.is_async {
+                "AsyncGenerator"
+            } else {
+                "Generator"
+            };
+            let yield_type = self
+                .get_generator_yield_type_argument(shape.return_type)
+                .unwrap_or(TypeId::ANY);
+            let return_type = self
+                .get_generator_return_type_argument(shape.return_type)
+                .filter(|ty| !matches!(*ty, TypeId::UNKNOWN | TypeId::ERROR))
+                .unwrap_or(TypeId::VOID);
+            let next_type = self
+                .get_generator_next_type_argument(shape.return_type)
+                .filter(|ty| !matches!(*ty, TypeId::UNKNOWN | TypeId::ERROR))
+                .unwrap_or(TypeId::ANY);
+            format!(
+                "{generator_name}<{}, {}, {}>",
+                self.format_type_for_assignability_message(yield_type),
+                self.format_type_for_assignability_message(return_type),
+                self.format_type_for_assignability_message(next_type)
+            )
         } else {
-            tsz_solver::widen_literal_type(self.ctx.types, shape.return_type)
+            let return_display_type = tsz_solver::widen_literal_type(self.ctx.types, shape.return_type);
+            self.format_type_for_assignability_message(return_display_type)
+        };
+        let type_param_prefix = if shape.type_params.is_empty() {
+            String::new()
+        } else {
+            let names = shape
+                .type_params
+                .iter()
+                .map(|tp| self.ctx.types.resolve_atom_ref(tp.name).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("<{names}>")
         };
 
         Some(format!(
-            "({}) => {}",
+            "{}({}) => {}",
+            type_param_prefix,
             rendered.join(", "),
-            self.format_type_for_assignability_message(return_display_type)
+            return_display
         ))
     }
 

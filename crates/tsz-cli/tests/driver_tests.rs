@@ -714,6 +714,66 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 }
 
 #[test]
+fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_outer_ts2345() {
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts",
+    ) else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("test.ts"), &source);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::EsNext);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2345: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE)
+        .collect();
+    let ts2488: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR)
+        .collect();
+
+    assert_eq!(
+        ts2345.len(),
+        2,
+        "Expected fixture to report the two outer TS2345 callback mismatches, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+    assert_eq!(
+        ts2488.len(),
+        1,
+        "Expected fixture to keep the single inner TS2488, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+    assert!(
+        ts2345.iter().all(|diag| diag.message_text.contains("Generator<number, void, any>")),
+        "Expected outer TS2345 diagnostics to preserve the unannotated generator surface `Generator<number, void, any>`, got diagnostics: {:?}",
+        ts2345
+    );
+    assert!(
+        ts2488[0].message_text.contains("Type '() => T'"),
+        "Expected inner TS2488 diagnostic to preserve the non-generic function surface `() => T`, got: {:?}",
+        ts2488[0]
+    );
+}
+
+#[test]
 fn compile_default_import_of_merged_interface_and_const_export_is_callable() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

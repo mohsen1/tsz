@@ -17,6 +17,14 @@ use crate::test_utils::check_source;
 /// because `get_generator_return_type_argument` uses direct Application arg extraction
 /// via `is_generator_like_name`.
 const GENERATOR_STUBS: &str = r#"
+interface SymbolConstructor {
+    readonly iterator: symbol;
+}
+declare var Symbol: SymbolConstructor;
+interface ReadonlyArray<T> {
+    readonly length: number;
+    [n: number]: T;
+}
 interface Generator<T = unknown, TReturn = any, TNext = unknown> {
     next(value: TNext): IteratorResult<T, TReturn>;
     return(value: TReturn): IteratorResult<T, TReturn>;
@@ -212,5 +220,43 @@ function* g(): Iterator<Iterable<(x: string) => number>> {
     assert_eq!(
         ts7006_count, 0,
         "yield operand generator IIFE should contextually type nested callback params, got: {diags:?}"
+    );
+}
+
+#[test]
+fn yield_star_generator_callback_mismatch_reports_outer_ts2345() {
+    let source = r#"
+declare const inner3: {
+  <A>(value: A): {
+    (): A;
+    [Symbol.iterator](): {
+      next(...args: ReadonlyArray<any>): IteratorResult<number, A>;
+    };
+  };
+};
+
+declare function outer3<A>(
+  body: (value: A) => Generator<never, unknown, unknown>,
+): void;
+
+outer3(function* <T>(value: T) {
+  yield* inner3(value);
+});
+
+outer3(function* <T>(value: T) {
+  const x = inner3(value);
+  yield* x;
+});
+"#;
+    let diags = check_with_strict(source);
+    let ts2345_count = diags.iter().filter(|(code, _)| *code == 2345).count();
+    let ts2488_count = diags.iter().filter(|(code, _)| *code == 2488).count();
+    assert_eq!(
+        ts2345_count, 2,
+        "outer generator callback should reject delegated number yield type against Generator<never, unknown, unknown>, got: {diags:?}"
+    );
+    assert_eq!(
+        ts2488_count, 0,
+        "iterable generator shape should not emit TS2488 in the valid inner3 cases, got: {diags:?}"
     );
 }
