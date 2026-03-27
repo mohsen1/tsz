@@ -1451,6 +1451,37 @@ impl<'a> CheckerState<'a> {
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
 
+                // For async functions, expand the return context to include Promise
+                // types so that `return new Promise(resolve => resolve())` can infer
+                // T = void during return type inference. The same transformation is
+                // applied in check_return_statement (core_statement_checks.rs) but
+                // that runs AFTER inference. During inference, the raw contextual
+                // return type (e.g., `void`) doesn't carry enough information for
+                // the generic Promise constructor to infer T. Transform:
+                //   void -> void | PromiseLike<void> | Promise<void>
+                // This enables contextually-typed async callbacks like
+                //   run(async () => { return new Promise(resolve => resolve()); })
+                // to correctly infer T = void when `run` expects `() => void`.
+                let inference_return_context = if is_async
+                    && !is_generator
+                    && let Some(ctx_type) = return_context
+                    && ctx_type != TypeId::ANY
+                    && ctx_type != TypeId::UNKNOWN
+                    && ctx_type != TypeId::NEVER
+                    && !tsz_solver::is_union_type(self.ctx.types, ctx_type)
+                    && !self.is_promise_type(ctx_type)
+                {
+                    let promise_like_t = self.get_promise_like_type(ctx_type);
+                    let promise_t = self.get_promise_type(ctx_type);
+                    let mut members = vec![ctx_type, promise_like_t];
+                    if let Some(pt) = promise_t {
+                        members.push(pt);
+                    }
+                    Some(self.ctx.types.factory().union(members))
+                } else {
+                    return_context
+                };
+
                 // When the return context is (or references) a const type parameter,
                 // enable const assertion mode so array/object literals in the callback
                 // body are inferred as readonly tuples/readonly objects. This matches
@@ -1465,7 +1496,8 @@ impl<'a> CheckerState<'a> {
                         self.ctx.in_const_assertion = true;
                     }
                 }
-                let inferred = self.infer_return_type_from_body(idx, body, return_context);
+                let inferred =
+                    self.infer_return_type_from_body(idx, body, inference_return_context);
                 self.ctx.in_const_assertion = prev_const_assertion;
                 return_type = jsdoc_return_context.unwrap_or(inferred);
 

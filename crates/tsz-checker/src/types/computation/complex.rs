@@ -652,14 +652,22 @@ impl<'a> CheckerState<'a> {
                         }
                     };
                     let mut substitution = {
+                        // When the contextual type is a union containing a Promise member
+                        // (e.g., `void | PromiseLike<void> | Promise<void>` from async
+                        // function return context), extract the Promise<T> member and use
+                        // T for inference. This ensures `new Promise((resolve) => { resolve(); })`
+                        // correctly infers T = void when the contextual type comes from
+                        // an async function return.
                         let round2_contextual_type = if let Some(contextual) = contextual_type
                             && contextual != TypeId::ANY
                             && contextual != TypeId::UNKNOWN
                             && contextual != TypeId::NEVER
                             && !self.type_contains_error(contextual)
-                            && self.is_promise_type(contextual)
+                            && let Some(promise_member) =
+                                self.find_promise_in_contextual_type(contextual)
                         {
-                            if let Some(inner) = self.promise_like_return_type_argument(contextual)
+                            if let Some(inner) =
+                                self.promise_like_return_type_argument(promise_member)
                             {
                                 let promise_like_t = self.get_promise_like_type(inner);
                                 let promise_t = self.get_promise_type(inner);
@@ -687,9 +695,15 @@ impl<'a> CheckerState<'a> {
                     if let Some(contextual) = contextual_type {
                         use tsz_binder::SymbolId;
 
+                        // When the contextual type is a union containing a Promise member
+                        // (e.g., from async function return context), use the Promise
+                        // member for application-matching against the constructor return type.
+                        let contextual_for_app_match = self
+                            .find_promise_in_contextual_type(contextual)
+                            .unwrap_or(contextual);
                         if let (Some((src_base, src_args)), Some((dst_base, dst_args))) = (
                             query::get_application_info(self.ctx.types, shape.return_type),
-                            query::get_application_info(self.ctx.types, contextual),
+                            query::get_application_info(self.ctx.types, contextual_for_app_match),
                         ) {
                             let base_name = |base: TypeId| -> Option<&str> {
                                 query::lazy_def_id(self.ctx.types, base)
@@ -738,9 +752,10 @@ impl<'a> CheckerState<'a> {
                         {
                             let promise_executor_context = if i == 0 {
                                 if let Some(contextual) = contextual_type
-                                    && self.is_promise_type(contextual)
+                                    && let Some(promise_member) =
+                                        self.find_promise_in_contextual_type(contextual)
                                     && let Some(inner) =
-                                        self.promise_like_return_type_argument(contextual)
+                                        self.promise_like_return_type_argument(promise_member)
                                     && let Some(exec_shape) =
                                         query::get_function_shape(self.ctx.types, param_type)
                                 {
@@ -779,9 +794,10 @@ impl<'a> CheckerState<'a> {
                             };
                             let mut round2_substitution = substitution.clone();
                             if let Some(contextual) = contextual_type
-                                && self.is_promise_type(contextual)
+                                && let Some(promise_member) =
+                                    self.find_promise_in_contextual_type(contextual)
                                 && let Some(inner) =
-                                    self.promise_like_return_type_argument(contextual)
+                                    self.promise_like_return_type_argument(promise_member)
                             {
                                 for ty in tsz_solver::visitor::collect_all_types(
                                     self.ctx.types,
