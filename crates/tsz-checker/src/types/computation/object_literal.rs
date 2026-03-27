@@ -360,6 +360,19 @@ impl<'a> CheckerState<'a> {
                             matches!(lookup_presence, ContextualPropertyPresence::Present);
                         let mut property_context_type =
                             self.contextual_object_property_type_for_lookup(ctx_type, &name);
+                        // For optional properties (e.g., `set?` in ProxyHandler), the
+                        // contextual type includes `undefined` from optionality. When
+                        // the property IS present in the literal, that `undefined` is
+                        // irrelevant — the property is being assigned, not read. Strip
+                        // it so the callable type flows through for generic inference
+                        // (e.g., `deprecate<T extends Function>(fn: T): T` should
+                        // infer T as the handler type, not fall back to `Function`).
+                        if let Some(pct) = property_context_type {
+                            let stripped = tsz_solver::remove_undefined(self.ctx.types, pct);
+                            if stripped != TypeId::UNDEFINED && stripped != pct {
+                                property_context_type = Some(stripped);
+                            }
+                        }
                         if initializer_is_function_like
                             && property_context_type.is_none()
                             && !allows_callable_fallback
