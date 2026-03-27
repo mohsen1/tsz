@@ -855,7 +855,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let overrides = CheckerOverrideProvider::new(self, None);
-        let result = is_assignable_with_overrides(
+        let relation_result = is_assignable_with_overrides(
             &AssignabilityQueryInputs {
                 db: self.ctx.types,
                 resolver: &self.ctx,
@@ -867,6 +867,13 @@ impl<'a> CheckerState<'a> {
             },
             &overrides,
         );
+        let result = relation_result.is_related();
+
+        // TS2859: propagate depth-exceeded flag so callers can emit
+        // "Excessive complexity comparing types" diagnostic.
+        if relation_result.depth_exceeded {
+            self.ctx.relation_depth_exceeded.set(true);
+        }
 
         if is_cacheable {
             let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
@@ -920,6 +927,11 @@ impl<'a> CheckerState<'a> {
             Some(&self.ctx),
             self.ctx.sound_mode(),
         );
+
+        // Propagate relation depth exceeded to checker context for TS2859.
+        if outcome.depth_exceeded {
+            self.ctx.relation_depth_exceeded.set(true);
+        }
 
         // Checker-only post-check: the solver may say "related" but the checker
         // can downgrade via deferred conditional types or other checker-specific
@@ -1180,7 +1192,7 @@ impl<'a> CheckerState<'a> {
             let env = self.ctx.type_env.borrow();
             let flags = self.ctx.pack_relation_flags();
             let overrides = CheckerOverrideProvider::new(self, Some(&*env));
-            is_assignable_with_overrides(
+            let relation_result = is_assignable_with_overrides(
                 &AssignabilityQueryInputs {
                     db: self.ctx.types,
                     resolver: &*env,
@@ -1191,7 +1203,11 @@ impl<'a> CheckerState<'a> {
                     sound_mode: self.ctx.sound_mode(),
                 },
                 &overrides,
-            )
+            );
+            if relation_result.depth_exceeded {
+                self.ctx.relation_depth_exceeded.set(true);
+            }
+            relation_result.is_related()
         };
 
         if result

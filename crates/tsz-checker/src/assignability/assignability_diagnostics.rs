@@ -434,11 +434,31 @@ impl<'a> CheckerState<'a> {
 
         // Canonical relation path: execute a RelationRequest to get both the
         // assignability result and structured failure info in one boundary call.
-        // The `is_assignable_to` call shares solver preparation (evaluate, env
-        // resolution, variance fast-path) and the outcome's `weak_union_violation`
-        // flag feeds into `should_skip_weak_union_error_with_outcome` to avoid a
-        // second solver round-trip for failure analysis.
-        if self.is_assignable_to(source, target) {
+
+        // Reset the relation depth flag before the assignability check so we
+        // can detect fresh depth exceedance from this particular relation.
+        self.ctx.relation_depth_exceeded.set(false);
+        let assignable = self.is_assignable_to(source, target);
+
+        // TS2859: if the solver hit its recursion/complexity limit during the check
+        // (including the constituent-count overflow guard in check_subtype_inner),
+        // emit "Excessive complexity comparing types" regardless of whether the
+        // relation technically succeeded or failed.
+        if self.ctx.relation_depth_exceeded.get() {
+            let source_name = self.format_type_diagnostic(source);
+            let target_name = self.format_type_diagnostic(target);
+            self.error_at_node(
+                diag_idx,
+                &format!(
+                    "Excessive complexity comparing types '{}' and '{}'.",
+                    source_name, target_name
+                ),
+                crate::diagnostics::diagnostic_codes::EXCESSIVE_COMPLEXITY_COMPARING_TYPES_AND,
+            );
+            return false;
+        }
+
+        if assignable {
             return true;
         }
 

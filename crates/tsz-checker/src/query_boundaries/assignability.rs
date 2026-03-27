@@ -233,7 +233,7 @@ pub(crate) fn are_types_overlapping_with_env(
 pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
-) -> bool {
+) -> tsz_solver::RelationResult {
     let AssignabilityQueryInputs {
         db,
         resolver,
@@ -261,7 +261,6 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
         context,
         overrides,
     })
-    .is_related()
 }
 
 /// Like `is_assignable_with_overrides` but skips weak type checks (TS2559).
@@ -414,7 +413,7 @@ pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
     ctx: Option<&crate::context::CheckerContext<'_>>,
     collect_failure_analysis: bool,
 ) -> AssignabilityGateResult {
-    let related = is_assignable_with_overrides(inputs, overrides);
+    let related = is_assignable_with_overrides(inputs, overrides).is_related();
 
     if !collect_failure_analysis || related {
         return AssignabilityGateResult {
@@ -451,6 +450,10 @@ pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
 pub(crate) struct RelationOutcome {
     /// Whether the relation holds (source is assignable to target).
     pub related: bool,
+    /// Whether the solver's recursion depth limit was exceeded during
+    /// the relation check. When true, the caller should emit TS2859
+    /// ("Excessive complexity comparing types").
+    pub depth_exceeded: bool,
     /// Structured failure classification when `related` is false.
     /// Converted from the solver's `SubtypeFailureReason`.
     pub failure: Option<super::relation_types::RelationFailure>,
@@ -497,11 +500,26 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         sound_mode,
     };
 
-    let related = is_assignable_with_overrides(&inputs, overrides);
+    let relation_result = is_assignable_with_overrides(&inputs, overrides);
+    let related = relation_result.is_related();
+    let depth_exceeded = relation_result.depth_exceeded;
 
-    if related {
+    if related && !depth_exceeded {
         return RelationOutcome {
             related: true,
+            depth_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        };
+    }
+
+    // If depth was exceeded but the relation appears to hold, we still
+    // signal depth_exceeded so the caller can emit TS2859.
+    if related && depth_exceeded {
+        return RelationOutcome {
+            related: true,
+            depth_exceeded: true,
             failure: None,
             weak_union_violation: false,
             property_classification: None,
@@ -542,6 +560,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
 
     RelationOutcome {
         related: false,
+        depth_exceeded,
         failure,
         weak_union_violation,
         property_classification,
