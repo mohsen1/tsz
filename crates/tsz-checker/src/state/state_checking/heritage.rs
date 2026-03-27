@@ -425,9 +425,17 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         } else if !is_interface_only && is_class_declaration {
-                            // Fast path: class symbols are valid extends targets without needing
-                            // full symbol type resolution here.
-                            if !self.is_class_symbol(sym_to_check) {
+                            // Fast path: pure class symbols are valid extends targets without
+                            // needing full symbol type resolution here. Merged class/value
+                            // symbols (like a user class colliding with lib `Symbol`) still need
+                            // constructor validation because their value side may be non-newable.
+                            let skip_constructor_check = self
+                                .get_cross_file_symbol(sym_to_check)
+                                .is_some_and(|s| {
+                                    (s.flags & symbol_flags::CLASS) != 0
+                                        && (s.flags & symbol_flags::VARIABLE) == 0
+                                });
+                            if !skip_constructor_check {
                                 let symbol_type = if is_being_resolved {
                                     // Skip type resolution for symbols already being resolved to prevent infinite recursion
                                     TypeId::ERROR

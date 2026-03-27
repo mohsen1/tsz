@@ -83,6 +83,48 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_recursive_complicated_classes_emits_ts2507_for_symbol_extends() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+class Signature {
+    public parameters: ParameterSymbol[] = null;
+}
+
+function aEnclosesB(a: Symbol) {
+    return true;
+}
+
+class Symbol {
+    public bound: boolean;
+    public visible() {
+        var b: TypeSymbol;
+        return aEnclosesB(b);
+    }
+}
+
+class InferenceSymbol extends Symbol {}
+class ParameterSymbol extends InferenceSymbol {}
+class TypeSymbol extends InferenceSymbol {}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2507 && message.contains("SymbolConstructor")),
+        "Expected TS2507 mentioning SymbolConstructor, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_source_pragma_enables_no_property_access_from_index_signature() {
     let source = r#"
 // @noPropertyAccessFromIndexSignature: true
