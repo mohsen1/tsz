@@ -203,6 +203,68 @@ if (Array.isArray(maybeArray)) {
 }
 
 #[test]
+fn test_generic_constructor_callback_mismatch_reports_ts2345() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo6<T>(cb: { new(x: T): string; new(x: T, y?: T): string }) {
+    return cb;
+}
+
+declare var b: { new <T>(x: T, y: T): string };
+var r10 = foo6(b);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for the incompatible generic constructor callback, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2769),
+        "Expected the single-signature generic call to stay TS2345-only, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_constructor_callback_valid_cases_stay_clean() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo5<T>(cb: { new(x: T): string; new(x: number): T }) {
+    return cb;
+}
+
+declare var a: { new <T>(x: T): T };
+var r6 = foo5(a);
+
+function foo7<T>(x:T, cb: { new(x: T): string; new(x: T, y?: T): string }) {
+    return cb;
+}
+
+var r13 = foo7(1, a);
+declare var c: { new<T>(x: T): number; new<T>(x: number): T; }
+var r14 = foo7(1, c);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect TS2345 for valid generic constructor callback cases, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2769),
+        "Did not expect TS2769 for valid generic constructor callback cases, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unresolved_computed_class_method_contributes_indexed_callable_type() {
     let source = r#"
 declare var something: string;
