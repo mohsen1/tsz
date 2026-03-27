@@ -2227,14 +2227,22 @@ impl<'a> CheckerState<'a> {
                 needs_real_type_recheck,
                 shape_this_type,
             );
+        let finalized_contextual_param_types = generic_instantiated_params
+            .as_ref()
+            .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));
         let forced_block_body_callback_mismatch = self
             .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
-                ContextualTypeContext::with_expected_and_options(
-                    checker.ctx.types,
-                    callee_type_for_call,
-                    checker.ctx.compiler_options.no_implicit_any,
-                )
-                .get_parameter_type_for_call(index, args.len())
+                finalized_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(index).copied().flatten())
+                    .or_else(|| {
+                        ContextualTypeContext::with_expected_and_options(
+                            checker.ctx.types,
+                            callee_type_for_call,
+                            checker.ctx.compiler_options.no_implicit_any,
+                        )
+                        .get_parameter_type_for_call(index, args.len())
+                    })
             })
             .inspect(|&(index, actual, expected)| {
                 if let CallResult::Success(return_type) = result {
@@ -2250,12 +2258,17 @@ impl<'a> CheckerState<'a> {
             .is_some();
         let forced_binding_pattern_unknown_context_mismatch = self
             .current_binding_pattern_callback_unknown_context_arg(args, |checker, index| {
-                ContextualTypeContext::with_expected_and_options(
-                    checker.ctx.types,
-                    callee_type_for_call,
-                    checker.ctx.compiler_options.no_implicit_any,
-                )
-                .get_parameter_type_for_call(index, args.len())
+                finalized_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(index).copied().flatten())
+                    .or_else(|| {
+                        ContextualTypeContext::with_expected_and_options(
+                            checker.ctx.types,
+                            callee_type_for_call,
+                            checker.ctx.compiler_options.no_implicit_any,
+                        )
+                        .get_parameter_type_for_call(index, args.len())
+                    })
             })
             .inspect(|&(index, actual, expected)| {
                 if matches!(result, CallResult::Success(_))
