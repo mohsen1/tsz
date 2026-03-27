@@ -235,7 +235,7 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             } else {
-                let ok = self.check_assignable_or_report_at_without_source_elaboration(
+                let ok = self.check_assignable_or_report_at(
                     return_type,
                     expected_type,
                     source_error_node,
