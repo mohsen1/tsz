@@ -78,7 +78,8 @@ mod members;
 
 use crate::context::transform::TransformContext;
 use crate::transforms::ir::{
-    IRCatchClause, IRNode, IRParam, IRProperty, IRPropertyKey, IRPropertyKind, IRSwitchCase,
+    IRCatchClause, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
+    IRPropertyKind, IRSwitchCase,
 };
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
@@ -315,6 +316,9 @@ pub struct ES5ClassTransformer<'a> {
     temp_var_counter: u32,
     /// Mapping from computed property name expression `NodeIndex` to temp variable name.
     computed_prop_temp_map: std::collections::HashMap<NodeIndex, String>,
+    /// Alias used for `this` in static property initializers/static blocks for the current class.
+    current_static_class_alias: Option<String>,
+    use_define_for_class_fields: bool,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -335,7 +339,21 @@ impl<'a> ES5ClassTransformer<'a> {
             indent_base: 0,
             temp_var_counter: 0,
             computed_prop_temp_map: std::collections::HashMap::new(),
+            current_static_class_alias: None,
+            use_define_for_class_fields: false,
         }
+    }
+
+    pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
+        self.use_define_for_class_fields = enable;
+    }
+
+    pub const fn set_temp_var_counter(&mut self, counter: u32) {
+        self.temp_var_counter = counter;
+    }
+
+    pub const fn temp_var_counter(&self) -> u32 {
+        self.temp_var_counter
     }
 
     /// Check if an expression (possibly wrapped in type assertions) is side-effect-free.
@@ -673,6 +691,22 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_super(self.has_extends)
             .with_static(true)
             .with_class_alias(Some(class_alias.to_string()));
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_expression(idx)
+    }
+
+    /// Convert an AST expression to IR in static context with a raw `this` substitution.
+    fn convert_expression_static_with_raw_this_substitution(
+        &self,
+        idx: NodeIndex,
+        replacement: &str,
+    ) -> IRNode {
+        let mut converter = AstToIr::new(self.arena)
+            .with_super(self.has_extends)
+            .with_static(true)
+            .with_raw_this_substitution(Some(replacement.to_string()));
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }
@@ -1247,7 +1281,12 @@ impl<'a> ES5ClassTransformer<'a> {
         // This must happen before constructor/member IR emission so that temps
         // are available when building property assignment IR nodes.
         self.computed_prop_temp_map.clear();
-        self.temp_var_counter = 0;
+        self.current_static_class_alias = if self.static_members_need_class_alias(&class_data.members)
+        {
+            Some(self.generate_temp_name())
+        } else {
+            None
+        };
         // Each entry: (Option<temp_name>, expr_idx) for the comma expression
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex)> = Vec::new();
         for &member_idx in &class_data.members.nodes {
@@ -1286,7 +1325,6 @@ impl<'a> ES5ClassTransformer<'a> {
             {
                 true
             } else {
-                // In ES5 mode, useDefineForClassFields is always false
                 let is_private = self
                     .arena
                     .get(prop.name)
@@ -1294,7 +1332,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 let has_accessor = self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                prop.initializer.is_none() && !is_private && !has_accessor
+                prop.initializer.is_none()
+                    && !self.use_define_for_class_fields
+                    && !is_private
+                    && !has_accessor
             };
             if is_erased {
                 // Side-effect only: emit expression for effects but no temp.
@@ -2096,7 +2137,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    /// Emit a property initializer as an assignment
+    /// Emit a property initializer as an assignment or defineProperty.
     fn emit_property_initializer_ir(&self, prop_idx: NodeIndex, use_this: bool) -> Option<IRNode> {
         let prop_node = self.arena.get(prop_idx)?;
         let prop_data = self.arena.get_property_decl(prop_node)?;
@@ -2113,10 +2154,29 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
-        Some(IRNode::expr_stmt(IRNode::assign(
-            self.build_property_access(receiver, prop_name),
-            self.convert_expression(prop_data.initializer),
-        )))
+        let value = self.convert_expression(prop_data.initializer);
+
+        if self.use_define_for_class_fields {
+            Some(IRNode::DefineProperty {
+                target: Box::new(receiver),
+                property_name: self.get_method_name_ir(prop_data.name),
+                descriptor: IRPropertyDescriptor {
+                    get: None,
+                    set: None,
+                    value: Some(Box::new(value)),
+                    enumerable: true,
+                    configurable: true,
+                    writable: true,
+                    trailing_comment: None,
+                },
+                leading_comment: None,
+            })
+        } else {
+            Some(IRNode::expr_stmt(IRNode::assign(
+                self.build_property_access(receiver, prop_name),
+                value,
+            )))
+        }
     }
 
     /// Build property access node based on property name type

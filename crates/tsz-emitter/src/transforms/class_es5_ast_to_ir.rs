@@ -5,6 +5,12 @@
 
 use super::*;
 
+#[derive(Clone)]
+enum ThisSubstitution {
+    Identifier(String),
+    Raw(String),
+}
+
 /// Convert an AST node to IR, avoiding `ASTRef` when possible
 pub struct AstToIr<'a> {
     arena: &'a NodeArena,
@@ -12,8 +18,8 @@ pub struct AstToIr<'a> {
     this_captured: Cell<bool>,
     /// Transform directives from `LoweringPass`
     transforms: Option<TransformContext>,
-    /// Current class alias to use for `this` substitution in static methods
-    current_class_alias: Cell<Option<String>>,
+    /// Current `this` substitution to use when lowering static initializer contexts.
+    current_this_substitution: Cell<Option<ThisSubstitution>>,
     /// Whether we're inside a derived class (has extends clause) — needed for super lowering
     has_super: bool,
     /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
@@ -26,7 +32,7 @@ impl<'a> AstToIr<'a> {
             arena,
             this_captured: Cell::new(false),
             transforms: None,
-            current_class_alias: Cell::new(None),
+            current_this_substitution: Cell::new(None),
             has_super: false,
             is_static: false,
         }
@@ -52,7 +58,15 @@ impl<'a> AstToIr<'a> {
 
     /// Set the current class alias for `this` substitution
     pub fn with_class_alias(self, alias: Option<String>) -> Self {
-        self.current_class_alias.set(alias);
+        self.current_this_substitution
+            .set(alias.map(ThisSubstitution::Identifier));
+        self
+    }
+
+    /// Set the current raw expression to substitute for `this`.
+    pub fn with_raw_this_substitution(self, expr: Option<String>) -> Self {
+        self.current_this_substitution
+            .set(expr.map(ThisSubstitution::Raw));
         self
     }
 
@@ -113,10 +127,13 @@ impl<'a> AstToIr<'a> {
             k if k == SyntaxKind::NullKeyword as u16 => IRNode::NullLiteral,
             k if k == SyntaxKind::UndefinedKeyword as u16 => IRNode::Undefined,
             k if k == SyntaxKind::ThisKeyword as u16 => {
-                // If we have a class_alias set (static method context), use it instead of `this`
-                if let Some(alias) = self.current_class_alias.take() {
-                    self.current_class_alias.set(Some(alias.clone()));
-                    IRNode::Identifier(alias.into())
+                if let Some(substitution) = self.current_this_substitution.take() {
+                    self.current_this_substitution
+                        .set(Some(substitution.clone()));
+                    match substitution {
+                        ThisSubstitution::Identifier(alias) => IRNode::Identifier(alias.into()),
+                        ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
+                    }
                 } else {
                     IRNode::This {
                         captured: self.this_captured.get(),
@@ -1114,7 +1131,7 @@ impl<'a> AstToIr<'a> {
 
             // Regular function expressions have their own `this`, so we must
             // clear the class alias (it should NOT substitute `this` inside).
-            let prev_alias = self.current_class_alias.take();
+            let prev_substitution = self.current_this_substitution.take();
 
             let body = if func.body.is_none() {
                 vec![]
@@ -1132,7 +1149,7 @@ impl<'a> AstToIr<'a> {
             };
 
             // Restore previous alias
-            self.current_class_alias.set(prev_alias);
+            self.current_this_substitution.set(prev_substitution);
 
             IRNode::FunctionExpr {
                 name: name.map(Into::into),
@@ -1183,13 +1200,21 @@ impl<'a> AstToIr<'a> {
 
             // Save previous state and set captured flag if needed
             let prev_captured = self.this_captured.get();
-            let prev_alias = self.current_class_alias.take();
+            let prev_substitution = self.current_this_substitution.take();
+            let this_substitution = class_alias
+                .map(ThisSubstitution::Identifier)
+                .or_else(|| {
+                    if captures_this {
+                        prev_substitution.clone()
+                    } else {
+                        None
+                    }
+                });
 
-            if captures_this {
+            if captures_this && this_substitution.is_none() {
                 self.this_captured.set(true);
             }
-            // Set the class_alias so `this` references in the body get converted
-            self.current_class_alias.set(class_alias);
+            self.current_this_substitution.set(this_substitution);
 
             let params = self.convert_parameters(&arrow.parameters);
             let (body, is_expression_body, body_source_range) =
@@ -1218,7 +1243,7 @@ impl<'a> AstToIr<'a> {
 
             // Restore previous state
             self.this_captured.set(prev_captured);
-            self.current_class_alias.set(prev_alias);
+            self.current_this_substitution.set(prev_substitution);
 
             // Arrow functions become regular functions in ES5
 

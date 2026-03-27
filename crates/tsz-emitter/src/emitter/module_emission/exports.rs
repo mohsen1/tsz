@@ -391,6 +391,9 @@ impl<'a> Printer<'a> {
                                     });
 
                                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                                es5_emitter.set_temp_var_counter(
+                                    self.ctx.destructuring_state.temp_var_counter,
+                                );
                                 es5_emitter.set_indent_level(self.writer.indent_level());
                                 es5_emitter.set_transforms(self.transforms.clone());
                                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
@@ -409,6 +412,9 @@ impl<'a> Printer<'a> {
                                 {
                                     es5_emitter.set_tslib_prefix(true);
                                 }
+                                es5_emitter.set_use_define_for_class_fields(
+                                    self.ctx.options.use_define_for_class_fields,
+                                );
                                 // Pass decorator info so __decorate calls are inside the IIFE
                                 es5_emitter.set_decorator_info(ClassDecoratorInfo {
                                     class_decorators: legacy_decorators.clone(),
@@ -419,6 +425,8 @@ impl<'a> Printer<'a> {
                                         .emit_decorator_metadata,
                                 });
                                 let output = es5_emitter.emit_class(export.export_clause);
+                                self.ctx.destructuring_state.temp_var_counter =
+                                    es5_emitter.temp_var_counter();
                                 let mappings = es5_emitter.take_mappings();
                                 if !mappings.is_empty() && self.writer.has_source_map() {
                                     self.writer.write("");

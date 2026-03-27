@@ -264,6 +264,7 @@ impl<'a> Printer<'a> {
 
         let temp_name = "default_1".to_string();
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter.set_indent_level(self.writer.indent_level());
         // Pass transform directives to the ClassES5Emitter
         es5_emitter.set_transforms(self.transforms.clone());
@@ -278,7 +279,10 @@ impl<'a> Printer<'a> {
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
         }
+        es5_emitter
+            .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         let es5_output = es5_emitter.emit_class_with_name(class_node, &temp_name);
+        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
         let mappings = es5_emitter.take_mappings();
         if !mappings.is_empty() && self.writer.has_source_map() {
             self.writer.write("");

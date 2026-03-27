@@ -111,20 +111,41 @@ impl<'a> ES5ClassTransformer<'a> {
                 let leading_comment = self.extract_leading_comment(member_node);
                 let trailing_comment = self.extract_trailing_comment_for_method(method_data.body);
 
-                // ClassName.prototype.methodName = function () { body };
-                body.push(IRNode::PrototypeMethod {
-                    class_name: self.class_name.clone().into(),
-                    method_name,
-                    function: Box::new(IRNode::FunctionExpr {
-                        name: None,
-                        parameters: params,
-                        body: method_body,
-                        is_expression_body: false,
-                        body_source_range,
-                    }),
-                    leading_comment,
-                    trailing_comment,
-                });
+                let function = IRNode::FunctionExpr {
+                    name: None,
+                    parameters: params,
+                    body: method_body,
+                    is_expression_body: false,
+                    body_source_range,
+                };
+
+                if self.use_define_for_class_fields {
+                    body.push(IRNode::DefineProperty {
+                        target: Box::new(IRNode::prop(
+                            IRNode::id(self.class_name.clone()),
+                            "prototype",
+                        )),
+                        property_name: method_name,
+                        descriptor: IRPropertyDescriptor {
+                            get: None,
+                            set: None,
+                            value: Some(Box::new(function)),
+                            enumerable: false,
+                            configurable: true,
+                            writable: true,
+                            trailing_comment,
+                        },
+                        leading_comment,
+                    });
+                } else {
+                    body.push(IRNode::PrototypeMethod {
+                        class_name: self.class_name.clone().into(),
+                        method_name,
+                        function: Box::new(function),
+                        leading_comment,
+                        trailing_comment,
+                    });
+                }
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
@@ -178,8 +199,10 @@ impl<'a> ES5ClassTransformer<'a> {
                             descriptor: IRPropertyDescriptor {
                                 get: get_fn.map(Box::new),
                                 set: set_fn.map(Box::new),
+                                value: None,
                                 enumerable: false,
                                 configurable: true,
+                                writable: false,
                                 trailing_comment: None,
                             },
                             leading_comment,
@@ -253,8 +276,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         set: Some(Box::new(
                             self.build_auto_accessor_setter_function(&accessor.weakmap_name),
                         )),
+                        value: None,
                         enumerable: false,
                         configurable: true,
+                        writable: false,
                         trailing_comment: self.extract_trailing_comment_for_node(member_node),
                     },
                     leading_comment,
@@ -484,13 +509,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // If so, we need to emit `var _a; _a = ClassName;` and replace `this` with `_a`.
         // Note: `this` in static methods/getters/setters stays as `this` (they have their own
         // `this` binding at call time). Only property initializers and static blocks need aliasing.
-        let needs_class_alias = self.static_members_need_class_alias(&class_data.members);
-
-        let class_alias: Option<String> = if needs_class_alias {
-            Some("_a".to_string())
-        } else {
-            None
-        };
+        let class_alias = self.current_static_class_alias.clone();
 
         // Emit `var _a; _a = ClassName;` if needed
         if let Some(ref alias) = class_alias {
@@ -682,7 +701,12 @@ impl<'a> ES5ClassTransformer<'a> {
                     };
 
                     // Use class alias for the initializer value if needed
-                    let value = if let Some(ref alias) = class_alias {
+                    let value = if !self.class_decorators.is_empty() {
+                        self.convert_expression_static_with_raw_this_substitution(
+                            prop_data.initializer,
+                            "(void 0)",
+                        )
+                    } else if let Some(ref alias) = class_alias {
                         self.convert_expression_static_with_class_alias(
                             prop_data.initializer,
                             alias,
@@ -773,8 +797,10 @@ impl<'a> ES5ClassTransformer<'a> {
                             descriptor: IRPropertyDescriptor {
                                 get: get_fn.map(Box::new),
                                 set: set_fn.map(Box::new),
+                                value: None,
                                 enumerable: false,
                                 configurable: true,
+                                writable: false,
                                 trailing_comment: None,
                             },
                             leading_comment,
@@ -879,15 +905,7 @@ impl<'a> ES5ClassTransformer<'a> {
             false
         });
 
-        let needs_class_alias = self.static_members_need_class_alias(&class_data.members);
-        let class_alias: Option<String> = if needs_class_alias {
-            Some("_a".to_string())
-        } else {
-            None
-        };
-
-        // Emit `var _a; _a = ClassName;` if needed (must come before any static member)
-        let mut class_alias_emitted = false;
+        let class_alias = self.current_static_class_alias.clone();
 
         let mut deferred_static_blocks = Vec::new();
 
@@ -909,24 +927,6 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
-            // --- Helper closure to emit class alias preamble on first static member ---
-            let maybe_emit_alias =
-                |body: &mut Vec<IRNode>, emitted: &mut bool, alias: &Option<String>| {
-                    if !*emitted {
-                        if let Some(alias) = alias {
-                            body.push(IRNode::VarDecl {
-                                name: alias.clone().into(),
-                                initializer: None,
-                            });
-                            body.push(IRNode::expr_stmt(IRNode::assign(
-                                IRNode::id(alias.clone()),
-                                IRNode::id(self.class_name.clone()),
-                            )));
-                        }
-                        *emitted = true;
-                    }
-                };
-
             if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                 let Some(method_data) = self.arena.get_method_decl(member_node) else {
                     continue;
@@ -946,8 +946,6 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 if is_static {
                     // --- Static method (from emit_static_members_ir) ---
-                    maybe_emit_alias(body, &mut class_alias_emitted, &class_alias);
-
                     let is_async = self
                         .arena
                         .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword)
@@ -994,19 +992,38 @@ impl<'a> ES5ClassTransformer<'a> {
                     let trailing_comment =
                         self.extract_trailing_comment_for_method(method_data.body);
 
-                    body.push(IRNode::StaticMethod {
-                        class_name: self.class_name.clone().into(),
-                        method_name,
-                        function: Box::new(IRNode::FunctionExpr {
-                            name: None,
-                            parameters: params,
-                            body: method_body,
-                            is_expression_body: false,
-                            body_source_range,
-                        }),
-                        leading_comment,
-                        trailing_comment,
-                    });
+                    let function = IRNode::FunctionExpr {
+                        name: None,
+                        parameters: params,
+                        body: method_body,
+                        is_expression_body: false,
+                        body_source_range,
+                    };
+
+                    if self.use_define_for_class_fields {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::id(self.class_name.clone())),
+                            property_name: method_name,
+                            descriptor: IRPropertyDescriptor {
+                                get: None,
+                                set: None,
+                                value: Some(Box::new(function)),
+                                enumerable: false,
+                                configurable: true,
+                                writable: true,
+                                trailing_comment,
+                            },
+                            leading_comment,
+                        });
+                    } else {
+                        body.push(IRNode::StaticMethod {
+                            class_name: self.class_name.clone().into(),
+                            method_name,
+                            function: Box::new(function),
+                            leading_comment,
+                            trailing_comment,
+                        });
+                    }
                 } else {
                     // --- Instance method (from emit_methods_ir) ---
                     let destructuring_prologue =
@@ -1054,19 +1071,41 @@ impl<'a> ES5ClassTransformer<'a> {
                     let trailing_comment =
                         self.extract_trailing_comment_for_method(method_data.body);
 
-                    body.push(IRNode::PrototypeMethod {
-                        class_name: self.class_name.clone().into(),
-                        method_name,
-                        function: Box::new(IRNode::FunctionExpr {
-                            name: None,
-                            parameters: params,
-                            body: method_body,
-                            is_expression_body: false,
-                            body_source_range,
-                        }),
-                        leading_comment,
-                        trailing_comment,
-                    });
+                    let function = IRNode::FunctionExpr {
+                        name: None,
+                        parameters: params,
+                        body: method_body,
+                        is_expression_body: false,
+                        body_source_range,
+                    };
+
+                    if self.use_define_for_class_fields {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
+                            )),
+                            property_name: method_name,
+                            descriptor: IRPropertyDescriptor {
+                                get: None,
+                                set: None,
+                                value: Some(Box::new(function)),
+                                enumerable: false,
+                                configurable: true,
+                                writable: true,
+                                trailing_comment,
+                            },
+                            leading_comment,
+                        });
+                    } else {
+                        body.push(IRNode::PrototypeMethod {
+                            class_name: self.class_name.clone().into(),
+                            method_name,
+                            function: Box::new(function),
+                            leading_comment,
+                            trailing_comment,
+                        });
+                    }
                 }
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
@@ -1094,7 +1133,6 @@ impl<'a> ES5ClassTransformer<'a> {
                         if emitted_static_accessors.contains(&accessor_name) {
                             continue;
                         }
-                        maybe_emit_alias(body, &mut class_alias_emitted, &class_alias);
 
                         if let Some(&(getter_idx, setter_idx)) =
                             static_accessor_map.get(&accessor_name)
@@ -1116,8 +1154,10 @@ impl<'a> ES5ClassTransformer<'a> {
                                 descriptor: IRPropertyDescriptor {
                                     get: get_fn.map(Box::new),
                                     set: set_fn.map(Box::new),
+                                    value: None,
                                     enumerable: false,
                                     configurable: true,
+                                    writable: false,
                                     trailing_comment: None,
                                 },
                                 leading_comment,
@@ -1153,8 +1193,10 @@ impl<'a> ES5ClassTransformer<'a> {
                                 descriptor: IRPropertyDescriptor {
                                     get: get_fn.map(Box::new),
                                     set: set_fn.map(Box::new),
+                                    value: None,
                                     enumerable: false,
                                     configurable: true,
+                                    writable: false,
                                     trailing_comment: None,
                                 },
                                 leading_comment,
@@ -1257,7 +1299,12 @@ impl<'a> ES5ClassTransformer<'a> {
                                 }
                             }
                         };
-                        let value = if let Some(ref alias) = class_alias {
+                        let value = if !self.class_decorators.is_empty() {
+                            self.convert_expression_static_with_raw_this_substitution(
+                                prop_data.initializer,
+                                "(void 0)",
+                            )
+                        } else if let Some(ref alias) = class_alias {
                             self.convert_expression_static_with_class_alias(
                                 prop_data.initializer,
                                 alias,
@@ -1265,8 +1312,25 @@ impl<'a> ES5ClassTransformer<'a> {
                         } else {
                             self.convert_expression_static(prop_data.initializer)
                         };
-                        deferred_static_prop_inits
-                            .push(IRNode::expr_stmt(IRNode::assign(target, value)));
+                        if self.use_define_for_class_fields {
+                            deferred_static_prop_inits.push(IRNode::DefineProperty {
+                                target: Box::new(IRNode::id(self.class_name.clone())),
+                                property_name: self.get_method_name_ir(prop_data.name),
+                                descriptor: IRPropertyDescriptor {
+                                    get: None,
+                                    set: None,
+                                    value: Some(Box::new(value)),
+                                    enumerable: true,
+                                    configurable: true,
+                                    writable: true,
+                                    trailing_comment: None,
+                                },
+                                leading_comment: self.extract_leading_comment(member_node),
+                            });
+                        } else {
+                            deferred_static_prop_inits
+                                .push(IRNode::expr_stmt(IRNode::assign(target, value)));
+                        }
                     }
                 } else {
                     // --- Instance auto-accessor property ---
@@ -1291,8 +1355,10 @@ impl<'a> ES5ClassTransformer<'a> {
                             set: Some(Box::new(
                                 self.build_auto_accessor_setter_function(&accessor.weakmap_name),
                             )),
+                            value: None,
                             enumerable: false,
                             configurable: true,
+                            writable: false,
                             trailing_comment: self.extract_trailing_comment_for_node(member_node),
                         },
                         leading_comment,
@@ -1332,7 +1398,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // all methods/accessors, matching tsc's ES5 class member ordering.
         if !deferred_static_prop_inits.is_empty() {
             // Emit class alias preamble before the first static property init
-            if !class_alias_emitted && let Some(ref alias) = class_alias {
+            if let Some(ref alias) = class_alias {
                 body.push(IRNode::VarDecl {
                     name: alias.clone().into(),
                     initializer: None,
@@ -1354,7 +1420,14 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Note: `this` in static methods/getters/setters does NOT need aliasing because
     /// regular functions have their own `this` binding. Only static property initializer
     /// expressions and static block statement bodies need `this` → `_a` substitution.
-    fn static_members_need_class_alias(&self, members: &tsz_parser::parser::NodeList) -> bool {
+    pub(super) fn static_members_need_class_alias(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        if !self.class_decorators.is_empty() {
+            return false;
+        }
+
         for &member_idx in &members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
