@@ -6,7 +6,6 @@
 //! bidirectional type inference.
 
 use crate::TypeDatabase;
-use crate::diagnostics::format::TypeFormatter;
 use crate::types::{
     CallableShapeId, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId, ParamInfo,
     TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
@@ -586,6 +585,7 @@ pub(crate) struct PropertyExtractor<'a> {
     db: &'a dyn TypeDatabase,
     name_atom: Atom,
     is_numeric_name: bool,
+    strip_optional_undefined: bool,
 }
 
 impl<'a> PropertyExtractor<'a> {
@@ -594,19 +594,14 @@ impl<'a> PropertyExtractor<'a> {
             db,
             name_atom: db.intern_string(name),
             is_numeric_name: name.parse::<f64>().is_ok(),
+            strip_optional_undefined: false,
         }
     }
 
-    pub(crate) fn from_atom(
-        db: &'a dyn TypeDatabase,
-        name_atom: Atom,
-        is_numeric_name: bool,
-    ) -> Self {
-        Self {
-            db,
-            name_atom,
-            is_numeric_name,
-        }
+    pub(crate) fn new_for_assignment(db: &'a dyn TypeDatabase, name: &str) -> Self {
+        let mut extractor = Self::new(db, name);
+        extractor.strip_optional_undefined = true;
+        extractor
     }
 
     pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
@@ -629,11 +624,11 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         for prop in &shape.properties {
             if prop.name == self.name_atom {
-                // Contextual property lookup is a read-side query, so optional
-                // properties expose `T | undefined`. Callers that specifically
-                // need the declared/raw property type should use the dedicated
-                // raw-property query helpers instead of this contextual API.
-                return Some(crate::utils::optional_property_type(self.db, prop));
+                return Some(if prop.optional && !self.strip_optional_undefined {
+                    add_undefined_if_missing(self.db, prop.type_id)
+                } else {
+                    prop.type_id
+                });
             }
         }
         // Fall back to index signatures for Object types too
@@ -715,8 +710,12 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let types: Vec<TypeId> = members
             .iter()
             .filter_map(|&member| {
-                let mut extractor =
-                    PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
+                let mut extractor = Self {
+                    db: self.db,
+                    name_atom: self.name_atom,
+                    is_numeric_name: self.is_numeric_name,
+                    strip_optional_undefined: self.strip_optional_undefined,
+                };
                 extractor.extract(member)
             })
             .collect();
@@ -728,8 +727,12 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let types: Vec<TypeId> = members
             .iter()
             .filter_map(|&member| {
-                let mut extractor =
-                    PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
+                let mut extractor = Self {
+                    db: self.db,
+                    name_atom: self.name_atom,
+                    is_numeric_name: self.is_numeric_name,
+                    strip_optional_undefined: self.strip_optional_undefined,
+                };
                 extractor.extract(member)
             })
             .collect();
@@ -870,7 +873,7 @@ pub(crate) fn extract_rest_param_type_at(
 }
 
 fn evaluate_rest_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    let result = match db.lookup(type_id) {
+    match db.lookup(type_id) {
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => Some(inner),
         Some(
             TypeData::Lazy(_)
@@ -883,21 +886,7 @@ fn evaluate_rest_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Typ
             (evaluated != type_id).then_some(evaluated)
         }
         _ => None,
-    };
-    if std::env::var_os("TSZ_DEBUG_CONTEXTUAL_REST_EVAL").is_some()
-        && matches!(db.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
-    {
-        let mut fmt = TypeFormatter::new(db);
-        let raw = fmt.format(type_id).into_owned();
-        let evaluated = result
-            .map(|ty| {
-                let mut fmt = TypeFormatter::new(db);
-                fmt.format(ty).into_owned()
-            })
-            .unwrap_or_else(|| "<none>".to_string());
-        eprintln!("contextual-rest-eval raw={raw} evaluated={evaluated}");
     }
-    result
 }
 
 /// Check if `index` falls at a rest parameter position in the given parameter list.
@@ -969,21 +958,6 @@ fn extract_param_type_at_inner(
                     extract_param_type_at_inner(db, &mock_params, index, arg_count)
                 })
                 .collect();
-            if std::env::var_os("TSZ_DEBUG_CONTEXTUAL_REST_EVAL").is_some() {
-                let mut fmt = TypeFormatter::new(db);
-                let rest = fmt.format(last_param.type_id).into_owned();
-                let parts: Vec<_> = types
-                    .iter()
-                    .map(|&ty| {
-                        let mut fmt = TypeFormatter::new(db);
-                        fmt.format(ty).into_owned()
-                    })
-                    .collect();
-                eprintln!(
-                    "contextual-rest-union index={} arg_count={:?} rest={} members={parts:?}",
-                    index, arg_count, rest
-                );
-            }
             return collect_single_or_union_no_reduce(db, types);
         }
         if let Some(TypeData::Tuple(elements_id)) = db.lookup(last_param.type_id) {

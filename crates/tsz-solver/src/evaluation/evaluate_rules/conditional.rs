@@ -1196,13 +1196,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => member,
                     };
-                    let Some(inferred) = self.resolve_conditional_infer_property(
+                    let inferred = self.resolve_conditional_infer_property(
                         member_unwrapped,
                         prop_name,
                         optional,
-                    ) else {
-                        return None;
-                    };
+                    )?;
                     inferred_members.push(inferred);
                 }
                 if inferred_members.is_empty() {

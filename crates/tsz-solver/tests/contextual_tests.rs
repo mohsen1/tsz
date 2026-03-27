@@ -371,7 +371,7 @@ fn test_contextual_optional_property_uses_declared_type() {
     let obj = interner.object(vec![optional]);
 
     let ctx = ContextualTypeContext::with_expected(&interner, obj);
-    assert_eq!(ctx.get_property_type("x"), Some(TypeId::NUMBER));
+    assert_eq!(ctx.get_property_assignment_type("x"), Some(TypeId::NUMBER));
 }
 
 // =============================================================================

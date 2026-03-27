@@ -873,26 +873,23 @@ impl<'a> CheckerState<'a> {
         }
         let unknown_object = if arg_shape.string_index.is_some() || arg_shape.number_index.is_some()
         {
-            self.ctx
-                .types
-                .factory()
-                .object_with_index(tsz_solver::ObjectShape {
-                    flags: tsz_solver::ObjectFlags::empty(),
-                    properties: unknown_properties,
-                    string_index: arg_shape.string_index.as_ref().map(|sig| {
-                        tsz_solver::IndexSignature {
-                            value_type: TypeId::UNKNOWN,
-                            ..sig.clone()
-                        }
-                    }),
-                    number_index: arg_shape.number_index.as_ref().map(|sig| {
-                        tsz_solver::IndexSignature {
-                            value_type: TypeId::UNKNOWN,
-                            ..sig.clone()
-                        }
-                    }),
-                    symbol: None,
-                })
+            let unknown_shape = tsz_solver::ObjectShape {
+                properties: unknown_properties,
+                string_index: arg_shape.string_index.as_ref().map(|sig| {
+                    tsz_solver::IndexSignature {
+                        value_type: TypeId::UNKNOWN,
+                        ..sig.clone()
+                    }
+                }),
+                number_index: arg_shape.number_index.as_ref().map(|sig| {
+                    tsz_solver::IndexSignature {
+                        value_type: TypeId::UNKNOWN,
+                        ..sig.clone()
+                    }
+                }),
+                ..Default::default()
+            };
+            self.ctx.types.factory().object_with_index(unknown_shape)
         } else {
             self.ctx.types.factory().object(unknown_properties)
         };
@@ -1933,7 +1930,6 @@ impl<'a> CheckerState<'a> {
                 return;
             }
         }
-
         let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
         let param_str = self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
         let message = format_message(

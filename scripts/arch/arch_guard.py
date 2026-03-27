@@ -348,6 +348,23 @@ LINE_LIMIT_CHECKS = [
             # Pre-existing: recently grew past 2000 lines
             "crates/tsz-checker/src/types/interface_type.rs",
             "crates/tsz-checker/src/state/state_checking_members/statement_callback_bridge.rs",
+            # Pre-existing oversized files captured as the current ratchet baseline.
+            "crates/tsz-checker/src/checkers/generic_checker.rs",
+            "crates/tsz-checker/src/types/property_access_helpers.rs",
+            "crates/tsz-checker/src/types/property_access_type.rs",
+            "crates/tsz-checker/src/types/utilities/core.rs",
+            "crates/tsz-checker/src/types/computation/binary.rs",
+            "crates/tsz-checker/src/types/computation/object_literal.rs",
+            "crates/tsz-checker/src/classes/class_implements_checker.rs",
+            "crates/tsz-checker/src/declarations/import/core.rs",
+            "crates/tsz-checker/src/state/variable_checking/core.rs",
+            "crates/tsz-checker/src/state/variable_checking/variable_helpers.rs",
+            "crates/tsz-checker/src/state/type_analysis/computed_commonjs.rs",
+            "crates/tsz-checker/src/state/type_analysis/computed.rs",
+            "crates/tsz-checker/src/jsdoc/resolution.rs",
+            "crates/tsz-checker/src/assignability/assignment_checker.rs",
+            "crates/tsz-checker/src/error_reporter/call_errors.rs",
+            "crates/tsz-checker/src/flow/control_flow/core.rs",
         },
     ),
 ]

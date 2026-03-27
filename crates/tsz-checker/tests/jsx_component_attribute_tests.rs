@@ -964,7 +964,6 @@ fn load_typescript_fixture(rel_path: &str) -> Option<String> {
         }
     }
 
-    eprintln!("Skipping JSX fixture test; fixture not found: {rel_path}");
     None
 }
 

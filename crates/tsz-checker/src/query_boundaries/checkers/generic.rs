@@ -1,4 +1,4 @@
-use tsz_solver::{TypeData, TypeDatabase, TypeId};
+use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{callable_shape_for_type, contains_type_parameters};
 
@@ -265,11 +265,9 @@ pub(crate) fn index_signature_value_types(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> [Option<TypeId>; 2] {
-    let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = db.lookup(type_id)
-    else {
+    let Some(shape) = tsz_solver::type_queries::get_object_shape(db, type_id) else {
         return [None, None];
     };
-    let shape = db.object_shape(shape_id);
     [
         shape.string_index.as_ref().map(|sig| sig.value_type),
         shape.number_index.as_ref().map(|sig| sig.value_type),

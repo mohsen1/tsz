@@ -3604,24 +3604,4 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             _ => false,
         }
     }
-
-    /// Check if a type is a function (or object containing only a function)
-    /// whose parameters are ALL `any`-typed (from implicit typing).
-    /// Used to detect "partially inferable" types during reverse-mapped inference.
-    fn is_function_with_only_any_params(&self, type_id: TypeId) -> bool {
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Function(shape_id)) => {
-                let shape = self.interner.function_shape(shape_id);
-                !shape.params.is_empty() && shape.params.iter().all(|p| p.type_id == TypeId::ANY)
-            }
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .any(|p| self.is_function_with_only_any_params(p.type_id))
-            }
-            _ => false,
-        }
-    }
 }

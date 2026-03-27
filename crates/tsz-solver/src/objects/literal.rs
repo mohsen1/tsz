@@ -84,7 +84,7 @@ impl<'a> ObjectLiteralBuilder<'a> {
             .into_iter()
             .map(|prop| {
                 let prop_name = self.db.resolve_atom_ref(prop.name);
-                let contextual_prop_type = ctx.get_property_type(&prop_name);
+                let contextual_prop_type = ctx.get_property_assignment_type(&prop_name);
 
                 if let Some(ctx_type) = contextual_prop_type {
                     PropertyInfo {
