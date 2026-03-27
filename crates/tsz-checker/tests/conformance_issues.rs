@@ -205,6 +205,32 @@ c?.foo;
 }
 
 #[test]
+fn test_verbatim_module_syntax_const_enum_in_esnext_does_not_report_cjs_errors() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+export const enum E {
+    A = 1,
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ESNext,
+            verbatim_module_syntax: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 1287),
+        "Expected no TS1287 for ESNext verbatim module syntax const enum export, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1295),
+        "Expected no TS1295 for ESNext verbatim module syntax const enum export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_window_console_resolves_through_global_this_alias() {
     let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics_with_lib(
         r#"

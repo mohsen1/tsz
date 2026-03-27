@@ -1434,8 +1434,10 @@ impl<'a> CheckerState<'a> {
         if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
             return false;
         }
-        if let Some(is_esm) = self.ctx.file_is_esm {
-            return !is_esm;
+        if self.ctx.compiler_options.module.is_node_module() {
+            if let Some(is_esm) = self.ctx.file_is_esm {
+                return !is_esm;
+            }
         }
         !self.ctx.compiler_options.module.is_es_module()
     }
