@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-27T13:49:49Z",
-  "git_sha": "35ffafabfe0a54bb677e16828ed0290ddd887841",
+  "timestamp": "2026-03-27T14:40:12Z",
+  "git_sha": "7b80a08de63dd02aeb8ac72b0fa608fe7e5cbf3a",
   "summary": {
     "total_tests": 12581,
-    "passed": 11295,
-    "failed": 1286,
+    "passed": 11296,
+    "failed": 1285,
     "pass_rate": 89.8
   },
   "areas_by_pass_rate": [
@@ -361,9 +361,9 @@
     {
       "area": "compiler",
       "total": 6518,
-      "passed": 5924,
-      "failed": 594,
-      "pass_rate": 90.89
+      "passed": 5925,
+      "failed": 593,
+      "pass_rate": 90.9
     },
     {
       "area": "ambient",
@@ -1188,15 +1188,15 @@
       "count": 1
     },
     {
+      "code": "TS1005",
+      "count": 1
+    },
+    {
       "code": "TS17008",
       "count": 1
     },
     {
       "code": "TS17014",
-      "count": 1
-    },
-    {
-      "code": "TS1005",
       "count": 1
     },
     {
@@ -1255,7 +1255,7 @@
     },
     {
       "code": "TS2339",
-      "count": 8
+      "count": 9
     },
     {
       "code": "TS2883",
@@ -1299,10 +1299,6 @@
     },
     {
       "code": "TS2614",
-      "count": 1
-    },
-    {
-      "code": "TS2503",
       "count": 1
     },
     {
@@ -1400,15 +1396,19 @@
       "count": 1
     },
     {
-      "code": "TS2879",
-      "count": 1
-    },
-    {
       "code": "TS2874",
       "count": 1
     },
     {
+      "code": "TS2879",
+      "count": 1
+    },
+    {
       "code": "TS2614",
+      "count": 1
+    },
+    {
+      "code": "TS1434",
       "count": 1
     },
     {
@@ -1417,10 +1417,6 @@
     },
     {
       "code": "TS1435",
-      "count": 1
-    },
-    {
-      "code": "TS1434",
       "count": 1
     },
     {
@@ -1433,10 +1429,6 @@
     },
     {
       "code": "TS2578",
-      "count": 1
-    },
-    {
-      "code": "TS2503",
       "count": 1
     },
     {
@@ -1465,6 +1457,10 @@
     },
     {
       "code": "TS1155",
+      "count": 1
+    },
+    {
+      "code": "TS7009",
       "count": 1
     }
   ],
@@ -1641,7 +1637,7 @@
     },
     {
       "code": "TS2339",
-      "count": 30
+      "count": 31
     },
     {
       "code": "TS2304",
@@ -1793,10 +1789,10 @@
     }
   ],
   "categories": {
-    "false_positive": 67,
+    "false_positive": 66,
     "all_missing": 130,
-    "wrong_code": 378,
-    "fingerprint_only": 704,
-    "close_to_passing": 260
+    "wrong_code": 379,
+    "fingerprint_only": 703,
+    "close_to_passing": 261
   }
 }

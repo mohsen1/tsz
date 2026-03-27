@@ -956,7 +956,10 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<SymbolId> {
-        for augmentation in self.get_module_augmentation_declarations(module_specifier, member_name)
+        if let Some(augmentation) = self
+            .get_module_augmentation_declarations(module_specifier, member_name)
+            .into_iter()
+            .next()
         {
             let binder = augmentation
                 .arena

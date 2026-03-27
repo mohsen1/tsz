@@ -1,192 +1,179 @@
 # =============================================================================
-# TSZ Campaign Definitions
+# TSZ Campaign Definitions — v2 (Post-90% Operating Model)
 # =============================================================================
 #
-# Each campaign defines a MISSION — a diagnostic/semantic goal to achieve.
-# Agents follow the root cause wherever it leads, across crate boundaries.
+# The remaining ~10% of conformance failures are architecture-shaped:
+#   - Wrong-code drift in the big3 (TS2322/TS2339/TS2345)
+#   - Half-migrated request/context transport
+#   - Narrowing not fully boundary-clean
+#   - Node/declaration-emit coordination gaps
+#   - Crashes masking real diagnostic shapes
 #
-# File ownership is NOT enforced. Campaigns are organized by WHAT you're
-# fixing, not WHERE the code lives. A false-positives fix might need solver
-# changes. A narrowing fix might need checker changes. That's fine.
+# The old model rewarded leaf fixes and told agents to reroll broad-surface
+# work. That was correct in the high 80s. Above 90%, it creates churn.
 #
-# The `entry_files` field suggests where to START looking, not where you
-# must stay. The `coordinate_on` field lists files where another campaign
-# is likely working — check git log before making large changes there.
+# NEW MODEL:
+#   - 50% of agents on Tier 1 campaigns (trunk work)
+#   - 30% on Tier 2 subsystem lanes
+#   - 20% on Tier 3 leaf cleanup / parser / quick wins
 #
-# To see which campaigns are available vs claimed:
-#   scripts/session/check-status.sh
+# Campaigns define MISSIONS, not file ownership. Follow root causes across
+# crate boundaries. Multi-crate changes are EXPECTED, not exceptional.
 #
-# To start working on a campaign:
-#   scripts/session/start-campaign.sh <campaign-name>
+# KPIs (track these, not overall conformance %):
+#   1. Wrong-code count for TS2322/TS2339/TS2345
+#   2. Crash count
+#   3. Node lane pass rate
+#   4. Close-to-passing tests (diff 0/1/2)
+#   5. Direct solver query calls remaining in narrowing.rs
+#   6. Raw contextual-state mutations outside approved migration debt
 #
-# To check/record session progress:
-#   scripts/session/campaign-checkpoint.sh <campaign-name> [--status|--init]
+# To see status: scripts/session/check-status.sh
+# To start:      scripts/session/start-campaign.sh <campaign-name>
+# To checkpoint:  scripts/session/campaign-checkpoint.sh <campaign> [--status|--init]
+# KPI dashboard:  python3 scripts/conformance/query-conformance.py --dashboard
 #
 # =============================================================================
 
 campaigns:
 
-  # ---------------------------------------------------------------------------
-  # SOLVER CAMPAIGNS (3) — deep type computation work
-  # ---------------------------------------------------------------------------
+  # ===========================================================================
+  # TIER 1 — TRUNK CAMPAIGNS (50% of agent capacity)
+  # ===========================================================================
+  # These are the highest-leverage campaigns. They address the shared kernel
+  # that causes the majority of remaining wrong-code drift.
 
-  generic-inference:
+  big3-unification:
+    tier: 1
     mission: >
-      Fix generic function call type parameter inference and instantiation.
-      When tsc infers type params for generic calls and we get it wrong.
-    focus_codes: [TS2345, TS2322, TS2769, TS7006]
+      Unify the relation kernel for TS2322/TS2339/TS2345. Route ALL
+      assignment/call-arg/JSX-prop/destructuring/satisfies checks through
+      the canonical relation boundary (query_boundaries/assignability).
+      Delete checker-local re-derivations of EPC applicability, missing-property
+      classification, weak-union decisions, and property-shape classification.
+      Use wrong-code big3 count as the KPI, not overall pass %.
+    focus_codes: [TS2322, TS2339, TS2345, TS2416, TS2769]
+    kpi: "wrong-code count for TS2322+TS2339+TS2345 (target: reduce by 50%)"
     research_command: |
-      python3 scripts/conformance/query-conformance.py --campaign big3
-      python3 scripts/conformance/query-conformance.py --code TS2769
-      ./scripts/conformance/conformance.sh run --filter "generic" --verbose --max 20
-    test_filter: "generic|typeArgument|callSignature|overload|infer"
-    entry_files:
-      - crates/tsz-solver/src/infer.rs
-      - crates/tsz-solver/src/operations/generic_call.rs
-      - crates/tsz-checker/src/types/function_type.rs
-    coordinate_on:
-      - crates/tsz-solver/src/subtype.rs  # subtype-relations campaign likely active
-    estimated_impact: 120 tests
-    difficulty: hard
-
-  subtype-relations:
-    mission: >
-      Fix core subtype and assignability checks for unions, intersections,
-      and structural object compatibility. The heart of TS2322.
-    focus_codes: [TS2322, TS2345, TS2416]
-    research_command: |
+      python3 scripts/conformance/query-conformance.py --dashboard
       python3 scripts/conformance/query-conformance.py --campaign big3
       python3 scripts/conformance/query-conformance.py --code TS2322
-      ./scripts/conformance/conformance.sh run --filter "assignability|subtype" --verbose --max 20
-    test_filter: "assignab|subtype|compat|union.*assign|intersection.*assign"
+      python3 scripts/conformance/query-conformance.py --extra-code TS2322
+    test_filter: "assignab|subtype|compat|union|intersection|generic|overload|property"
     entry_files:
       - crates/tsz-solver/src/subtype.rs
       - crates/tsz-solver/src/relations/
+      - crates/tsz-solver/src/infer.rs
+      - crates/tsz-solver/src/operations/generic_call.rs
       - crates/tsz-checker/src/assignability/
+      - crates/tsz-checker/src/query_boundaries/assignability.rs
+    success_criteria:
+      - "All assignment checks route through query_boundaries/assignability"
+      - "No checker-local EPC/missing-property/weak-union classification"
+      - "TS2322+TS2339+TS2345 wrong-code count reduced by 50%+"
+      - "Zero regressions in other diagnostic families"
     coordinate_on:
-      - crates/tsz-solver/src/infer.rs  # generic-inference campaign likely active
-    estimated_impact: 150 tests
+      - crates/tsz-solver/src/narrowing.rs  # narrowing-boundary campaign
+      - crates/tsz-checker/src/types/contextual_type.rs  # request-transport campaign
+    estimated_impact: 226 tests (99 TS2322 + 70 TS2345 + 57 TS2339 problems)
     difficulty: hard
+    subsumes: [generic-inference, subtype-relations, computed-types]
 
-  computed-types:
+  request-transport:
+    tier: 1
     mission: >
-      Fix mapped type evaluation, conditional type distribution, template
-      literal types, and keyof computation.
-    focus_codes: [TS2322, TS2344, TS2536, TS2339]
-    research_command: |
-      python3 scripts/conformance/query-conformance.py --code TS2344
-      ./scripts/conformance/conformance.sh run --filter "mapped|conditional|templateLiteral" --verbose --max 20
-    test_filter: "mapped|conditional|templateLiteral|keyof"
-    entry_files:
-      - crates/tsz-solver/src/evaluate.rs
-      - crates/tsz-solver/src/operations/mapped.rs
-      - crates/tsz-solver/src/operations/conditional.rs
-    estimated_impact: 80 tests
-    difficulty: very-hard
-
-  # ---------------------------------------------------------------------------
-  # CHECKER/SOLVER BOUNDARY CAMPAIGNS (3) — orchestration + solver queries
-  # ---------------------------------------------------------------------------
-
-  contextual-typing:
-    mission: >
-      Fix contextual type inference: how expression types are inferred from
-      surrounding context (callback params, object literals, rest params).
-      Root cause often in solver's contextual type propagation, not just checker.
+      Complete the TypingRequest migration. Push the request object all the way
+      through the hot paths so request-aware caches become the normal case.
+      Eliminate raw contextual_type and contextual_type_is_assertion mutations
+      from CheckerContext. Every contextual-type flow should use TypingRequest.
     focus_codes: [TS7006, TS2322, TS2345, TS2769]
+    kpi: "count of raw contextual-state mutations outside TypingRequest (target: 0)"
     research_command: |
+      python3 scripts/conformance/query-conformance.py --dashboard
       python3 scripts/conformance/query-conformance.py --campaign contextual-typing
       python3 scripts/conformance/query-conformance.py --code TS7006
-      ./scripts/conformance/conformance.sh run --filter "contextual|callback" --verbose --max 20
-    test_filter: "contextual|callback|objectLiteral|restParam|spreadArg"
+      rg "contextual_type\b" crates/tsz-checker/src/ --type rust -l
+      rg "contextual_type_is_assertion" crates/tsz-checker/src/ --type rust -l
+      rg "skip_flow_narrowing" crates/tsz-checker/src/ --type rust -l
+    test_filter: "contextual|callback|objectLiteral|restParam|spreadArg|generic"
     entry_files:
       - crates/tsz-checker/src/types/contextual_type.rs
+      - crates/tsz-checker/src/context/mod.rs
+      - crates/tsz-checker/src/context/core.rs
       - crates/tsz-checker/src/types/computation/
       - crates/tsz-checker/src/state/type_analysis/
-    estimated_impact: 130 tests
+    success_criteria:
+      - "All contextual-type flows use TypingRequest"
+      - "CheckerContext.contextual_type field removed or deprecated"
+      - "Request-aware caches cover call inference, JSX props, JSX children"
+      - "Object-literal callback transport uses request path"
+    hot_paths_to_migrate:
+      - "Call inference / contextual callbacks"
+      - "JSX props and JSX children"
+      - "JSDoc callback / typedef contextual typing"
+      - "Generic constructor contextual mismatch paths"
+      - "Object-literal callback transport"
+    coordinate_on:
+      - crates/tsz-checker/src/checkers/jsx/  # JSX prop transport
+      - crates/tsz-checker/src/jsdoc/  # JSDoc callback transport
+    estimated_impact: 130+ tests (contextual-typing family)
     difficulty: hard
 
-  narrowing:
+  narrowing-boundary:
+    tier: 1
     mission: >
-      Fix control flow analysis and type narrowing: typeof guards, instanceof,
-      discriminated unions, truthiness, nullish checks, type predicates.
-      May require solver, checker, or binder changes depending on root cause.
-    focus_codes: [TS2322, TS2339, TS18048, TS2741, TS2532]
+      Finish narrowing.rs as a real boundary-clean module. No direct solver
+      type-query calls from flow/control_flow/narrowing.rs. All predicate
+      extraction, lazy-def resolution, return-type truthiness helpers, and
+      type-parameter info queries must go through boundary helpers.
+      Re-add narrowing.rs to the cleaned-modules architecture guard.
+    focus_codes: [TS2322, TS2339, TS18048, TS2741, TS2532, TS2454]
+    kpi: "direct solver query calls remaining in narrowing.rs (target: 0)"
     research_command: |
+      python3 scripts/conformance/query-conformance.py --dashboard
       python3 scripts/conformance/query-conformance.py --campaign narrowing-flow
       python3 scripts/conformance/query-conformance.py --code TS18048
-      ./scripts/conformance/conformance.sh run --filter "narrow|typeGuard|controlFlow" --verbose --max 20
-    test_filter: "narrow|typeGuard|controlFlow|discriminat|assert"
+      rg "type_queries\." crates/tsz-checker/src/flow/ --type rust -c
+      rg "solver\." crates/tsz-checker/src/flow/ --type rust -c
+    test_filter: "narrow|typeGuard|controlFlow|discriminat|assert|predicate|optional"
     entry_files:
       - crates/tsz-solver/src/narrowing.rs
       - crates/tsz-checker/src/flow_analysis.rs
       - crates/tsz-checker/src/state/flow/
-    estimated_impact: 140 tests
-    difficulty: hard
-
-  property-resolution:
-    mission: >
-      Fix property access, index access, keyof resolution, and bracket
-      notation on unions, intersections, and merged declaration shapes.
-    focus_codes: [TS2339, TS7053, TS2536, TS2538]
-    research_command: |
-      python3 scripts/conformance/query-conformance.py --campaign property-resolution
-      python3 scripts/conformance/query-conformance.py --code TS2339
-      ./scripts/conformance/conformance.sh run --filter "property|indexAccess|elementAccess" --verbose --max 20
-    test_filter: "property|indexAccess|keyof|elementAccess|bracketNotation"
-    entry_files:
-      - crates/tsz-solver/src/operations/property.rs
-      - crates/tsz-solver/src/operations/index.rs
-      - crates/tsz-checker/src/types/property_access_type.rs
-    estimated_impact: 100 tests
-    difficulty: medium
-
-  jsdoc-jsx-salsa:
-    mission: >
-      Treat JSDoc, JSX, and Salsa as one semantic integration campaign.
-      These are not isolated feature islands: they are broad consumers of
-      shared checker/solver mechanics around property writes, contextual
-      typing transport, parser recovery, cross-module typedef resolution,
-      JSX library-managed attributes, and JS open-world behavior.
-    focus_codes: [TS2322, TS2339, TS2345, TS7006, TS2540, TS2657, TS17014, TS2741]
-    research_command: |
-      python3 scripts/conformance/query-conformance.py --campaign jsdoc-jsx-salsa
-      ./scripts/conformance/conformance.sh run --filter "jsdoc|jsx|salsa" --verbose --max 40
-      rg -n "checkObjectDefineProperty|checkOtherObjectAssignProperty|typedefCrossModule3|typedefMultipleTypeParameters|tsxLibraryManagedAttributes|tsxReactComponentWithDefaultTypeParameter3|tsxErrorRecovery2|tsxFragmentErrors|moduleExportAssignment|thisPropertyAssignment|typeFromJSConstructor" scripts/conformance/conformance-baseline.txt scripts/conformance-last-run.txt crates/tsz-core/tests/conformance_snapshot.txt
-    test_filter: "jsdoc|jsx|tsx|salsa|checkJs|LibraryManagedAttributes|typedef|thisProperty|moduleExport"
-    entry_files:
-      - crates/tsz-checker/src/jsdoc/
-      - crates/tsz-checker/src/checkers/jsx/
-      - crates/tsz-checker/src/state/type_analysis/
-      - crates/tsz-checker/src/types/computation/
-      - crates/tsz-checker/src/state/type_resolution/
-      - crates/tsz-solver/src/contextual/
-      - crates/tsz-solver/src/relations/subtype/
+      - crates/tsz-checker/src/flow/
+      - crates/tsz-checker/src/query_boundaries/
+    success_criteria:
+      - "Zero direct solver type-query calls from narrowing code"
+      - "Boundary helpers cover predicate extraction"
+      - "Boundary helpers cover lazy-def resolution in narrowing"
+      - "Boundary helpers cover return-type truthiness"
+      - "Boundary helpers cover type-parameter info queries"
+      - "narrowing.rs re-added to architecture_contract_tests.rs"
     coordinate_on:
-      - crates/tsz-checker/src/types/computation/object_literal_context.rs  # overlaps with contextual-typing
-      - crates/tsz-checker/src/checkers/property_checker.rs  # overlaps with property-resolution
-      - crates/tsz-checker/src/state/type_analysis/computed_commonjs.rs  # overlaps with false-positives
-    targets:
-      - "JSDoc property/write semantics: checkObjectDefineProperty.ts and checkOtherObjectAssignProperty.ts"
-      - "JSDoc cross-module typedefs: typedefCrossModule3.ts and typedefMultipleTypeParameters.ts"
-      - "JSX semantic checking: tsxLibraryManagedAttributes.tsx and tsxReactComponentWithDefaultTypeParameter3.tsx"
-      - "JSX parser recovery: tsxErrorRecovery2.tsx and tsxFragmentErrors.tsx"
-      - "Salsa JS-open-world mismatches: moduleExportAssignment.ts, thisPropertyAssignment.ts, and typeFromJSConstructor.ts"
-    estimated_impact: 252 tests
+      - crates/tsz-solver/src/subtype.rs  # big3-unification campaign
+    estimated_impact: 140+ tests (narrowing family)
     difficulty: hard
 
-  module-resolution:
+  # ===========================================================================
+  # TIER 2 — SUBSYSTEM LANES (30% of agent capacity)
+  # ===========================================================================
+  # These address specific subsystem gaps that are NOT big3/relation work.
+  # Keep them focused and separate from trunk campaigns.
+
+  node-declaration-emit:
+    tier: 2
     mission: >
-      Fix NodeNext/package-exports/import-mode/declaration-emit coordination.
-      This lane owns resolver diagnostics, driver-provided per-file mode facts,
-      package self-name and exports semantics, and declaration-emit behaviors
-      that depend on those facts. It is not the same as big3/core semantics work.
-    focus_codes: [TS2307, TS2835, TS2792, TS1479, TS2883, TS5107]
+      Fix Node/module-resolution/declaration-emit coordination. This lane owns
+      resolver diagnostics, driver-provided per-file mode facts, package
+      self-name and exports semantics, and declaration-emit behaviors.
+      This is NOT big3/core semantics work — keep it separate.
+    focus_codes: [TS2307, TS1192, TS2835, TS2823, TS1479, TS2883, TS5107, TS5101]
+    kpi: "Node lane pass rate (projects/NodeModulesSearch + projects/jsFileCompilation + node + declarationEmit)"
     research_command: |
+      python3 scripts/conformance/query-conformance.py --dashboard
       python3 scripts/conformance/query-conformance.py --campaign module-resolution
       python3 scripts/conformance/query-conformance.py --code TS2307
-      python3 scripts/conformance/query-conformance.py --code TS2835
-      ./scripts/conformance/conformance.sh run --filter "node|packageJson|exports|imports|declarationEmit" --verbose --max 20
+      python3 scripts/conformance/query-conformance.py --code TS5107
     test_filter: "node|nodenext|packageJson|exports|imports|resolutionMode|declarationEmit|symlink"
     entry_files:
       - crates/tsz-core/src/module_resolver/
@@ -194,21 +181,102 @@ campaigns:
       - crates/tsz-cli/src/driver/check.rs
       - crates/tsz-checker/src/declarations/import/
       - crates/tsz-checker/src/state/type_resolution/module.rs
+      - crates/tsz-emitter/src/declaration_emitter/
+    owns:
+      - "TS2307, TS1192, TS2835, TS2823, TS1479, TS2883, TS5107, TS5101"
+      - "projects/NodeModulesSearch"
+      - "projects/jsFileCompilation"
+      - "moduleResolution"
+      - "externalModules and externalModules/typeOnly"
+      - "declaration-emit package/import-mode tests"
+    success_criteria:
+      - "projects/NodeModulesSearch pass rate > 50%"
+      - "projects/jsFileCompilation pass rate > 60%"
+      - "node area pass rate > 75%"
+      - "declarationEmit area pass rate > 80%"
     coordinate_on:
       - crates/tsz-checker/src/context/mod.rs
       - crates/tsz-checker/src/context/core.rs
-      - crates/tsz-emitter/src/declaration_emitter/
-    estimated_impact: 60 tests
+    estimated_impact: 60+ tests
     difficulty: medium
 
-  # ---------------------------------------------------------------------------
-  # DIAGNOSTIC / PARSER CAMPAIGNS (2) — error accuracy
-  # ---------------------------------------------------------------------------
+  crash-zero:
+    tier: 2
+    mission: >
+      Zero the crash budget. Crashes create fake "missing diagnostics," hide
+      real diagnostic shape, and waste agent time. Every crash is a measurement
+      corruption. Fix recursion/stack-depth cutoffs, declaration-emit
+      truncation/error fallback, lazy evaluation cycle breakers,
+      module-resolution crash repros, and "never emit nothing when tsc emits
+      something" crash-to-diagnostic conversion.
+    focus_codes: []
+    kpi: "crash count (target: 0)"
+    research_command: |
+      python3 scripts/conformance/query-conformance.py --dashboard
+      # Find tests where we emit 0 diagnostics but tsc expects some
+      python3 -c "
+      import json
+      with open('scripts/conformance/conformance-detail.json') as f:
+          d = json.load(f)
+      crashes = [(p, f) for p, f in d['failures'].items()
+                 if not f.get('a') and f.get('e')]
+      print(f'Tests with 0 actual diagnostics (likely crashes): {len(crashes)}')
+      for p, f in sorted(crashes)[:20]:
+          print(f'  {p.rsplit(\"/\",1)[-1]}  expected={f[\"e\"]}')
+      "
+    test_filter: ""  # cross-cutting — crashes can happen anywhere
+    entry_files:
+      - crates/tsz-solver/src/evaluate.rs
+      - crates/tsz-solver/src/subtype.rs
+      - crates/tsz-checker/src/context/
+      - crates/tsz-core/src/module_resolver/
+    success_criteria:
+      - "Zero panics/crashes on any conformance test"
+      - "Every test that tsc diagnoses, we diagnose (may be wrong code, but not empty)"
+      - "Recursion limits produce fallback diagnostics, not silent failures"
+    estimated_impact: "Cleans measurement for all other campaigns"
+    difficulty: medium
+
+  stable-identity:
+    tier: 2
+    mission: >
+      Start stable-identity work: binder-owned stable declaration locations,
+      earlier DefId creation for top-level semantic definitions, fewer
+      checker-side "recover identity from syntax" repairs. This helps
+      conformance in cross-file symbol/type lookup, declaration emit
+      naming/visibility, module/default export semantics, and augmentation
+      stitching. Keep scope narrow — do NOT jump to workspace scheduler.
+    focus_codes: [TS2304, TS2305, TS2694, TS2686]
+    kpi: "checker-side identity recovery callsites (target: reduce by 50%)"
+    research_command: |
+      python3 scripts/conformance/query-conformance.py --code TS2304
+      python3 scripts/conformance/query-conformance.py --code TS2694
+      rg "recover.*identity\|resolve.*declaration\|find.*declaration.*from" crates/tsz-checker/src/ --type rust -l
+    test_filter: "augment|crossFile|module.*export|declaration.*emit|namespace"
+    entry_files:
+      - crates/tsz-binder/src/
+      - crates/tsz-checker/src/symbols/
+      - crates/tsz-checker/src/types/type_resolution/
+    success_criteria:
+      - "Top-level definitions get DefId in binder, not lazily in checker"
+      - "Cross-file symbol lookup uses stable DefId path"
+      - "Augmentation stitching uses stable identity"
+    coordinate_on:
+      - crates/tsz-checker/src/context/  # request-transport campaign
+    estimated_impact: 40+ tests
+    difficulty: hard
+
+  # ===========================================================================
+  # TIER 3 — LEAF CLEANUP / PARSER / QUICK WINS (20% of agent capacity)
+  # ===========================================================================
+  # These campaigns handle isolated fixes that don't require trunk work.
+  # Only assign agents here after Tier 1/2 are staffed.
 
   parser-diagnostics:
+    tier: 3
     mission: >
       Fix parser error recovery and TS1xxx diagnostic accuracy.
-      Primarily parser work, but may touch scanner for tokenization edge cases.
+      Primarily parser work, may touch scanner for tokenization edge cases.
     focus_codes: [TS1005, TS1109, TS1128, TS1003, TS1002]
     research_command: |
       python3 scripts/conformance/query-conformance.py --campaign parser-recovery
@@ -220,63 +288,62 @@ campaigns:
     difficulty: medium
 
   false-positives:
+    tier: 3
     mission: >
-      Eliminate extra diagnostics we emit that tsc doesn't. 193 tests where
-      tsc expects 0 errors but we emit some. Root causes are typically in
-      solver relations, checker assignability gates, or narrowing — not just
-      in the error_reporter. Follow the root cause wherever it leads.
+      Eliminate extra diagnostics we emit that tsc doesn't. Root causes are
+      typically in solver relations, checker assignability gates, or narrowing.
+      Follow the root cause wherever it leads.
     focus_codes: [TS2322, TS2339, TS2345, TS5107]
     research_command: |
       python3 scripts/conformance/query-conformance.py --false-positives
       python3 scripts/conformance/query-conformance.py --one-extra
-      python3 scripts/conformance/query-conformance.py --extra-code TS2322
-    test_filter: ""  # cross-cutting — use research_command instead
+    test_filter: ""  # cross-cutting
     entry_files:
       - crates/tsz-checker/src/error_reporter/
       - crates/tsz-checker/src/assignability/
       - crates/tsz-solver/src/subtype.rs
-      - crates/tsz-solver/src/narrowing.rs
-    estimated_impact: 193 tests
+    estimated_impact: 66 tests (false positives where tsc expects 0 errors)
     difficulty: medium
 
-  # ---------------------------------------------------------------------------
-  # PERFORMANCE CAMPAIGN (1) — speed and correctness under load
-  # ---------------------------------------------------------------------------
-
-  performance:
+  jsdoc-jsx-salsa:
+    tier: 3
     mission: >
-      Fix 8 ERROR benchmarks (crashes on generic functions, utility types,
-      controlFlowArrays). Optimize slow paths: large union discrimination
-      (5.12x), optional chains (3x), deep mapped types (1.5x).
-    focus_codes: []
+      Semantic integration for JSDoc, JSX, and Salsa. These are broad consumers
+      of shared solver/checker mechanics. Use as regression baskets for
+      contextual typing, assignability, and property lookup fixes. Reserve
+      area-local fixes for true syntax or feature-surface gaps AFTER semantic
+      root causes (Tier 1) are addressed.
+    focus_codes: [TS2322, TS2339, TS2345, TS7006, TS2540, TS2657, TS17014, TS2741]
     research_command: |
-      ./scripts/bench/bench-vs-tsgo.sh --json 2>/dev/null | python3 -c "
-      import json,sys
-      d=json.load(sys.stdin)
-      for t in d.get('tests',[]):
-        if t.get('status')=='error' or t.get('factor',0)>1.5:
-          print(f\"{t['name']}: {t.get('status','slow')} ({t.get('factor','N/A')}x)\")
-      "
-    test_filter: ""
-    entry_files: []  # varies — guided by profiling
-    targets:
-      - "Fix 8 ERROR benchmark cases (generic functions, utility types, controlFlowArrays)"
-      - "Optimize conditionalTypeDiscriminatingLargeUnion (5.12x slower than tsgo)"
-      - "Optimize optional-chain N=400 (3x slower than tsgo)"
-      - "Optimize ts-essentials/xor.ts and paths.ts (2-3x slower)"
-    estimated_impact: "0 conformance tests, but critical for 2x-faster-than-tsgo goal"
+      python3 scripts/conformance/query-conformance.py --campaign jsdoc-jsx-salsa
+      ./scripts/conformance/conformance.sh run --filter "jsdoc|jsx|salsa" --verbose --max 40
+    test_filter: "jsdoc|jsx|tsx|salsa|checkJs|LibraryManagedAttributes|typedef|thisProperty|moduleExport"
+    entry_files:
+      - crates/tsz-checker/src/jsdoc/
+      - crates/tsz-checker/src/checkers/jsx/
+      - crates/tsz-checker/src/state/type_analysis/
+      - crates/tsz-solver/src/contextual/
+    coordinate_on:
+      - crates/tsz-checker/src/types/computation/object_literal_context.rs
+      - crates/tsz-checker/src/checkers/property_checker.rs
+    estimated_impact: 252 tests
     difficulty: hard
+    note: >
+      Most improvements here will come from Tier 1 campaigns (big3, request-transport).
+      Only work area-local gaps after Tier 1 progress stabilizes.
 
-  # ---------------------------------------------------------------------------
+  # ===========================================================================
   # INTEGRATOR (1) — merge queue, no code changes
-  # ---------------------------------------------------------------------------
+  # ===========================================================================
 
   integrator:
     mission: >
       Merge queue manager. Does NOT write code. Validates campaign branches
       against main, merges if conformance holds, rejects if regressions.
       Runs via /loop. Updates conformance snapshots after merges.
+      Also responsible for running KPI dashboard after each merge.
     role: integration
-    loop_command: "/loop 30m run scripts/session/integrate.sh --auto and report results"
+    loop_command: |
+      /loop 30m run scripts/session/integrate.sh --auto && python3 scripts/conformance/query-conformance.py --dashboard
     entry_files: []
     estimated_impact: "Keeps main green"

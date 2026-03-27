@@ -239,32 +239,31 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let first_variance_modifier = type_params
-            .nodes
-            .iter()
-            .copied()
-            .find_map(|param_idx| {
-                let param_node = self.ctx.arena.get(param_idx)?;
-                let param = self.ctx.arena.get_type_parameter(param_node)?;
-                if self.node_contains_any_parse_error(param_idx)
-                    || matches!(
-                        self.get_identifier_text_from_idx(param.name).as_deref(),
-                        Some("in" | "out")
-                    )
-                {
-                    return None;
-                }
-                let modifiers = param.modifiers.as_ref()?;
-                modifiers.nodes.iter().copied().find(|&modifier_idx| {
-                    self.ctx.arena.get(modifier_idx).is_some_and(|modifier_node| {
+        let first_variance_modifier = type_params.nodes.iter().copied().find_map(|param_idx| {
+            let param_node = self.ctx.arena.get(param_idx)?;
+            let param = self.ctx.arena.get_type_parameter(param_node)?;
+            if self.node_contains_any_parse_error(param_idx)
+                || matches!(
+                    self.get_identifier_text_from_idx(param.name).as_deref(),
+                    Some("in" | "out")
+                )
+            {
+                return None;
+            }
+            let modifiers = param.modifiers.as_ref()?;
+            modifiers.nodes.iter().copied().find(|&modifier_idx| {
+                self.ctx
+                    .arena
+                    .get(modifier_idx)
+                    .is_some_and(|modifier_node| {
                         matches!(
                             modifier_node.kind,
                             k if k == SyntaxKind::InKeyword as u16
                                 || k == SyntaxKind::OutKeyword as u16
                         )
                     })
-                })
-            });
+            })
+        });
 
         let Some(variance_modifier_idx) = first_variance_modifier else {
             return;
