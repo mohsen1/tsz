@@ -1600,7 +1600,19 @@ impl<'a> CheckerState<'a> {
                         // property read type is the getter's return type (not a function type).
                         self.get_type_of_function(elem_idx);
                         if accessor.type_annotation.is_none() {
-                            self.infer_getter_return_type(accessor.body)
+                            // When a contextual type exists (e.g., `T extends { [k: string]: Types }`),
+                            // pass the contextual property type as the return context so that
+                            // literal types from `as const` are preserved instead of widened.
+                            // Without this, `get x() { return 'boolean' as const }` widens
+                            // to `string` because infer_getter_return_type passes None.
+                            let return_context = contextual_type.and_then(|ctx| {
+                                self.contextual_object_property_type_for_lookup(ctx, &name)
+                            });
+                            self.infer_return_type_from_body(
+                                tsz_parser::parser::NodeIndex::NONE,
+                                accessor.body,
+                                return_context,
+                            )
                         } else {
                             self.get_type_from_type_node(accessor.type_annotation)
                         }
