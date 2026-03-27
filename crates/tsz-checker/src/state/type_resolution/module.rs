@@ -1169,19 +1169,23 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // allowSyntheticDefaultImports suppresses TS1192 for modules that can use
-        // synthetic default imports. For .d.ts files not in the ESM map (no package.json
-        // "type": "module"), this includes plain .d.ts files regardless of module kind.
+        // allowSyntheticDefaultImports suppresses TS1192 for non-source-file modules
+        // (.d.ts, .js) that can use synthetic default imports. For .ts source files,
+        // tsc always emits TS1192 when there is no default export — the developer
+        // should add an explicit `export default`.
+        //
+        // For .d.ts files not in the ESM map (no package.json "type": "module"),
+        // this includes plain .d.ts files regardless of module kind.
         // For ESM .d.ts files (from packages with "type": "module"), TS1192 is still
         // emitted because ESM requires explicit default exports.
-        if self.ctx.allow_synthetic_default_imports() {
+        if self.ctx.allow_synthetic_default_imports() && !is_source_file_import {
             if self.module_can_use_synthetic_default_import(module_specifier) {
                 return;
             }
             // For non-source-file imports (.d.ts), also suppress when the module is
             // not positively identified as ESM. Plain .d.ts files without a "type":
             // "module" package.json are assumed to be CJS-compatible.
-            if !is_source_file_import && !self.module_is_esm(module_specifier) {
+            if !self.module_is_esm(module_specifier) {
                 return;
             }
         }
