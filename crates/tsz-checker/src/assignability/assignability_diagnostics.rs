@@ -708,10 +708,9 @@ impl<'a> CheckerState<'a> {
 
     fn is_constructor_only_object_type_for_comparison(&mut self, type_id: TypeId) -> bool {
         let resolved = self.evaluate_type_with_resolution(type_id);
-        let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
-            self.ctx.types,
-            resolved,
-        ) else {
+        let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, resolved)
+        else {
             return false;
         };
         if shape.construct_signatures.is_empty() {
