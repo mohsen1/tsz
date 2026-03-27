@@ -2308,7 +2308,10 @@ let x2: string = f;
             ..Default::default()
         };
 
-        let file_paths = vec![dir.path().join("linked/index.d.ts"), dir.path().join("app/app.ts")];
+        let file_paths = vec![
+            dir.path().join("linked/index.d.ts"),
+            dir.path().join("app/app.ts"),
+        ];
         let SourceReadResult {
             sources,
             dependencies: _,
@@ -2355,7 +2358,8 @@ let x2: string = f;
 
         assert!(
             diagnostics.iter().any(|diag| {
-                diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                diag.code
+                    == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
                     && diag.file.contains("linked/index.d.ts")
             }),
             "expected TS2307 for original linked target, got: {diagnostics:?}"
