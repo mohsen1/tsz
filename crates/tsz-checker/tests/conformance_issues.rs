@@ -3726,8 +3726,8 @@ const test3: (arg: number) => void = (arg = 1) => {};
 
 #[test]
 fn test_jsdoc_param_type_reference_to_ambient_constructor_value_is_constructable() {
-    let diagnostics = without_missing_global_type_errors(
-        compile_and_get_diagnostics_named_with_lib_and_options(
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_named_with_lib_and_options(
             "foo.js",
             r#"
 /** @param {Image} image */
@@ -3741,8 +3741,7 @@ function process(image) {
                 target: ScriptTarget::ES2015,
                 ..CheckerOptions::default()
             },
-        ),
-    );
+        ));
 
     assert!(
         !has_error(&diagnostics, 2351),
