@@ -252,14 +252,8 @@ fn test_compile_project_module_esnext_verbatim_const_enum_is_not_treated_as_comm
     .expect("write source");
 
     let project = dir.path().to_string_lossy().to_string();
-    let args = CliArgs::try_parse_from([
-        "tsz",
-        "--project",
-        project.as_str(),
-        "--pretty",
-        "false",
-    ])
-    .expect("project args");
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
     let result = compile(&args, dir.path()).expect("compile succeeds");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 

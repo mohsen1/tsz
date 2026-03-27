@@ -931,7 +931,10 @@ impl<'a> CheckerState<'a> {
                 && self.is_js_prototype_read_root(object_expr_idx, property_name))
     }
 
-    pub(super) fn current_file_commonjs_export_member_name(&self, idx: NodeIndex) -> Option<String> {
+    pub(super) fn current_file_commonjs_export_member_name(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         match node.kind {
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
