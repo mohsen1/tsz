@@ -290,6 +290,96 @@ impl<'a> CheckerState<'a> {
         self.raw_block_body_callback_mismatch(args, expected_for_index)
     }
 
+    pub(crate) fn current_binding_pattern_callback_unknown_context_arg(
+        &mut self,
+        args: &[NodeIndex],
+        mut expected_for_index: impl FnMut(&mut Self, usize) -> Option<TypeId>,
+    ) -> Option<(usize, TypeId, TypeId)> {
+        args.iter().enumerate().find_map(|(index, &arg_idx)| {
+            let arg_node = self.ctx.arena.get(arg_idx)?;
+            if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return None;
+            }
+            let func = self.ctx.arena.get_function(arg_node)?;
+            let expected = expected_for_index(self, index)?;
+            let expected_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                expected,
+            )?;
+
+            let has_unknown_binding_pattern =
+                func.parameters
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .any(|(param_index, &param_idx)| {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            return false;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            return false;
+                        };
+                        if param.type_annotation.is_some() {
+                            return false;
+                        }
+                        let has_binding_pattern =
+                            self.ctx.arena.get(param.name).is_some_and(|name_node| {
+                                name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            });
+                        if !has_binding_pattern {
+                            return false;
+                        }
+                        expected_shape
+                            .params
+                            .get(param_index)
+                            .map(|param| param.type_id)
+                            .or_else(|| {
+                                let last = expected_shape.params.last()?;
+                                last.rest.then_some(last.type_id)
+                            })
+                            .is_some_and(|param_type| {
+                                let unconstrained_type_param =
+                                    crate::query_boundaries::common::type_parameter_constraint(
+                                        self.ctx.types,
+                                        param_type,
+                                    )
+                                    .is_none_or(|constraint| {
+                                        constraint == TypeId::UNKNOWN
+                                    || constraint == TypeId::ERROR
+                                    || crate::query_boundaries::common::contains_type_parameters(
+                                        self.ctx.types,
+                                        constraint,
+                                    )
+                                    || crate::query_boundaries::common::contains_infer_types(
+                                        self.ctx.types,
+                                        constraint,
+                                    )
+                                    });
+                                param_type == TypeId::UNKNOWN
+                                    || param_type == TypeId::ERROR
+                                    || crate::query_boundaries::common::contains_infer_types(
+                                        self.ctx.types,
+                                        param_type,
+                                    )
+                                    || (crate::query_boundaries::common::is_type_parameter_like(
+                                        self.ctx.types,
+                                        param_type,
+                                    ) && unconstrained_type_param)
+                            })
+                    });
+
+            if !has_unknown_binding_pattern {
+                return None;
+            }
+
+            let actual = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
+            Some((index, actual, expected))
+        })
+    }
+
     pub(crate) fn collect_non_callback_diagnostics_between(
         &self,
         args: &[NodeIndex],

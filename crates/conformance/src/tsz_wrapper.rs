@@ -301,13 +301,14 @@ pub fn prepare_test_dir(
                     "sourceRoot",
                 ] {
                     if let Some(value) = map.get_mut(key) {
-                        if let serde_json::Value::String(value) = value {
-                            if value.starts_with('/') {
+                        match value {
+                            serde_json::Value::String(value) if value.starts_with('/') => {
                                 *value = dir_path
                                     .join(value.trim_start_matches('/'))
                                     .to_string_lossy()
                                     .into_owned();
                             }
+                            _ => {}
                         }
                     }
                 }

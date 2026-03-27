@@ -519,7 +519,6 @@ fn remove_nullish_inner(
     // the deferred conditional untouched.
     if let Some(TypeData::Conditional(cond_id)) = types.lookup(type_id) {
         let cond = types.conditional_type(cond_id);
-
         // Common Extract-like shape: `T extends U ? T : never`.
         // Truthiness / non-null removal should narrow the true branch through the
         // constraint, yielding `T & NonNullable<U>`.

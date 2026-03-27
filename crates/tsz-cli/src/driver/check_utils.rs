@@ -2056,8 +2056,10 @@ mod tests {
                 "export declare function __decorate(decorators: Function[], target: any, key?: string | symbol, desc?: any): any;\n",
             ),
         ]);
-        let mut options = ResolvedCompilerOptions::default();
-        options.import_helpers = true;
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..ResolvedCompilerOptions::default()
+        };
         options.checker.target = tsz_common::ScriptTarget::ES2015;
         options.checker.experimental_decorators = true;
 
@@ -2092,8 +2094,10 @@ mod tests {
             "/app/a.ts",
             "declare var dec: any, __decorate: any;\n@dec export class A {}\n",
         )]);
-        let mut options = ResolvedCompilerOptions::default();
-        options.import_helpers = true;
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..ResolvedCompilerOptions::default()
+        };
         options.checker.target = tsz_common::ScriptTarget::ES2015;
         options.checker.experimental_decorators = true;
         options.checker.no_types_and_symbols = true;

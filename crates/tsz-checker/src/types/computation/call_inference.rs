@@ -419,21 +419,6 @@ impl<'a> CheckerState<'a> {
                 evaluated
             }
         };
-        if std::env::var_os("TSZ_DEBUG_INSTANTIATED_CONTEXT").is_some()
-            && self
-                .ctx
-                .file_name
-                .contains("dependentDestructuredVariables")
-        {
-            let raw: Vec<_> = instantiated_params
-                .iter()
-                .map(|param| (self.format_type(param.type_id), param.rest))
-                .collect();
-            eprintln!(
-                "instantiated-context file={} arg_count={} params={:?}",
-                self.ctx.file_name, arg_count, raw
-            );
-        }
         let unpacked_params: Vec<_> = instantiated_params
             .iter()
             .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
@@ -461,21 +446,6 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .collect();
-        if std::env::var_os("TSZ_DEBUG_INSTANTIATED_CONTEXT").is_some()
-            && self
-                .ctx
-                .file_name
-                .contains("dependentDestructuredVariables")
-        {
-            let formatted: Vec<_> = contextuals
-                .iter()
-                .map(|ty| ty.map(|ty| self.format_type(ty)))
-                .collect();
-            eprintln!(
-                "instantiated-context-result file={} arg_count={} contextuals={:?}",
-                self.ctx.file_name, arg_count, formatted
-            );
-        }
         contextuals
     }
 
@@ -1361,24 +1331,6 @@ impl<'a> CheckerState<'a> {
                 || expected == TypeId::ERROR
                 || common::contains_infer_types(self.ctx.types, expected)
         });
-        if std::env::var_os("TSZ_DEBUG_CALL_ARG_CONTEXT").is_some()
-            && self
-                .ctx
-                .file_name
-                .contains("dependentDestructuredVariables")
-            && let Some(expected) = expected_type
-            && let Some(node) = self.ctx.arena.get(arg_idx)
-            && (node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-        {
-            eprintln!(
-                "call-arg-context file={} arg_idx={} expected={} callable_ctx={:?}",
-                self.ctx.file_name,
-                arg_idx.0,
-                self.format_type(expected),
-                callable_ctx.callable_type.map(|ty| self.format_type(ty))
-            );
-        }
         let needs_contextual_signature_instantiation =
             self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
         let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;

@@ -615,9 +615,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
-                    return None;
-                };
+                let spread_data = self.ctx.arena.get_jsx_spread_attribute(attr_node)?;
                 if !self.collect_jsx_union_resolution_spread_attrs(
                     spread_data.expression,
                     &mut provided,

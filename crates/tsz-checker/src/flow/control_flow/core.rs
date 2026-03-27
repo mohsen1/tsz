@@ -575,29 +575,11 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(info) = bindings.get(&sym_id) else {
             return narrowed_type;
         };
-        let ref_name = self
-            .arena
-            .get(reference)
-            .and_then(|node| self.arena.get_identifier(node))
-            .map(|ident| ident.escaped_text.to_string())
-            .unwrap_or_else(|| format!("#{}", reference.0));
         if !info.is_const {
-            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-                eprintln!(
-                    "correlated-skip name={} sym={:?} reason=not_const group={}",
-                    ref_name, sym_id, info.group_id
-                );
-            }
             return narrowed_type;
         }
 
         let Some(source_members) = union_members_for_type(self.interner, info.source_type) else {
-            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-                eprintln!(
-                    "correlated-skip name={} sym={:?} reason=no_union source={:?}",
-                    ref_name, sym_id, info.source_type
-                );
-            }
             return narrowed_type;
         };
 
@@ -617,33 +599,15 @@ impl<'a> FlowAnalyzer<'a> {
 
         for (sib_sym, sib_info) in siblings {
             let Some(sib_ref) = self.symbol_identifier_ref(sib_sym) else {
-                if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-                    eprintln!(
-                        "correlated-skip sym={:?} sibling={:?} reason=no_ref",
-                        sym_id, sib_sym
-                    );
-                }
                 continue;
             };
             let Some(sib_initial) =
                 self.derive_binding_type_from_members(&source_members, sib_info)
             else {
-                if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-                    eprintln!(
-                        "correlated-skip sym={:?} sibling={:?} reason=no_initial",
-                        sym_id, sib_sym
-                    );
-                }
                 continue;
             };
 
             let sib_narrowed = self.get_flow_type_uncorrelated(sib_ref, sib_initial, flow_node);
-            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-                eprintln!(
-                    "correlated-check sym={:?} sibling={:?} sib_initial={:?} sib_narrowed={:?}",
-                    sym_id, sib_sym, sib_initial, sib_narrowed
-                );
-            }
             if sib_narrowed == sib_initial {
                 continue;
             }
@@ -655,12 +619,6 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if remaining_members.len() == original_member_count {
-            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-                eprintln!(
-                    "correlated-nochange name={} sym={:?} group={} narrowed={:?}",
-                    ref_name, sym_id, info.group_id, narrowed_type
-                );
-            }
             return narrowed_type;
         }
         if remaining_members.is_empty() {
@@ -673,25 +631,11 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if correlated == narrowed_type {
-            if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-                eprintln!(
-                    "correlated-same name={} sym={:?} result={:?}",
-                    ref_name, sym_id, correlated
-                );
-            }
             return correlated;
         }
 
-        let final_ty = self
-            .intersect_types(correlated, narrowed_type)
-            .unwrap_or(correlated);
-        if std::env::var_os("TSZ_DEBUG_CORRELATED").is_some() {
-            eprintln!(
-                "correlated-result name={} sym={:?} correlated={:?} narrowed={:?} final={:?}",
-                ref_name, sym_id, correlated, narrowed_type, final_ty
-            );
-        }
-        final_ty
+        self.intersect_types(correlated, narrowed_type)
+            .unwrap_or(correlated)
     }
 
     fn symbol_identifier_ref(&self, sym: SymbolId) -> Option<NodeIndex> {

@@ -2174,13 +2174,12 @@ impl<'a> CheckerState<'a> {
             };
             result = if retry_sanitized || needs_real_type_recheck {
                 if let Some(instantiated_params) = retry.2.as_ref() {
-                    let r = self.recheck_generic_call_arguments_with_real_types(
+                    self.recheck_generic_call_arguments_with_real_types(
                         retry.0.clone(),
                         instantiated_params,
                         args,
                         &arg_types,
-                    );
-                    r
+                    )
                 } else {
                     retry.0
                 }
@@ -2217,16 +2216,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let (mut result, allow_contextual_mismatch_deferral) = self.finalize_generic_call_result(
-            callee_type_for_call,
-            generic_instantiated_params.as_ref(),
-            args,
-            &arg_types,
-            result,
-            sanitized_generic_inference,
-            needs_real_type_recheck,
-            shape_this_type,
-        );
+        let (mut result, mut allow_contextual_mismatch_deferral) = self
+            .finalize_generic_call_result(
+                callee_type_for_call,
+                generic_instantiated_params.as_ref(),
+                args,
+                &arg_types,
+                result,
+                sanitized_generic_inference,
+                needs_real_type_recheck,
+                shape_this_type,
+            );
         let forced_block_body_callback_mismatch = self
             .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
                 ContextualTypeContext::with_expected_and_options(
@@ -2238,12 +2238,31 @@ impl<'a> CheckerState<'a> {
             })
             .inspect(|&(index, actual, expected)| {
                 if let CallResult::Success(return_type) = result {
+                    allow_contextual_mismatch_deferral = false;
                     result = CallResult::ArgumentTypeMismatch {
                         index,
                         expected,
                         actual,
                         fallback_return: return_type,
                     };
+                }
+            })
+            .is_some();
+        let forced_binding_pattern_unknown_context_mismatch = self
+            .current_binding_pattern_callback_unknown_context_arg(args, |checker, index| {
+                ContextualTypeContext::with_expected_and_options(
+                    checker.ctx.types,
+                    callee_type_for_call,
+                    checker.ctx.compiler_options.no_implicit_any,
+                )
+                .get_parameter_type_for_call(index, args.len())
+            })
+            .inspect(|&(index, actual, expected)| {
+                if matches!(result, CallResult::Success(_))
+                    && let Some(&arg_idx) = args.get(index)
+                {
+                    allow_contextual_mismatch_deferral = false;
+                    self.error_argument_not_assignable_at(actual, expected, arg_idx);
                 }
             })
             .is_some();
@@ -2254,6 +2273,7 @@ impl<'a> CheckerState<'a> {
             ..
         } = result
             && !forced_block_body_callback_mismatch
+            && !forced_binding_pattern_unknown_context_mismatch
             && fallback_return != TypeId::ERROR
             && self.should_defer_contextual_argument_mismatch(actual, expected)
         {
