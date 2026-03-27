@@ -3793,6 +3793,57 @@ fn compile_prefers_browser_exports_for_bundler() {
 }
 
 #[test]
+fn bundler_esm_declaration_package_without_default_emits_ts1192() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "esnext",
+            "module": "preserve",
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import pkg, { toString } from "pkg";
+
+export const value = toString();
+export { pkg };
+"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{
+          "name": "pkg",
+          "type": "module",
+          "types": "./index.d.ts"
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/index.d.ts"),
+        "export declare function toString(): string;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT),
+        "Expected TS1192 for default import from ESM declaration package with no default export, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 #[ignore = "module resolution for node-next/nodenext not yet complete"]
 fn compile_node_next_resolves_js_extension_to_ts() {
     let temp = TempDir::new().expect("temp dir");
