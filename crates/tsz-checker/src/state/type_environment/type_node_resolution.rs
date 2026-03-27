@@ -678,6 +678,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
         error_node: NodeIndex,
+        allow_unknown_property_fallback: bool,
+        base_display: &str,
     ) -> TypeId {
         if let Some(sym_id) = self.resolve_global_value_symbol(name) {
             if self.alias_resolves_to_type_only(sym_id) {
@@ -699,7 +701,7 @@ impl<'a> CheckerState<'a> {
                 if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
                     && symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE == 0
                 {
-                    self.error_property_not_exist_on_global_this(name, error_node);
+                    self.error_property_not_exist_on_global_this(name, error_node, base_display);
                     return TypeId::ERROR;
                 }
             }
@@ -740,10 +742,15 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        // For truly unknown properties, return ANY to maintain compatibility with
-        // JS expando patterns (e.g., `globalThis.alpha = 4` in checkJs mode).
-        // The caller is responsible for emitting TS7017 (dot access) or TS7053
-        // (bracket access) when noImplicitAny is enabled.
-        TypeId::ANY
+        if allow_unknown_property_fallback {
+            // For truly unknown properties, return ANY to maintain compatibility with
+            // JS expando patterns (e.g., `globalThis.alpha = 4` in checkJs mode).
+            // The caller is responsible for emitting TS7017 (dot access) or TS7053
+            // (bracket access) when noImplicitAny is enabled.
+            TypeId::ANY
+        } else {
+            self.error_property_not_exist_on_global_this(name, error_node, base_display);
+            TypeId::ERROR
+        }
     }
 }

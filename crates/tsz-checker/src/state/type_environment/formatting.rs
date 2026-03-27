@@ -11,13 +11,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
         error_node: NodeIndex,
+        base_display: &str,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         self.error_at_node(
             error_node,
             &format_message(
                 diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                &[name, "typeof globalThis"],
+                &[name, base_display],
             ),
             diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
         );
