@@ -253,6 +253,12 @@ impl<'a> FlowAnalyzer<'a> {
                 // instanceof is always positive in TRUE_CONDITION.
                 if self.condition_proves_assignment(flow, reference) {
                     true
+                } else if self.is_dead_condition_branch(flow) {
+                    // Dead branch of a conditional with a constant condition
+                    // (e.g., FALSE_CONDITION of `true || false`). Treat as
+                    // vacuously assigned — this branch can never execute, so
+                    // TS2454 should not fire here. Matches tsc behavior.
+                    true
                 } else if let Some(&ant) = flow.antecedent.first() {
                     if let Some(&ant_result) = local_cache.get(&ant) {
                         ant_result
@@ -333,14 +339,159 @@ impl<'a> FlowAnalyzer<'a> {
         final_result
     }
 
+    /// Check if a CONDITION flow node represents an impossible (dead) branch.
+    ///
+    /// For example, `true || false ? a : b` creates TRUE_CONDITION and
+    /// FALSE_CONDITION flow nodes for the condition `true || false`. Since
+    /// `true || false` is always truthy, the FALSE_CONDITION branch is dead.
+    /// Similarly, `false && true` is always falsy, so its TRUE_CONDITION
+    /// branch is dead.
+    ///
+    /// tsc recognizes these dead branches and does not emit TS2454 for
+    /// references inside them.
+    fn is_dead_condition_branch(&self, flow: &tsz_binder::FlowNode) -> bool {
+        let is_true_cond = flow.has_any_flags(flow_flags::TRUE_CONDITION)
+            && !flow.has_any_flags(flow_flags::FALSE_CONDITION);
+        let is_false_cond = flow.has_any_flags(flow_flags::FALSE_CONDITION)
+            && !flow.has_any_flags(flow_flags::TRUE_CONDITION);
+
+        if !is_true_cond && !is_false_cond {
+            return false;
+        }
+
+        let condition = flow.node;
+        if condition.is_none() {
+            return false;
+        }
+
+        if is_false_cond && self.is_always_truthy(condition) {
+            return true;
+        }
+        if is_true_cond && self.is_always_falsy(condition) {
+            return true;
+        }
+        false
+    }
+
+    /// Check if an expression always evaluates to a truthy value.
+    ///
+    /// Handles simple constant patterns:
+    /// - `true` literal
+    /// - `true || expr` (short-circuits to true)
+    /// - `expr && true` where both sides are truthy
+    /// - `!false` (negation of falsy)
+    /// - `(expr)` (parenthesized)
+    fn is_always_truthy(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        // Parenthesized: unwrap
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.arena.get_parenthesized(node) {
+                return self.is_always_truthy(paren.expression);
+            }
+            return false;
+        }
+
+        // `true` literal
+        if node.kind == SyntaxKind::TrueKeyword as u16 {
+            return true;
+        }
+
+        // `!expr` is truthy if expr is always falsy
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr(node)
+                && unary.operator == SyntaxKind::ExclamationToken as u16
+            {
+                return self.is_always_falsy(unary.operand);
+            }
+            return false;
+        }
+
+        // Binary logical operators
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = self.arena.get_binary_expr(node) {
+                // `a || b`: truthy if a is always truthy (short-circuits)
+                if bin.operator_token == SyntaxKind::BarBarToken as u16 {
+                    return self.is_always_truthy(bin.left);
+                }
+                // `a && b`: truthy only if both are always truthy
+                if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
+                    return self.is_always_truthy(bin.left) && self.is_always_truthy(bin.right);
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if an expression always evaluates to a falsy value.
+    ///
+    /// Handles simple constant patterns:
+    /// - `false` literal
+    /// - `false && expr` (short-circuits to false)
+    /// - `!true` (negation of truthy)
+    /// - `null` literal
+    /// - `(expr)` (parenthesized)
+    fn is_always_falsy(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        // Parenthesized: unwrap
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.arena.get_parenthesized(node) {
+                return self.is_always_falsy(paren.expression);
+            }
+            return false;
+        }
+
+        // `false` literal
+        if node.kind == SyntaxKind::FalseKeyword as u16 {
+            return true;
+        }
+
+        // `null` literal
+        if node.kind == SyntaxKind::NullKeyword as u16 {
+            return true;
+        }
+
+        // `!expr` is falsy if expr is always truthy
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr(node)
+                && unary.operator == SyntaxKind::ExclamationToken as u16
+            {
+                return self.is_always_truthy(unary.operand);
+            }
+            return false;
+        }
+
+        // Binary logical operators
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = self.arena.get_binary_expr(node) {
+                // `a && b`: falsy if a is always falsy (short-circuits)
+                if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
+                    return self.is_always_falsy(bin.left);
+                }
+                // `a || b`: falsy only if both are always falsy
+                if bin.operator_token == SyntaxKind::BarBarToken as u16 {
+                    return self.is_always_falsy(bin.left) && self.is_always_falsy(bin.right);
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if a CONDITION flow node proves the reference variable is assigned.
     ///
-    /// typeof/instanceof guards prove a variable has a value in the "positive
-    /// sense" branch:
-    /// - `typeof x === "string"` + `TRUE_CONDITION` → x is assigned (typeof returned "string")
-    /// - `typeof x !== "string"` + `FALSE_CONDITION` → x is assigned (double negative)
-    /// - `typeof x !== "string"` + `TRUE_CONDITION` → x might be uninitialized
-    /// - `x instanceof C` + `TRUE_CONDITION` → x is assigned
+    /// typeof/instanceof/property-access guards prove a variable has a value
+    /// in the "positive sense" branch:
+    /// - `typeof x === "string"` + `TRUE_CONDITION` -> x is assigned
+    /// - `typeof x !== "string"` + `FALSE_CONDITION` -> x is assigned (double negative)
+    /// - `x instanceof C` + `TRUE_CONDITION` -> x is assigned
+    /// - `x.prop === val` + positive sense -> x is assigned (property access proves existence)
     fn condition_proves_assignment(
         &self,
         flow: &tsz_binder::FlowNode,
@@ -487,6 +638,46 @@ impl<'a> FlowAnalyzer<'a> {
             return self.is_matching_reference(typeof_operand, reference);
         }
 
+        // Property access on the reference (e.g., `var1.constructor === Number`):
+        // Evaluating the property access requires the variable to have a value,
+        // so the positive-sense branch (where the equality holds) proves the
+        // variable is definitely assigned. The negative-sense branch does NOT
+        // prove assignment — the variable might still be uninitialized (if the
+        // comparison threw, we wouldn't be in the negative branch, but the flow
+        // analysis conservatively treats the negative branch as "possibly
+        // uninitialized" to match tsc behavior at merge points).
+        if self.expression_accesses_reference(bin.left, reference)
+            || self.expression_accesses_reference(bin.right, reference)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if an expression accesses the reference variable via a property
+    /// access (e.g., `ref.constructor`, `ref.length`).
+    ///
+    /// Evaluating a property access requires the base expression to have a
+    /// value, so encountering such an access in any branch of a condition
+    /// proves the variable is definitely assigned at that point.
+    fn expression_accesses_reference(&self, expr: NodeIndex, reference: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            if let Some(access) = self.arena.get_access_expr(node) {
+                // Optional chaining (`ref?.prop`) does NOT prove assignment —
+                // the access short-circuits when the base is nullish.
+                if !access.question_dot_token
+                    && self.is_matching_reference(access.expression, reference)
+                {
+                    return true;
+                }
+            }
+        }
         false
     }
 
