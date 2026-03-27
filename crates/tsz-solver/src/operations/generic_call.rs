@@ -631,6 +631,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Re-set declared constraints using the full substitution now that all
+        // placeholders exist. When type parameter order is `<T extends ..U.., U extends P>`,
+        // the initial pass above sets T's constraint before U's placeholder exists, so
+        // the constraint may contain the original (unconstrained) TypeParameter for U.
+        // Re-instantiating with the complete substitution replaces those stale references
+        // with U's placeholder, which carries U's constraint in its TypeParamInfo.
+        // This is critical for `constraint_contains_type_param_with_primitive_constraint`
+        // which checks the constraint of TypeParameters found inside T's constraint
+        // (e.g., Object.freeze: T extends {[idx:string]: U|...}, U extends string|...).
+        for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
+            if let Some(constraint) = tp.constraint {
+                let inst_constraint = instantiate_call_type(
+                    self.interner,
+                    constraint,
+                    &substitution,
+                    actual_this_type,
+                );
+                infer_ctx.set_declared_constraint(var, inst_constraint);
+            }
+        }
+
         // Seed inference from generic `this` parameter when present.
         // For calls like `obj.method<T>(...)`, `this: T` must constrain `T` from
         // the calling receiver so parameter types like `keyof T` don't collapse.
