@@ -1112,6 +1112,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !target_instantiated.type_params.is_empty()
             && source_instantiated.type_params.len() != target_instantiated.type_params.len()
         {
+            if self.has_conflicting_contextual_param_candidates(
+                &source_instantiated,
+                &target_instantiated,
+            ) {
+                self.type_param_equivalences.truncate(equiv_start);
+                return SubtypeResult::False;
+            }
+
+            if let Ok(substitution) = self.infer_source_type_param_substitution(
+                &source_instantiated,
+                &target_instantiated,
+            ) {
+                let inferred_source =
+                    self.instantiate_function_shape(&source_instantiated, &substitution);
+                let result = self.check_function_subtype(&inferred_source, &target_instantiated);
+                self.type_param_equivalences.truncate(equiv_start);
+                return result;
+            }
+
             let source_canonical =
                 erase_type_params_to_constraints(&source_instantiated.type_params);
             source_instantiated =
@@ -1849,11 +1868,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // For each target construct signature, at least one source signature must match.
-        // Construct signatures use bivariant parameter checking (like methods).
+        // Callable-object construct signatures come from property values such as
+        // `{ ctor: new <T>(x: T) => T }`, not from method syntax, so they should
+        // follow the regular property-function relation instead of method-style
+        // bivariance. Standalone constructor function types still flow through
+        // `check_function_subtype` with `is_constructor = true`.
         for t_sig in &target.construct_signatures {
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
-                let result = self.check_call_signature_subtype_as_constructor(s_sig, t_sig);
+                let result = self.check_call_signature_subtype(s_sig, t_sig);
                 if result.is_true() {
                     found_match = true;
                     break;
@@ -1947,15 +1970,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &CallSignature,
     ) -> SubtypeResult {
         self.check_call_signature_subtype_impl(source, target, false)
-    }
-
-    /// Check construct signature subtyping (bivariant parameters).
-    pub(crate) fn check_call_signature_subtype_as_constructor(
-        &mut self,
-        source: &CallSignature,
-        target: &CallSignature,
-    ) -> SubtypeResult {
-        self.check_call_signature_subtype_impl(source, target, true)
     }
 
     fn check_call_signature_subtype_impl(

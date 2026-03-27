@@ -1328,14 +1328,43 @@ impl<'a> FlowAnalyzer<'a> {
                             if self.is_logical_assignment(flow.node) {
                                 assigned_type
                             } else if self.is_access_reference(reference) {
-                                // For property accesses with divergent get/set types
-                                // (e.g., `get style(): CSSStyleDeclaration; set style(v: string)`),
-                                // the assigned type (setter param) is not assignable to the
-                                // declared read type (getter return).  Skip narrowing in that
-                                // case to preserve the correct read type for subsequent accesses.
+                                // Property/element access reads should keep their declared read
+                                // type for constructor-valued and generic callable members.
+                                // A prior write can be assignment-compatible without changing the
+                                // member's declared read surface, especially for interface/class
+                                // members with generic call/construct signatures.
                                 let widened =
                                     query::widen_literal_to_primitive(self.interner, assigned_type);
-                                if self.is_assignable_to(widened, initial_type) {
+                                let callable_read_preserves_declared_type = |type_id| {
+                                    let function_shape =
+                                        tsz_solver::type_queries::get_function_shape(
+                                            self.interner,
+                                            type_id,
+                                        );
+                                    let has_generic_call_signatures =
+                                        query::call_signatures_for_type(self.interner, type_id)
+                                            .is_some_and(|sigs| {
+                                                sigs.iter()
+                                                    .any(|sig| !sig.type_params.is_empty())
+                                            });
+                                    let construct_signatures =
+                                        tsz_solver::type_queries::get_construct_signatures(
+                                            self.interner,
+                                            type_id,
+                                        );
+                                    function_shape.as_ref().is_some_and(|shape| {
+                                        shape.is_constructor || !shape.type_params.is_empty()
+                                    }) || has_generic_call_signatures
+                                        || construct_signatures
+                                            .as_ref()
+                                            .is_some_and(|sigs| !sigs.is_empty())
+                                };
+                                let preserves_declared_callable_read_type =
+                                    callable_read_preserves_declared_type(initial_type)
+                                        || callable_read_preserves_declared_type(widened);
+                                if preserves_declared_callable_read_type {
+                                    initial_type
+                                } else if self.is_assignable_to(widened, initial_type) {
                                     widened
                                 } else {
                                     initial_type
