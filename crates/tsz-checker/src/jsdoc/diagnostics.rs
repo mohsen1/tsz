@@ -1354,9 +1354,12 @@ impl<'a> CheckerState<'a> {
                     let resolved = self.resolve_jsdoc_type_str(expr);
                     self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                     if resolved.is_none() {
-                        // Also check if it's a typedef (globally) that's just out of scope
+                        // Also check if it's a typedef (globally) that's just out of scope.
+                        // Use resolve_jsdoc_typedef_info (not resolve_jsdoc_typedef_type)
+                        // because the latter has an `.or(Some(ANY))` fallback that always
+                        // returns Some, making the existence check meaningless.
                         let typedef_exists = self
-                            .resolve_jsdoc_typedef_type(expr, u32::MAX, &comments, &source_text)
+                            .resolve_jsdoc_typedef_info(expr, &comments, &source_text)
                             .is_some();
                         if typedef_exists {
                             self.emit_jsdoc_cannot_find_name(
