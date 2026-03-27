@@ -14,6 +14,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -169,6 +170,8 @@ impl<'a> CheckerState<'a> {
             .map(|sid| self.ctx.symbol_resolution_set.insert(sid))
             .unwrap_or(false);
 
+        self.check_variance_annotations_supported_for_type_alias(alias);
+
         // TS4109: detect circular type arguments when the alias body is directly
         // a TypeReference (e.g. `type X = Foo<X extends {} ? A : B>`).  In TSC
         // this fires only during `resolveTypeArguments` for the direct body type
@@ -226,6 +229,64 @@ impl<'a> CheckerState<'a> {
         // via the `type_query_override` callback during `ensure_type_alias_resolved`.
         self.precompute_type_query_flow_types(alias.type_node);
         self.pop_type_parameters(updates);
+    }
+
+    fn check_variance_annotations_supported_for_type_alias(
+        &mut self,
+        alias: &tsz_parser::parser::node::TypeAliasData,
+    ) {
+        let Some(type_params) = &alias.type_parameters else {
+            return;
+        };
+
+        let first_variance_modifier = type_params
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|param_idx| {
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                if self.node_contains_any_parse_error(param_idx)
+                    || matches!(
+                        self.get_identifier_text_from_idx(param.name).as_deref(),
+                        Some("in" | "out")
+                    )
+                {
+                    return None;
+                }
+                let modifiers = param.modifiers.as_ref()?;
+                modifiers.nodes.iter().copied().find(|&modifier_idx| {
+                    self.ctx.arena.get(modifier_idx).is_some_and(|modifier_node| {
+                        matches!(
+                            modifier_node.kind,
+                            k if k == SyntaxKind::InKeyword as u16
+                                || k == SyntaxKind::OutKeyword as u16
+                        )
+                    })
+                })
+            });
+
+        let Some(variance_modifier_idx) = first_variance_modifier else {
+            return;
+        };
+
+        let body_kind = self.ctx.arena.get(alias.type_node).map(|n| n.kind);
+        let variance_supported = body_kind.is_some_and(|kind| {
+            kind == syntax_kind_ext::TYPE_LITERAL
+                || kind == syntax_kind_ext::FUNCTION_TYPE
+                || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                || kind == syntax_kind_ext::MAPPED_TYPE
+        });
+
+        if variance_supported {
+            return;
+        }
+
+        self.error_at_node(
+            variance_modifier_idx,
+            crate::diagnostics::diagnostic_messages::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
+            crate::diagnostics::diagnostic_codes::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
+        );
     }
 
     /// Walk a type argument AST node and return true if it contains a reference
