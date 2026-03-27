@@ -205,6 +205,29 @@ c?.foo;
 }
 
 #[test]
+fn test_variance_annotations_require_direct_supported_type_alias_bodies() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type NumericConstraint<Value extends number> = Value;
+type VarianceConstrainedNumber<in out Value extends number> = NumericConstraint<Value>;
+
+type VarianceFunction<in out Value> = (value: Value) => Value;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2637_count = diagnostics.iter().filter(|(code, _)| *code == 2637).count();
+    assert_eq!(
+        ts2637_count, 1,
+        "Expected exactly one TS2637 for unsupported variance alias bodies, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_verbatim_module_syntax_const_enum_in_esnext_does_not_report_cjs_errors() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
