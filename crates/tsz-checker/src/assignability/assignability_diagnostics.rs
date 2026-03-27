@@ -706,6 +706,24 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
     }
 
+    fn is_constructor_only_object_type_for_comparison(&mut self, type_id: TypeId) -> bool {
+        let resolved = self.evaluate_type_with_resolution(type_id);
+        let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            resolved,
+        ) else {
+            return false;
+        };
+        if shape.construct_signatures.is_empty() {
+            return false;
+        }
+        if !shape.call_signatures.is_empty() {
+            return false;
+        }
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
+            .is_none_or(|obj| obj.properties.is_empty())
+    }
+
     /// Check if two types are comparable (overlap).
     ///
     /// Corresponds to TypeScript's `areTypesComparable`: returns true if the types
@@ -811,6 +829,12 @@ impl<'a> CheckerState<'a> {
         // Example: `{ b?: number }` vs `{ b?: string }` are comparable because both
         // include `{}` as a valid value.
         if self.objects_with_all_optional_common_props_overlap(source_apparent, target_apparent) {
+            return true;
+        }
+
+        if self.is_constructor_only_object_type_for_comparison(source_apparent)
+            && self.is_constructor_only_object_type_for_comparison(target_apparent)
+        {
             return true;
         }
 

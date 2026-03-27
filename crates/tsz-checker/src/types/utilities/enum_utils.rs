@@ -1173,6 +1173,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.constructor_signature_only_objects_overlap(effective_left, effective_right) {
+            tracing::trace!("constructor-only object types overlap");
+            return false;
+        }
+
         // Independent property variance: Two object types overlap if ALL common
         // properties have independently overlapping types, even when neither whole
         // type is assignable to the other.
@@ -1232,6 +1237,25 @@ impl<'a> CheckerState<'a> {
 
         // At least one type must have properties (avoid trivial empty-object matching)
         !left_shape.properties.is_empty() || !right_shape.properties.is_empty()
+    }
+
+    fn constructor_signature_only_objects_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
+        let is_constructor_only = |this: &mut Self, type_id| {
+            let resolved = this.evaluate_type_with_resolution(type_id);
+            let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
+                this.ctx.types,
+                resolved,
+            ) else {
+                return false;
+            };
+            if shape.construct_signatures.is_empty() || !shape.call_signatures.is_empty() {
+                return false;
+            }
+            crate::query_boundaries::assignability::object_shape_for_type(this.ctx.types, resolved)
+                .is_none_or(|obj| obj.properties.is_empty())
+        };
+
+        is_constructor_only(self, left) && is_constructor_only(self, right)
     }
 
     /// Check if two object types have all common properties with independently

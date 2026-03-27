@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
             && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
         {
-            let function_shape = tsz_solver::type_queries::get_function_shape(
+            let function_shape = crate::query_boundaries::flow_analysis::function_shape_for_type(
                 self.ctx.types,
                 declared_type,
             );
@@ -84,7 +84,10 @@ impl<'a> CheckerState<'a> {
                 )
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()));
             let construct_signatures =
-                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, declared_type);
+                crate::query_boundaries::flow_analysis::construct_signatures_for_type(
+                    self.ctx.types,
+                    declared_type,
+                );
             let has_any_construct_signatures = construct_signatures
                 .as_ref()
                 .is_some_and(|sigs| !sigs.is_empty());
