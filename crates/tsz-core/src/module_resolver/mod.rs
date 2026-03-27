@@ -208,8 +208,16 @@ impl ModuleResolver {
 
         // Determine the module kind of the importing file, honoring any explicit
         // driver-provided resolution-mode override from import attributes.
-        let importing_module_kind = importing_module_kind_override
-            .unwrap_or_else(|| self.get_importing_module_kind(containing_file));
+        let importing_module_kind =
+            importing_module_kind_override.unwrap_or_else(|| match self.module_kind {
+                ModuleKind::Preserve => match import_kind {
+                    ImportKind::EsmImport
+                    | ImportKind::DynamicImport
+                    | ImportKind::EsmReExport => ImportingModuleKind::Esm,
+                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                },
+                _ => self.get_importing_module_kind(containing_file),
+            });
         let cache_key = (
             containing_dir.clone(),
             specifier.to_string(),

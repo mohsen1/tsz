@@ -2367,6 +2367,87 @@ fn test_lookup_resolution_mode_override_selects_import_condition() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn test_lookup_module_preserve_uses_syntax_directed_conditions() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_lookup_module_preserve_conditions");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{".":{"import":"./esm.d.ts","require":"./cjs.d.ts"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/esm.d.ts"),
+        r#"export const esm: "esm";"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/cjs.d.ts"),
+        r#"declare const cjs: "cjs"; export = cjs;"#,
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { esm } from 'pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Preserve,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let esm_request = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.ts"),
+        specifier_span: Span::new(19, 24),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let esm_result = resolver.lookup(&esm_request, |_, _| None, |_| false);
+    let esm_path = esm_result
+        .resolved_path
+        .expect("module preserve import should select the import condition");
+    assert!(
+        esm_path.ends_with("esm.d.ts"),
+        "expected import condition path, got {}",
+        esm_path.display()
+    );
+
+    resolver.clear_cache();
+
+    let cjs_request = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.ts"),
+        specifier_span: Span::new(19, 24),
+        import_kind: ImportKind::CjsRequire,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let cjs_result = resolver.lookup(&cjs_request, |_, _| None, |_| false);
+    let cjs_path = cjs_result
+        .resolved_path
+        .expect("module preserve require should select the require condition");
+    assert!(
+        cjs_path.ends_with("cjs.d.ts"),
+        "expected require condition path, got {}",
+        cjs_path.display()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // -----------------------------------------------------------------------
 // ModuleLookupOutcome / classify() tests
 // -----------------------------------------------------------------------
