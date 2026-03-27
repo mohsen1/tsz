@@ -1357,6 +1357,7 @@ impl<'a> CheckerState<'a> {
                 instantiated_params,
                 arg_types.len(),
             );
+            let mut recovered_argument_mismatch = false;
             let result = if sanitized_generic_inference || needs_real_type_recheck {
                 self.recheck_generic_call_arguments_with_real_types(
                     result,
@@ -1367,13 +1368,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 result
             };
-            let recovered_mismatch = matches!(
-                &result,
-                CallResult::ArgumentTypeMismatch {
-                    fallback_return,
-                    ..
-                } if *fallback_return != TypeId::ERROR
-            );
             let (result, should_epc) = match result {
                 CallResult::Success(return_type) => (CallResult::Success(return_type), true),
                 CallResult::ArgumentTypeMismatch {
@@ -1477,6 +1471,7 @@ impl<'a> CheckerState<'a> {
                         if !fresh_assignable && !excess_property_recovery {
                             allow_contextual_mismatch_deferral = false;
                         }
+                        recovered_argument_mismatch = fresh_assignable || excess_property_recovery;
                         (
                             CallResult::ArgumentTypeMismatch {
                                 index,
@@ -1540,7 +1535,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                if recovered_mismatch {
+                if recovered_argument_mismatch {
                     if let CallResult::ArgumentTypeMismatch {
                         fallback_return, ..
                     } = &result

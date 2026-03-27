@@ -125,6 +125,66 @@ const result = apply(x => x, 42);
     );
 }
 
+#[test]
+fn direct_generic_argument_mismatch_is_not_recovered_to_success() {
+    let source = r#"
+declare function bar<T>(item1: T, item2: T): T;
+bar(1, "");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "Expected TS2345 for conflicting direct inference candidates. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn higher_order_generic_return_mismatch_preserves_followup_ts2339() {
+    let source = r#"
+class SetOf<A> {
+  _store: A[];
+
+  add(a: A) {
+    this._store.push(a);
+  }
+
+  transform<B>(transformer: (a: SetOf<A>) => SetOf<B>): SetOf<B> {
+    return transformer(this);
+  }
+
+  forEach(fn: (a: A, index: number) => void) {
+      this._store.forEach((a, i) => fn(a, i));
+  }
+}
+
+declare function compose<A, B, C, D, E>(
+  fnA: (a: SetOf<A>) => SetOf<B>,
+  fnB: (b: SetOf<B>) => SetOf<C>,
+  fnC: (c: SetOf<C>) => SetOf<D>,
+  fnD: (c: SetOf<D>) => SetOf<E>,
+): (x: SetOf<A>) => SetOf<E>;
+declare function compose<T>(...fns: ((x: T) => T)[]): (x: T) => T;
+
+declare function map<A, B>(fn: (a: A) => B): (s: SetOf<A>) => SetOf<B>;
+declare function filter<A>(predicate: (a: A) => boolean): (s: SetOf<A>) => SetOf<A>;
+
+const testSet = new SetOf<number>();
+testSet.transform(
+  compose(
+    filter(x => x % 1 === 0),
+    map(x => x + x),
+    map(x => 123),
+    map(x => x.toUpperCase())
+  )
+);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2339),
+        "Expected TS2339 after higher-order generic inference mismatch. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Constraint-based literal preservation ───────────────────────────
 
 #[test]
