@@ -1516,8 +1516,12 @@ impl<'a> CheckerState<'a> {
             self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)
         {
             if let Some(comment) = comments.iter().find(|c| c.pos == jsdoc_start) {
-                let raw = &source_text[comment.pos as usize..comment.end as usize];
-                attached_positions = Self::jsdoc_satisfies_keyword_positions(raw, jsdoc_start);
+                let malformed_positions =
+                    Self::malformed_jsdoc_satisfies_positions(source_text, comment.pos, comment.end);
+                if malformed_positions.is_empty() {
+                    let raw = &source_text[comment.pos as usize..comment.end as usize];
+                    attached_positions = Self::jsdoc_satisfies_keyword_positions(raw, jsdoc_start);
+                }
             }
             attached_comment_pos = Some(jsdoc_start);
             self.emit_duplicate_jsdoc_satisfies_positions(&attached_positions);
@@ -1544,10 +1548,20 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let inline_positions = Self::jsdoc_satisfies_keyword_positions(
-            &source_text[comment.pos as usize..comment.end as usize],
+        let inline_positions = if Self::malformed_jsdoc_satisfies_positions(
+            source_text,
             comment.pos,
-        );
+            comment.end,
+        )
+        .is_empty()
+        {
+            Self::jsdoc_satisfies_keyword_positions(
+                &source_text[comment.pos as usize..comment.end as usize],
+                comment.pos,
+            )
+        } else {
+            Vec::new()
+        };
         self.emit_duplicate_jsdoc_satisfies_positions(&inline_positions);
 
         if !attached_positions.is_empty()
