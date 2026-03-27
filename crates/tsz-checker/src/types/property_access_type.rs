@@ -1932,7 +1932,15 @@ impl<'a> CheckerState<'a> {
                         && skip_flow_narrowing
                         && self.property_access_is_direct_write_target(idx)
                     {
-                        return TypeId::ANY;
+                        let object_literal_owned_this = self
+                            .this_has_contextual_owner(access.expression)
+                            .and_then(|owner_idx| self.ctx.arena.get(owner_idx))
+                            .is_some_and(|owner_node| {
+                                owner_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            });
+                        if !object_literal_owned_this {
+                            return TypeId::ANY;
+                        }
                     }
 
                     if self.is_js_file() && is_this_access && !has_explicit_this_context {
