@@ -675,12 +675,17 @@ impl<'a> CheckerState<'a> {
         let mut this_type = None;
         let mut params_ok = true;
         if !params_inner.is_empty() {
-            for p in params_inner.split(',') {
-                let p = p.trim();
-                let (name, t_str) = if let Some(colon) = p.find(':') {
-                    (Some(p[..colon].trim()), p[colon + 1..].trim())
+            for raw_param in Self::split_top_level_params(params_inner) {
+                let p = raw_param.trim();
+                let is_rest = p.starts_with("...");
+                let effective_p = if is_rest { &p[3..] } else { p };
+                let (name, t_str) = if let Some(colon) = effective_p.find(':') {
+                    (
+                        Some(effective_p[..colon].trim()),
+                        effective_p[colon + 1..].trim(),
+                    )
                 } else {
-                    (None, p)
+                    (None, effective_p)
                 };
                 if let Some(p_type) = self.resolve_jsdoc_reference(t_str) {
                     if name == Some("this") {
@@ -692,7 +697,7 @@ impl<'a> CheckerState<'a> {
                         name: atom,
                         type_id: p_type,
                         optional: false,
-                        rest: false,
+                        rest: is_rest,
                     });
                 } else {
                     params_ok = false;

@@ -227,6 +227,28 @@ function f() {
     );
 }
 
+/// `@type {(...values: string[]) => void}` should be parsed as a rest parameter,
+/// not as a single `string[]` positional parameter.
+#[test]
+fn jsdoc_arrow_function_type_preserves_rest_parameter() {
+    let diags = check_js(
+        r#"/** @type {(...values: string[]) => void} */
+const f = function() {};
+f("a", "b", "c");
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2554)
+        .map(|d| d.code)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected no TS2345/TS2554 when JSDoc arrow function type uses a rest parameter, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// `@type {function(this: Foo): void}` should preserve the contextual `this`
 /// parameter for Closure-style callable syntax too.
 #[test]
