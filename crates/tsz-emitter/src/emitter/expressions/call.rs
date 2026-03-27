@@ -9,6 +9,56 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
+            && let Some(expr_node) = self.arena.get(call.expression)
+        {
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                self.write("Reflect.get(");
+                self.write(&base_alias);
+                self.write(", ");
+                self.emit_scoped_static_super_property_name(access.name_or_argument);
+                self.write(", ");
+                self.emit_scoped_static_super_receiver();
+                self.write(").call(");
+                self.emit_scoped_static_super_receiver();
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+
+            if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                self.write("Reflect.get(");
+                self.write(&base_alias);
+                self.write(", ");
+                self.emit(access.name_or_argument);
+                self.write(", ");
+                self.emit_scoped_static_super_receiver();
+                self.write(").call(");
+                self.emit_scoped_static_super_receiver();
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+        }
+
         if self.is_optional_chain(node) {
             if self.ctx.options.target.supports_es2020() {
                 self.emit_unwrapping_type_args(call.expression);
