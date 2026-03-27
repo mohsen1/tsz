@@ -529,6 +529,23 @@ impl<'a> Printer<'a> {
         self.generate_fresh_temp_name()
     }
 
+    pub(super) fn make_unique_name_from_base(&mut self, base: &str) -> String {
+        for suffix in 1..=1000 {
+            let candidate = format!("{base}_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                self.ctx.block_scope_state.reserve_name(candidate.clone());
+                return candidate;
+            }
+        }
+
+        let name = self.make_unique_name_fresh();
+        self.ctx.block_scope_state.reserve_name(name.clone());
+        name
+    }
+
     pub(super) fn preallocate_temp_names(&mut self, count: usize) {
         for _ in 0..count {
             let name = self.generate_fresh_temp_name();

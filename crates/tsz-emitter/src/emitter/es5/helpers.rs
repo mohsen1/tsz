@@ -978,6 +978,24 @@ impl<'a> Printer<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         this_expr: &str,
     ) {
+        let await_param_recovery = func
+            .parameters
+            .nodes
+            .iter()
+            .copied()
+            .any(|param_idx| self.param_initializer_has_top_level_await(param_idx))
+            && crate::transforms::emit_utils::block_is_empty(self.arena, func.body)
+            && crate::transforms::emit_utils::first_await_default_param_name(
+                self.arena,
+                &func.parameters.nodes,
+            )
+            .is_some();
+
+        if await_param_recovery {
+            self.emit_async_arrow_es5_await_param_recovery(func, this_expr);
+            return;
+        }
+
         // Note: emit_function_parameters_es5 calls push_temp_scope() internally,
         // so we don't push here — the pop at the end of this function balances it.
         self.write("function (");
@@ -1168,5 +1186,78 @@ impl<'a> Printer<'a> {
             }
         }
         self.pop_temp_scope();
+    }
+
+    fn emit_async_arrow_es5_await_param_recovery(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+        this_expr: &str,
+    ) {
+        let Some(param_name) = crate::transforms::emit_utils::first_await_default_param_name(
+            self.arena,
+            &func.parameters.nodes,
+        ) else {
+            return;
+        };
+        let args_name = self.make_unique_name_from_base("args");
+
+        self.write("function () {");
+        self.write_line();
+        self.increase_indent();
+        self.write("var ");
+        self.write(&args_name);
+        self.write(" = [];");
+        self.write_line();
+        self.write("for (var _i = 0; _i < arguments.length; _i++) {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&args_name);
+        self.write("[_i] = arguments[_i];");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("return ");
+        self.write_helper("__awaiter");
+        self.write("(");
+        self.write(this_expr);
+        self.write(", ");
+        self.write_helper("__spreadArray");
+        self.write("([], ");
+        self.write(&args_name);
+        self.write(", true), void 0, function (");
+        self.emit_function_parameter_names_only(&func.parameters.nodes);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write("if (");
+        self.write(&param_name);
+        self.write(" === void 0) { ");
+        self.write(&param_name);
+        self.write(" = _a.sent(); }");
+        self.write_line();
+        self.write("return ");
+        self.write_helper("__generator");
+        self.write("(this, function (_a) {");
+        self.write_line();
+        self.increase_indent();
+        self.write("switch (_a.label) {");
+        self.write_line();
+        self.increase_indent();
+        self.write("case 0: return [4 /*yield*/, ];");
+        self.write_line();
+        self.write("case 1: return [2 /*return*/];");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.decrease_indent();
+        self.write("});");
+        self.write_line();
+        self.decrease_indent();
+        self.write("});");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
     }
 }

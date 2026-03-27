@@ -518,7 +518,7 @@ impl<'a> Printer<'a> {
         emit_utils::first_await_default_param_name(self.arena, params)
     }
 
-    fn emit_function_parameter_names_only(&mut self, params: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_function_parameter_names_only(&mut self, params: &[NodeIndex]) {
         let mut first = true;
         for &param_idx in params {
             let Some(param_node) = self.arena.get(param_idx) else {

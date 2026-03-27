@@ -220,12 +220,6 @@ impl<'a> Printer<'a> {
     fn emit_arrow_function_async_lowered(&mut self, func: &tsz_parser::parser::node::FunctionData) {
         // Don't emit `async` - it's lowered away
 
-        // TSC always wraps parameters in parens when lowering async arrows,
-        // even if the original source had `async x => ...` without parens.
-        self.write("(");
-        self.emit_function_parameters_js(&func.parameters.nodes);
-        self.write(")");
-
         // For arrow functions on ES2015+, TSC passes `this` to __awaiter when
         // the arrow is inside a function/method scope (where `this` is bound).
         // At top level (file scope), use `void 0` since there's no meaningful `this`.
@@ -234,6 +228,30 @@ impl<'a> Printer<'a> {
         } else {
             "void 0"
         };
+
+        let await_param_recovery = func
+            .parameters
+            .nodes
+            .iter()
+            .copied()
+            .any(|param_idx| self.param_initializer_has_top_level_await(param_idx))
+            && crate::transforms::emit_utils::block_is_empty(self.arena, func.body)
+            && crate::transforms::emit_utils::first_await_default_param_name(
+                self.arena,
+                &func.parameters.nodes,
+            )
+            .is_some();
+
+        if await_param_recovery {
+            self.emit_async_arrow_await_param_recovery(func, this_arg);
+            return;
+        }
+
+        // TSC always wraps parameters in parens when lowering async arrows,
+        // even if the original source had `async x => ...` without parens.
+        self.write("(");
+        self.emit_function_parameters_js(&func.parameters.nodes);
+        self.write(")");
 
         // Check if the body references `arguments`. If so, we must capture it
         // before entering the generator: `() => { var arguments_1 = arguments; return __awaiter(...); }`
@@ -402,6 +420,35 @@ impl<'a> Printer<'a> {
         self.ctx.emit_await_as_yield = false;
 
         self.decrease_indent();
+        self.write("})");
+    }
+
+    fn emit_async_arrow_await_param_recovery(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+        this_arg: &str,
+    ) {
+        let Some(param_name) = crate::transforms::emit_utils::first_await_default_param_name(
+            self.arena,
+            &func.parameters.nodes,
+        ) else {
+            return;
+        };
+        let args_name = self.make_unique_name_from_base("args");
+
+        self.write("(...");
+        self.write(&args_name);
+        self.write(") => ");
+        self.write_helper("__awaiter");
+        self.write("(");
+        self.write(this_arg);
+        self.write(", [...");
+        self.write(&args_name);
+        self.write("], void 0, function* (");
+        self.write(&param_name);
+        self.write(" = yield ");
+        self.write(") {");
+        self.write_line();
         self.write("})");
     }
 
@@ -1243,6 +1290,22 @@ mod tests {
         assert!(
             !output.contains("function foo() /** nothing */"),
             "Comment should not drift after closing paren.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn async_arrow_await_default_param_es2015_forwards_args() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "var foo = async (a = await): Promise<void> => {}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains("var foo = (...args_1) => __awaiter(void 0, [...args_1], void 0, function* (a = yield ) {"),
+            "Async arrow await-default recovery should forward args in ES2015 emit.\nOutput:\n{}",
+            result.code
         );
     }
 
