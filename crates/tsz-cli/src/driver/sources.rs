@@ -2,6 +2,28 @@
 
 use super::*;
 
+/// Count how many `node_modules` segments appear in a file path.
+/// For example, `/a/node_modules/b/node_modules/c/index.js` has depth 2.
+fn node_modules_depth(path: &Path) -> u32 {
+    path.components()
+        .filter(|c| c.as_os_str() == "node_modules")
+        .count() as u32
+}
+
+/// Check if a JS file should be skipped due to `maxNodeModuleJsDepth`.
+/// Returns true if the file is a `.js` file inside `node_modules` and its
+/// nesting depth exceeds the allowed maximum.
+fn should_skip_js_in_node_modules(path: &Path, max_depth: u32) -> bool {
+    if !is_js_file(path) {
+        return false;
+    }
+    let depth = node_modules_depth(path);
+    if depth == 0 {
+        return false;
+    }
+    depth > max_depth
+}
+
 /// Result of reading a source file - either valid text or binary/unreadable
 #[derive(Debug, Clone)]
 pub enum FileReadResult {
@@ -495,6 +517,16 @@ pub(super) fn read_source_files(
                     pending.push_back(dep.clone());
                 }
             }
+            continue;
+        }
+
+        // Skip JS files in node_modules that exceed maxNodeModuleJsDepth.
+        // These files are recorded as dependencies but treated as untyped
+        // (no parsing, no import resolution). This matches tsc's behavior:
+        // with the default maxNodeModuleJsDepth=0, JS files inside node_modules
+        // are never parsed.
+        if should_skip_js_in_node_modules(&path, options.max_node_module_js_depth) {
+            sources.insert(path.clone(), (None, false, false));
             continue;
         }
 
