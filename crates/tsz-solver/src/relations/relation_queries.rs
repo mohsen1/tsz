@@ -375,9 +375,9 @@ pub fn check_application_variance<R: TypeResolver>(
         return None;
     }
 
-    // Clone args to avoid borrow conflicts
-    let s_args: Vec<TypeId> = s_app.args.to_vec();
-    let t_args: Vec<TypeId> = t_app.args.to_vec();
+    // Keep Arc refs to avoid borrow conflicts (cheaper than Vec allocation)
+    let s_app = s_app.clone();
+    let t_app = t_app.clone();
 
     // Set up a compat checker for the argument checks
     let mut checker = configured_compat_checker(db, resolver, policy, context);
@@ -389,8 +389,8 @@ pub fn check_application_variance<R: TypeResolver>(
     let mut all_ok = true;
     let mut any_checked = false;
     for (i, variance) in variances.iter().enumerate() {
-        let s_arg = s_args[i];
-        let t_arg = t_args[i];
+        let s_arg = s_app.args[i];
+        let t_arg = t_app.args[i];
 
         if variance.is_invariant() {
             any_checked = true;
