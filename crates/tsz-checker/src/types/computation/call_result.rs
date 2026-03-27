@@ -713,7 +713,8 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_function_shape(this.ctx.types, evaluated).is_some()
                 || common::callable_shape_for_type(this.ctx.types, evaluated).is_some()
         };
-        let callable_mismatch = has_callable_shape(self, actual) && has_callable_shape(self, expected);
+        let callable_mismatch =
+            has_callable_shape(self, actual) && has_callable_shape(self, expected);
         let actual_has_generic_signatures = self.callable_has_own_generic_signatures(actual);
         let expected_has_generic_signatures = self.callable_has_own_generic_signatures(expected);
         let has_construct_signatures = |this: &mut Self, ty: TypeId| {
@@ -726,8 +727,8 @@ impl<'a> CheckerState<'a> {
         };
         let constructor_mismatch =
             has_construct_signatures(self, actual) && has_construct_signatures(self, expected);
-        let constructor_generic_mismatch =
-            constructor_mismatch && (actual_has_generic_signatures || expected_has_generic_signatures);
+        let constructor_generic_mismatch = constructor_mismatch
+            && (actual_has_generic_signatures || expected_has_generic_signatures);
         if assign_query::contains_infer_types(self.ctx.types, actual)
             || assign_query::contains_infer_types(self.ctx.types, expected)
         {
@@ -751,9 +752,8 @@ impl<'a> CheckerState<'a> {
                     || assign_query::contains_type_parameters(self.ctx.types, refined_actual)
                     || assign_query::contains_type_parameters(self.ctx.types, refined_expected);
             if constructor_generic_mismatch {
-                return !self.generic_constructor_mismatch_has_uncovered_required_arity(
-                    actual, expected,
-                );
+                return !self
+                    .generic_constructor_mismatch_has_uncovered_required_arity(actual, expected);
             }
             if !refined_still_has_holes {
                 return false;
