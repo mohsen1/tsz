@@ -1128,16 +1128,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for i in 0..fixed_compare_count {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
+            // Compute effective types — optional params widened to `T | undefined`
+            // under strictNullChecks (matching tsc's `getTypeAtPosition`).
+            let s_effective = self.effective_param_type(s_param);
+            let t_effective = self.effective_param_type(t_param);
             // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
-            if !self.are_parameters_compatible_impl(
-                s_param.type_id,
-                t_param.type_id,
-                is_method_or_ctor,
-            ) {
+            if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method_or_ctor) {
                 return Some(SubtypeFailureReason::ParameterTypeMismatch {
                     param_index: i,
-                    source_param: s_param.type_id,
-                    target_param: t_param.type_id,
+                    source_param: s_effective,
+                    target_param: t_effective,
                 });
             }
         }
