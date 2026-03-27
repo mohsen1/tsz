@@ -1121,6 +1121,7 @@ pub fn unpack_tuple_rest_parameter(
 /// Get the object shape ID for an object type.
 ///
 /// Returns None if the type is not an object type.
+#[inline]
 pub fn get_object_shape_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
