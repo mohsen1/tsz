@@ -985,8 +985,26 @@ f("hello");
 // Super call edge cases
 // ============================================================================
 
-// NOTE: super<T>() should emit TS2754 but tsz does not yet implement this.
-// Add a test once TS2754 support is implemented.
+#[test]
+fn super_type_arguments_do_not_cascade_into_checker_arity_errors() {
+    let source = r#"
+class Base {
+    constructor() {}
+}
+
+class Derived extends Base {
+    constructor() {
+        super<T>(0);
+    }
+}
+"#;
+
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2554),
+        "super<T>(...) should not cascade into TS2554 after parser recovery: {codes:?}"
+    );
+}
 
 // ============================================================================
 // Spread argument edge cases (callWithSpread patterns)

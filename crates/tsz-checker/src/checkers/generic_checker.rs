@@ -394,21 +394,8 @@ impl<'a> CheckerState<'a> {
             && callee_node.kind == SyntaxKind::SuperKeyword as u16
             && !type_args_list.nodes.is_empty()
         {
-            // TSC reports this error spanning from the `<` of the type
-            // argument list to the `)` of the call. Approximate by using
-            // the callee node's end (just after `super`) as the start and
-            // the call expression end as the span end. This covers `<T>(x)`.
-            let callee_end = callee_node.end;
-            let call_node_end = self.ctx.arena.get(call_idx).map_or(callee_end, |n| n.end);
-            let span_length = call_node_end.saturating_sub(callee_end);
-            self.error_at_position(
-                callee_end,
-                span_length,
-                crate::diagnostics::diagnostic_messages::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
-                crate::diagnostics::diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
-            );
-            // super<T>() is always invalid — not a count mismatch per se,
-            // but the caller already handles the super bail-out separately.
+            // The parser already reports TS2754 for `super<T>(...)`.
+            // Skip re-emitting it here to avoid duplicate diagnostics.
             return false;
         }
 

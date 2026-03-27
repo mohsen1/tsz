@@ -2601,11 +2601,28 @@ fn super_type_arguments_report_parser_error_and_recover_to_call() {
 
     let call = arena.get_call_expr(call_node).expect("call data");
     assert!(
-        call.type_arguments.is_none(),
-        "recovery should not keep type arguments on super calls"
+        call.type_arguments.is_some(),
+        "recovery should preserve type arguments on super calls for later checker recovery"
     );
     let callee_node = arena.get(call.expression).expect("callee");
     assert_eq!(callee_node.kind, SyntaxKind::SuperKeyword as u16);
+}
+
+#[test]
+fn class_field_type_annotation_dot_reports_ts1442() {
+    let source = "class C { a: this.foo; }";
+    let (parser, _) = parse_source(source);
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER),
+        "expected TS1442 for class field type annotation followed by dot access, got {:?}",
+        parser.get_diagnostics()
+    );
 }
 
 #[test]
