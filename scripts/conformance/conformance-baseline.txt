@@ -84,7 +84,6 @@ FAIL TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans_moduleAugme
 FAIL TypeScript/tests/cases/compiler/duplicateObjectLiteralProperty_computedName3.ts | expected:[TS1117] actual:[TS1117]
 FAIL TypeScript/tests/cases/compiler/duplicatePackage_referenceTypes.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/duplicatePackage_subModule.ts | expected:[] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/duplicateVariablesWithAny.ts | expected:[TS2403] actual:[TS2403]
 FAIL TypeScript/tests/cases/compiler/elidedJSImport1.ts | expected:[TS2591,TS2708,TS18042] actual:[TS2591]
 FAIL TypeScript/tests/cases/compiler/emitCapturingThisInTupleDestructuring1.ts | expected:[TS2493,TS7010,TS7017,TS7041] actual:[TS2493,TS7010,TS7017,TS7041]
 FAIL TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile2.ts | expected:[TS4094] actual:[TS4094]
@@ -107,11 +106,11 @@ FAIL TypeScript/tests/cases/compiler/errorsWithInvokablesInUnions01.ts | expecte
 FAIL TypeScript/tests/cases/compiler/es5-asyncFunctionWithStatements.ts | expected:[TS1101,TS1300,TS2410,TS5024] actual:[TS1101,TS1300,TS2410,TS5024]
 FAIL TypeScript/tests/cases/compiler/es6ClassTest9.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1068,TS1183]
 FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImport1.ts | expected:[TS2614] actual:[TS2614]
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImportDts.ts | expected:[TS1192] actual:[]
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding.ts | expected:[TS1192] actual:[]
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingDts.ts | expected:[TS1192] actual:[]
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingWithExport.ts | expected:[TS1191,TS1192] actual:[TS1191]
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingNoDefaultProperty.ts | expected:[TS1192] actual:[]
+FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImportDts.ts | expected:[TS1192] actual:[TS1192]
+FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding.ts | expected:[TS1192] actual:[TS1192]
+FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingDts.ts | expected:[TS1192] actual:[TS1192]
+FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingWithExport.ts | expected:[TS1191,TS1192] actual:[TS1191,TS1192]
+FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingNoDefaultProperty.ts | expected:[TS1192] actual:[TS1192]
 FAIL TypeScript/tests/cases/compiler/es6ImportNamedImportMergeErrors.ts | expected:[TS2300,TS2440] actual:[TS2300,TS2440]
 FAIL TypeScript/tests/cases/compiler/es6ImportNamedImportNoExportMember.ts | expected:[TS2305] actual:[TS2305]
 FAIL TypeScript/tests/cases/compiler/esModuleInteropDefaultImports.ts | expected:[TS2349] actual:[TS2349,TS2497,TS2614,TS2616]
@@ -363,7 +362,6 @@ FAIL TypeScript/tests/cases/compiler/numericIndexerTyping1.ts | expected:[TS2322
 FAIL TypeScript/tests/cases/compiler/numericIndexerTyping2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/objectCreate-errors.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/objectCreationOfElementAccessExpression.ts | expected:[TS2348,TS2538,TS2564] actual:[TS2348,TS2538,TS2564]
-FAIL TypeScript/tests/cases/compiler/objectFreezeLiteralsDontWiden.ts | expected:[TS2322] actual:[]
 FAIL TypeScript/tests/cases/compiler/objectFromEntries.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/objectGroupBy.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/objectLiteralExcessProperties.ts | expected:[TS2304,TS2322,TS2353,TS2561] actual:[TS2304,TS2322,TS2353,TS2561]
@@ -811,12 +809,12 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagVariadicType.ts | expec
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag15.ts | expected:[TS1360,TS2322,TS7006] actual:[TS1360,TS2304,TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag7.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTag1.ts | expected:[TS2403,TS7006,TS7014] actual:[TS2304,TS7006,TS7014]
+FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTag1.ts | expected:[TS2403,TS7006,TS7014] actual:[TS7006,TS7014]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTag2.ts | expected:[TS2322,TS2339,TS2345,TS7014] actual:[TS2322,TS2339,TS2345,TS7014]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTagOnObjectProperty2.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkOtherObjectAssignProperty.ts | expected:[TS2339,TS2540] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsImportAliasExposedWithinNamespace.ts | expected:[TS18042] actual:[]
-FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsJSDocRedirectedLookups.ts | expected:[TS2304,TS2552] actual:[TS2304]
+FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsJSDocRedirectedLookups.ts | expected:[TS2304,TS2552] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReusesExistingTypeAnnotations.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypeReassignmentFromDeclaration.ts | expected:[TS2307] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypeReassignmentFromDeclaration2.ts | expected:[TS9006] actual:[]
@@ -849,7 +847,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTemplateTag7.ts | expected:[T
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTemplateTag8.ts | expected:[TS1274,TS2322] actual:[TS2314,TS2322,TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment.ts | expected:[TS2322,TS2339,TS2345] actual:[TS2322,TS2339,TS2345]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment3.ts | expected:[TS7005] actual:[]
-FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceExports.ts | expected:[] actual:[TS2304]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToMergedClass.ts | expected:[TS2454] actual:[TS2322,TS2454]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTag.ts | expected:[] actual:[TS6200]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTagCast.ts | expected:[TS1228,TS2322,TS2352,TS2454] actual:[TS2322,TS2352,TS2454]
@@ -3239,6 +3236,7 @@ PASS TypeScript/tests/cases/compiler/duplicateVarAndImport.ts
 PASS TypeScript/tests/cases/compiler/duplicateVarAndImport2.ts
 PASS TypeScript/tests/cases/compiler/duplicateVariableDeclaration1.ts
 PASS TypeScript/tests/cases/compiler/duplicateVariablesByScope.ts
+PASS TypeScript/tests/cases/compiler/duplicateVariablesWithAny.ts
 PASS TypeScript/tests/cases/compiler/duplicateVarsAcrossFileBoundaries.ts
 PASS TypeScript/tests/cases/compiler/dynamicImportEvaluateSpecifier.ts
 PASS TypeScript/tests/cases/compiler/dynamicImportInDefaultExportExpression.ts
@@ -5584,6 +5582,7 @@ PASS TypeScript/tests/cases/compiler/objectCreate.ts
 PASS TypeScript/tests/cases/compiler/objectCreate2.ts
 PASS TypeScript/tests/cases/compiler/objectCreationExpressionInFunctionParameter.ts
 PASS TypeScript/tests/cases/compiler/objectFreeze.ts
+PASS TypeScript/tests/cases/compiler/objectFreezeLiteralsDontWiden.ts
 PASS TypeScript/tests/cases/compiler/objectIndexer.ts
 PASS TypeScript/tests/cases/compiler/objectInstantiationFromUnionSpread.ts
 PASS TypeScript/tests/cases/compiler/objectLitArrayDeclNoNew.ts
@@ -10239,6 +10238,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/jsdocThisType.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTwoLineTypedef.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeDefAtStartOfFile.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment2.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceExports.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToImport.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToImportOfClassExpression.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToImportOfFunctionExpression.ts
@@ -11222,7 +11222,6 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource10.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource11.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource12.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource13.ts
-PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource3.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource4.ts
