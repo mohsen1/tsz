@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-27T22:26:54Z",
-  "git_sha": "8e036c396723b7fabee23646b70cfaf99b894c37",
+  "timestamp": "2026-03-27T22:33:59Z",
+  "git_sha": "f5c049275006b624512e2eba4b4a57b1c8fce18b",
   "summary": {
     "total_tests": 12581,
     "passed": 11325,
@@ -157,10 +157,10 @@
     },
     {
       "area": "salsa",
-      "total": 190,
-      "passed": 151,
+      "total": 191,
+      "passed": 152,
       "failed": 39,
-      "pass_rate": 79.47
+      "pass_rate": 79.58
     },
     {
       "area": "externalModules/typeOnly",
@@ -368,9 +368,9 @@
     {
       "area": "compiler",
       "total": 6518,
-      "passed": 5938,
-      "failed": 580,
-      "pass_rate": 91.1
+      "passed": 5937,
+      "failed": 581,
+      "pass_rate": 91.09
     },
     {
       "area": "expressions/unaryOperators",
@@ -1184,15 +1184,15 @@
       "count": 1
     },
     {
+      "code": "TS17014",
+      "count": 1
+    },
+    {
       "code": "TS17008",
       "count": 1
     },
     {
       "code": "TS1005",
-      "count": 1
-    },
-    {
-      "code": "TS17014",
       "count": 1
     },
     {
@@ -1255,7 +1255,7 @@
     },
     {
       "code": "TS2339",
-      "count": 7
+      "count": 8
     },
     {
       "code": "TS2883",
@@ -1364,11 +1364,11 @@
       "count": 1
     },
     {
-      "code": "TS2702",
+      "code": "TS2693",
       "count": 1
     },
     {
-      "code": "TS2693",
+      "code": "TS2702",
       "count": 1
     },
     {
@@ -1432,7 +1432,7 @@
       "count": 1
     },
     {
-      "code": "TS2300",
+      "code": "TS2351",
       "count": 1
     },
     {
@@ -1440,7 +1440,7 @@
       "count": 1
     },
     {
-      "code": "TS2351",
+      "code": "TS2300",
       "count": 1
     },
     {
@@ -1625,7 +1625,7 @@
     },
     {
       "code": "TS2339",
-      "count": 29
+      "count": 30
     },
     {
       "code": "TS1005",
@@ -1779,8 +1779,8 @@
   "categories": {
     "false_positive": 58,
     "all_missing": 124,
-    "wrong_code": 367,
+    "wrong_code": 368,
     "fingerprint_only": 699,
-    "close_to_passing": 250
+    "close_to_passing": 251
   }
 }
