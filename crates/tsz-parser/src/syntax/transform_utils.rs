@@ -84,6 +84,25 @@ fn target_reference_children(
         {
             Vec::new()
         }
+        kind if kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::CLASS_EXPRESSION =>
+        {
+            if let Some(class_data) = arena.get_class(node) {
+                let mut children = Vec::new();
+                if let Some(modifiers) = class_data.modifiers.as_ref() {
+                    children.extend(modifiers.nodes.iter().copied());
+                }
+                if let Some(heritage_clauses) = class_data.heritage_clauses.as_ref() {
+                    children.extend(heritage_clauses.nodes.iter().copied());
+                }
+                for &member_idx in &class_data.members.nodes {
+                    push_computed_member_name(arena, member_idx, &mut children);
+                }
+                children
+            } else {
+                Vec::new()
+            }
+        }
         kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
             if let Some(method) = arena.get_method_decl(node) {
                 let mut children = Vec::new();
@@ -172,6 +191,37 @@ fn target_reference_children(
             }
         }
         _ => arena.get_children(node_idx),
+    }
+}
+
+fn push_computed_member_name(
+    arena: &NodeArena,
+    member_idx: NodeIndex,
+    children: &mut Vec<NodeIndex>,
+) {
+    let Some(member) = arena.get(member_idx) else {
+        return;
+    };
+
+    let name_idx = match member.kind {
+        kind if kind == syntax_kind_ext::PROPERTY_DECLARATION => {
+            arena.get_property_decl(member).map(|prop| prop.name)
+        }
+        kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+            arena.get_method_decl(member).map(|method| method.name)
+        }
+        kind if kind == syntax_kind_ext::GET_ACCESSOR || kind == syntax_kind_ext::SET_ACCESSOR => {
+            arena.get_accessor(member).map(|accessor| accessor.name)
+        }
+        _ => None,
+    };
+
+    if let Some(name_idx) = name_idx
+        && arena
+            .get(name_idx)
+            .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    {
+        children.push(name_idx);
     }
 }
 
