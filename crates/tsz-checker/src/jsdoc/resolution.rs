@@ -1171,13 +1171,7 @@ impl<'a> CheckerState<'a> {
             .declaration_arenas
             .get(&(sym_id, decl))
             .and_then(|arenas| arenas.first().map(Arc::as_ref))
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .symbol_arenas
-                    .get(&sym_id)
-                    .map(Arc::as_ref)
-            })
+            .or_else(|| self.ctx.binder.symbol_arenas.get(&sym_id).map(Arc::as_ref))
             .unwrap_or_else(|| {
                 let file_idx = self
                     .ctx
@@ -1196,7 +1190,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        arena.source_files
+        arena
+            .source_files
             .first()
             .is_some_and(|sf| sf.file_name.ends_with(".d.ts"))
     }

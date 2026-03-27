@@ -10252,8 +10252,8 @@ function process(image) {
 }
 
 #[test]
-fn direct_checker_with_real_default_libs_jsdoc_type_reference_to_ambient_value_keeps_construct_signature(
-) {
+fn direct_checker_with_real_default_libs_jsdoc_type_reference_to_ambient_value_keeps_construct_signature()
+ {
     let files = vec![(
         "foo.js".to_string(),
         r#"/** @param {Image} image */
