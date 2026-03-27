@@ -1258,4 +1258,3 @@ fn test_self_name_resolution_remaps_virtual_absolute_output_paths_from_package_r
 
     let _ = fs::remove_dir_all(&dir);
 }
-

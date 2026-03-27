@@ -203,10 +203,10 @@ fn test_no_input_diagnostics_preserve_config_errors() {
 
 #[test]
 fn test_compile_emits_ts18003_with_explicit_default_include_and_only_mts_input() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        fs::write(
-                dir.path().join("tsconfig.json"),
-                r#"{
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
     "compilerOptions": {
         "module": "esnext",
         "moduleResolution": "node16",
@@ -215,23 +215,23 @@ fn test_compile_emits_ts18003_with_explicit_default_include_and_only_mts_input()
     "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
     "exclude": ["node_modules"]
 }"#,
-        )
-        .expect("write tsconfig");
-        fs::write(dir.path().join("index.mts"), "export const x = 1;\n").expect("write mts");
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("index.mts"), "export const x = 1;\n").expect("write mts");
 
-        let args = CliArgs::try_parse_from(["tsz"]).expect("default args");
-        let result = compile(&args, dir.path()).expect("compile succeeds");
-        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
-        assert!(codes.contains(&5110), "expected TS5110, got: {codes:?}");
-        assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
+    let args = CliArgs::try_parse_from(["tsz"]).expect("default args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&5110), "expected TS5110, got: {codes:?}");
+    assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
 }
 
-    #[test]
-    fn test_compile_emits_ts18003_in_batch_style_project_mode() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        fs::write(
-            dir.path().join("tsconfig.json"),
-            r#"{
+#[test]
+fn test_compile_emits_ts18003_in_batch_style_project_mode() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
       "compilerOptions": {
         "module": "esnext",
         "moduleResolution": "node16",
@@ -240,25 +240,25 @@ fn test_compile_emits_ts18003_with_explicit_default_include_and_only_mts_input()
       "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
       "exclude": ["node_modules"]
     }"#,
-        )
-        .expect("write tsconfig");
-        fs::write(dir.path().join("index.mts"), "export const x = 1;\n").expect("write mts");
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("index.mts"), "export const x = 1;\n").expect("write mts");
 
-        let project = dir.path().to_string_lossy().to_string();
-        let args = CliArgs::try_parse_from([
-            "tsz",
-            "--project",
-            project.as_str(),
-            "--noEmit",
-            "--pretty",
-            "false",
-        ])
-        .expect("batch-style args");
-        let result = compile(&args, dir.path()).expect("compile succeeds");
-        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
-        assert!(codes.contains(&5110), "expected TS5110, got: {codes:?}");
-        assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
-    }
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("batch-style args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&5110), "expected TS5110, got: {codes:?}");
+    assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
+}
 
 #[cfg(unix)]
 #[test]
@@ -268,8 +268,10 @@ fn test_compile_preserve_symlinks_emits_ts2307_for_original_target() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::create_dir_all(dir.path().join("linked")).expect("create linked dir");
     fs::create_dir_all(dir.path().join("app/node_modules/real")).expect("create real dir");
-    fs::create_dir_all(dir.path().join("app/node_modules/linked")).expect("create linked alias dir");
-    fs::create_dir_all(dir.path().join("app/node_modules/linked2")).expect("create linked2 alias dir");
+    fs::create_dir_all(dir.path().join("app/node_modules/linked"))
+        .expect("create linked alias dir");
+    fs::create_dir_all(dir.path().join("app/node_modules/linked2"))
+        .expect("create linked2 alias dir");
 
     fs::write(
         dir.path().join("linked/index.d.ts"),

@@ -649,9 +649,18 @@ fn test_rewrite_bare_specifiers_skips_package_root_self_name_with_ts_variants() 
     ];
 
     let content = r#"import * as self from "package";"#;
-    assert_eq!(rewrite_bare_specifiers(content, "index.ts", &filenames), content);
-    assert_eq!(rewrite_bare_specifiers(content, "index.mts", &filenames), content);
-    assert_eq!(rewrite_bare_specifiers(content, "index.cts", &filenames), content);
+    assert_eq!(
+        rewrite_bare_specifiers(content, "index.ts", &filenames),
+        content
+    );
+    assert_eq!(
+        rewrite_bare_specifiers(content, "index.mts", &filenames),
+        content
+    );
+    assert_eq!(
+        rewrite_bare_specifiers(content, "index.cts", &filenames),
+        content
+    );
 }
 
 #[test]
@@ -726,10 +735,7 @@ fn test_compile_prepared_dir_emits_ts18003_for_only_mts_input() {
 // @Filename: /index.mts
 export const x = 1;
 "#;
-    let filenames = vec![(
-        "/index.mts".to_string(),
-        "export const x = 1;".to_string(),
-    )];
+    let filenames = vec![("/index.mts".to_string(), "export const x = 1;".to_string())];
     let options = HashMap::from([
         ("target".to_string(), "es2015".to_string()),
         ("module".to_string(), "esnext".to_string()),
@@ -741,8 +747,16 @@ export const x = 1;
     let tsz = find_tsz_binary();
     let result = compile_test(content, &filenames, &options, &tsz).unwrap();
 
-    assert!(result.error_codes.contains(&5110), "got: {:?}", result.error_codes);
-    assert!(result.error_codes.contains(&18003), "got: {:?}", result.error_codes);
+    assert!(
+        result.error_codes.contains(&5110),
+        "got: {:?}",
+        result.error_codes
+    );
+    assert!(
+        result.error_codes.contains(&18003),
+        "got: {:?}",
+        result.error_codes
+    );
 }
 
 #[test]
