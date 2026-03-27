@@ -1339,6 +1339,15 @@ impl<'a> CheckerState<'a> {
         let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
         let expected_context_type =
             self.contextual_type_option_for_call_argument(expected_type, arg_idx, callable_ctx);
+        let concrete_callback_context = expected_context_type.is_some_and(|ty| {
+            ty != TypeId::ANY
+                && ty != TypeId::UNKNOWN
+                && ty != TypeId::ERROR
+                && !common::contains_type_parameters(self.ctx.types, ty)
+                && !common::contains_infer_types(self.ctx.types, ty)
+                && tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+                    .is_some_and(|shape| shape.params.iter().all(|param| !param.rest))
+        });
         let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
             common::contains_type_parameters(self.ctx.types, ty)
                 || should_preserve_contextual_application_shape(self.ctx.types, ty)
@@ -1600,6 +1609,11 @@ impl<'a> CheckerState<'a> {
                 // like TS18048, which represent the actual body expression after
                 // return-context refinement and would otherwise get lost.
                 if is_function_arg_diag && !is_nullish_callback_body_diag {
+                    if diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        && concrete_callback_context
+                    {
+                        return true;
+                    }
                     return false;
                 }
                 // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
