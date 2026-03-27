@@ -129,7 +129,7 @@ impl<'a> CheckerState<'a> {
         self.get_jsx_single_string_literal_tag_name(component_type)
     }
 
-    fn get_jsx_single_string_literal_tag_name(&self, type_id: TypeId) -> Option<String> {
+    pub(super) fn get_jsx_single_string_literal_tag_name(&self, type_id: TypeId) -> Option<String> {
         if let Some(name) =
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, type_id)
         {
@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn get_jsx_intrinsic_props_for_tag(
+    pub(super) fn get_jsx_intrinsic_props_for_tag(
         &mut self,
         element_idx: NodeIndex,
         tag: &str,
@@ -452,6 +452,9 @@ impl<'a> CheckerState<'a> {
 
         let children_prop_name = self.get_jsx_children_prop_name();
         let provided_attrs = self.collect_jsx_union_resolution_attrs(attributes_idx)?;
+        let has_concrete_attr = provided_attrs.iter().any(|(name, ty)| {
+            name != &children_prop_name && ty.is_some()
+        });
         let provided_attrs: Vec<(String, Option<TypeId>)> = provided_attrs
             .into_iter()
             .filter_map(|(name, ty)| {
@@ -460,11 +463,14 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Function-valued JSX attrs need contextual typing from the
-                // recovered props type, but we still want the property to
-                // participate in generic inference/defaulting. Use `any` as a
-                // placeholder so inference can proceed without forcing an
-                // eager, context-free function type.
-                Some((name, Some(ty.unwrap_or(TypeId::ANY))))
+                // recovered props type, but they should not override a more
+                // specific concrete attribute such as `as="button"` when we
+                // infer/default generic props.
+                match ty {
+                    Some(ty) => Some((name, Some(ty))),
+                    None if has_concrete_attr => None,
+                    None => Some((name, Some(TypeId::ANY))),
+                }
             })
             .collect();
         let typed_attrs: Vec<(String, TypeId)> = provided_attrs

@@ -863,6 +863,18 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::Success { .. }
             )
         });
+        let as_intrinsic_props = self
+            .collect_jsx_union_resolution_attrs(attributes_idx)
+            .and_then(|attrs| {
+                attrs.into_iter().find_map(|(name, ty)| {
+                    if name != "as" {
+                        return None;
+                    }
+                    ty.and_then(|ty| self.get_jsx_single_string_literal_tag_name(ty))
+                })
+            })
+            .and_then(|tag| self.get_jsx_intrinsic_props_for_tag(tag_name_idx, &tag, false))
+            .map(|ty| self.normalize_jsx_required_props_target(ty));
 
         let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
         let mut spread_covers_all = false;
@@ -950,9 +962,23 @@ impl<'a> CheckerState<'a> {
                 let is_data_or_aria =
                     attr_name.starts_with("data-") || attr_name.starts_with("aria-");
                 let is_special_named_attr = attr_name.contains('-') || attr_name.contains(':');
-                let (expected_type, expected_type_is_boolean_literal) = match self
-                    .resolve_property_access_with_env(props_type, &attr_name)
-                {
+                let direct_prop_access = self.resolve_property_access_with_env(props_type, &attr_name);
+                let attr_prop_access = match direct_prop_access {
+                    crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
+                        if attr_name != "as" =>
+                    {
+                        if let Some(intrinsic_props) = as_intrinsic_props {
+                            match self.resolve_property_access_with_env(intrinsic_props, &attr_name) {
+                                crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. } => direct_prop_access,
+                                intrinsic_access => intrinsic_access,
+                            }
+                        } else {
+                            direct_prop_access
+                        }
+                    }
+                    other => other,
+                };
+                let (expected_type, expected_type_is_boolean_literal) = match attr_prop_access {
                     PropertyAccessResult::Success {
                         type_id,
                         from_index_signature,

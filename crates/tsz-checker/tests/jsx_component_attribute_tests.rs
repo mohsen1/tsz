@@ -1514,6 +1514,24 @@ function UnwrappedLink2<T extends ElementType = ElementType>(
 }
 
 #[test]
+fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts2322() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx",
+    ) else {
+        return;
+    };
+
+    let diags = cross_file_jsx_diagnostics_with_mode(&react_types, &source, JsxMode::Preserve);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "real react16 fixture should not emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;
