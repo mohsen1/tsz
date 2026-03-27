@@ -833,7 +833,7 @@ pub enum PropertyLookup {
 
 /// Index signature information for object types
 /// Represents `{ [key: string]: ValueType }` or `{ [key: number]: ValueType }`
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct IndexSignature {
     /// The key type (usually string or number)
     pub key_type: TypeId,
@@ -987,7 +987,7 @@ impl TupleElement {
 }
 
 /// Type predicate information (x is T / asserts x is T).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypePredicate {
     pub asserts: bool,
     pub target: TypePredicateTarget,
@@ -995,7 +995,7 @@ pub struct TypePredicate {
     pub parameter_index: Option<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TypePredicateTarget {
     This,
     Identifier(Atom),
@@ -1134,7 +1134,7 @@ impl std::hash::Hash for CallableShape {
 }
 
 /// Parameter information
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct ParamInfo {
     pub name: Option<Atom>,
     pub type_id: TypeId,
