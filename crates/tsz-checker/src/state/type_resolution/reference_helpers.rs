@@ -80,7 +80,13 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or_else(|| {
                             type_params.iter().filter(|p| p.default.is_none()).count()
                         });
-                    if required_count > 0 {
+                    if required_count > 0
+                        // Skip TS2314 for self-references within the same type alias.
+                        // TSC handles circular self-references (e.g. `type T1<X> = T1`)
+                        // through its circularity detection path instead of emitting
+                        // "Generic type requires N type argument(s)".
+                        && !self.ctx.symbol_resolution_set.contains(&sym_id)
+                    {
                         // tsc uses the original declaration name, not the local alias.
                         // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
                         // Resolve through aliases to get the target symbol's name.
