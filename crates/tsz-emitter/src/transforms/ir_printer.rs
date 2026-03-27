@@ -1083,11 +1083,7 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.write_indent();
                     self.write("writable: ");
-                    self.write(if descriptor.writable {
-                        "true"
-                    } else {
-                        "false"
-                    });
+                    self.write(if descriptor.writable { "true" } else { "false" });
                     self.write(",");
                     self.write_line();
                     self.write_indent();

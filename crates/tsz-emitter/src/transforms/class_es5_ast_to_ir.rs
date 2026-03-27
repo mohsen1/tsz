@@ -1201,15 +1201,13 @@ impl<'a> AstToIr<'a> {
             // Save previous state and set captured flag if needed
             let prev_captured = self.this_captured.get();
             let prev_substitution = self.current_this_substitution.take();
-            let this_substitution = class_alias
-                .map(ThisSubstitution::Identifier)
-                .or_else(|| {
-                    if captures_this {
-                        prev_substitution.clone()
-                    } else {
-                        None
-                    }
-                });
+            let this_substitution = class_alias.map(ThisSubstitution::Identifier).or_else(|| {
+                if captures_this {
+                    prev_substitution.clone()
+                } else {
+                    None
+                }
+            });
 
             if captures_this && this_substitution.is_none() {
                 self.this_captured.set(true);

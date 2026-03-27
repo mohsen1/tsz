@@ -1281,12 +1281,12 @@ impl<'a> ES5ClassTransformer<'a> {
         // This must happen before constructor/member IR emission so that temps
         // are available when building property assignment IR nodes.
         self.computed_prop_temp_map.clear();
-        self.current_static_class_alias = if self.static_members_need_class_alias(&class_data.members)
-        {
-            Some(self.generate_temp_name())
-        } else {
-            None
-        };
+        self.current_static_class_alias =
+            if self.static_members_need_class_alias(&class_data.members) {
+                Some(self.generate_temp_name())
+            } else {
+                None
+            };
         // Each entry: (Option<temp_name>, expr_idx) for the comma expression
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex)> = Vec::new();
         for &member_idx in &class_data.members.nodes {
