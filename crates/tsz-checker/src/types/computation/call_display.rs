@@ -384,6 +384,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn generic_constructor_mismatch_has_uncovered_required_arity(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source = self.evaluate_type_with_env(source);
+        let target = self.evaluate_type_with_env(target);
+        let Some(source_shape) = common::callable_shape_for_type(self.ctx.types, source) else {
+            return false;
+        };
+        let Some(target_shape) = common::callable_shape_for_type(self.ctx.types, target) else {
+            return false;
+        };
+        if source_shape.construct_signatures.is_empty() || target_shape.construct_signatures.is_empty()
+        {
+            return false;
+        }
+
+        target_shape.construct_signatures.iter().any(|target_sig| {
+            let target_required = target_sig
+                .params
+                .iter()
+                .filter(|param| !param.optional && !param.rest)
+                .count();
+            !source_shape.construct_signatures.iter().any(|source_sig| {
+                source_sig
+                    .params
+                    .iter()
+                    .filter(|param| !param.optional && !param.rest)
+                    .count()
+                    <= target_required
+            })
+        })
+    }
+
     pub(crate) fn raw_param_for_argument_index<'b>(
         &self,
         sig: &'b tsz_solver::CallSignature,
