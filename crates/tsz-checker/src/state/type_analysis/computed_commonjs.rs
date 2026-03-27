@@ -320,7 +320,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn current_file_commonjs_module_exports_namespace_type(&mut self) -> TypeId {
-        self.current_file_commonjs_namespace_type_with_display_extension(true)
+        self.current_file_commonjs_namespace_type_with_display_extension(false)
     }
 
     fn current_file_commonjs_namespace_type_with_display_extension(
@@ -388,7 +388,14 @@ impl<'a> CheckerState<'a> {
             self,
             Some(self.current_file_commonjs_module_name(preserve_js_extension)),
         )
-        .unwrap_or(TypeId::ANY)
+        .unwrap_or_else(|| {
+            let empty_namespace = self.ctx.types.factory().object(Vec::new());
+            self.ctx.namespace_module_names.insert(
+                empty_namespace,
+                self.current_file_commonjs_module_name(preserve_js_extension),
+            );
+            empty_namespace
+        })
     }
 
     fn collect_current_file_commonjs_export_names(
