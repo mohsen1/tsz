@@ -155,6 +155,66 @@ export type SomeType = import('./inner').SomeType;
     );
 }
 
+#[test]
+fn compile_project_namespace_import_qualified_type_sees_module_augmentation_exports() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/backbone/index.d.ts"),
+        r#"declare namespace Backbone {
+    interface Model<T extends object = any, TQuery = any, TOptions = any> {}
+}
+export = Backbone;
+"#,
+    );
+    write_file(
+        &base.join("node_modules/backbone-fetch-cache/index.d.ts"),
+        r#"import * as Backbone from "backbone";
+declare module "backbone" {
+    interface ModelWithCache extends Backbone.Model<any, any, any> {
+        cache: boolean;
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import * as Backbone from "backbone";
+import "backbone-fetch-cache";
+
+let model: Backbone.ModelWithCache;
+model.cache;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_NAMESPACE
+                || d.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER),
+        "Expected namespace-import type position to see module augmentation members, got: {:#?}",
+        result.diagnostics
+    );
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct SymbolSnapshot {
     flags: u32,
