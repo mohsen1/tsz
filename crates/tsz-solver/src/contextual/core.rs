@@ -1073,6 +1073,23 @@ impl<'a> ContextualTypeContext<'a> {
     /// const obj: {x: number, y: string} = {x: 1, y: "hi"};
     /// ```
     pub fn get_property_type(&self, name: &str) -> Option<TypeId> {
+        self.get_property_type_inner(name, false)
+    }
+
+    /// Get the contextual type for an object-literal property assignment.
+    ///
+    /// This uses the declared property type for optional properties so a present
+    /// assignment like `{ x: 1 }` in `{ x?: number }` is checked against `number`
+    /// rather than the read-side `number | undefined`.
+    pub fn get_property_assignment_type(&self, name: &str) -> Option<TypeId> {
+        self.get_property_type_inner(name, true)
+    }
+
+    fn get_property_type_inner(
+        &self,
+        name: &str,
+        strip_optional_undefined: bool,
+    ) -> Option<TypeId> {
         let expected = self.expected?;
 
         // Single lookup to dispatch on the type shape. Avoids multiple DashMap
@@ -1084,7 +1101,7 @@ impl<'a> ContextualTypeContext<'a> {
                     .iter()
                     .filter_map(|&m| {
                         let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_property_type(name)
+                        ctx.get_property_type_inner(name, strip_optional_undefined)
                     })
                     .collect();
 
@@ -1126,7 +1143,7 @@ impl<'a> ContextualTypeContext<'a> {
                     .iter()
                     .filter_map(|&m| {
                         let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_property_type(name)
+                        ctx.get_property_type_inner(name, strip_optional_undefined)
                     })
                     .collect();
                 if let Some(result) =
@@ -1183,7 +1200,7 @@ impl<'a> ContextualTypeContext<'a> {
                 let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                    return ctx.get_property_type(name);
+                    return ctx.get_property_type_inner(name, strip_optional_undefined);
                 }
                 // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
                 // parameter), use the mapped type's template as the contextual property type
@@ -1217,13 +1234,13 @@ impl<'a> ContextualTypeContext<'a> {
                         resolved_operand,
                     ) {
                         let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
-                        return ctx.get_property_type(name);
+                        return ctx.get_property_type_inner(name, strip_optional_undefined);
                     }
                     if let Some(constraint) =
                         crate::type_queries::get_type_parameter_constraint(self.interner, operand)
                     {
                         let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
-                        return ctx.get_property_type(name);
+                        return ctx.get_property_type_inner(name, strip_optional_undefined);
                     }
                 }
             }
@@ -1242,17 +1259,19 @@ impl<'a> ContextualTypeContext<'a> {
                 let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                    return ctx.get_property_type(name);
+                    return ctx.get_property_type_inner(name, strip_optional_undefined);
                 }
                 // Fallback for unevaluated Application types
                 let app = self.interner.type_application(app_id);
                 let base_ctx = ContextualTypeContext::with_expected(self.interner, app.base);
-                if let Some(prop) = base_ctx.get_property_type(name) {
+                if let Some(prop) = base_ctx.get_property_type_inner(name, strip_optional_undefined)
+                {
                     return Some(prop);
                 }
                 if let Some(&arg0) = app.args.first() {
                     let ctx = ContextualTypeContext::with_expected(self.interner, arg0);
-                    if let Some(prop) = ctx.get_property_type(name) {
+                    if let Some(prop) = ctx.get_property_type_inner(name, strip_optional_undefined)
+                    {
                         return Some(prop);
                     }
                 }
@@ -1261,21 +1280,25 @@ impl<'a> ContextualTypeContext<'a> {
                 let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                    return ctx.get_property_type(name);
+                    return ctx.get_property_type_inner(name, strip_optional_undefined);
                 }
             }
             Some(TypeData::TypeParameter(ref info) | TypeData::Infer(ref info)) => {
                 // Handle TypeParameter/Infer - use constraint for property extraction
                 if let Some(constraint) = info.constraint {
                     let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
-                    return ctx.get_property_type(name);
+                    return ctx.get_property_type_inner(name, strip_optional_undefined);
                 }
             }
             _ => {}
         }
 
         // Use visitor for Object types
-        let mut extractor = PropertyExtractor::new(self.interner, name);
+        let mut extractor = if strip_optional_undefined {
+            PropertyExtractor::new_for_assignment(self.interner, name)
+        } else {
+            PropertyExtractor::new(self.interner, name)
+        };
         extractor.extract(expected)
     }
 

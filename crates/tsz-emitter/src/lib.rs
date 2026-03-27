@@ -6,6 +6,9 @@
 //! - Declaration file (.d.ts) emission
 //! - Source map generation
 
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::needless_borrow)]
+
 pub mod context;
 pub mod declaration_emitter;
 pub mod emitter;

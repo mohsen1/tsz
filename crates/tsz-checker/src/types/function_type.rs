@@ -965,12 +965,7 @@ impl<'a> CheckerState<'a> {
                     });
                 let mut type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some()
-                        || (has_contextual_type
-                            && type_id != TypeId::ANY
-                            && !tsz_solver::type_queries::contains_type_parameters_db(
-                                self.ctx.types,
-                                type_id,
-                            ))
+                        || (has_contextual_type && type_id != TypeId::ANY)
                     {
                         // When a type annotation or concrete contextual type is
                         // available, preserve it.  The binding pattern only determines
@@ -978,10 +973,6 @@ impl<'a> CheckerState<'a> {
                         // Without this guard, array destructuring `([a])` would
                         // reconstruct a tuple `[T]` instead of keeping the contextual
                         // array type `T[]`, causing a false TS2345.
-                        //
-                        // However, when the contextual type contains type parameters
-                        // (e.g. `T` from a generic call), the pattern-inferred type
-                        // should be used so that generic inference can constrain T.
                         type_id
                     } else {
                         pattern_type

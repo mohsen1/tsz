@@ -283,6 +283,8 @@ impl CheckerState<'_> {
         // Phase 1: Detect `var/let/const alias = this` patterns
         let this_aliases = self.collect_this_aliases(&stmts);
         let mut constructor_collected_props = FxHashSet::default();
+        let mut pending_implicit_any =
+            FxHashMap::<Atom, (String, &'static str, NodeIndex)>::default();
 
         for &stmt_idx in &stmts {
             let Some((prop_name, rhs_idx, is_private, report_idx)) = self
@@ -438,7 +440,10 @@ impl CheckerState<'_> {
                 && !any_is_explicit
                 && !enclosing_has_this_tag
             {
-                let implicit_type = if type_id == TypeId::ANY {
+                let implicit_type = if type_id == TypeId::ANY
+                    || (provisional_open
+                        && (type_id == TypeId::NULL || type_id == TypeId::UNDEFINED))
+                {
                     Some("any")
                 } else if tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
                     == Some(TypeId::ANY)
@@ -448,22 +453,9 @@ impl CheckerState<'_> {
                     None
                 };
                 if let Some(implicit_type) = implicit_type {
-                    let message =
-                        format!("Member '{prop_name}' implicitly has an '{implicit_type}' type.");
-                    let implicit_anchor = stmt_idx;
-                    let already_emitted = self.ctx.diagnostics.iter().any(|d| {
-                        d.code
-                            == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
-                            && d.start == self.ctx.arena.get(implicit_anchor).map_or(0, |n| n.pos)
-                            && d.message_text == message
-                    });
-                    if !already_emitted {
-                        self.error_at_node_msg(
-                            implicit_anchor,
-                            crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
-                            &[&prop_name, implicit_type],
-                        );
-                    }
+                    pending_implicit_any
+                        .entry(name_atom)
+                        .or_insert_with(|| (prop_name.clone(), implicit_type, stmt_idx));
                 }
             }
 
@@ -521,6 +513,34 @@ impl CheckerState<'_> {
                     declaration_order: 0,
                 },
             );
+        }
+
+        for (name_atom, (prop_name, implicit_type, implicit_anchor)) in pending_implicit_any {
+            let still_implicit = properties.get(&name_atom).is_some_and(|property| {
+                property.write_type == TypeId::ANY
+                    || property.type_id == TypeId::ANY
+                    || tsz_solver::type_queries::get_array_element_type(
+                        self.ctx.types,
+                        property.type_id,
+                    ) == Some(TypeId::ANY)
+            });
+            if !still_implicit {
+                continue;
+            }
+
+            let message = format!("Member '{prop_name}' implicitly has an '{implicit_type}' type.");
+            let already_emitted = self.ctx.diagnostics.iter().any(|d| {
+                d.code == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
+                    && d.start == self.ctx.arena.get(implicit_anchor).map_or(0, |n| n.pos)
+                    && d.message_text == message
+            });
+            if !already_emitted {
+                self.error_at_node_msg(
+                    implicit_anchor,
+                    crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
+                    &[&prop_name, implicit_type],
+                );
+            }
         }
     }
 

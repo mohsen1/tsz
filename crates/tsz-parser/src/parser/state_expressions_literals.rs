@@ -726,12 +726,14 @@ impl ParserState {
                 Hyphen,
             }
 
+            type ClassAtomParse = (Vec<(u32, u32)>, usize);
+
             fn parse_class_atom(
                 raw_text: &str,
                 start: usize,
                 class_end: usize,
                 unicode_mode: bool,
-            ) -> Option<(Vec<(u32, u32)>, usize)> {
+            ) -> Option<ClassAtomParse> {
                 let rest = raw_text.get(start..class_end)?;
                 let mut chars = rest.chars();
                 let ch = chars.next()?;

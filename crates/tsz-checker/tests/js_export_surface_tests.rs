@@ -321,6 +321,7 @@ fn format_commonjs_single_file_symbol_type(
     checker.format_type(symbol_type)
 }
 
+#[allow(dead_code)]
 fn format_commonjs_two_file_consumer_symbol_type(
     producer_name: &str,
     producer_source: &str,

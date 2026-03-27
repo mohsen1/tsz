@@ -1340,7 +1340,9 @@ impl<'a> CheckerState<'a> {
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
         {
-            let last_nm = *nm_positions.last().unwrap();
+            let Some(&last_nm) = nm_positions.last() else {
+                return None;
+            };
             let pkg_start = last_nm + 1;
             let pkg_len = if components.get(pkg_start).is_some_and(|c| {
                 matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))

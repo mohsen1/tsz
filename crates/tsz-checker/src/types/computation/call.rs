@@ -1680,7 +1680,10 @@ impl<'a> CheckerState<'a> {
                         callable_ctx,
                     );
                     for (i, arg_type) in initial_arg_types.iter_mut().enumerate() {
-                        let Some(arg_node) = self.ctx.arena.get(args[i]) else {
+                        let Some(&arg_idx) = args.get(i) else {
+                            continue;
+                        };
+                        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
                             continue;
                         };
                         if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
@@ -1696,9 +1699,9 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|params| !params.nodes.is_empty())
                         {
                             let raw_arg_type =
-                                self.get_type_of_node_with_request(args[i], &TypingRequest::NONE);
+                                self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
                             let seeded =
-                                self.sanitize_generic_inference_arg_type(args[i], raw_arg_type);
+                                self.sanitize_generic_inference_arg_type(arg_idx, raw_arg_type);
                             if seeded != TypeId::UNKNOWN && seeded != TypeId::ERROR {
                                 *arg_type = seeded;
                             }

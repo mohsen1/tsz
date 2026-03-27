@@ -494,12 +494,6 @@ fn remove_nullish_inner(
             && let Some(resolved) = db.resolve_lazy(def_id, types)
         {
             let instantiated = crate::instantiate_generic(types, resolved, &type_params, &app.args);
-            if std::env::var_os("TSZ_DEBUG_REMOVE_NULLISH").is_some() {
-                eprintln!(
-                    "remove-nullish-app type={:?} base={:?} resolved={:?} instantiated={:?}",
-                    type_id, app.base, resolved, instantiated
-                );
-            }
             if instantiated != type_id {
                 return remove_nullish_inner(types, query_db, instantiated);
             }
@@ -525,17 +519,6 @@ fn remove_nullish_inner(
     // the deferred conditional untouched.
     if let Some(TypeData::Conditional(cond_id)) = types.lookup(type_id) {
         let cond = types.conditional_type(cond_id);
-        if std::env::var_os("TSZ_DEBUG_REMOVE_NULLISH").is_some() {
-            eprintln!(
-                "remove-nullish-cond type={:?} check={:?} extends={:?} true={:?} false={:?} true_eq_check={}",
-                type_id,
-                cond.check_type,
-                cond.extends_type,
-                cond.true_type,
-                cond.false_type,
-                cond.true_type == cond.check_type
-            );
-        }
 
         // Common Extract-like shape: `T extends U ? T : never`.
         // Truthiness / non-null removal should narrow the true branch through the
@@ -549,12 +532,6 @@ fn remove_nullish_inner(
             } else {
                 types.union2(true_branch, false_branch)
             };
-            if std::env::var_os("TSZ_DEBUG_REMOVE_NULLISH").is_some() {
-                eprintln!(
-                    "remove-nullish-cond-result type={:?} non_null_extends={:?} true_branch={:?} false_branch={:?} result={:?}",
-                    type_id, non_null_extends, true_branch, false_branch, result
-                );
-            }
             return result;
         }
 

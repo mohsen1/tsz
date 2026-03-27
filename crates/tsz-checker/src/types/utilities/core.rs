@@ -873,6 +873,15 @@ impl<'a> CheckerState<'a> {
                 .filter(|&t| t != TypeId::UNKNOWN && t != TypeId::ERROR);
 
             if let Some(ctx_type) = contextual_type {
+                if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ctx_type)
+                    && tsz_solver::type_queries::get_type_parameter_constraint(
+                        self.ctx.types,
+                        ctx_type,
+                    )
+                    .is_none()
+                {
+                    continue;
+                }
                 // Assign the contextual type to the binding pattern elements
                 let request = crate::context::TypingRequest::with_contextual_type(ctx_type);
                 self.assign_binding_pattern_symbol_types_with_request(

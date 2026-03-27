@@ -1374,15 +1374,27 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// Skip leading backtick-quoted sections in a `JSDoc` line.
+    /// Skip leading JSDoc decoration and backtick-quoted sections in a `JSDoc` line.
     ///
-    /// Lines like `` `@param` @param {string} z `` contain backtick-quoted text
-    /// before the real `@param` tag. This function strips those leading quoted
-    /// sections so the real tag can be detected.
+    /// Lines like `* @param {string} z` or `` `@param` @param {string} z ``
+    /// contain comment decoration or backtick-quoted text before the real
+    /// `@param` tag. This function strips those leading sections so the real
+    /// tag can be detected.
     pub(crate) fn skip_backtick_quoted(s: &str) -> &str {
         let mut rest = s;
         loop {
             rest = rest.trim_start();
+            if let Some(after_star) = rest.strip_prefix('*') {
+                let is_jsdoc_decoration = after_star.is_empty()
+                    || after_star
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_whitespace() || ch == '@');
+                if is_jsdoc_decoration {
+                    rest = after_star;
+                    continue;
+                }
+            }
             if rest.starts_with('`') {
                 // Find matching closing backtick
                 if let Some(end) = rest[1..].find('`') {

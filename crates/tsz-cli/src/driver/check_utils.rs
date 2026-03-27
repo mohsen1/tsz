@@ -405,7 +405,7 @@ fn source_tslib_helper_parameter_counts(
         "__setFunctionName",
         "__propKey",
     ] {
-        if let Some(param_count) = extract_declared_function_parameter_count(&source, helper_name) {
+        if let Some(param_count) = extract_declared_function_parameter_count(source, helper_name) {
             counts.insert(helper_name.to_string(), param_count);
         }
     }
@@ -2043,6 +2043,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn in_program_tslib_index_helpers_satisfy_legacy_decorator_requirements() {
         let program = merged_program(&[
@@ -2075,6 +2076,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn no_types_and_symbols_still_honors_project_local_tslib() {
         let temp_dir = tempfile::TempDir::new().unwrap();
