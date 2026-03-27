@@ -558,9 +558,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    fn normalize_rest_param_types(&mut self, shape: &FunctionShape) -> FunctionShape {
-        let mut normalized = shape.clone();
-        for param in &mut normalized.params {
+    fn normalize_rest_param_types(&mut self, shape: &mut FunctionShape) {
+        for param in &mut shape.params {
             if !param.rest {
                 continue;
             }
@@ -579,7 +578,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 param.type_id = evaluated;
             }
         }
-        normalized
     }
 
     fn is_effective_never_type(&mut self, type_id: TypeId) -> bool {
@@ -1302,8 +1300,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        source_instantiated = self.normalize_rest_param_types(&source_instantiated);
-        target_instantiated = self.normalize_rest_param_types(&target_instantiated);
+        self.normalize_rest_param_types(&mut source_instantiated);
+        self.normalize_rest_param_types(&mut target_instantiated);
 
         // Return type is covariant
         let return_result = self.check_return_compat(
