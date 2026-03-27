@@ -956,7 +956,8 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<SymbolId> {
-        for augmentation in self.get_module_augmentation_declarations(module_specifier, member_name) {
+        for augmentation in self.get_module_augmentation_declarations(module_specifier, member_name)
+        {
             let binder = augmentation
                 .arena
                 .as_deref()
