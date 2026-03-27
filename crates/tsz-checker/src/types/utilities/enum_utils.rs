@@ -1242,10 +1242,9 @@ impl<'a> CheckerState<'a> {
     fn constructor_signature_only_objects_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
         let is_constructor_only = |this: &mut Self, type_id| {
             let resolved = this.evaluate_type_with_resolution(type_id);
-            let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
-                this.ctx.types,
-                resolved,
-            ) else {
+            let Some(shape) =
+                crate::query_boundaries::common::callable_shape_for_type(this.ctx.types, resolved)
+            else {
                 return false;
             };
             if shape.construct_signatures.is_empty() || !shape.call_signatures.is_empty() {

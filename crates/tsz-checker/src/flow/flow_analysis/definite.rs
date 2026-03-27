@@ -97,8 +97,9 @@ impl<'a> CheckerState<'a> {
             let is_generic_function_shape = function_shape
                 .as_ref()
                 .is_some_and(|shape| !shape.type_params.is_empty());
-            let is_constructor_function_shape =
-                function_shape.as_ref().is_some_and(|shape| shape.is_constructor);
+            let is_constructor_function_shape = function_shape
+                .as_ref()
+                .is_some_and(|shape| shape.is_constructor);
 
             if is_generic_function_shape
                 || has_generic_call_signatures

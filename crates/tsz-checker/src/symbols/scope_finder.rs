@@ -495,7 +495,8 @@ impl<'a> CheckerState<'a> {
             if var_decl.type_annotation.is_some() {
                 // Resolve the type annotation and check if it provides a `this` type
                 let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
-                let ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, declared_type);
+                let ctx =
+                    tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, declared_type);
                 if ctx.get_this_type().is_some() {
                     return true;
                 }

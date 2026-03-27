@@ -1131,10 +1131,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::False;
             }
 
-            if let Ok(substitution) = self.infer_source_type_param_substitution(
-                &source_instantiated,
-                &target_instantiated,
-            ) {
+            if let Ok(substitution) = self
+                .infer_source_type_param_substitution(&source_instantiated, &target_instantiated)
+            {
                 let inferred_source =
                     self.instantiate_function_shape(&source_instantiated, &substitution);
                 let result = self.check_function_subtype_impl(

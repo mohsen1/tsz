@@ -1341,14 +1341,12 @@ impl<'a> FlowAnalyzer<'a> {
                                     let has_generic_call_signatures =
                                         query::call_signatures_for_type(self.interner, type_id)
                                             .is_some_and(|sigs| {
-                                                sigs.iter()
-                                                    .any(|sig| !sig.type_params.is_empty())
+                                                sigs.iter().any(|sig| !sig.type_params.is_empty())
                                             });
-                                    let construct_signatures =
-                                        query::construct_signatures_for_type(
-                                            self.interner,
-                                            type_id,
-                                        );
+                                    let construct_signatures = query::construct_signatures_for_type(
+                                        self.interner,
+                                        type_id,
+                                    );
                                     function_shape.as_ref().is_some_and(|shape| {
                                         shape.is_constructor || !shape.type_params.is_empty()
                                     }) || has_generic_call_signatures
