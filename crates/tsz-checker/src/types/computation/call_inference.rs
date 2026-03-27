@@ -1034,6 +1034,9 @@ impl<'a> CheckerState<'a> {
                     )
                 })
                 .unwrap_or(cached_actual);
+            let actual = arg_idx
+                .map(|arg_idx| self.sanitize_generic_inference_arg_type(arg_idx, actual))
+                .unwrap_or(actual);
             let refreshed_object_literal_param_has_implicit_any = !object_literal_function_param_spans
                 .is_empty()
                 && self.ctx.speculative_diagnostics_since(&refresh_snap).iter().any(|diag| {

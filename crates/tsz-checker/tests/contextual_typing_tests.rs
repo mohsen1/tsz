@@ -1283,6 +1283,30 @@ const result = process([1, 2, 3], ({ }) => {});
     );
 }
 
+#[test]
+fn test_destructuring_with_generic_parameter_fixture_shape_has_no_ts2345() {
+    let source = r#"
+class GenericClass<T> {
+    payload: T;
+}
+
+var genericObject = new GenericClass<{ greeting: string }>();
+
+function genericFunction<T>(object: GenericClass<T>, callback: (payload: T) => void) {
+    callback(object.payload);
+}
+
+genericFunction(genericObject, ({greeting}) => {
+    var s = greeting.toLocaleLowerCase();
+});
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "Expected no TS2345 for destructuring generic parameter fixture, got diagnostics={diagnostics:?}"
+    );
+}
+
 /// Generic function instantiation against target: source generic function arg
 /// should be instantiated using target parameter types as context.
 #[test]
