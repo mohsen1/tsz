@@ -397,7 +397,8 @@ impl<'a> CheckerState<'a> {
         let Some(target_shape) = common::callable_shape_for_type(self.ctx.types, target) else {
             return false;
         };
-        if source_shape.construct_signatures.is_empty() || target_shape.construct_signatures.is_empty()
+        if source_shape.construct_signatures.is_empty()
+            || target_shape.construct_signatures.is_empty()
         {
             return false;
         }
