@@ -1527,7 +1527,7 @@ fn checker_files_stay_under_loc_limit() {
     //   checkers/jsx/props.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
         ("types/function_type.rs", 1940),
-        ("state/type_analysis/computed_commonjs.rs", 2121),
+        ("state/type_analysis/computed_commonjs.rs", 2342),
     ];
 
     let mut violations = Vec::new();

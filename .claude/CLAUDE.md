@@ -158,20 +158,35 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
-## 20.25) Multi-Session Work (Campaign System)
+## 20.25) Multi-Session Work (Campaign System — v2 Post-90%)
 - **Always use `ultrathink` at the start of every agent prompt.**
 - **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
-- Each agent owns a **mission** (diagnostic/semantic goal). See `scripts/session/campaigns.yaml`.
-- **Follow root causes across crate boundaries.** Campaigns define goals, not file ownership.
-- Agents work on `campaign/<name>` branches, never push directly to main.
-- An **integrator agent** validates and merges campaign branches to main.
-- **Never declare a campaign "complete."** Run `campaign-checkpoint.sh` to record progress.
-- **Read the progress file before starting.** Don't re-investigate known dead ends.
-- Follow the **discipline cycle**: research → plan → implement → verify → commit → push.
+- **Campaign work is the DEFAULT**, not the exception. The remaining failures are architecture-shaped.
+- **Multi-crate changes are EXPECTED.** Do not reroll because a fix touches solver + checker + boundary.
 - Read `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
+
+### Campaign Tiers and Agent Allocation
+| Tier | Allocation | Campaigns | Focus |
+|------|-----------|-----------|-------|
+| **1** | 50% of agents | big3-unification, request-transport, narrowing-boundary | Trunk: relation kernel, context transport, boundary cleanup |
+| **2** | 30% of agents | node-declaration-emit, crash-zero, stable-identity | Subsystem: resolver, crashes, identity |
+| **3** | 20% of agents | parser-diagnostics, false-positives, jsdoc-jsx-salsa | Leaf cleanup, parser, integration areas |
+
+### KPIs (Track These, Not Overall %)
+| KPI | Command | Target |
+|-----|---------|--------|
+| Wrong-code TS2322+TS2339+TS2345 | `query-conformance.py --dashboard` | Reduce by 50% |
+| Crash count | `query-conformance.py --dashboard` | Zero |
+| Node lane pass rate | `query-conformance.py --dashboard` | >75% |
+| Close-to-passing (diff 0/1/2) | `query-conformance.py --close 2` | Reduce by 50% |
+| Direct solver calls in narrowing | `rg "type_queries\." crates/tsz-checker/src/flow/` | Zero |
+| Raw contextual mutations | `rg "contextual_type\b" crates/tsz-checker/src/` | Zero outside TypingRequest |
 
 ### Quick Reference
 ```bash
+# KPI dashboard (primary daily signal):
+python3 scripts/conformance/query-conformance.py --dashboard
+
 # Health check (run before starting any campaign work):
 scripts/session/healthcheck.sh
 
@@ -199,8 +214,12 @@ scripts/session/cleanup.sh --auto
 scripts/session/setup-machine.sh
 ```
 
-### Key rules
+### Key Rules
+- **Campaign work is default.** Leaf fixes are only for Tier 3 agents.
 - **Follow root causes across crate boundaries.** Campaigns define missions, not file ownership.
+- **Multi-crate changes are normal.** Do NOT reroll for "broad-surface" targets (Tier 1/2).
+- **Track KPIs, not overall %.** Each campaign has a specific KPI in campaigns.yaml.
+- **Find invariants that fix BOTH missing AND extra diagnostics.** One-directional fixes create drift.
 - **Never declare a campaign "complete."** Only the integrator can. Run the checkpoint script.
 - **Read the progress file before starting.** Don't re-investigate known dead ends.
 - **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
@@ -210,8 +229,8 @@ scripts/session/setup-machine.sh
 # Worker agents — rebase and check status:
 /loop 30m run scripts/session/check-status.sh and rebase on origin/main if needed
 
-# Integrator — validate and merge:
-/loop 30m run scripts/session/integrate.sh --auto
+# Integrator — validate, merge, and report KPIs:
+/loop 30m run scripts/session/integrate.sh --auto && python3 scripts/conformance/query-conformance.py --dashboard
 
 # Cleanup — free disk space:
 /loop 4h run scripts/session/cleanup.sh --auto
@@ -224,49 +243,50 @@ scripts/session/setup-machine.sh
 - **All analysis can be done offline** from pre-computed snapshot files. Use the query tools below.
 - Only run the full suite (`./scripts/conformance/conformance.sh run` or `snapshot`) when you need to **verify code changes** you've made.
 
+### KPI Dashboard (primary daily signal)
+```bash
+# This replaces overall conformance % as the primary signal
+python3 scripts/conformance/query-conformance.py --dashboard
+```
+The dashboard shows:
+1. **Big3 wrong-code count** (TS2322+TS2339+TS2345 missing/extra breakdown)
+2. **Crash count** (tests where we emit 0 but tsc expects diagnostics)
+3. **Node lane pass rate** (NodeModulesSearch, jsFileCompilation, node, declarationEmit)
+4. **Close-to-passing** (fingerprint-only, diff=1, diff=2)
+5. **Failure categories** (false positives, all-missing, wrong-code, fingerprint-only)
+6. **Campaign impact** (Tier 1 and Tier 2 campaign test counts)
+
 ### Offline analysis (preferred — zero cost, instant)
 Two snapshot files contain everything needed for analysis:
 - **`scripts/conformance/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
 - **`scripts/conformance/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
 
 ### Preferred strategy: campaign-first, not whack-a-mole
-- Default to **root-cause campaigns**, not individual test chasing.
-- Start conformance work with:
+- **Campaign work is the default.** Leaf fixes are only for Tier 3 agents.
+- Start with the **KPI dashboard**, then deep-dive your assigned campaign:
   ```bash
-  ./scripts/conformance/conformance.sh analyze --campaigns
+  python3 scripts/conformance/query-conformance.py --dashboard
+  python3 scripts/conformance/query-conformance.py --campaign big3
+  python3 scripts/conformance/query-conformance.py --campaign contextual-typing
+  python3 scripts/conformance/query-conformance.py --campaign narrowing-flow
+  python3 scripts/conformance/query-conformance.py --campaign module-resolution
+  python3 scripts/conformance/query-conformance.py --campaign parser-recovery
+  python3 scripts/conformance/query-conformance.py --campaign jsdoc-jsx-salsa
   ```
-- Deep-dive one campaign before choosing code changes:
-  ```bash
-  ./scripts/conformance/conformance.sh analyze --campaign big3
-  ./scripts/conformance/conformance.sh analyze --campaign contextual-typing
-  ./scripts/conformance/conformance.sh analyze --campaign property-resolution
-  ./scripts/conformance/conformance.sh analyze --campaign narrowing-flow
-  ./scripts/conformance/conformance.sh analyze --campaign parser-recovery
-  ./scripts/conformance/conformance.sh analyze --campaign jsdoc-jsx-salsa
-  ```
-- Treat **`TS2322` / `TS2339` / `TS2345` / `TS7006` / `TS2769`** as symptom families, not isolated bug buckets.
-- Do **not** pick work solely from:
-  - top failing tests,
-  - lowest pass-rate areas,
-  - `--close` lists,
-  - single diagnostic codes.
-- Use quick-win views only after selecting a campaign, to build a representative basket:
-  ```bash
-  ./scripts/conformance/conformance.sh analyze --one-missing
-  ./scripts/conformance/conformance.sh analyze --one-extra
-  ./scripts/conformance/conformance.sh analyze --code TS2322
-  ./scripts/conformance/conformance.sh analyze --extra-code TS2339
-  ./scripts/conformance/conformance.sh analyze --close 2
-  ```
+- Treat **`TS2322` / `TS2339` / `TS2345`** as one family. Find invariants that fix BOTH missing AND extra.
+- Do **not** pick work solely from one-extra/one-missing/close lists. Those are Tier 3 tools.
 - For each campaign:
   1. Pick 8-15 representative failures spanning both missing and extra diagnostics.
   2. Write the shared semantic invariant first.
   3. Fix the invariant in Solver or a boundary helper, not in checker-local heuristics.
   4. Use targeted filtered runs only after code changes.
-- `JSDoc`, `JSX`, and `Salsa` are usually **regression baskets**, not first-choice root causes.
+- `JSDoc`, `JSX`, and `Salsa` are **regression baskets** — most fixes come from Tier 1 campaigns.
 
 **Query tool** (`python3 scripts/conformance/query-conformance.py`):
 ```bash
+# KPI dashboard (primary daily signal)
+python3 scripts/conformance/query-conformance.py --dashboard
+
 # Overview: what to work on next
 python3 scripts/conformance/query-conformance.py
 
@@ -276,10 +296,10 @@ python3 scripts/conformance/query-conformance.py --campaigns
 # Deep-dive one campaign
 python3 scripts/conformance/query-conformance.py --campaign big3
 
-# Tests fixable by adding 1 missing code (highest impact)
+# Tests fixable by adding 1 missing code (Tier 3 only)
 python3 scripts/conformance/query-conformance.py --one-missing
 
-# Tests fixable by removing 1 extra code
+# Tests fixable by removing 1 extra code (Tier 3 only)
 python3 scripts/conformance/query-conformance.py --one-extra
 
 # False positive breakdown (expected 0, we emit errors)
