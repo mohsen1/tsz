@@ -2364,14 +2364,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
-        let specific_bounds = lower_bounds
+        let mut specific_iter = lower_bounds
             .iter()
             .copied()
-            .filter(|&ty| !self.tuple_contains_any_or_unknown(ty))
-            .collect::<Vec<_>>();
+            .filter(|&ty| !self.tuple_contains_any_or_unknown(ty));
 
-        if specific_bounds.len() == 1 {
-            return Some(self.sanitize_tuple_inference_candidate(specific_bounds[0]));
+        if let Some(first) = specific_iter.next() {
+            if specific_iter.next().is_none() {
+                // Exactly one specific bound
+                return Some(self.sanitize_tuple_inference_candidate(first));
+            }
         }
 
         None
