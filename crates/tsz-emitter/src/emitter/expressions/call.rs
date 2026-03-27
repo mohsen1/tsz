@@ -17,6 +17,21 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
+                if self.scoped_static_super_direct_access {
+                    self.write(&base_alias);
+                    self.write(".");
+                    self.emit_property_name_without_import_substitution(access.name_or_argument);
+                    self.write(".call(");
+                    self.emit_scoped_static_super_receiver();
+                    if let Some(ref args) = call.arguments {
+                        for &arg_idx in &args.nodes {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                }
                 self.write("Reflect.get(");
                 self.write(&base_alias);
                 self.write(", ");
@@ -40,6 +55,21 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
+                if self.scoped_static_super_direct_access {
+                    self.write(&base_alias);
+                    self.write("[");
+                    self.emit(access.name_or_argument);
+                    self.write("].call(");
+                    self.emit_scoped_static_super_receiver();
+                    if let Some(ref args) = call.arguments {
+                        for &arg_idx in &args.nodes {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                }
                 self.write("Reflect.get(");
                 self.write(&base_alias);
                 self.write(", ");

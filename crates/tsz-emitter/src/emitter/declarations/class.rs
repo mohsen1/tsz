@@ -1964,9 +1964,15 @@ impl<'a> Printer<'a> {
             self.arena,
             &class.heritage_clauses,
         );
+        let needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        let has_legacy_class_decorators = self.ctx.options.legacy_decorators
+            && !self.collect_class_decorators(&class.modifiers).is_empty();
+        let externalized_static_initializer_uses_undefined_receiver =
+            !is_class_expression && needs_static_block_lowering && has_legacy_class_decorators;
 
         let static_initializer_nodes: Vec<NodeIndex> =
-            if is_class_expression || !target_needs_field_lowering {
+            if is_class_expression || !needs_static_block_lowering {
                 Vec::new()
             } else {
                 class
@@ -2001,22 +2007,42 @@ impl<'a> Printer<'a> {
             && static_initializer_nodes
                 .iter()
                 .any(|init_idx| contains_this_reference(self.arena, *init_idx));
-        let static_this_alias = if static_initializer_needs_this_alias {
-            Some(self.make_unique_name_hoisted())
-        } else {
-            None
-        };
-        let static_super_base_alias = if has_extends
+        let static_initializer_needs_super_alias = has_extends
             && !extends_null
             && !static_initializer_nodes.is_empty()
             && static_initializer_nodes
                 .iter()
-                .any(|init_idx| contains_super_reference(self.arena, *init_idx))
+                .any(|init_idx| contains_super_reference(self.arena, *init_idx));
+        let static_this_alias = if static_initializer_needs_this_alias
+            && !externalized_static_initializer_uses_undefined_receiver
         {
             Some(self.make_unique_name_hoisted())
         } else {
             None
         };
+        let static_super_base_alias = if static_initializer_needs_super_alias
+            && !externalized_static_initializer_uses_undefined_receiver
+        {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+        let static_initializer_this_binding =
+            if externalized_static_initializer_uses_undefined_receiver
+                && static_initializer_needs_this_alias
+            {
+                Some("(void 0)")
+            } else {
+                static_this_alias.as_deref()
+            };
+        let static_initializer_super_base =
+            if externalized_static_initializer_uses_undefined_receiver
+                && static_initializer_needs_super_alias
+            {
+                Some("(void 0)")
+            } else {
+                static_super_base_alias.as_deref()
+            };
 
         self.write("class");
 
@@ -2155,9 +2181,6 @@ impl<'a> Printer<'a> {
             < (ScriptTarget::ES2022 as u32)
             || !self.ctx.options.use_define_for_class_fields;
 
-        // Check if we need to lower static blocks to IIFEs (for targets < ES2022)
-        let needs_static_block_lowering =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         let mut deferred_static_blocks: Vec<(NodeIndex, usize)> = Vec::new();
         // Collect computed property name expressions from erased type-only members.
         // tsc emits these as standalone side-effect statements after the class body
@@ -3146,10 +3169,11 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
-                    self.emit_expression_with_scoped_static_initializer(
+                    self.emit_expression_with_scoped_static_initializer_mode(
                         *init_idx,
-                        static_this_alias.as_deref(),
-                        static_super_base_alias.as_deref(),
+                        static_initializer_this_binding,
+                        static_initializer_super_base,
+                        externalized_static_initializer_uses_undefined_receiver,
                     );
                     self.write_line();
                     self.decrease_indent();
@@ -3169,10 +3193,11 @@ impl<'a> Printer<'a> {
                         }
                     }
                     self.write(" = ");
-                    self.emit_expression_with_scoped_static_initializer(
+                    self.emit_expression_with_scoped_static_initializer_mode(
                         *init_idx,
-                        static_this_alias.as_deref(),
-                        static_super_base_alias.as_deref(),
+                        static_initializer_this_binding,
+                        static_initializer_super_base,
+                        externalized_static_initializer_uses_undefined_receiver,
                     );
                     self.write(";");
                 }

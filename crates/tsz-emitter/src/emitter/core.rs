@@ -569,6 +569,10 @@ pub struct Printer<'a> {
     /// This must not flow into nested non-arrow function or class scopes.
     pub(crate) scoped_static_this_alias: Option<Arc<str>>,
 
+    /// When true, scoped static `super` lowering should emit direct property access/calls
+    /// on the scoped base expression instead of `Reflect.get`.
+    pub(crate) scoped_static_super_direct_access: bool,
+
     /// Temporary base-class alias for outer static `super` while emitting a static field
     /// initializer. This is cleared at the same nested scope boundaries as static `this`.
     pub(crate) scoped_static_super_base_alias: Option<Arc<str>>,
@@ -725,6 +729,7 @@ impl<'a> Printer<'a> {
             source_is_js_file: false,
             computed_prop_temp_map: FxHashMap::default(),
             scoped_static_this_alias: None,
+            scoped_static_super_direct_access: false,
             scoped_static_super_base_alias: None,
         }
     }
@@ -995,20 +1000,39 @@ impl<'a> Printer<'a> {
         self.emit_node(node, idx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn emit_expression_with_scoped_static_initializer(
         &mut self,
         idx: NodeIndex,
         this_alias: Option<&str>,
         super_base_alias: Option<&str>,
     ) {
+        self.emit_expression_with_scoped_static_initializer_mode(
+            idx,
+            this_alias,
+            super_base_alias,
+            false,
+        );
+    }
+
+    pub(crate) fn emit_expression_with_scoped_static_initializer_mode(
+        &mut self,
+        idx: NodeIndex,
+        this_alias: Option<&str>,
+        super_base_alias: Option<&str>,
+        super_direct_access: bool,
+    ) {
         let prev_this_alias = self.scoped_static_this_alias.clone();
+        let prev_super_direct_access = self.scoped_static_super_direct_access;
         let prev_super_alias = self.scoped_static_super_base_alias.clone();
 
         self.scoped_static_this_alias = this_alias.map(Arc::from);
+        self.scoped_static_super_direct_access = super_direct_access;
         self.scoped_static_super_base_alias = super_base_alias.map(Arc::from);
 
         self.emit_expression(idx);
         self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
     }
 
@@ -1017,9 +1041,12 @@ impl<'a> Printer<'a> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let prev_this_alias = self.scoped_static_this_alias.take();
+        let prev_super_direct_access = self.scoped_static_super_direct_access;
         let prev_super_alias = self.scoped_static_super_base_alias.take();
+        self.scoped_static_super_direct_access = false;
         let result = f(self);
         self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
         result
     }
