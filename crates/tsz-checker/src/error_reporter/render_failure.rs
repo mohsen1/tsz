@@ -594,6 +594,72 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TSC emits TS2322 instead of TS2741 when the *source* type is an intersection.
+        // This covers type aliases like `LinkedList<T> = T & { next: ... }` that may have
+        // been evaluated to an intersection by the time we reach diagnostic rendering.
+        // Only check the top-level `source` type, not `source_type` (which is from the
+        // solver's MissingProperty reason and may be an inner/property type).
+        if tsz_solver::type_queries::is_intersection_type(self.ctx.types, source) {
+            let src_str = if depth == 0 {
+                self.format_assignment_source_type_for_diagnostic(source, target, idx)
+            } else {
+                self.format_type_diagnostic(source_type)
+            };
+            let tgt_str = if depth == 0 {
+                self.format_assignability_type_for_message(target, source)
+            } else {
+                self.format_type_diagnostic(target_type)
+            };
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            return Diagnostic::error(
+                file_name,
+                start,
+                length,
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+
+        // TSC emits TS2322 instead of TS2741 when the source is a type application
+        // (generic type alias) whose base type resolves to an intersection. For example,
+        // `LinkedList<Entity>` where `type LinkedList<T> = T & { next: LinkedList<T> }`.
+        // Named type aliases expanding to intersections are reported as general
+        // assignability failures, not property-level "missing" errors.
+        if let Some((base, _args)) =
+            tsz_solver::type_queries::get_application_info(self.ctx.types, source)
+        {
+            let base_eval = self.evaluate_type_with_env(base);
+            let base_is_intersection =
+                tsz_solver::type_queries::is_intersection_type(self.ctx.types, base)
+                    || tsz_solver::type_queries::is_intersection_type(self.ctx.types, base_eval);
+            if base_is_intersection {
+                let src_str = if depth == 0 {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_type_diagnostic(source_type)
+                };
+                let tgt_str = if depth == 0 {
+                    self.format_assignability_type_for_message(target, source)
+                } else {
+                    self.format_type_diagnostic(target_type)
+                };
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&src_str, &tgt_str],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+            }
+        }
+
         // Private brand properties handling
         let prop_name = self.ctx.types.resolve_atom_ref(property_name);
         if prop_name.starts_with("__private_brand") {
