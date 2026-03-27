@@ -55,6 +55,12 @@ impl<'a> Printer<'a> {
             && let Some(base_node) = self.arena.get(access.expression)
             && base_node.kind == SyntaxKind::SuperKeyword as u16
         {
+            if self.scoped_static_super_direct_access {
+                self.write(&base_alias);
+                self.write(".");
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                return;
+            }
             self.write("Reflect.get(");
             self.write(&base_alias);
             self.write(", ");
@@ -320,6 +326,13 @@ impl<'a> Printer<'a> {
             && let Some(base_node) = self.arena.get(access.expression)
             && base_node.kind == SyntaxKind::SuperKeyword as u16
         {
+            if self.scoped_static_super_direct_access {
+                self.write(&base_alias);
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+                return;
+            }
             self.write("Reflect.get(");
             self.write(&base_alias);
             self.write(", ");
@@ -524,7 +537,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_property_name_without_import_substitution(&mut self, node: NodeIndex) {
+    pub(super) fn emit_property_name_without_import_substitution(&mut self, node: NodeIndex) {
         let prev_import = self.suppress_commonjs_named_import_substitution;
         let prev_ns = self.suppress_ns_qualification;
         self.suppress_commonjs_named_import_substitution = true;
