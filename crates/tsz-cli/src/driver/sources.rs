@@ -466,6 +466,7 @@ pub(super) fn read_source_files(
     let mut seen = FxHashSet::default();
     let mut pending = VecDeque::new();
     let mut resolution_cache = ModuleResolutionCache::default();
+    let mut module_resolver = ModuleResolver::new(options);
     let mut type_reference_errors = Vec::new();
     let mut resolution_mode_errors = Vec::new();
     let use_cache = cache.is_some() && changed_paths.is_some();
@@ -508,13 +509,15 @@ pub(super) fn read_source_files(
                 return Err(anyhow::anyhow!("failed to read {}: {}", path.display(), e));
             }
         };
-        let (specifiers, type_refs) = if is_binary {
-            (vec![], vec![])
+        let specifiers = if is_binary {
+            Vec::new()
         } else {
-            (
-                collect_module_specifiers_from_text(&path, &text),
-                tsz::checker::triple_slash_validator::extract_reference_types(&text),
-            )
+            crate::driver::resolution::collect_module_requests_from_text(&path, &text)
+        };
+        let type_refs = if is_binary {
+            Vec::new()
+        } else {
+            tsz::checker::triple_slash_validator::extract_reference_types(&text)
         };
         let reference_paths = if is_binary || options.no_resolve {
             vec![]
@@ -529,15 +532,33 @@ pub(super) fn read_source_files(
         let entry = dependencies.entry(path.clone()).or_default();
 
         if !options.no_resolve {
-            for specifier in specifiers {
-                if let Some(resolved) = resolve_module_specifier(
-                    &path,
-                    &specifier,
-                    options,
-                    base_dir,
-                    &mut resolution_cache,
-                    &seen,
-                ) {
+            for (specifier, import_kind, resolution_mode_override) in specifiers {
+                let request = tsz::module_resolver::ModuleLookupRequest {
+                    specifier: &specifier,
+                    containing_file: &path,
+                    specifier_span: tsz_common::Span::new(0, 0),
+                    import_kind,
+                    resolution_mode_override,
+                    no_implicit_any: options.checker.no_implicit_any,
+                    implied_classic_resolution: options.checker.implied_classic_resolution,
+                };
+                let outcome = module_resolver
+                    .lookup(
+                        &request,
+                        |spec, fp| {
+                            resolve_module_specifier(
+                                fp,
+                                spec,
+                                options,
+                                base_dir,
+                                &mut resolution_cache,
+                                &seen,
+                            )
+                        },
+                        |_| false,
+                    )
+                    .classify();
+                if let Some(resolved) = outcome.resolved_path {
                     let canonical = normalize_resolved_path(&resolved, options);
                     entry.insert(canonical.clone());
                     if seen.insert(canonical.clone()) {

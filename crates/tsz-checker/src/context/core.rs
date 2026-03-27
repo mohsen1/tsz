@@ -15,7 +15,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
-use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
+use super::{CheckerContext, LibContext, ResolutionError, ResolutionModeOverride, TypeCache};
 
 impl TypeCache {
     /// Invalidate cached symbol types that depend on the provided roots.
@@ -572,6 +572,14 @@ impl<'a> CheckerContext<'a> {
         self.resolved_module_paths = Some(paths);
     }
 
+    /// Set resolved module paths keyed by the full driver lookup request.
+    pub fn set_resolved_module_request_paths(
+        &mut self,
+        paths: Arc<FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>>,
+    ) {
+        self.resolved_module_request_paths = Some(paths);
+    }
+
     /// Set resolved module specifiers (module names that exist in the project).
     /// Used to suppress TS2307 errors for known modules.
     pub fn set_resolved_modules(&mut self, modules: FxHashSet<String>) {
@@ -587,6 +595,14 @@ impl<'a> CheckerContext<'a> {
         self.resolved_module_errors = Some(errors);
     }
 
+    /// Set resolved module errors keyed by the full driver lookup request.
+    pub fn set_resolved_module_request_errors(
+        &mut self,
+        errors: Arc<FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>>,
+    ) {
+        self.resolved_module_request_errors = Some(errors);
+    }
+
     /// Get the resolution error for a specifier, if any.
     /// Returns the specific error (TS2834, TS2835, TS2792, etc.) if the module resolution failed with a known error.
     pub fn get_resolution_error(&self, specifier: &str) -> Option<&ResolutionError> {
@@ -598,6 +614,25 @@ impl<'a> CheckerContext<'a> {
             }
         }
         None
+    }
+
+    /// Get the resolution error for a specifier under an explicit resolution-mode override.
+    pub fn get_resolution_error_with_mode(
+        &self,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<&ResolutionError> {
+        if let Some(errors) = self.resolved_module_request_errors.as_ref() {
+            for candidate in module_specifier_candidates(specifier) {
+                if let Some(error) =
+                    errors.get(&(self.current_file_idx, candidate, resolution_mode_override))
+                {
+                    return Some(error);
+                }
+            }
+        }
+
+        self.get_resolution_error(specifier)
     }
 
     /// Set the current file index.
@@ -739,6 +774,27 @@ impl<'a> CheckerContext<'a> {
             }
         }
         None
+    }
+
+    /// Resolve an import specifier from a specific file using an explicit
+    /// `resolution-mode` override when one was present in the original request.
+    pub fn resolve_import_target_from_file_with_mode(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<usize> {
+        if let Some(paths) = self.resolved_module_request_paths.as_ref() {
+            for candidate in module_specifier_candidates(specifier) {
+                if let Some(target_idx) =
+                    paths.get(&(source_file_idx, candidate.clone(), resolution_mode_override))
+                {
+                    return Some(*target_idx);
+                }
+            }
+        }
+
+        self.resolve_import_target_from_file(source_file_idx, specifier)
     }
 
     /// Resolve a member exported by the target module of an ALIAS symbol.

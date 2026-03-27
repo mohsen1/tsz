@@ -592,6 +592,32 @@ fn test_collect_module_specifiers_finds_import_type_dependencies() {
 }
 
 #[test]
+fn test_collect_module_specifiers_extracts_import_type_resolution_mode_override() {
+    use tsz::module_resolver::{ImportKind, ImportingModuleKind};
+
+    let text =
+        r#"export type SomeType = import("pkg", { with: { "resolution-mode": "require" } }).Foo;"#;
+    let file_name = "index.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    let import_types: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmImport)
+        .collect();
+
+    assert_eq!(
+        import_types.len(),
+        1,
+        "Expected one import type, got: {specifiers:?}"
+    );
+    assert_eq!(import_types[0].0, "pkg");
+    assert_eq!(import_types[0].3, Some(ImportingModuleKind::CommonJs));
+}
+
+#[test]
 fn test_resolve_type_package_entry_with_exports_map() {
     use std::fs;
     let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");

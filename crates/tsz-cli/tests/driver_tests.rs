@@ -9091,6 +9091,68 @@ export { _Default, _ImportRelative };
 }
 
 #[test]
+fn import_type_resolution_mode_declaration_emit_uses_exact_package_condition() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{
+          "name": "pkg",
+          "version": "0.0.1",
+          "exports": {
+            "import": "./import.js",
+            "require": "./require.js"
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/import.d.ts"),
+        "export interface ImportInterface {}\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/require.d.ts"),
+        "export interface RequireInterface {}\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "node16",
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "out"
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"export type LocalInterface =
+    & import("pkg", { with: {"resolution-mode": "require"} }).RequireInterface
+    & import("pkg", { with: {"resolution-mode": "import"} }).ImportInterface;
+
+export const a = (null as any as import("pkg", { with: {"resolution-mode": "require"} }).RequireInterface);
+export const b = (null as any as import("pkg", { with: {"resolution-mode": "import"} }).ImportInterface);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2694_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER)
+        .collect();
+    assert!(
+        ts2694_diags.is_empty(),
+        "Did not expect TS2694 when import types use distinct resolution-mode conditions, got: {result:?}"
+    );
+}
+
+#[test]
 fn import_non_exported_member_alias_reports_ts2460() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
