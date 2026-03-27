@@ -83,6 +83,62 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_this_in_function_call_js_emits_ts2683_for_unannotated_callbacks_only() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "a.js",
+        r#"
+class Test {
+    constructor() {
+        /** @type {number[]} */
+        this.data = [1, 2, 3];
+    }
+
+    finderRaw() {
+        this.data.find(function (d) {
+            return d === this.data.length;
+        });
+    }
+
+    forEacherRaw() {
+        this.data.forEach(function (d) {
+            console.log(d === this.data.length);
+        });
+    }
+
+    forEacher() {
+        this.data.forEach(
+        /** @this {Test} */
+        function (d) {
+            console.log(d === this.data.length);
+        }, this);
+    }
+
+    finder() {
+        this.data.find(
+        /** @this {Test} */
+        function (d) {
+            return d === this.data.length;
+        }, this);
+    }
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2683_count = diagnostics.iter().filter(|(code, _)| *code == 2683).count();
+    assert_eq!(
+        ts2683_count, 2,
+        "Expected exactly two TS2683 diagnostics for the raw callbacks, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_recursive_complicated_classes_emits_ts2507_for_symbol_extends() {
     if load_lib_files_for_test().is_empty() {
         return;

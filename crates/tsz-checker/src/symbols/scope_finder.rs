@@ -487,21 +487,43 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if parent is a variable declaration with a type annotation
-        if parent_node.kind != VARIABLE_DECLARATION {
-            return false;
-        }
-        let var_decl = match self.ctx.arena.get_variable_declaration(parent_node) {
-            Some(d) => d,
-            None => return false,
-        };
-        if var_decl.type_annotation.is_none() {
-            return false;
+        if parent_node.kind == VARIABLE_DECLARATION {
+            let var_decl = match self.ctx.arena.get_variable_declaration(parent_node) {
+                Some(d) => d,
+                None => return false,
+            };
+            if var_decl.type_annotation.is_some() {
+                // Resolve the type annotation and check if it provides a `this` type
+                let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
+                let ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, declared_type);
+                if ctx.get_this_type().is_some() {
+                    return true;
+                }
+            }
         }
 
-        // Resolve the type annotation and check if it provides a `this` type
-        let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
-        let ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, declared_type);
-        ctx.get_this_type().is_some()
+        if self.is_js_file()
+            && let Some(jsdoc_callable_type) =
+                self.jsdoc_callable_type_annotation_for_function(enclosing_fn)
+        {
+            let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                self.ctx.types,
+                jsdoc_callable_type,
+            );
+            if ctx.get_this_type().is_some() {
+                return true;
+            }
+        }
+
+        if self.is_js_file()
+            && self
+                .get_jsdoc_for_function(enclosing_fn)
+                .is_some_and(|jsdoc| jsdoc.contains("@this"))
+        {
+            return true;
+        }
+
+        false
     }
 
     /// Check if an `arguments` reference is directly inside an arrow function.
