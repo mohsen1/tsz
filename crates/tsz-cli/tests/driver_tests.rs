@@ -737,7 +737,9 @@ fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_oute
     let ts2345: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE)
+        .filter(|d| {
+            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
         .collect();
     let ts2488: Vec<_> = result
         .diagnostics
@@ -762,7 +764,9 @@ fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_oute
         result.file_infos
     );
     assert!(
-        ts2345.iter().all(|diag| diag.message_text.contains("Generator<number, void, any>")),
+        ts2345
+            .iter()
+            .all(|diag| diag.message_text.contains("Generator<number, void, any>")),
         "Expected outer TS2345 diagnostics to preserve the unannotated generator surface `Generator<number, void, any>`, got diagnostics: {:?}",
         ts2345
     );

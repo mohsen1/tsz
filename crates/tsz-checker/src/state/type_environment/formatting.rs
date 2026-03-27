@@ -117,15 +117,19 @@ impl<'a> CheckerState<'a> {
         if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
             && !shape.type_params.is_empty()
         {
-            let display_type = self.ctx.types.factory().function(tsz_solver::FunctionShape {
-                type_params: Vec::new(),
-                params: shape.params.clone(),
-                this_type: shape.this_type,
-                return_type: shape.return_type,
-                type_predicate: shape.type_predicate.clone(),
-                is_constructor: shape.is_constructor,
-                is_method: shape.is_method,
-            });
+            let display_type = self
+                .ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape {
+                    type_params: Vec::new(),
+                    params: shape.params.clone(),
+                    this_type: shape.this_type,
+                    return_type: shape.return_type,
+                    type_predicate: shape.type_predicate.clone(),
+                    is_constructor: shape.is_constructor,
+                    is_method: shape.is_method,
+                });
             return self.format_type_diagnostic(display_type);
         }
 
@@ -138,15 +142,19 @@ impl<'a> CheckerState<'a> {
         {
             let sig = &shape.call_signatures[0];
             if !sig.type_params.is_empty() {
-                let display_type = self.ctx.types.factory().function(tsz_solver::FunctionShape {
-                    type_params: Vec::new(),
-                    params: sig.params.clone(),
-                    this_type: sig.this_type,
-                    return_type: sig.return_type,
-                    type_predicate: sig.type_predicate.clone(),
-                    is_constructor: false,
-                    is_method: sig.is_method,
-                });
+                let display_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .function(tsz_solver::FunctionShape {
+                        type_params: Vec::new(),
+                        params: sig.params.clone(),
+                        this_type: sig.this_type,
+                        return_type: sig.return_type,
+                        type_predicate: sig.type_predicate.clone(),
+                        is_constructor: false,
+                        is_method: sig.is_method,
+                    });
                 return self.format_type_diagnostic(display_type);
             }
         }
