@@ -992,7 +992,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some((from_path, type_name)) = self.first_non_portable_type_reference(inferred_type)
+        if let Some((from_path, type_name)) =
+            self.first_non_portable_type_reference(resolved_inferred_type)
         {
             self.error_at_node_msg(
                 name_idx,
@@ -1409,54 +1410,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if nm_positions.len() == 1 {
-            let nm_idx = nm_positions[0];
-            let pkg_start = nm_idx + 1;
-            let pkg_len = if components.get(pkg_start).is_some_and(|c| {
-                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
-            }) {
-                2
-            } else {
-                1
-            };
-
-            let subpath_start = pkg_start + pkg_len;
-            if subpath_start < components.len() {
-                let package_root = Path::new(&source_path)
-                    .components()
-                    .take(nm_idx + 1 + pkg_len)
-                    .collect::<std::path::PathBuf>();
-
-                let subpath_parts: Vec<String> = components[subpath_start..]
-                    .iter()
-                    .filter_map(|c| match c {
-                        Component::Normal(part) => part.to_str().map(str::to_string),
-                        _ => None,
-                    })
-                    .collect();
-                let relative_path = subpath_parts.join("/");
-
-                if let Some(runtime_path) = self.declaration_runtime_relative_path(&relative_path)
-                    && self
-                        .reverse_export_specifier_for_runtime_path(&package_root, &runtime_path)
-                        .is_none()
-                {
-                    let pkg_json_path = package_root.join("package.json");
-                    if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
-                        && let Ok(pkg_json) =
-                            serde_json::from_str::<serde_json::Value>(&pkg_content)
-                        && let Some(exports) = pkg_json.get("exports")
-                        && Self::exports_has_explicit_subpaths(exports)
-                    {
-                        let mut from_path =
-                            self.calculate_relative_path(&self.ctx.file_name, &source_path);
-                        from_path = self.strip_ts_extensions(&from_path);
-                        from_path = from_path.trim_end_matches('/').to_string();
-                        return Some((from_path, type_name));
-                    }
-                }
-            }
-        }
+        // Case 3 (single node_modules, private subpath) is handled by the
+        // declaration emitter which has access to the printed type text and can
+        // make more accurate portability decisions.  The type-graph walk here
+        // is too aggressive: it finds types in conditional branches that may
+        // resolve away, leading to false TS2883 emissions that tsc avoids.
 
         None
     }

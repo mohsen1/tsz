@@ -6840,6 +6840,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     if self.diagnostics.len() == diagnostics_before
                         && !self.type_text_is_directly_nameable_reference(&printed_type_text)
+                        && self.printed_type_contains_non_portable_import(&printed_type_text)
                     {
                         self.check_non_portable_type_references(
                             type_id,
@@ -9994,6 +9995,43 @@ impl<'a> DeclarationEmitter<'a> {
             && !printed.contains('\n')
     }
 
+    /// Check whether the printed type text contains any `import("...")` reference
+    /// whose module specifier is a private package subpath (has a `/` after the
+    /// bare package name).  This scans all `import("...")` occurrences in the
+    /// text, not just the leading one.
+    ///
+    /// When the printed type text has NO such non-portable import references,
+    /// the type is already nameable from the consumer's perspective and the
+    /// deeper type-graph portability walk can be skipped.
+    fn printed_type_contains_non_portable_import(&self, printed: &str) -> bool {
+        let mut remaining = printed;
+        while let Some(start) = remaining.find("import(\"") {
+            let after_prefix = &remaining[start + 8..]; // skip `import("`
+            if let Some((specifier, rest)) = after_prefix.split_once("\")") {
+                if !specifier.starts_with('.') && !specifier.starts_with('/') {
+                    let mut parts = specifier.split('/');
+                    if let Some(first) = parts.next() {
+                        if !first.is_empty() {
+                            let has_subpath = if first.starts_with('@') {
+                                let _scope_pkg = parts.next();
+                                parts.next().is_some()
+                            } else {
+                                parts.next().is_some()
+                            };
+                            if has_subpath {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                remaining = rest;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
     fn import_type_uses_private_package_subpath(&self, printed: &str) -> bool {
         let Some(rest) = printed.strip_prefix("import(\"") else {
             return false;
@@ -10119,10 +10157,15 @@ impl<'a> DeclarationEmitter<'a> {
         let type_name = symbol.escaped_name.clone();
         let source_path = self.get_symbol_source_path(sym_id, binder)?;
 
-        if let Some(from_path) =
-            self.package_root_export_reference_path(sym_id, &type_name, binder, current_file_path)
+        // If the symbol is re-exported from a module accessible via a bare
+        // package specifier (no subpath), the type IS portable -- consumers
+        // can reference it through the package root.  tsc does not emit
+        // TS2883 in this situation.
+        if self
+            .package_root_export_reference_path(sym_id, &type_name, binder, current_file_path)
+            .is_some()
         {
-            return Some((from_path, type_name));
+            return None;
         }
 
         // Parse node_modules segments from the source path
@@ -10263,6 +10306,20 @@ impl<'a> DeclarationEmitter<'a> {
                             serde_json::from_str::<serde_json::Value>(&pkg_content)
                         && pkg_json.get("exports").is_some()
                     {
+                        // Before flagging as non-portable, check whether the
+                        // symbol is re-exported from a module that IS accessible
+                        // through the package's exports map.  If so, the type
+                        // can be referenced via the public API and TS2883
+                        // should not fire.
+                        if self.symbol_is_reexported_from_public_module(
+                            sym_id,
+                            &type_name,
+                            binder,
+                            &package_root,
+                        ) {
+                            return None;
+                        }
+
                         let mut from_path = self.strip_ts_extensions(
                             &self.calculate_relative_path(current_file_path, &source_path),
                         );
@@ -10287,6 +10344,57 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    /// Check whether the symbol is re-exported from a module within the same
+    /// package whose runtime path IS accessible through the package's exports
+    /// map.  Returns `true` when the type can be reached through the public
+    /// API, meaning TS2883 should be suppressed.
+    fn symbol_is_reexported_from_public_module(
+        &self,
+        sym_id: SymbolId,
+        type_name: &str,
+        binder: &BinderState,
+        package_root: &std::path::Path,
+    ) -> bool {
+        let package_root_str = package_root.to_string_lossy();
+
+        for (module_path, exports) in &binder.module_exports {
+            // Only consider modules inside the same package.
+            if !module_path.starts_with(package_root_str.as_ref()) {
+                continue;
+            }
+            // Check if this module exports the symbol under the same name.
+            let Some(exported_sym_id) = exports.get(type_name) else {
+                continue;
+            };
+            let resolved = self
+                .resolve_portability_import_alias(exported_sym_id, binder)
+                .unwrap_or_else(|| self.resolve_portability_symbol(exported_sym_id, binder));
+            if resolved != sym_id {
+                continue;
+            }
+            // The module re-exports the same symbol.  Check whether that
+            // module's own path is accessible through the exports map.
+            let module_relative = module_path.strip_prefix(package_root_str.as_ref());
+            let module_relative = module_relative.map(|p| p.trim_start_matches('/'));
+            if let Some(rel) = module_relative
+                && !rel.is_empty()
+            {
+                if let Some(runtime) = self.declaration_runtime_relative_path(rel)
+                    && self
+                        .reverse_export_specifier_for_runtime_path(package_root, &runtime)
+                        .is_some()
+                {
+                    return true;
+                }
+            } else {
+                // Module IS the package root (index file).
+                return true;
+            }
+        }
+
+        false
     }
 
     fn package_root_export_reference_path(
