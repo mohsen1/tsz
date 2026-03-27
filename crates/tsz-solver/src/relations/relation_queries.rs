@@ -231,18 +231,14 @@ pub fn query_relation_with_overrides<
     let (related, depth_exceeded) = match kind {
         RelationKind::Assignable => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
-            (
-                checker.is_assignable_with_overrides(source, target, overrides),
-                false,
-            )
+            let related = checker.is_assignable_with_overrides(source, target, overrides);
+            (related, checker.depth_exceeded())
         }
         RelationKind::AssignableBivariantCallbacks => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let _ = overrides;
-            (
-                checker.is_assignable_to_bivariant_callback(source, target),
-                false,
-            )
+            let related = checker.is_assignable_to_bivariant_callback(source, target);
+            (related, checker.depth_exceeded())
         }
         RelationKind::Subtype => {
             let mut checker = configured_subtype_checker(interner, resolver, policy, context);

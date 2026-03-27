@@ -1443,6 +1443,38 @@ pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     }
 }
 
+/// Compute the "constituent count" of a type for relation complexity estimation.
+///
+/// Mirrors tsc's `getConstituentCount` used to detect TS2859 before
+/// performing expensive structural comparisons:
+/// - Union: sum of constituent counts of all members (additive)
+/// - Intersection: product of constituent counts of all members (multiplicative)
+/// - Everything else: 1
+///
+/// The caller compares `source_count * target_count` against a threshold
+/// (tsc uses 1,000,000) to decide if the comparison is too complex.
+pub fn constituent_count(db: &dyn TypeDatabase, type_id: TypeId) -> u64 {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(members_id)) => {
+            let members = db.type_list(members_id);
+            members
+                .iter()
+                .map(|m| constituent_count(db, *m))
+                .sum::<u64>()
+                .max(1)
+        }
+        Some(TypeData::Intersection(members_id)) => {
+            let members = db.type_list(members_id);
+            members
+                .iter()
+                .map(|m| constituent_count(db, *m))
+                .product::<u64>()
+                .max(1)
+        }
+        _ => 1,
+    }
+}
+
 /// Get the callable shape for a callable type.
 ///
 /// Returns None if the type is not a Callable.

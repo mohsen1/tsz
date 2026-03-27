@@ -1029,6 +1029,39 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
+        // TS2859 complexity guard: check constituent-count cross-product before
+        // running the full structural comparison. This mirrors tsc's overflow
+        // detection which triggers when comparing large union/intersection types.
+        //
+        // We must evaluate/resolve types before counting, since type aliases
+        // (Lazy references) are opaque (count = 1) until resolved. Evaluating
+        // expands template literals, resolves Lazy(DefId), etc.
+        {
+            let resolved_source = self.subtype.evaluate_type(source);
+            let resolved_target = self.subtype.evaluate_type(target);
+            let source_count =
+                crate::type_queries::data::constituent_count(self.interner, resolved_source);
+            let target_count =
+                crate::type_queries::data::constituent_count(self.interner, resolved_target);
+            if source_count.saturating_mul(target_count) > 1_000_000 {
+                // Guard: if any intersection member of the evaluated source
+                // equals the evaluated target, the relation is trivially true
+                // and tsc would not overflow.
+                let trivially_related = if let Some(members_id) =
+                    crate::visitor::intersection_list_id(self.interner, resolved_source)
+                {
+                    let members = self.interner.type_list(members_id);
+                    members.iter().any(|&m| m == resolved_target)
+                } else {
+                    false
+                };
+                if !trivially_related {
+                    self.subtype.guard.mark_exceeded();
+                    return false;
+                }
+            }
+        }
+
         // Default to structural subtype checking
         self.configure_subtype(strict_function_types);
         self.subtype.is_subtype_of(source, target)
@@ -1838,6 +1871,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             },
             _ => true,
         }
+    }
+
+    /// Whether the underlying subtype checker exceeded its recursion depth limit.
+    ///
+    /// When true, the relation result is unreliable because the checker gave up
+    /// before reaching a definitive answer. The caller should emit TS2859
+    /// ("Excessive complexity comparing types").
+    pub fn depth_exceeded(&self) -> bool {
+        self.subtype.depth_exceeded()
     }
 }
 

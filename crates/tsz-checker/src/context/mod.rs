@@ -735,6 +735,10 @@ pub struct CheckerContext<'a> {
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: Cell<bool>,
 
+    /// Whether relation complexity was exceeded during an assignability check
+    /// (for TS2859 "Excessive complexity comparing types" emission).
+    pub relation_depth_exceeded: Cell<bool>,
+
     /// Explicit evaluation session state (replaces thread-local depth/fuel guards).
     /// Shared via `Rc` across parent/child contexts so counters survive cross-arena
     /// delegation without implicit global state.
