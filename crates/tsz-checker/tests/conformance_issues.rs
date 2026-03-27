@@ -122,6 +122,44 @@ self.console;
 }
 
 #[test]
+fn test_window_alias_unknown_property_reports_ts2339() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface ConsoleLike {
+    log(...args: any[]): void;
+}
+
+interface Window {
+    console: ConsoleLike;
+}
+
+declare var globalThis: {};
+declare var window: Window & typeof globalThis;
+declare var self: Window & typeof globalThis;
+
+window.z = 3;
+self.console;
+"#,
+    );
+
+    let ts2339_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2339_messages.len(),
+        1,
+        "Expected exactly one TS2339 for the missing window property alias, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2339_messages[0].contains("Property 'z' does not exist on type"),
+        "Expected TS2339 to point at the missing window property, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unresolved_computed_class_method_contributes_indexed_callable_type() {
     let source = r#"
 declare var something: string;
