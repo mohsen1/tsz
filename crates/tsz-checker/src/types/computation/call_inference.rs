@@ -1571,17 +1571,35 @@ impl<'a> CheckerState<'a> {
                         && diag.start >= node.pos
                         && diag.start < node.end
                 });
-                // Round-2/single-arg recomputes are speculative for direct callback
-                // arguments. Keep their diagnostics owned by the final contextual
-                // recheck so stale wide-generic errors (for example TS2339 from
-                // `ClientEvents[string]`) do not leak past the instantiated retry.
-                if is_function_arg_diag {
-                    return false;
-                }
+                let is_nullish_callback_body_diag = callback_body_start.is_some_and(|start| {
+                    diag.start == start
+                        && matches!(
+                            diag.code,
+                            diagnostic_codes::IS_POSSIBLY_NULL
+                                | diagnostic_codes::IS_POSSIBLY_UNDEFINED
+                                | diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+                                | diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                                | diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                                | diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+                                | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL
+                                | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED
+                                | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL_OR_UNDEFINED
+                        )
+                });
                 if expected_is_unresolved
                     && (is_function_arg_diag
                         || (is_object_literal_diag && is_provisional_implicit_any))
                 {
+                    return false;
+                }
+                // Round-2/single-arg recomputes are speculative for direct callback
+                // arguments. Keep their diagnostics owned by the final contextual
+                // recheck so stale wide-generic errors (for example TS2339 from
+                // `ClientEvents[string]`) do not leak past the instantiated retry.
+                // The narrow exception here is nullish callback-body diagnostics
+                // like TS18048, which represent the actual body expression after
+                // return-context refinement and would otherwise get lost.
+                if is_function_arg_diag && !is_nullish_callback_body_diag {
                     return false;
                 }
                 // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
@@ -1598,7 +1616,7 @@ impl<'a> CheckerState<'a> {
                 let keep = (!is_assignability && !is_provisional_implicit_any)
                     || (implicit_any_in_object_literal
                         && !implicit_any_in_object_literal_method)
-                    || callback_body_start.is_some_and(|start| diag.start == start)
+                    || is_nullish_callback_body_diag
                     || !(is_object_literal_diag || is_function_arg_implicit_any_diag);
                 // --- Phase 3: exact-message dedup for kept diagnostics ---
                 if keep {
