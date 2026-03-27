@@ -10213,6 +10213,99 @@ var y = "ok";
 }
 
 #[test]
+fn compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["foo.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("foo.js"),
+        r#"/** @param {Image} image */
+function process(image) {
+    return new image(1, 1)
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE),
+        "Expected JSDoc type reference to ambient value `Image` to remain constructable in project mode, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn direct_checker_with_real_default_libs_jsdoc_type_reference_to_ambient_value_keeps_construct_signature(
+) {
+    let files = vec![(
+        "foo.js".to_string(),
+        r#"/** @param {Image} image */
+function process(image) {
+    return new image(1, 1)
+}
+"#
+        .to_string(),
+    )];
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
+    let file = &program.files[0];
+    let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let mut checker = CheckerState::new(
+        &file.arena,
+        &binder,
+        &query_cache,
+        file.file_name.clone(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.check_source_file(file.source_file);
+
+    assert!(
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE),
+        "Expected direct merged-program checker path to keep ambient `Image` constructable, got diagnostics: {:?}",
+        checker.ctx.diagnostics,
+    );
+}
+
+#[test]
 fn compile_default_import_class_static_enum_object_keeps_enum_members() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

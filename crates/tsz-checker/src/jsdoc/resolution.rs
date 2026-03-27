@@ -16,6 +16,7 @@
 
 use super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
 use crate::state::CheckerState;
+use std::sync::Arc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -908,6 +909,13 @@ impl<'a> CheckerState<'a> {
                 return Some(resolved);
             }
         }
+
+        if let Some(sym_id) = self.resolve_jsdoc_entity_name_symbol(name) {
+            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                return Some(resolved);
+            }
+        }
         None
     }
 
@@ -1133,7 +1141,14 @@ impl<'a> CheckerState<'a> {
                 return instance_type;
             }
             let value_type = self.get_type_of_symbol(sym_id);
-            if let Some(instance_type) = self.instance_type_from_constructor_type(value_type) {
+            let prefer_value_type = symbol.value_declaration.is_some()
+                && self.jsdoc_declared_value_symbol_prefers_value_type(
+                    sym_id,
+                    symbol.value_declaration,
+                );
+            if !prefer_value_type
+                && let Some(instance_type) = self.instance_type_from_constructor_type(value_type)
+            {
                 return instance_type;
             }
             // Fall back to the raw value type for non-constructor variables.
@@ -1143,6 +1158,47 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeId::ERROR
+    }
+
+    fn jsdoc_declared_value_symbol_prefers_value_type(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        decl: NodeIndex,
+    ) -> bool {
+        let arena = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl))
+            .and_then(|arenas| arenas.first().map(Arc::as_ref))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .map(Arc::as_ref)
+            })
+            .unwrap_or_else(|| {
+                let file_idx = self
+                    .ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .unwrap_or(self.ctx.current_file_idx);
+                self.ctx.get_arena_for_file(file_idx as u32)
+            });
+
+        let Some(node) = arena.get(decl) else {
+            return false;
+        };
+
+        if let Some(var_decl) = arena.get_variable_declaration(node)
+            && var_decl.initializer.is_none()
+        {
+            return true;
+        }
+
+        arena.source_files
+            .first()
+            .is_some_and(|sf| sf.file_name.ends_with(".d.ts"))
     }
 
     pub(crate) fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
