@@ -155,8 +155,6 @@ class SetOf<A> {
   forEach(fn: (a: A, index: number) => void) {
       this._store.forEach((a, i) => fn(a, i));
   }
-}
-
 declare function compose<A, B, C, D, E>(
   fnA: (a: SetOf<A>) => SetOf<B>,
   fnB: (b: SetOf<B>) => SetOf<C>,
@@ -182,6 +180,94 @@ testSet.transform(
     assert!(
         diags.iter().any(|(code, _)| *code == 2339),
         "Expected TS2339 after higher-order generic inference mismatch. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_return_context_preserves_undefined_in_callback_parameter() {
+    let source = r#"
+declare function match<T>(cb: (value: T) => boolean): T;
+const z: number | undefined = match(y => y > 0);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 18048),
+        "Expected TS18048 when callback parameter inherits number | undefined. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_return_context_preserves_undefined_through_optional_wrappers() {
+    let source = r#"
+declare function match<T>(cb: (value: T) => boolean): T;
+
+declare function foo(pos: { x?: number; y?: number }): boolean;
+foo({ y: match(y => y > 0) });
+
+declare function foo2(point: [number?]): boolean;
+foo2([match(y => y > 0)]);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts18048_count = diags.iter().filter(|(code, _)| *code == 18048).count();
+    assert_eq!(
+        ts18048_count, 2,
+        "Expected TS18048 for both optional-wrapper callback sites. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn speculative_callback_recheck_drops_stale_property_errors_after_instantiation() {
+    let source = r#"
+type Mapper<T, U> = (x: T) => U;
+
+declare function wrap<T, U>(cb: Mapper<T, U>): Mapper<T, U>;
+declare function combine<A, B, C>(f: (x: A) => B, g: (x: B) => C): (x: A) => C;
+declare function useMapper<T, U>(value: T[], cb: Mapper<T, U>): U[];
+
+useMapper(["a", "b"], combine(wrap(s => s.length), wrap(n => n > 10)));
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2339),
+        "Expected no stale TS2339 after callback recheck narrows `n` to number. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn speculative_tuple_listener_recheck_drops_stale_property_errors() {
+    let source = r#"
+interface CloseEvent {
+    code: number;
+    wasClean: boolean;
+    reason: string;
+}
+
+interface ClientEvents {
+    warn: [message: string];
+    shardDisconnect: [closeEvent: CloseEvent, shardId: number];
+}
+
+declare class Client {
+    on<K extends keyof ClientEvents>(event: K, listener: (...args: ClientEvents[K]) => void): void;
+}
+
+const bot = new Client();
+bot.on("shardDisconnect", (event, shard) => {
+    event.code;
+    event.wasClean;
+    event.reason;
+    void shard;
+});
+bot.on("shardDisconnect", event => {
+    event.code;
+    event.wasClean;
+    event.reason;
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2339),
+        "Expected no stale TS2339 for tuple listener recheck. Diagnostics: {diags:#?}"
     );
 }
 
