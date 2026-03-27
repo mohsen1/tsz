@@ -1113,12 +1113,12 @@ impl<'a> CheckerState<'a> {
             }
             let is_this_global = self.is_this_resolving_to_global(access.expression);
             if self.is_global_this_like_expression(access.expression) || is_this_global {
-                let base_display = if self.is_global_this_expression(access.expression) || is_this_global
-                {
-                    "typeof globalThis"
-                } else {
-                    "Window & typeof globalThis"
-                };
+                let base_display =
+                    if self.is_global_this_expression(access.expression) || is_this_global {
+                        "typeof globalThis"
+                    } else {
+                        "Window & typeof globalThis"
+                    };
                 let allow_unknown_property_fallback =
                     self.is_global_this_expression(access.expression) || is_this_global;
                 let property_type = self.resolve_global_this_property_type(

@@ -352,12 +352,12 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = literal_string.as_deref()
             && (self.is_global_this_like_expression(access.expression) || is_this_global)
         {
-            let base_display = if self.is_global_this_expression(access.expression) || is_this_global
-            {
-                "typeof globalThis"
-            } else {
-                "Window & typeof globalThis"
-            };
+            let base_display =
+                if self.is_global_this_expression(access.expression) || is_this_global {
+                    "typeof globalThis"
+                } else {
+                    "Window & typeof globalThis"
+                };
             let allow_unknown_property_fallback =
                 self.is_global_this_expression(access.expression) || is_this_global;
             // For element access (globalThis['y']), tsc reports TS2339 at the full
