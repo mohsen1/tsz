@@ -3731,6 +3731,54 @@ const obj = {
 }
 
 #[test]
+fn test_async_await_operand_promise_resolve_object_literal_no_false_ts2353() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface PromiseLike<T> {
+    then<TResult1 = T, TResult2 = never>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+        onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
+    ): PromiseLike<TResult1 | TResult2>;
+}
+
+interface Promise<T> {}
+
+interface PromiseConstructor {
+    new <T>(
+        executor: (
+            resolve: (value: T | PromiseLike<T>) => void,
+            reject: (reason?: any) => void
+        ) => void
+    ): Promise<T>;
+}
+
+declare var Promise: PromiseConstructor;
+
+interface Obj { key: "value"; }
+declare function accept(x: Promise<Obj>): void;
+
+accept(new Promise(resolve => resolve({ key: "value" })));
+        "#,
+        CheckerOptions {
+            no_implicit_any: true,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2353),
+        "Did not expect TS2353 for Promise resolve object literal under unresolved generic context. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_type_reference_to_merged_class_preserves_ts2454() {
     let diagnostics = compile_and_get_diagnostics_named(
         "jsdocTypeReferenceToMergedClass.js",

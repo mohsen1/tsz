@@ -153,6 +153,12 @@ impl<'a> CheckerState<'a> {
         // object_shape queries to succeed.
         self.ensure_relation_input_ready(target);
 
+        // Excess property checking against unresolved inference targets leaks
+        // provisional diagnostics like `__infer_0 | PromiseLike<__infer_0>`.
+        // tsc waits until the contextual target is concrete before deciding
+        // whether a fresh object literal has excess properties.
+        let evaluated_target = self.evaluate_type_with_env(target);
+
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter_like(self.ctx.types, target) {
             return;
@@ -183,9 +189,15 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
             let mut any_member_has_number_index = false;
+            let mut has_unresolved_member = false;
 
             for &member in &members {
                 let resolved_member = self.resolve_type_for_property_access(member);
+                if self.contextual_type_is_unresolved_for_argument_refresh(member)
+                    || self.contextual_type_is_unresolved_for_argument_refresh(resolved_member)
+                {
+                    has_unresolved_member = true;
+                }
                 let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
                     // If a union member is the `object` intrinsic, it conceptually
                     // accepts any properties, so excess property checking should not
@@ -263,7 +275,32 @@ impl<'a> CheckerState<'a> {
                 .map(|i| target_shapes[i].clone())
                 .collect::<Vec<_>>();
             let effective_shapes = if discriminant_shapes.is_empty() {
-                target_shapes
+                if has_unresolved_member {
+                    let matching_shapes = target_shapes
+                        .iter()
+                        .filter(|shape| {
+                            shape.properties.iter().all(|target_prop| {
+                                if target_prop.optional {
+                                    return true;
+                                }
+                                source_props.iter().any(|source_prop| {
+                                    source_prop.name == target_prop.name
+                                        && self.is_assignable_to(
+                                            source_prop.type_id,
+                                            target_prop.type_id,
+                                        )
+                                })
+                            })
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if matching_shapes.is_empty() {
+                        return;
+                    }
+                    matching_shapes
+                } else {
+                    target_shapes
+                }
             } else {
                 discriminant_shapes
             };
@@ -336,6 +373,12 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+            return;
+        }
+
+        if self.contextual_type_is_unresolved_for_argument_refresh(target)
+            || self.contextual_type_is_unresolved_for_argument_refresh(evaluated_target)
+        {
             return;
         }
 
