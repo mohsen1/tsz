@@ -200,7 +200,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // Suppress if the nested function has an explicit `this` parameter
                         // or a contextual `this` type from a parent type annotation
                         if self.checker.ctx.no_implicit_this()
-                            && !self.checker.is_js_file()
                             && !self
                                 .checker
                                 .enclosing_function_has_explicit_this_parameter(idx)
