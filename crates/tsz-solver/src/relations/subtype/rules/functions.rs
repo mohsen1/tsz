@@ -355,6 +355,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         crate::utils::required_param_count(params)
     }
 
+    /// Get the effective parameter type for function subtype comparison.
+    ///
+    /// Matches tsc's `getTypeAtPosition` behavior: when `strictNullChecks` is
+    /// enabled, optional parameters have their type widened to `T | undefined`.
+    /// This is critical for property-type interface-extends checking (TS2430):
+    /// a derived property `(x: number) => number` is NOT assignable to a base
+    /// property `(x?: number) => number` because in the contravariant parameter
+    /// check, `number | undefined` is not assignable to `number`.
+    ///
+    /// For method overrides (bivariant comparison), the widening still occurs
+    /// but the bivariant check passes via the covariant direction
+    /// (`number <: number | undefined`), which is correct -- tsc also allows
+    /// method overrides with required params matching optional base params.
+    pub(crate) fn effective_param_type(&self, param: &ParamInfo) -> TypeId {
+        if param.optional && self.strict_null_checks {
+            self.interner.union2(param.type_id, TypeId::UNDEFINED)
+        } else {
+            param.type_id
+        }
+    }
+
     /// Check if a parameter type contains `void` — either is `void` directly
     /// or is a union with `void` as a member (e.g., `number | void`).
     fn param_type_contains_void(&self, type_id: TypeId) -> bool {
@@ -1542,20 +1563,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let s_param = &source_params_unpacked[i];
                 let t_param = &target_params_unpacked[i];
 
-                // Use declared parameter types directly for comparison.
-                // ParamInfo.type_id stores the declared type (e.g., `number`
-                // for `x?: number`), matching tsc's `getTypeAtPosition` which
-                // does NOT include `| undefined` for optional params.
-                // Optionality only affects arity counting, not type comparison.
-                if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method)
-                {
+                // Compute effective parameter types, matching tsc's `getTypeAtPosition`:
+                // optional parameters are widened to `T | undefined` under strictNullChecks.
+                let s_effective = self.effective_param_type(s_param);
+                let t_effective = self.effective_param_type(t_param);
+                if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
                     // Trace: Parameter type mismatch
                     if let Some(tracer) = &mut self.tracer
                         && !tracer.on_mismatch_dyn(
                             crate::diagnostics::SubtypeFailureReason::ParameterTypeMismatch {
                                 param_index: i,
-                                source_param: s_param.type_id,
-                                target_param: t_param.type_id,
+                                source_param: s_effective,
+                                target_param: t_effective,
                             },
                         )
                     {
@@ -2033,7 +2052,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_generic = !source.type_params.is_empty();
         let target_generic = !target.type_params.is_empty();
         if !source_generic && !target_generic {
-            return false;
+            // Non-generic constructors need strict params when there's an
+            // optionality mismatch between corresponding parameters. This
+            // matches tsc where property-typed constructor types like
+            // `new (x?: number) => number` use strict comparison, not
+            // constructor bivariance. Without this, the bivariant check
+            // would pass (`number <: number | undefined`) and incorrectly
+            // allow `new (x: number) => number` as a subtype.
+            let has_optionality_mismatch = source
+                .params
+                .iter()
+                .zip(target.params.iter())
+                .any(|(sp, tp)| sp.optional != tp.optional);
+            return has_optionality_mismatch;
         }
 
         source.type_params.len() != target.type_params.len()
@@ -2152,8 +2183,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_param = &source_params[i];
             let t_param = &target_params[i];
 
-            // Use declared types directly — see comment in check_function_params_subtype.
-            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
+            // Compute effective types — optional params widened to `T | undefined`
+            // under strictNullChecks (matching tsc's `getTypeAtPosition`).
+            let s_effective = self.effective_param_type(s_param);
+            let t_effective = self.effective_param_type(t_param);
+            if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
                 return SubtypeResult::False;
             }
         }
