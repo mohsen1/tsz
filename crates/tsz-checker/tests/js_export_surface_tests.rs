@@ -285,6 +285,51 @@ fn check_commonjs_three_files_with_prelude(
         .collect()
 }
 
+#[test]
+fn test_module_exports_object_property_jsdoc_rest_function_survives_require() {
+    let diagnostics = check_commonjs_two_files(
+        "typescript-eslint.js",
+        r#"
+/**
+ * @typedef {{ rules: Record<string, boolean> }} Plugin
+ */
+
+/**
+ * @typedef {{ plugins: Record<string, Plugin> }} Config
+ */
+
+/**
+ * @type {(...configs: Config[]) => void}
+ */
+function config(...configs) {}
+
+module.exports = { config };
+"#,
+        "eslint.config.js",
+        r#"
+const tseslint = require("./typescript-eslint.js");
+
+const shared = {
+  plugins: {
+    react: {
+      deprecatedRules: { "jsx-sort-default-props": true },
+      rules: { "no-unsafe": true },
+    },
+  },
+};
+
+tseslint.config(shared);
+"#,
+        "./typescript-eslint.js",
+    );
+
+    let ts2345: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Expected no TS2345 when a CommonJS-exported JSDoc rest function is called through require(), got: {diagnostics:#?}"
+    );
+}
+
 fn format_commonjs_single_file_symbol_type(
     file_name: &str,
     source: &str,
