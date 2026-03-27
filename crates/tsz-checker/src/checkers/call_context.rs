@@ -105,53 +105,70 @@ impl<'a> CheckerState<'a> {
         &self,
         arg_idx: NodeIndex,
     ) -> Vec<(u32, u32)> {
-        let Some(node) = self.ctx.arena.get(arg_idx) else {
-            return Vec::new();
-        };
-        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
-            return Vec::new();
-        };
+        fn collect<'a>(checker: &CheckerState<'a>, idx: NodeIndex, spans: &mut Vec<(u32, u32)>) {
+            let Some(node) = checker.ctx.arena.get(idx) else {
+                return;
+            };
 
-        obj.elements
-            .nodes
-            .iter()
-            .filter_map(|&element_idx| {
-                let element = self.ctx.arena.get(element_idx)?;
-                match element.kind {
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .ctx
-                        .arena
-                        .get_method_decl(element)
-                        .map(|method| method.parameters.nodes.as_slice()),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.ctx
-                            .arena
-                            .get_accessor(element)
-                            .map(|accessor| accessor.parameters.nodes.as_slice())
-                    }
-                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
-                        .ctx
-                        .arena
-                        .get_property_assignment(element)
-                        .and_then(|prop| self.ctx.arena.get(prop.initializer))
-                        .and_then(|init| self.ctx.arena.get_function(init))
-                        .map(|func| func.parameters.nodes.as_slice()),
-                    _ => None,
+            match node.kind {
+                k if k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    spans.extend(checker.function_like_param_spans_for_node(idx));
                 }
-                .map(|params| {
-                    params
-                        .iter()
-                        .filter_map(|&param_idx| {
-                            let param_node = self.ctx.arena.get(param_idx)?;
-                            Some((param_node.pos, param_node.end))
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-            .flatten()
-            .collect()
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(paren) = checker.ctx.arena.get_parenthesized(node) {
+                        collect(checker, paren.expression, spans);
+                    }
+                }
+                k if k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION =>
+                {
+                    if let Some(assertion) = checker.ctx.arena.get_type_assertion(node) {
+                        collect(checker, assertion.expression, spans);
+                    }
+                }
+                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION =>
+                {
+                    let Some(literal) = checker.ctx.arena.get_literal_expr(node) else {
+                        return;
+                    };
+
+                    for &element_idx in &literal.elements.nodes {
+                        let Some(element) = checker.ctx.arena.get(element_idx) else {
+                            continue;
+                        };
+
+                        match element.kind {
+                            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                                let Some(prop) =
+                                    checker.ctx.arena.get_property_assignment(element)
+                                else {
+                                    continue;
+                                };
+                                collect(checker, prop.initializer, spans);
+                            }
+                            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                                if let Some(spread) = checker.ctx.arena.get_spread(element) {
+                                    collect(checker, spread.expression, spans);
+                                }
+                            }
+                            _ => collect(checker, element_idx, spans),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut spans = Vec::new();
+        collect(self, arg_idx, &mut spans);
+        spans
     }
 
     pub(crate) fn object_literal_noncontextual_function_param_spans(
