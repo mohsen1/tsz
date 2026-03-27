@@ -369,6 +369,22 @@ impl<'a> CheckerState<'a> {
                 self.contextual_generic_rest_parameter_display(expected, index, rest)
             {
                 display
+            } else if matches!(
+                self.ctx.arena.get(param.name).map(|node| node.kind),
+                Some(k)
+                    if k == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || k == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN
+            ) {
+                let type_id = self
+                    .contextual_parameter_type_with_env_from_expected(expected, index, rest)
+                    .or_else(|| shape.params.get(index).map(|param| param.type_id))
+                    .unwrap_or(TypeId::ANY);
+                if matches!(type_id, TypeId::ANY | TypeId::UNKNOWN) {
+                    self.binding_pattern_parameter_type_display(param.name)
+                        .unwrap_or_else(|| self.format_type_for_assignability_message(type_id))
+                } else {
+                    self.format_type_for_assignability_message(type_id)
+                }
             } else {
                 let type_id = self
                     .contextual_parameter_type_with_env_from_expected(expected, index, rest)
@@ -2319,6 +2335,9 @@ impl<'a> CheckerState<'a> {
         self.error_at_node(idx, message, code);
     }
 }
+
+#[path = "call_errors_binding_patterns.rs"]
+mod call_errors_binding_patterns;
 
 #[cfg(test)]
 #[path = "call_errors_tests.rs"]

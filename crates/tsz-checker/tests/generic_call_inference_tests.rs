@@ -185,6 +185,29 @@ testSet.transform(
     );
 }
 
+#[test]
+fn generic_binding_pattern_mismatch_preserves_structured_display() {
+    let source = r#"
+declare function trans<T>(f: (x: T) => string): number;
+trans(({a}) => a);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345_messages: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .map(|(_, message)| message.clone())
+        .collect();
+    assert_eq!(
+        ts2345_messages.len(),
+        1,
+        "Expected one TS2345 for binding-pattern mismatch. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345_messages[0].contains("({ a }: { a: any; }) => any"),
+        "Expected structured binding-pattern display. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Constraint-based literal preservation ───────────────────────────
 
 #[test]
