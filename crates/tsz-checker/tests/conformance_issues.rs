@@ -20197,3 +20197,53 @@ Point.zero = (): Point => Point(0, 0);
         "Expected exported arrow-function expando assignment to avoid TS2339. Got: {ts2339:?}. All: {diagnostics:?}"
     );
 }
+
+
+#[test]
+fn test_relative_module_augmentation_namespace_import_member_resolves_in_type_position() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/backbone.d.ts",
+                r#"
+declare namespace Backbone {
+    interface Model<T extends object = any, TQuery = any, TOptions = any> {}
+}
+export = Backbone;
+"#,
+            ),
+            (
+                "/augment.d.ts",
+                r#"
+import * as Backbone from "./backbone";
+declare module "./backbone" {
+    interface ModelWithCache extends Backbone.Model<any, any, any> {
+        cache: boolean;
+    }
+}
+"#,
+            ),
+            (
+                "/index.ts",
+                r#"
+import * as Backbone from "./backbone";
+import "./augment";
+
+let model: Backbone.ModelWithCache;
+model.cache;
+"#,
+            ),
+        ],
+        "/index.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2503 || *code == 2694),
+        "Expected module augmentation member on namespace import to resolve in type position, got: {diagnostics:#?}"
+    );
+}

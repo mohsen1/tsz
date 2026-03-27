@@ -215,6 +215,23 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::Type(reexported_sym);
             }
 
+            if let Some(ref module_specifier) = left_symbol.import_module
+                && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
+                    module_specifier,
+                    right_name,
+                    visited_aliases,
+                )
+            {
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(augmented_sym, Some(right_name))
+                    || self.symbol_is_value_only(augmented_sym, Some(right_name)))
+                    && !self.symbol_is_type_only(augmented_sym, Some(right_name));
+                if is_value_only {
+                    return TypeSymbolResolution::ValueOnly(augmented_sym);
+                }
+                return TypeSymbolResolution::Type(augmented_sym);
+            }
+
             return TypeSymbolResolution::NotFound;
         }
 
@@ -303,6 +320,23 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::ValueOnly(reexported_sym);
             }
             return TypeSymbolResolution::Type(reexported_sym);
+        }
+
+        if let Some(ref module_specifier) = left_symbol.import_module
+            && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
+                module_specifier,
+                right_name,
+                visited_aliases,
+            )
+        {
+            let is_value_only = (self
+                .alias_resolves_to_value_only(augmented_sym, Some(right_name))
+                || self.symbol_is_value_only(augmented_sym, Some(right_name)))
+                && !self.symbol_is_type_only(augmented_sym, Some(right_name));
+            if is_value_only {
+                return TypeSymbolResolution::ValueOnly(augmented_sym);
+            }
+            return TypeSymbolResolution::Type(augmented_sym);
         }
 
         TypeSymbolResolution::NotFound
@@ -911,6 +945,31 @@ impl<'a> CheckerState<'a> {
                     return Some(sym_id);
                 }
             }
+        }
+
+        None
+    }
+
+    fn resolve_module_augmentation_member_symbol(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<SymbolId> {
+        for augmentation in self.get_module_augmentation_declarations(module_specifier, member_name) {
+            let binder = augmentation
+                .arena
+                .as_deref()
+                .and_then(|arena| self.ctx.get_binder_for_arena(arena))
+                .unwrap_or(self.ctx.binder);
+            let sym_id = binder.get_node_symbol(augmentation.node)?;
+            if std::ptr::eq(binder, self.ctx.binder) {
+                return Some(
+                    self.resolve_alias_symbol(sym_id, visited_aliases)
+                        .unwrap_or(sym_id),
+                );
+            }
+            return Some(sym_id);
         }
 
         None
