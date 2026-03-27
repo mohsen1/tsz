@@ -19,7 +19,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::sync::{
-    Arc, OnceLock, RwLock,
+    Arc, OnceLock,
     atomic::{AtomicBool, AtomicU32, Ordering},
 };
 use tsz_common::interner::{Atom, ShardedInterner};
@@ -305,10 +305,10 @@ pub struct TypeInterner {
     /// Cache for `is_identity_comparable_type` checks (memoized O(1) lookup after first computation)
     identity_comparable_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
-    /// Uses `RwLock` instead of `OnceLock` so file checkers can overwrite the
-    /// prime checker's value (which contains stale `DefIds` from a temporary
-    /// `DefinitionStore`).
-    array_base_type: RwLock<Option<TypeId>>,
+    /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
+    /// `RwLock` so file checkers can overwrite the prime checker's value without
+    /// lock contention on this frequently-read field.
+    array_base_type: AtomicU32,
     /// Type parameters for the Array base type.
     /// Kept as `OnceLock` since params don't contain `DefIds` and are stable
     /// across checkers (the interner allocates `TypeParam` `TypeIds` centrally).
@@ -385,7 +385,7 @@ impl TypeInterner {
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
-            array_base_type: RwLock::new(None),
+            array_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
@@ -429,19 +429,24 @@ impl TypeInterner {
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
     ///
-    /// The `TypeId` uses `RwLock` so each file checker can overwrite the prime
+    /// The `TypeId` uses `AtomicU32` so each file checker can overwrite the prime
     /// checker's value with one containing correct `DefIds` for its own
     /// `DefinitionStore`. The params use `OnceLock` since they don't contain
     /// `DefIds` and are stable across checkers.
     pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
-        *self.array_base_type.write().expect("RwLock not poisoned") = Some(type_id);
+        self.array_base_type.store(type_id.0, Ordering::Relaxed);
         let _ = self.array_base_type_params.set(params);
     }
 
     /// Get the global Array base type, if it has been set.
     #[inline]
     pub fn get_array_base_type(&self) -> Option<TypeId> {
-        *self.array_base_type.read().expect("RwLock not poisoned")
+        let raw = self.array_base_type.load(Ordering::Relaxed);
+        if raw == u32::MAX {
+            None
+        } else {
+            Some(TypeId(raw))
+        }
     }
 
     /// Get the type parameters for the global Array base type, if it has been set.
