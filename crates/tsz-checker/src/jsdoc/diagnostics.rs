@@ -1317,29 +1317,28 @@ impl<'a> CheckerState<'a> {
         }
 
         // Also check @type tag references for unresolvable simple names (TS2304).
-        // Only for @type tags on file-level statements (not inside functions),
-        // since function-level @type tags may reference function-scoped typedefs.
+        // Only for JSDoc comments that are actually attached to top-level statements.
+        // Inline expression-body casts like `value => /** @type {T} */(...)` should not
+        // be treated as file-level tags; those are validated in the normal checker flow
+        // where function-scoped `@template` params are available.
         for comment in &comments {
             if !is_jsdoc_comment(comment, &source_text) {
                 continue;
             }
-            // Skip comments inside function bodies - only check file-level @type tags.
-            // Use find_function_body_end to get the real body end, since function
-            // declaration nodes may include trailing trivia past the closing `}`.
-            let mut in_function = false;
-            for node in &self.ctx.arena.nodes {
-                if !node.is_function_like() {
-                    continue;
-                }
-                let body_end = Self::find_function_body_end(node.pos, node.end, &source_text);
-                if comment.pos >= node.pos && comment.pos < body_end {
-                    in_function = true;
-                    break;
-                }
-            }
-            if in_function {
+
+            let is_top_level_leading_jsdoc = sf.statements.nodes.iter().any(|&stmt_idx| {
+                self.ctx
+                    .arena
+                    .get(stmt_idx)
+                    .and_then(|stmt| {
+                        self.try_leading_jsdoc_with_pos(&comments, stmt.pos, &source_text)
+                    })
+                    .is_some_and(|(_, comment_pos)| comment_pos == comment.pos)
+            });
+            if !is_top_level_leading_jsdoc {
                 continue;
             }
+
             let content = get_jsdoc_content(comment, &source_text);
             // Check for @type {Name} where Name is a simple identifier
             if let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&content) {
