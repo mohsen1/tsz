@@ -1367,7 +1367,7 @@ impl<'a> CheckerState<'a> {
                     parent_package.join("/"),
                     import_module
                 );
-                return Some((from_path, type_name));
+                return Some((type_name, from_path));
             }
         }
 
@@ -1406,7 +1406,7 @@ impl<'a> CheckerState<'a> {
                     parent_parts.join("/"),
                     nested_parts.join("/")
                 );
-                return Some((from_path, type_name));
+                return Some((type_name, from_path));
             }
         }
 
