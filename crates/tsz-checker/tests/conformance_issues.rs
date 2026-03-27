@@ -7271,6 +7271,50 @@ f(t => { });
     );
 }
 
+/// Issue: nested tuple callbacks under object-literal properties can leak provisional TS7006
+///
+/// From: mappedTypeRecursiveInference2.ts
+/// Expected: No TS7006 errors
+/// Actual: TS7006 on the nested tuple callback inside the object-literal property
+#[test]
+fn test_contextual_typing_nested_object_literal_tuple_callback() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type MorphTuple = [string, "|>", any]
+
+type validateMorph<def extends MorphTuple> = def[1] extends "|>"
+    ? [validateDefinition<def[0]>, "|>", (In: def[0]) => unknown]
+    : def
+
+type validateDefinition<def> = def extends MorphTuple
+    ? validateMorph<def>
+    : {
+          [k in keyof def]: validateDefinition<def[k]>
+      }
+
+declare function type<def>(def: validateDefinition<def>): def
+
+const objectLiteral = type({ a: ["ark", "|>", (x) => x.length] })
+        "#,
+        CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 for the nested tuple callback inside the object-literal property.\
+         \nActual errors: {relevant:#?}"
+    );
+}
+
 /// Issue: false-positive assignability errors with contextual generic outer type parameters.
 ///
 /// Mirrors: contextualOuterTypeParameters.ts
