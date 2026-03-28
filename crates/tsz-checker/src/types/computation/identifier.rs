@@ -1741,13 +1741,14 @@ impl<'a> CheckerState<'a> {
                             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                                 continue;
                             };
-                            let Some(decl) =
-                                self.ctx.arena.get_variable_declaration(decl_node)
+                            let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node)
                             else {
                                 continue;
                             };
                             if decl.initializer.is_some()
-                                && self.get_require_module_specifier(decl.initializer).is_some()
+                                && self
+                                    .get_require_module_specifier(decl.initializer)
+                                    .is_some()
                             {
                                 return true;
                             }
