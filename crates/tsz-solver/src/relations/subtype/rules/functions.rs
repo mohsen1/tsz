@@ -357,23 +357,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Get the effective parameter type for function subtype comparison.
     ///
-    /// Matches tsc's `getTypeAtPosition` behavior: when `strictNullChecks` is
-    /// enabled, optional parameters have their type widened to `T | undefined`.
-    /// This is critical for property-type interface-extends checking (TS2430):
-    /// a derived property `(x: number) => number` is NOT assignable to a base
-    /// property `(x?: number) => number` because in the contravariant parameter
-    /// check, `number | undefined` is not assignable to `number`.
-    ///
-    /// For method overrides (bivariant comparison), the widening still occurs
-    /// but the bivariant check passes via the covariant direction
-    /// (`number <: number | undefined`), which is correct -- tsc also allows
-    /// method overrides with required params matching optional base params.
+    /// TypeScript compares declared optional parameter types during signature
+    /// compatibility rather than eagerly widening them to `T | undefined`.
+    /// That keeps `(x: string) => void` assignable to `(x?: string) => void`
+    /// and vice versa, matching the solver unit tests and tsc's behavior for
+    /// regular function signature relation checks.
     pub(crate) fn effective_param_type(&self, param: &ParamInfo) -> TypeId {
-        if param.optional && self.strict_null_checks {
-            self.interner.union2(param.type_id, TypeId::UNDEFINED)
-        } else {
-            param.type_id
-        }
+        param.type_id
     }
 
     /// Check if a parameter type contains `void` — either is `void` directly

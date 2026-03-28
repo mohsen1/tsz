@@ -1128,8 +1128,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for i in 0..fixed_compare_count {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
-            // Compute effective types — optional params widened to `T | undefined`
-            // under strictNullChecks (matching tsc's `getTypeAtPosition`).
+            // Compare declared parameter types, matching the subtype rules.
             let s_effective = self.effective_param_type(s_param);
             let t_effective = self.effective_param_type(t_param);
             // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
