@@ -21,6 +21,15 @@ pub(crate) fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     tsz_solver::type_queries::unwrap_readonly_deep(db, type_id)
 }
 
+/// Strict type parameter check: matches `TypeParameter` and `Infer` only.
+///
+/// Unlike `is_type_parameter_like` (which also matches `BoundParameter`),
+/// this returns true only for free type parameters. Used in readonly
+/// checking to detect generic indexed writes on unconstrained type params.
+pub(crate) fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_type_parameter(db, type_id)
+}
+
 pub(crate) fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_object_like_type(db, type_id)
 }
