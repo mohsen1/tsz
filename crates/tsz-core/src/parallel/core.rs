@@ -2928,8 +2928,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     .source_files
                     .first()
                     .is_some_and(|sf| sf.is_declaration_file);
-                let has_value = sym_info
-                    .is_some_and(|s| s.flags & crate::binder::symbol_flags::VALUE != 0);
+                let has_value =
+                    sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::VALUE != 0);
                 let is_module_decl = sym_info.is_some_and(|s| {
                     s.flags
                         & (crate::binder::symbol_flags::VALUE_MODULE
