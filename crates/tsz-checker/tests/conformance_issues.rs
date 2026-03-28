@@ -20348,11 +20348,15 @@ export const useCsvParser = () => {
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
     checker.ctx.set_current_file_idx(entry_idx);
-    checker.ctx.set_resolved_modules(FxHashSet::from_iter(["csv-parse".to_string()]));
-    checker.ctx.set_resolved_module_paths(Arc::new(FxHashMap::from_iter([(
-        (entry_idx, "csv-parse".to_string()),
-        0usize,
-    )])));
+    checker
+        .ctx
+        .set_resolved_modules(FxHashSet::from_iter(["csv-parse".to_string()]));
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(FxHashMap::from_iter([(
+            (entry_idx, "csv-parse".to_string()),
+            0usize,
+        )])));
 
     checker.check_source_file(roots[entry_idx]);
 
@@ -20370,9 +20374,7 @@ export const useCsvParser = () => {
     assert!(
         diagnostics.iter().any(|(code, message)| {
             *code == 2345
-                && message.contains(
-                    "typeof import(\"p1/node_modules/csv-parse/lib/index\")"
-                )
+                && message.contains("typeof import(\"p1/node_modules/csv-parse/lib/index\")")
         }),
         "Expected TS2345 message to preserve the resolved package path. Actual diagnostics: {diagnostics:#?}"
     );
@@ -20381,9 +20383,9 @@ export const useCsvParser = () => {
 #[test]
 fn test_typeof_import_namespace_skips_type_only_exports() {
     let files = vec![
-            (
-                "foo2.ts",
-                r#"
+        (
+            "foo2.ts",
+            r#"
 namespace Bar {
     export interface I {
         a: string;
@@ -20404,10 +20406,10 @@ class Bar {
 }
 export { Bar }
 "#,
-            ),
-            (
-                "usage.ts",
-                r#"
+        ),
+        (
+            "usage.ts",
+            r#"
 export class Bar2 {
     item: { a: string, b: number, c: object };
     constructor(input?: any) {}
@@ -20417,8 +20419,8 @@ export let shim: typeof import("./foo2") = {
     Bar: Bar2
 };
 "#,
-            ),
-        ];
+        ),
+    ];
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &files,
         "usage.ts",

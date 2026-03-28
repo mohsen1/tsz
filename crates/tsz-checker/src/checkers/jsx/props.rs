@@ -155,7 +155,9 @@ impl<'a> CheckerState<'a> {
                                     component_type,
                                 )
                             })
-                            .or_else(|| self.get_jsx_class_ref_fallback_type(attr_name, component_type))
+                            .or_else(|| {
+                                self.get_jsx_class_ref_fallback_type(attr_name, component_type)
+                            })
                     })
                 } else {
                     None
@@ -174,11 +176,20 @@ impl<'a> CheckerState<'a> {
 
         let instance_type = self.get_class_instance_type_for_component(component_type)?;
         let param_name = self.ctx.types.intern_string("instance");
-        let callback = self.ctx.types.factory().function(tsz_solver::FunctionShape::new(
-            vec![tsz_solver::ParamInfo::required(param_name, instance_type)],
-            TypeId::ANY,
-        ));
-        Some(self.ctx.types.factory().union(vec![TypeId::STRING, callback]))
+        let callback = self
+            .ctx
+            .types
+            .factory()
+            .function(tsz_solver::FunctionShape::new(
+                vec![tsz_solver::ParamInfo::required(param_name, instance_type)],
+                TypeId::ANY,
+            ));
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .union(vec![TypeId::STRING, callback]),
+        )
     }
 
     fn get_jsx_intrinsic_class_attribute_from_heritage(
@@ -195,7 +206,10 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let ica_sym_id = jsx_symbol.exports.as_ref()?.get("IntrinsicClassAttributes")?;
+        let ica_sym_id = jsx_symbol
+            .exports
+            .as_ref()?
+            .get("IntrinsicClassAttributes")?;
         let ica_symbol = self.ctx.binder.get_symbol(ica_sym_id)?;
         let instance_type = self.get_class_instance_type_for_component(component_type)?;
 
@@ -242,21 +256,22 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    let (expr_idx, type_arguments) =
-                        if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
-                            (
-                                expr_type_args.expression,
-                                expr_type_args.type_arguments.as_ref(),
-                            )
-                        } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                            if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
-                                (type_ref.type_name, type_ref.type_arguments.as_ref())
-                            } else {
-                                (type_idx, None)
-                            }
+                    let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                            (type_ref.type_name, type_ref.type_arguments.as_ref())
                         } else {
                             (type_idx, None)
-                        };
+                        }
+                    } else {
+                        (type_idx, None)
+                    };
 
                     let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
                         continue;
@@ -285,11 +300,8 @@ impl<'a> CheckerState<'a> {
                             &base_type_params,
                             &type_args,
                         );
-                        base_type = tsz_solver::instantiate_type(
-                            self.ctx.types,
-                            base_type,
-                            &substitution,
-                        );
+                        base_type =
+                            tsz_solver::instantiate_type(self.ctx.types, base_type, &substitution);
                     }
 
                     let base_type = self.normalize_jsx_required_props_target(base_type);
@@ -1152,19 +1164,15 @@ impl<'a> CheckerState<'a> {
                     } else if let Some(expected_type) = expected_special_type {
                         let expected_context_type =
                             self.normalize_jsx_required_props_target(expected_type);
-                        let contextual_expected_type = if self
-                            .ctx
-                            .arena
-                            .get(value_node_idx)
-                            .is_some_and(|node| {
+                        let contextual_expected_type =
+                            if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
                                 node.kind == syntax_kind_ext::ARROW_FUNCTION
                                     || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                            })
-                        {
-                            self.refine_jsx_callable_contextual_type(expected_context_type)
-                        } else {
-                            expected_context_type
-                        };
+                            }) {
+                                self.refine_jsx_callable_contextual_type(expected_context_type)
+                            } else {
+                                expected_context_type
+                            };
                         self.compute_type_of_node_with_request(
                             value_node_idx,
                             &request
