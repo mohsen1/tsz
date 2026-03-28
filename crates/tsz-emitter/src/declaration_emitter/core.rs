@@ -120,6 +120,10 @@ pub struct DeclarationEmitter<'a> {
     /// JS namespace-like alias exports synthesized from expando assignments such
     /// as `foo.default = foo` and `module.exports.Bar = Bar`.
     pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<(String, String)>>,
+    /// CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
+    pub(super) js_cjs_export_aliases: Vec<(String, String)>,
+    /// Statements consumed by CJS export alias collection.
+    pub(super) js_cjs_export_alias_statements: FxHashSet<NodeIndex>,
     /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
     /// top-level synthetic function declarations.
     /// The boolean marks whether the synthetic declaration should be exported.
@@ -242,6 +246,8 @@ impl<'a> DeclarationEmitter<'a> {
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
             js_namespace_export_aliases: FxHashMap::default(),
+            js_cjs_export_aliases: Vec::new(),
+            js_cjs_export_alias_statements: FxHashSet::default(),
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
@@ -316,6 +322,8 @@ impl<'a> DeclarationEmitter<'a> {
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
             js_namespace_export_aliases: FxHashMap::default(),
+            js_cjs_export_aliases: Vec::new(),
+            js_cjs_export_alias_statements: FxHashSet::default(),
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
@@ -772,6 +780,23 @@ impl<'a> DeclarationEmitter<'a> {
         ) = self.collect_js_commonjs_named_exports(source_file);
         self.js_named_export_names
             .extend(js_commonjs_named_export_names);
+        let (cjs_aliases, cjs_alias_stmts) =
+            self.collect_js_cjs_export_aliases(source_file);
+        self.js_cjs_export_aliases = cjs_aliases;
+        self.js_cjs_export_alias_statements = cjs_alias_stmts;
+        // Mark CJS alias local names as used so they survive usage analysis pruning.
+        if let Some(ref binder) = self.binder {
+            if let Some(ref mut used) = self.used_symbols {
+                for (_export_name, local_name) in &self.js_cjs_export_aliases {
+                    if let Some(sym_id) = binder.file_locals.get(local_name) {
+                        used.entry(*sym_id).or_insert(
+                            crate::declaration_emitter::usage_analyzer::UsageKind::VALUE
+                                | crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                        );
+                    }
+                }
+            }
+        }
         self.js_namespace_export_aliases =
             self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
         let js_commonjs_expando_declarations = self
@@ -796,6 +821,11 @@ impl<'a> DeclarationEmitter<'a> {
                 |(stmt_idx, (name_idx, initializer))| (stmt_idx, (name_idx, initializer, true)),
             ),
         );
+        // Remove CJS export alias statements from deferred maps.
+        for &stmt_idx in &self.js_cjs_export_alias_statements {
+            self.js_deferred_function_export_statements.remove(&stmt_idx);
+            self.js_deferred_value_export_statements.remove(&stmt_idx);
+        }
         self.js_deferred_prototype_method_statements =
             js_commonjs_expando_declarations.prototype_methods;
         let js_static_method_augmentations =
@@ -835,8 +865,14 @@ impl<'a> DeclarationEmitter<'a> {
             self.emitted_module_indicator = true;
         }
 
+        // Emit CJS export aliases before declarations.
+        self.emit_js_cjs_export_aliases();
+
         for &stmt_idx in &source_file.statements.nodes {
             if deferred_js_namespace_objects.contains(&stmt_idx) {
+                continue;
+            }
+            if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
                 continue;
             }
             self.emit_statement(stmt_idx);
