@@ -601,7 +601,7 @@ pub(super) fn read_source_files(
         }
 
         // Resolve /// <reference types="..." /> directives
-        if !type_refs.is_empty() && !options.no_resolve && !options.checker.no_types_and_symbols {
+        if !type_refs.is_empty() && !options.no_resolve {
             let type_roots = options
                 .type_roots
                 .clone()
