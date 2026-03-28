@@ -1635,16 +1635,16 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        let cjs_deferred_export_bindings = if is_es_module_output {
+            None
+        } else {
+            Some(self.collect_cjs_deferred_export_bindings(statements))
+        };
         let prev_deferred_local_export_bindings = if is_es_module_output {
             None
         } else {
-            let deferred_bindings = cjs_deferred_export_names
-                .iter()
-                .cloned()
-                .map(|name| (name.clone(), name))
-                .collect();
             self.deferred_local_export_bindings
-                .replace(deferred_bindings)
+                .replace(cjs_deferred_export_bindings.unwrap_or_default())
         };
         let prev_block_using_env = self
             .block_using_env
@@ -2171,6 +2171,65 @@ impl<'a> Printer<'a> {
                         }
                         true
                     }
+                    k if k == syntax_kind_ext::NAMED_EXPORTS && !is_es_module_output => {
+                        let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+                            return false;
+                        };
+                        let value_specs = self.collect_value_specifiers(&named_exports.elements);
+                        let mut emitted_any = false;
+
+                        for &spec_idx in &value_specs {
+                            let Some(spec_node) = self.arena.get(spec_idx) else {
+                                continue;
+                            };
+                            let Some(spec) = self.arena.get_specifier(spec_node) else {
+                                continue;
+                            };
+                            if spec.property_name.is_none() {
+                                continue;
+                            }
+
+                            let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                                continue;
+                            };
+                            let local_name = self
+                                .get_specifier_name_text(spec.property_name)
+                                .unwrap_or_else(|| export_name.clone());
+
+                            if self
+                                .ctx
+                                .module_state
+                                .hoisted_func_exports
+                                .iter()
+                                .any(|(exported, local)| exported == &export_name && local == &local_name)
+                            {
+                                continue;
+                            }
+
+                            if self
+                                .ctx
+                                .module_state
+                                .iife_exported_names
+                                .contains(&local_name)
+                            {
+                                continue;
+                            }
+
+                            if emitted_any {
+                                self.write_line();
+                            }
+                            self.write_export_binding_start(&export_name);
+                            self.write(&local_name);
+                            self.write_export_binding_end();
+                            self.ctx
+                                .module_state
+                                .inline_exported_names
+                                .insert(export_name);
+                            emitted_any = true;
+                        }
+
+                        emitted_any
+                    }
                     _ => false,
                 }
             }
@@ -2287,7 +2346,13 @@ impl<'a> Printer<'a> {
                     }
                     self.write_export_binding_end();
                 } else if !is_exported && cjs_deferred_export_names.contains(&name) {
-                    self.write_export_binding_start(&name);
+                    let export_name = self
+                        .deferred_local_export_bindings
+                        .as_ref()
+                        .and_then(|bindings| bindings.get(&name))
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    self.write_export_binding_start(&export_name);
                     self.write(&name);
                     self.write(" = ");
                     if decl.initializer.is_some() {
@@ -2456,6 +2521,11 @@ impl<'a> Printer<'a> {
             None
         };
         let has_decorators = !self.collect_class_decorators(&class.modifiers).is_empty();
+        let display_name = if export_name.as_deref() == Some("default") && class.name.is_none() {
+            "default".to_string()
+        } else {
+            binding_name.clone()
+        };
         if self.ctx.options.target.supports_es2025()
             && has_decorators
             && !self.ctx.options.legacy_decorators
@@ -2537,6 +2607,49 @@ impl<'a> Printer<'a> {
                     &binding_name,
                     export_name,
                 ));
+            } else if let Some(mut rewritten) = self.render_simple_tc39_decorated_class_es5(
+                node,
+                idx,
+                &binding_name,
+                &display_name,
+            ) {
+                rewritten = rewritten.replacen(
+                    &format!("var {binding_name} = "),
+                    &format!("{binding_name} = "),
+                    1,
+                );
+                if self.in_system_execute_body && export_name == "default" && class.name.is_none() {
+                    self.write(&rewritten);
+                    if !rewritten.trim_end().ends_with(';') {
+                        self.write(";");
+                    }
+                    self.write_line();
+                    self.write_export_binding_start(export_name);
+                    self.write(&binding_name);
+                    self.write_export_binding_end();
+                } else if self.in_system_execute_body
+                    && (has_explicit_export_modifier || export_name == "default")
+                {
+                    let trimmed = rewritten.strip_suffix(';').unwrap_or(&rewritten);
+                    self.write_export_binding_start(export_name);
+                    if export_name == "default" && class.name.is_some() {
+                        self.write("_default = ");
+                    }
+                    self.write(trimmed);
+                    self.write_export_binding_end();
+                } else if self.in_system_execute_body {
+                    self.write(&rewritten);
+                    if !rewritten.trim_end().ends_with(';') {
+                        self.write(";");
+                    }
+                    self.write_line();
+                    self.write_export_binding_start(export_name);
+                    self.write(&binding_name);
+                    self.write_export_binding_end();
+                } else {
+                    self.write_export_binding_start(export_name);
+                    self.write(&rewritten);
+                }
             } else if self.in_system_execute_body
                 && export_name == "default"
                 && !self.ctx.options.target.supports_es2025()
@@ -2897,6 +3010,61 @@ impl<'a> Printer<'a> {
             names.remove(name.as_str());
         }
         names
+    }
+
+    fn collect_cjs_deferred_export_bindings(
+        &self,
+        statements: &tsz_parser::parser::NodeList,
+    ) -> rustc_hash::FxHashMap<String, String> {
+        let mut bindings = rustc_hash::FxHashMap::default();
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.module_specifier.is_some() || export.is_type_only {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                    continue;
+                };
+                let local_name = if spec.property_name.is_some() {
+                    self.get_specifier_name_text(spec.property_name)
+                        .unwrap_or_else(|| export_name.clone())
+                } else {
+                    export_name.clone()
+                };
+                bindings.entry(local_name).or_insert(export_name);
+            }
+        }
+        for (_, local_name) in &self.ctx.module_state.hoisted_func_exports {
+            bindings.remove(local_name.as_str());
+        }
+        bindings
     }
 
     /// Get names declared by a statement for inline CJS export.
