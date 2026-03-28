@@ -58,6 +58,7 @@ interface TestCase {
   downlevelIteration: boolean;
   noEmitHelpers: boolean;
   noEmitOnError: boolean;
+  noEmitExpected: boolean;
   importHelpers: boolean;
   esModuleInterop: boolean;
   useDefineForClassFields?: boolean;
@@ -622,6 +623,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       downlevelIteration,
       noEmitHelpers,
       noEmitOnError,
+      noEmitExpected: baseline.noEmitExpected,
       importHelpers,
       esModuleInterop,
       useDefineForClassFields,
@@ -803,7 +805,20 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: tszDts });
     }
 
-    if (!config.dtsOnly && testCase.expectedJs !== null && !testCase.emitDeclarationOnly) {
+    // When the baseline says "missing from original emit" (noEmitExpected) and
+    // we ran with type checking (declaration mode), the compiler should produce
+    // no output (e.g., --noEmitOnError with type errors). Verify that tsz also
+    // produced no output. In JS-only mode (--noCheck), the noCheck emit content
+    // is the expected output, so we fall through to normal comparison.
+    if (!config.dtsOnly && testCase.noEmitExpected && emitDeclarations) {
+      const actualTrimmed = tszJs.replace(/\r\n/g, '\n').trim();
+      if (actualTrimmed === '') {
+        result.jsMatch = true; // Both sides agree: no output
+      } else {
+        result.jsMatch = false;
+        result.jsError = 'Expected no JS output (noEmitOnError), but tsz produced output';
+      }
+    } else if (!config.dtsOnly && testCase.expectedJs !== null && !testCase.emitDeclarationOnly) {
       // Strip sourceMappingURL lines entirely: our CLI may append its own
       // sourceMappingURL while tsc baselines use inline data URLs or different
       // filenames, causing line-count mismatches. Since we test code emission
@@ -849,7 +864,16 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       }
     }
 
-    if (!config.jsOnly && testCase.expectedDts !== null) {
+    // For noEmitExpected tests in declaration mode, also verify no DTS output.
+    if (!config.jsOnly && testCase.noEmitExpected && emitDeclarations) {
+      const actualDtsTrimmed = (tszDts ?? '').replace(/\r\n/g, '\n').trim();
+      if (actualDtsTrimmed === '') {
+        result.dtsMatch = true; // Both sides agree: no declaration output
+      } else {
+        result.dtsMatch = false;
+        result.dtsError = 'Expected no DTS output (noEmitOnError), but tsz produced output';
+      }
+    } else if (!config.jsOnly && testCase.expectedDts !== null) {
       if (tszDts !== null) {
         const expected = testCase.expectedDts.replace(/\r\n/g, '\n').trim();
         const actual = tszDts.replace(/\r\n/g, '\n').trim();

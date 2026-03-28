@@ -388,6 +388,14 @@ export class CliTranspiler {
         const hasDtsOutput =
           (expectedDtsFileName ? fs.existsSync(path.join(testDir, expectedDtsFileName)) : false) ||
           expectedOutputs.some(o => o.dtsCandidates.some(candidate => fs.existsSync(candidate)));
+
+        // When --noEmitOnError is set and the compiler exits with errors,
+        // producing no output is correct behavior (tsc does the same).
+        // Return empty output instead of throwing.
+        if (noEmitOnError && !hasJsOutput && !hasDtsOutput) {
+          return { js: '', dts: declaration ? '' : null };
+        }
+
         // Declaration mode can fail on unresolved imports in isolated baseline snippets.
         // Retry with noCheck/noLib to still exercise declaration printer paths.
         const shouldRetryDeclarationFastPath =

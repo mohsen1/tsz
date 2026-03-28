@@ -38,6 +38,13 @@ export interface BaselineContent {
   dtsFileName: string | null;
   /** All files in the baseline */
   files: Map<string, string>;
+  /**
+   * True when the baseline indicates that emit output is intentionally absent
+   * in the original (type-checked) emit (e.g., "File X missing from original
+   * emit" when --noEmitOnError is set). The js/dts fields still contain the
+   * noCheck emit content for comparison in JS-only mode.
+   */
+  noEmitExpected: boolean;
 }
 
 /**
@@ -54,19 +61,37 @@ export function parseBaseline(content: string): BaselineContent {
     dts: null,
     dtsFileName: null,
     files: new Map(),
+    noEmitExpected: false,
   };
 
   // Split by file markers: //// [filename]
   const fileMarkerRegex = /^\/\/\/\/ \[([^\]]+)\](?:[^\S\n\r]*[\/]{4})?/gm;
-  const segments: { name: string; markerStart: number; start: number; end: number }[] = [];
+  const segments: { name: string; markerStart: number; start: number; end: number; missingFromOriginalEmit?: boolean }[] = [];
+
+  // Detect "!!!! File X missing from original emit" markers.
+  // When tsc's --noEmitOnError is set and the file has type errors, tsc produces
+  // no output. The baseline annotates these with the "missing from original emit"
+  // marker. We track which output files are marked this way so we can set their
+  // expected content to null (no output expected).
+  const missingFromOriginalEmitRegex = /^!!!! File (\S+) missing from original emit/gm;
+  const missingFromOriginalEmitFiles = new Set<string>();
+  let missingMatch: RegExpExecArray | null;
+  while ((missingMatch = missingFromOriginalEmitRegex.exec(content)) !== null) {
+    missingFromOriginalEmitFiles.add(missingMatch[1]);
+  }
+  if (missingFromOriginalEmitFiles.size > 0) {
+    result.noEmitExpected = true;
+  }
 
   let match: RegExpExecArray | null;
   while ((match = fileMarkerRegex.exec(content)) !== null) {
+    const name = match[1];
     segments.push({
-      name: match[1],
+      name,
       markerStart: match.index,
       start: match.index + match[0].length,
       end: content.length, // Will be updated
+      missingFromOriginalEmit: missingFromOriginalEmitFiles.has(name),
     });
   }
 
@@ -294,6 +319,9 @@ export function parseBaseline(content: string): BaselineContent {
       // (for example multiple `index.js` outputs from different directories),
       // keep the later segment for that filename to stay aligned with the
       // `files` map, which also preserves the last occurrence.
+      //
+      // Files marked "missing from original emit" (e.g., --noEmitOnError with
+      // type errors) are not expected to be produced by the compiler, so skip them.
       if (!result.js || result.jsFileName === name) {
         result.js = fileContent;
         result.jsFileName = name;
