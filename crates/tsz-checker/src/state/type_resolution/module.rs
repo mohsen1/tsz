@@ -1196,11 +1196,30 @@ impl<'a> CheckerState<'a> {
         // tsc always emits TS1192 when there is no default export — the developer
         // should add an explicit `export default`.
         //
-        // For .d.ts files not in the ESM map (no package.json "type": "module"),
-        // this includes plain .d.ts files regardless of module kind.
-        // For ESM .d.ts files (from packages with "type": "module"), TS1192 is still
-        // emitted because ESM requires explicit default exports.
+        // When esModuleInterop is true, tsc always suppresses TS1192 for .d.ts
+        // imports because the interop helper synthesizes default exports for all
+        // module formats. The file_is_esm_map marks all files as ESM when the
+        // compiler module is ES2015+, but this should not prevent suppression
+        // when esModuleInterop explicitly enables synthetic defaults.
+        //
+        // When only allowSyntheticDefaultImports is true (without esModuleInterop),
+        // suppression applies to CJS-shaped modules. ESM .d.ts files (from packages
+        // with "type": "module") still require an explicit default export.
         if self.ctx.allow_synthetic_default_imports() && !is_source_file_import {
+            // esModuleInterop: suppress TS1192 for non-source-file imports unless
+            // the module is from a genuine ESM package (e.g., node_modules with
+            // package.json "type": "module"). The file_is_esm_map marks all files
+            // as ESM when the compiler module is ES2015+, so module_is_esm alone
+            // cannot distinguish "ESM because of package" vs "ESM because of
+            // compiler mode". We additionally check if the file is in node_modules
+            // to identify genuine package ESM.
+            if self.ctx.compiler_options.es_module_interop {
+                let is_package_esm = self.module_is_esm(module_specifier)
+                    && self.module_file_is_in_node_modules(module_specifier);
+                if !is_package_esm {
+                    return;
+                }
+            }
             if self.module_can_use_synthetic_default_import(module_specifier) {
                 return;
             }
@@ -1301,6 +1320,20 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .and_then(|map| map.get(file_name))
             .is_some_and(|is_esm| !*is_esm)
+    }
+
+    /// Check if the target module's resolved file is in a `node_modules` directory.
+    /// This helps distinguish between files that are ESM because of their package
+    /// context vs files that are ESM because of the compiler's module setting.
+    fn module_file_is_in_node_modules(&self, module_specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        source_file.file_name.contains("node_modules")
     }
 
     /// Check if the target module is a pure ESM module (from a package with
