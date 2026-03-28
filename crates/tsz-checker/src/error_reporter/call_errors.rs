@@ -30,7 +30,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(return_type) = get_function_return_type(self.ctx.types, type_id) {
-            let widened_return = crate::query_boundaries::common::widen_literal_type(self.ctx.types, return_type);
+            let widened_return =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, return_type);
             if widened_return != return_type {
                 let replaced =
                     replace_function_return_type(self.ctx.types, type_id, widened_return);
@@ -434,8 +435,10 @@ impl<'a> CheckerState<'a> {
                 self.format_type_for_assignability_message(next_type)
             )
         } else {
-            let return_display_type =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, shape.return_type);
+            let return_display_type = crate::query_boundaries::common::widen_literal_type(
+                self.ctx.types,
+                shape.return_type,
+            );
             self.format_type_for_assignability_message(return_display_type)
         };
         let type_param_prefix = if shape.type_params.is_empty() {
@@ -1080,7 +1083,8 @@ impl<'a> CheckerState<'a> {
         let Some(raw_param) = self.raw_param_for_argument_index(sig, arg_pos) else {
             return;
         };
-        let Some(type_param) = crate::query_boundaries::common::type_param_info(self.ctx.types, raw_param.type_id)
+        let Some(type_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, raw_param.type_id)
         else {
             return;
         };

@@ -754,7 +754,8 @@ impl<'a> CheckerState<'a> {
     /// Used to propagate const context into callback bodies during generic inference.
     pub(crate) fn return_context_has_const_type_param(&self, ret_ctx: TypeId) -> bool {
         // Direct check: is the return context itself a const type parameter?
-        if let Some(tp_info) = crate::query_boundaries::common::type_param_info(self.ctx.types, ret_ctx)
+        if let Some(tp_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, ret_ctx)
             && tp_info.is_const
         {
             return true;
@@ -763,7 +764,8 @@ impl<'a> CheckerState<'a> {
         // General check: does the return context reference any const type parameter?
         let referenced = tsz_solver::collect_referenced_types(self.ctx.types, ret_ctx);
         referenced.into_iter().any(|ty| {
-            crate::query_boundaries::common::type_param_info(self.ctx.types, ty).is_some_and(|info| info.is_const)
+            crate::query_boundaries::common::type_param_info(self.ctx.types, ty)
+                .is_some_and(|info| info.is_const)
         })
     }
 }

@@ -49,7 +49,10 @@ impl<'a> CheckerState<'a> {
             type_id != TypeId::UNKNOWN
                 && type_id != TypeId::ERROR
                 && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
-                && !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id)
+                && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    type_id,
+                )
         })
     }
 

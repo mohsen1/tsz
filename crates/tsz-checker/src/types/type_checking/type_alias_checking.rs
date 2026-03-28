@@ -587,10 +587,11 @@ impl<'a> CheckerState<'a> {
                         // because we only call it on the check type (not the
                         // branches), and only when a mapped type is present.
                         let check_type = self.get_type_from_type_node(cond.check_type);
-                        let check_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
-                            self.ctx.types,
-                            check_type,
-                        );
+                        let check_is_type_param =
+                            crate::query_boundaries::common::is_type_parameter_like(
+                                self.ctx.types,
+                                check_type,
+                            );
                         if !check_is_type_param {
                             self.check_type_node(cond.true_type);
                         }

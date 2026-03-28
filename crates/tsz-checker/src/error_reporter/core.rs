@@ -121,7 +121,10 @@ impl<'a> CheckerState<'a> {
                     {
                         normalized
                     } else {
-                        crate::query_boundaries::common::widen_literal_type(self.ctx.types, normalized)
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            normalized,
+                        )
                     };
                     tsz_solver::ParamInfo { type_id, ..*param }
                 })
@@ -285,7 +288,10 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         member,
                     )
-                    || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
+                    || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        member,
+                    )
             });
             if generic_scaffolding_only {
                 if has_undefined {

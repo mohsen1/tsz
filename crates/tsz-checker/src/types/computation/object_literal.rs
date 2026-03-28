@@ -232,7 +232,8 @@ impl<'a> CheckerState<'a> {
             // inferred concrete types. Without this, property access on `this`
             // inside method bodies would fail to find properties of the inferred
             // type, producing false TS2322 errors.
-            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, this_type) {
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, this_type)
+            {
                 this_type = self.evaluate_type_with_env(this_type);
             }
             self.ctx.this_type_stack.push(this_type);
@@ -1985,7 +1986,11 @@ impl<'a> CheckerState<'a> {
                     if is_valid_spread
                         && obj.elements.nodes.len() == 1
                         && properties.is_empty()
-                        && (crate::query_boundaries::common::type_param_info(self.ctx.types, spread_type).is_some()
+                        && (crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            spread_type,
+                        )
+                        .is_some()
                             || crate::query_boundaries::common::contains_type_parameters(
                                 self.ctx.types,
                                 spread_type,
@@ -2167,7 +2172,11 @@ impl<'a> CheckerState<'a> {
                         // resolves to constraint properties, losing the generic
                         // information and causing false TS2741/TS2322 errors.
                         let is_generic_spread = is_valid_spread
-                            && (crate::query_boundaries::common::type_param_info(self.ctx.types, spread_type).is_some()
+                            && (crate::query_boundaries::common::type_param_info(
+                                self.ctx.types,
+                                spread_type,
+                            )
+                            .is_some()
                                 || crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     spread_type,

@@ -338,7 +338,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             let callable_members: Vec<_> = members
                 .into_iter()
@@ -518,7 +519,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
             ExcessPropertiesKind::NotObject => {
-                if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id) {
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    type_id,
+                ) {
                     ContextualPropertyPresence::Unknown
                 } else {
                     ContextualPropertyPresence::Absent
@@ -615,8 +619,11 @@ impl<'a> CheckerState<'a> {
                                           union_type: TypeId,
                                           property_name: &str|
          -> Option<TypeId> {
-            let members = crate::query_boundaries::common::union_members(this.ctx.types, union_type)
-                .or_else(|| {
+            let members = crate::query_boundaries::common::union_members(
+                this.ctx.types,
+                union_type,
+            )
+            .or_else(|| {
                 match crate::query_boundaries::assignability::classify_for_excess_properties(
                     this.ctx.types,
                     union_type,
@@ -1022,8 +1029,10 @@ impl<'a> CheckerState<'a> {
         // If contextual extraction fails but the parent context is generic/deferred,
         // preserve an `unknown` contextual slot to prevent false implicit-any
         // diagnostics during higher-order inference rounds.
-        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, contextual_type)
-            && effective_property_presence != ContextualPropertyPresence::Absent
+        if crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            contextual_type,
+        ) && effective_property_presence != ContextualPropertyPresence::Absent
         {
             tracing::trace!(
                 contextual_type = contextual_type.0,
@@ -1180,7 +1189,8 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         // Get union members; bail if not a union.
         let resolved = self.resolve_type_for_property_access(ctx_type);
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
         else {
             return ctx_type;
         };

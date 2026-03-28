@@ -47,7 +47,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, contextual)
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
             return false;
         };
@@ -120,7 +121,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, contextual)
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
             return false;
         };
@@ -320,9 +322,10 @@ impl<'a> CheckerState<'a> {
             // array literals are typed as tuples instead of being widened to arrays.
             // We only use this for shape detection (tuple vs array), NOT for element contextual
             // typing — element types should be inferred independently to preserve literals.
-            if let Some(constraint) =
-                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, evaluated)
-            {
+            if let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                evaluated,
+            ) {
                 let constraint = self.resolve_lazy_type(constraint);
                 let constraint = self.evaluate_application_type(constraint);
                 if let Some(applicable) =

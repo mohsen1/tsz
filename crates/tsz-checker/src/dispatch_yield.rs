@@ -595,8 +595,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 // doesn't provide meaningful context — T gets inferred as any from the yield.
                 // But a type parameter from a variable annotation (e.g. const a: T = yield 0)
                 // IS a valid contextual type that suppresses TS7057.
-                if crate::query_boundaries::common::is_type_parameter_like(self.checker.ctx.types, t)
-                    && self.yield_is_direct_call_argument(idx)
+                if crate::query_boundaries::common::is_type_parameter_like(
+                    self.checker.ctx.types,
+                    t,
+                ) && self.yield_is_direct_call_argument(idx)
                 {
                     return false;
                 }

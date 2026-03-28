@@ -204,7 +204,8 @@ impl<'a> CheckerState<'a> {
             // Emit TS18033 if the type is not assignable to number.
             if !self.is_assignable_to(init_type, TypeId::NUMBER) {
                 // tsc displays widened types in TS18033: 'string' not '"bar"'
-                let widened = crate::query_boundaries::common::widen_literal_type(self.ctx.types, init_type);
+                let widened =
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, init_type);
                 let source_str = self.format_type(widened);
                 let target_str = self.format_type(TypeId::NUMBER);
                 self.error_at_node_msg(
