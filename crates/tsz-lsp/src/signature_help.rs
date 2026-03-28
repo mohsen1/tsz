@@ -232,6 +232,18 @@ impl<'a> SignatureHelpProvider<'a> {
             None
         };
 
+        // Interfaces and type aliases are type-only declarations — don't provide
+        // signature help when they're used as call targets (e.g. `C()`).
+        if let Some(symbol_id) = symbol_id {
+            if let Some(symbol) = self.binder.get_symbol(symbol_id) {
+                if symbol.flags & symbol_flags::INTERFACE != 0
+                    && symbol.flags & symbol_flags::VALUE == 0
+                {
+                    return None;
+                }
+            }
+        }
+
         let (callee_type, docs) = if let Some(symbol_id) = symbol_id {
             (
                 checker.get_type_of_symbol(symbol_id),
