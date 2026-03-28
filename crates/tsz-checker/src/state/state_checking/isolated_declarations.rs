@@ -361,8 +361,9 @@ impl<'a> CheckerState<'a> {
                 && param.initializer.is_some()
                 && !self.is_isolated_decl_simple_param_default(param.initializer)
             {
+                let error_node = self.isolated_decl_param_annotation_target(param);
                 self.error_at_node(
-                    param.name,
+                    error_node,
                     diagnostic_messages::PARAMETER_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
                     diagnostic_codes::PARAMETER_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
                 );
@@ -378,6 +379,24 @@ impl<'a> CheckerState<'a> {
                 self.check_isolated_decl_function_params(&func.parameters);
             }
         }
+    }
+
+    fn isolated_decl_param_annotation_target(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> NodeIndex {
+        let Some(init_node) = self.ctx.arena.get(param.initializer) else {
+            return param.name;
+        };
+        if (init_node.kind == syntax_kind_ext::AS_EXPRESSION
+            || init_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || init_node.kind == syntax_kind_ext::TYPE_ASSERTION)
+            && let Some(assertion) = self.ctx.arena.get_type_assertion(init_node)
+            && assertion.type_node.is_some()
+        {
+            return assertion.type_node;
+        }
+        param.name
     }
 
     /// Check if a parameter default is simple enough to not need a type annotation.
@@ -421,8 +440,10 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::AS_EXPRESSION
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
             {
-                // `x as T` — the type is explicit
-                true
+                // `x as T` / `x satisfies T` changes the exported parameter surface
+                // away from a trivially inferrable literal/default shape, so
+                // isolated declarations requires an explicit parameter annotation.
+                false
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION =>

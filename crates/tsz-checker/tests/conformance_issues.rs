@@ -17150,6 +17150,30 @@ export let o32 = { [1 - 1]: 1 };
 }
 
 #[test]
+fn test_isolated_declarations_parameter_default_type_assertion_needs_annotation() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "file2.ts",
+        r#"
+type T = number;
+export function foo2(p = (ip = 10 as T, v: number): void => {}): void {}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            isolated_declarations: true,
+            emit_declarations: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 9011),
+        "Expected TS9011 when an exported function parameter default relies on a type assertion instead of an explicit parameter annotation.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_computed_object_literal_argument_mismatch_reports_ts2345() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
