@@ -495,7 +495,26 @@ impl ModuleResolver {
             import_kind,
             request.resolution_mode_override,
         ) {
-            Ok(resolved_module) => ModuleLookupResult::resolved(resolved_module.resolved_path),
+            Ok(resolved_module) => {
+                // TS7016: If the resolved file is a JS file from node_modules
+                // (external package), noImplicitAny is enabled, and this is a
+                // CJS require() call, emit TS7016 alongside the successful resolution.
+                // ESM imports go through the checker's import-declaration path which
+                // handles ambient declarations and other suppression rules.
+                if resolved_module.is_external
+                    && resolved_module.extension.is_javascript()
+                    && request.no_implicit_any
+                    && matches!(import_kind, ImportKind::CjsRequire)
+                {
+                    ModuleLookupResult::resolved_untyped_js(
+                        resolved_module.resolved_path,
+                        request.no_implicit_any,
+                        specifier,
+                    )
+                } else {
+                    ModuleLookupResult::resolved(resolved_module.resolved_path)
+                }
+            }
             Err(failure) => {
                 // JsxNotEnabled: file exists but --jsx is not set.
                 // Mark as resolved (suppress TS2307) but record the JSX error.
