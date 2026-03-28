@@ -755,6 +755,50 @@ pub(super) fn collect_diagnostics(
     let resolved_module_errors = Arc::new(resolved_module_errors);
     let resolved_module_request_errors = Arc::new(resolved_module_request_errors);
 
+    // Pre-compute per-file TS7016 diagnostics for CJS require() calls.
+    // The driver's resolution pass detects untyped JS modules (TS7016) but the
+    // checker's module-not-found path skips them because the module DID resolve.
+    // For CJS require() calls (not import declarations), we emit TS7016 directly.
+    let per_file_ts7016_diagnostics: Vec<Vec<Diagnostic>> = {
+        let mut result: Vec<Vec<Diagnostic>> = Vec::with_capacity(program.files.len());
+        for (file_idx, file) in program.files.iter().enumerate() {
+            let mut diags = Vec::new();
+            for (specifier, spec_node, import_kind, _) in &cached_module_specifiers[file_idx] {
+                if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
+                    continue;
+                }
+                if let Some(error) = resolved_module_errors.get(&(file_idx, specifier.clone())) {
+                    if error.code != 7016 {
+                        continue;
+                    }
+                    // Find the string literal argument of the require() call for the span.
+                    let (start, length) = if let Some(node) = file.arena.get(*spec_node)
+                        && let Some(call) = file.arena.get_call_expr(node)
+                        && let Some(args) = call.arguments.as_ref()
+                        && let Some(&arg_idx) = args.nodes.first()
+                        && let Some(arg_node) = file.arena.get(arg_idx)
+                    {
+                        (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
+                    } else if let Some(node) = file.arena.get(*spec_node) {
+                        (node.pos, node.end.saturating_sub(node.pos))
+                    } else {
+                        continue;
+                    };
+                    diags.push(Diagnostic::error(
+                        &file.file_name,
+                        start,
+                        length,
+                        &error.message,
+                        error.code,
+                    ));
+                }
+            }
+            result.push(diags);
+        }
+        result
+    };
+    let per_file_ts7016_diagnostics = Arc::new(per_file_ts7016_diagnostics);
+
     // Pre-compute per-file ESM/CJS module kind for resolution modes that honor
     // package.json "type" semantics. The checker uses this shared map for
     // ESM-vs-CJS-sensitive diagnostics such as TS1479 and TS1192 suppression.
@@ -1054,11 +1098,14 @@ pub(super) fn collect_diagnostics(
                 file_results.into_iter().enumerate()
             {
                 diagnostics.extend(file_diags);
+                // Inject pre-computed TS7016 diagnostics for CJS require() calls.
+                let file_idx = work_items[idx];
+                diagnostics.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
                 request_cache_counters.merge(file_counters);
                 parallel_qc_stats.merge(&qc_stats);
                 parallel_ds_stats.merge(&ds_stats);
                 if let Some(tc) = type_cache {
-                    let file_path = PathBuf::from(&program.files[work_items[idx]].file_name);
+                    let file_path = PathBuf::from(&program.files[file_idx].file_name);
                     tc_out.insert(file_path, tc);
                 }
             }
@@ -1261,6 +1308,9 @@ pub(super) fn collect_diagnostics(
 
                 file_diagnostics.extend(checker_diagnostics);
             }
+
+            // Inject pre-computed TS7016 diagnostics for CJS require() calls.
+            file_diagnostics.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
 
             // Final JS-specific filter: remove any remaining grammar codes that
             // tsc doesn't emit for JS files. Both the parser and checker can
