@@ -604,8 +604,9 @@ impl BinderState {
                 // Start with CLASS flag
                 let mut flags = symbol_flags::CLASS;
 
-                // Add ABSTRACT flag if class has 'abstract' modifier
-                if Self::has_abstract_modifier(arena, class.modifiers.as_ref()) {
+                // Check modifiers once, reuse results
+                let is_abstract = Self::has_abstract_modifier(arena, class.modifiers.as_ref());
+                if is_abstract {
                     flags |= symbol_flags::ABSTRACT;
                 }
 
@@ -621,7 +622,6 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
-                let is_abstract = Self::has_abstract_modifier(arena, class.modifiers.as_ref());
                 let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
                 let tp_count = class
                     .type_parameters
@@ -651,8 +651,9 @@ impl BinderState {
                 );
             }
 
-            // Enter class scope for members
-            self.enter_scope(ContainerKind::Class, idx);
+            // Enter class scope for members, pre-sized for member count to avoid hash map resizing
+            let member_capacity = class.members.nodes.len();
+            self.enter_scope_with_capacity(ContainerKind::Class, idx, member_capacity);
 
             self.bind_type_parameters(arena, class.type_parameters.as_ref());
             if let Some(ref heritage) = class.heritage_clauses {
@@ -672,7 +673,8 @@ impl BinderState {
     pub(crate) fn bind_class_expression(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(class) = arena.get_class(node) {
             self.bind_modifiers(arena, class.modifiers.as_ref());
-            self.enter_scope(ContainerKind::Class, idx);
+            let member_capacity = class.members.nodes.len();
+            self.enter_scope_with_capacity(ContainerKind::Class, idx, member_capacity);
 
             if let Some(name) = Self::get_identifier_name(arena, class.name) {
                 let mut flags = symbol_flags::CLASS;
@@ -725,16 +727,12 @@ impl BinderState {
                             self.bind_node(arena, method.name);
                         }
                         if let Some(name) = Self::get_property_name(arena, method.name) {
-                            let mut flags = symbol_flags::METHOD;
-                            if Self::has_abstract_modifier(arena, method.modifiers.as_ref()) {
-                                flags |= symbol_flags::ABSTRACT;
-                            }
-                            if Self::has_static_modifier(arena, method.modifiers.as_ref()) {
-                                flags |= symbol_flags::STATIC;
-                            }
-                            if Self::has_private_modifier(arena, method.modifiers.as_ref()) {
-                                flags |= symbol_flags::PRIVATE;
-                            }
+                            // Single-pass modifier extraction avoids 3 separate list walks
+                            let flags = symbol_flags::METHOD
+                                | Self::extract_member_modifier_flags(
+                                    arena,
+                                    method.modifiers.as_ref(),
+                                );
                             let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
                             self.node_symbols.insert(method.name.0, sym_id);
                         }
@@ -756,16 +754,12 @@ impl BinderState {
                             self.bind_node(arena, prop.name);
                         }
                         if let Some(name) = Self::get_property_name(arena, prop.name) {
-                            let mut flags = symbol_flags::PROPERTY;
-                            if Self::has_abstract_modifier(arena, prop.modifiers.as_ref()) {
-                                flags |= symbol_flags::ABSTRACT;
-                            }
-                            if Self::has_static_modifier(arena, prop.modifiers.as_ref()) {
-                                flags |= symbol_flags::STATIC;
-                            }
-                            if Self::has_private_modifier(arena, prop.modifiers.as_ref()) {
-                                flags |= symbol_flags::PRIVATE;
-                            }
+                            // Single-pass modifier extraction avoids 3 separate list walks
+                            let flags = symbol_flags::PROPERTY
+                                | Self::extract_member_modifier_flags(
+                                    arena,
+                                    prop.modifiers.as_ref(),
+                                );
                             let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
                             self.node_symbols.insert(prop.name.0, sym_id);
                         }
@@ -784,20 +778,17 @@ impl BinderState {
                             self.bind_node(arena, accessor.name);
                         }
                         if let Some(name) = Self::get_property_name(arena, accessor.name) {
-                            let mut flags = if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                            // Single-pass modifier extraction avoids 3 separate list walks
+                            let base_flags = if node.kind == syntax_kind_ext::GET_ACCESSOR {
                                 symbol_flags::GET_ACCESSOR
                             } else {
                                 symbol_flags::SET_ACCESSOR
                             };
-                            if Self::has_abstract_modifier(arena, accessor.modifiers.as_ref()) {
-                                flags |= symbol_flags::ABSTRACT;
-                            }
-                            if Self::has_static_modifier(arena, accessor.modifiers.as_ref()) {
-                                flags |= symbol_flags::STATIC;
-                            }
-                            if Self::has_private_modifier(arena, accessor.modifiers.as_ref()) {
-                                flags |= symbol_flags::PRIVATE;
-                            }
+                            let flags = base_flags
+                                | Self::extract_member_modifier_flags(
+                                    arena,
+                                    accessor.modifiers.as_ref(),
+                                );
                             let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
                             self.node_symbols.insert(accessor.name.0, sym_id);
                         }
