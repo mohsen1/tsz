@@ -1600,6 +1600,18 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(" = ");
                     self.write(&Self::format_literal_initializer(&lit, interner));
+                } else if is_readonly
+                    && !is_abstract
+                    && !prop.question_token
+                    && prop.initializer.is_some()
+                    && let Some(lit_text) =
+                        self.const_literal_initializer_text_deep(prop.initializer)
+                {
+                    // The type system widened the literal (e.g., `false` → `boolean`),
+                    // but for readonly properties tsc preserves the `= value` form
+                    // when the initializer is a simple literal.
+                    self.write(" = ");
+                    self.write(&lit_text);
                 } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
                     prop.initializer,
                     prop.initializer.is_some(),
@@ -1614,8 +1626,22 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 } else {
-                    let type_text =
-                        self.rewrite_recursive_static_class_expression_type(prop_idx, type_id);
+                    // For non-readonly properties without an explicit type annotation,
+                    // widen literal types to their base types (e.g., `12` → `number`,
+                    // `false` → `boolean`) matching tsc's DTS behaviour.
+                    let effective_type = if !is_readonly {
+                        self.type_interner
+                            .map(|interner| {
+                                tsz_solver::operations::widening::widen_literal_type(
+                                    interner, type_id,
+                                )
+                            })
+                            .unwrap_or(type_id)
+                    } else {
+                        type_id
+                    };
+                    let type_text = self
+                        .rewrite_recursive_static_class_expression_type(prop_idx, effective_type);
                     self.write(": ");
                     self.write(&type_text);
                     // For optional class properties without an explicit type annotation,
@@ -3125,14 +3151,26 @@ impl<'a> DeclarationEmitter<'a> {
                             self.emit_inline_block_comments(name_node.pos);
                         }
                         self.emit_node(decl.name);
-                        self.emit_variable_decl_type_or_initializer(
-                            keyword,
-                            stmt_node.pos,
-                            *decl_idx,
-                            decl.name,
-                            decl.type_annotation,
-                            decl.initializer,
-                        );
+                        // When a variable's initializer is a simple reference to an
+                        // import-equals alias (e.g. `var bVal2 = b` where `import b = a.foo`),
+                        // tsc emits `typeof b` instead of expanding the type.
+                        if !decl.type_annotation.is_some()
+                            && decl.initializer.is_some()
+                            && let Some(alias_text) =
+                                self.initializer_import_alias_typeof_text(decl.initializer)
+                        {
+                            self.write(": typeof ");
+                            self.write(&alias_text);
+                        } else {
+                            self.emit_variable_decl_type_or_initializer(
+                                keyword,
+                                stmt_node.pos,
+                                *decl_idx,
+                                decl.name,
+                                decl.type_annotation,
+                                decl.initializer,
+                            );
+                        }
 
                         // Skip comments within the declaration's omitted parts (initializer,
                         // inline type comments) to prevent them from leaking as leading
@@ -4393,6 +4431,48 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         is_private
+    }
+
+    /// Check if an initializer is a simple reference (identifier or qualified name)
+    /// to a local import-equals alias (e.g. `import b = a.foo`).
+    /// Returns the text to use after `typeof` if so (e.g. `"b"`).
+    ///
+    /// tsc emits `typeof <alias>` for variables initialized with an import-equals
+    /// alias target rather than expanding the resolved type. This preserves the
+    /// declarative reference in the .d.ts output.
+    fn initializer_import_alias_typeof_text(&self, initializer: NodeIndex) -> Option<String> {
+        let binder = self.binder?;
+        let init_node = self.arena.get(initializer)?;
+
+        // Only handle simple identifier references.
+        // Qualified names (a.b.c) are not expanded this way by tsc.
+        if init_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let ident = self.arena.get_identifier(init_node)?;
+
+        // Look up the symbol for this identifier in the binder
+        let &sym_id = binder.node_symbols.get(&initializer.0)?;
+        let sym = binder.symbols.get(sym_id)?;
+
+        // Check if this symbol is an alias (import-equals creates ALIAS symbols)
+        if sym.flags & tsz_binder::symbol_flags::ALIAS == 0 {
+            return None;
+        }
+
+        // Verify that at least one declaration is an import-equals declaration
+        let has_import_equals_decl = sym.declarations.iter().any(|&decl_idx| {
+            self.arena
+                .get(decl_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+        });
+
+        if !has_import_equals_decl {
+            return None;
+        }
+
+        Some(ident.escaped_text.clone())
     }
 
     // Export/import emission → exports.rs
