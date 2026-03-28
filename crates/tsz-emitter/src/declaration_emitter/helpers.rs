@@ -6838,10 +6838,12 @@ impl<'a> DeclarationEmitter<'a> {
                             initializer,
                         );
                     }
+                    let mut ran_symbol_check = false;
                     if self.diagnostics.len() == diagnostics_before
                         && !self.type_text_is_directly_nameable_reference(&printed_type_text)
                         && self.printed_type_contains_non_portable_import(&printed_type_text)
                     {
+                        ran_symbol_check = true;
                         self.check_non_portable_type_references(
                             type_id,
                             &name_text,
@@ -6850,7 +6852,8 @@ impl<'a> DeclarationEmitter<'a> {
                             name_node.end - name_node.pos,
                         );
                     }
-                    if self.diagnostics.len() == diagnostics_before
+                    if !ran_symbol_check
+                        && self.diagnostics.len() == diagnostics_before
                         && has_initializer
                         && printed_type_text.starts_with("import(\"")
                         && self.import_type_uses_private_package_subpath(&printed_type_text)
@@ -10018,7 +10021,9 @@ impl<'a> DeclarationEmitter<'a> {
                             } else {
                                 parts.next().is_some()
                             };
-                            if has_subpath {
+                            if has_subpath
+                                && !self.is_bare_specifier_subpath_publicly_accessible(specifier)
+                            {
                                 return true;
                             }
                         }
@@ -10052,12 +10057,141 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        if first.starts_with('@') {
+        let has_subpath = if first.starts_with('@') {
             let _package = parts.next();
-            return parts.next().is_some();
-        }
+            parts.next().is_some()
+        } else {
+            parts.next().is_some()
+        };
 
-        parts.next().is_some()
+        has_subpath && !self.is_bare_specifier_subpath_publicly_accessible(specifier)
+    }
+
+    /// Check whether a bare package specifier with a subpath is publicly accessible.
+    /// Returns `true` when the package has no `exports` field (all subpaths accessible)
+    /// or the exports map explicitly maps the subpath.
+    fn is_bare_specifier_subpath_publicly_accessible(&self, specifier: &str) -> bool {
+        use std::path::Path;
+
+        let mut parts = specifier.split('/');
+        let Some(first) = parts.next() else {
+            return false;
+        };
+        let (package_name, subpath) = if first.starts_with('@') {
+            let scope_pkg = parts.next().unwrap_or("");
+            let pkg_name = format!("{first}/{scope_pkg}");
+            let rest: Vec<&str> = parts.collect();
+            if rest.is_empty() {
+                return false;
+            }
+            (pkg_name, rest.join("/"))
+        } else {
+            let rest: Vec<&str> = parts.collect();
+            if rest.is_empty() {
+                return false;
+            }
+            (first.to_string(), rest.join("/"))
+        };
+
+        let package_root = self.find_package_root_for_name(&package_name);
+        let Some(package_root) = package_root else {
+            return false;
+        };
+
+        let pkg_json_path = Path::new(&package_root).join("package.json");
+        let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path) else {
+            return false;
+        };
+        let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content) else {
+            return false;
+        };
+
+        let Some(exports) = pkg_json.get("exports") else {
+            // No exports field: all subpaths accessible.
+            return true;
+        };
+
+        let export_subpath = format!("./{subpath}");
+        self.exports_map_allows_subpath(exports, &export_subpath)
+    }
+
+    /// Find the filesystem path of a package root directory.
+    fn find_package_root_for_name(&self, package_name: &str) -> Option<String> {
+        let needle = format!("node_modules/{package_name}/");
+        for source_path in self.arena_to_path.values() {
+            if let Some(idx) = source_path.find(&needle) {
+                return Some(source_path[..idx + needle.len() - 1].to_string());
+            }
+        }
+        if let Some(binder) = self.binder {
+            for module_path in binder.module_exports.keys() {
+                if let Some(idx) = module_path.find(&needle) {
+                    return Some(module_path[..idx + needle.len() - 1].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Check whether a package's exports map allows a given subpath.
+    fn exports_map_allows_subpath(&self, exports: &serde_json::Value, subpath: &str) -> bool {
+        match exports {
+            serde_json::Value::String(target) => {
+                subpath == "." || self.match_export_target(".", target, subpath).is_some()
+            }
+            serde_json::Value::Array(entries) => entries
+                .iter()
+                .any(|entry| self.exports_map_allows_subpath(entry, subpath)),
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    if key == "." || key.starts_with("./") {
+                        if self.export_entry_matches_subpath(key, value, subpath) {
+                            return true;
+                        }
+                    } else {
+                        if self.exports_map_allows_subpath(value, subpath) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn export_entry_matches_subpath(
+        &self,
+        key: &str,
+        value: &serde_json::Value,
+        subpath: &str,
+    ) -> bool {
+        if key == subpath {
+            return true;
+        }
+        if key.contains('*') && self.match_exports_wildcard(key, subpath).is_some() {
+            return true;
+        }
+        if key.ends_with('/') && subpath.starts_with(key) {
+            return true;
+        }
+        match value {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    if !k.starts_with("./") && k != "." {
+                        // Condition key: recurse to check if any branch has a target
+                        if self.export_entry_matches_subpath(key, v, subpath) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            serde_json::Value::Array(entries) => entries
+                .iter()
+                .any(|entry| self.export_entry_matches_subpath(key, entry, subpath)),
+            _ => false,
+        }
     }
 
     /// Scan a type for non-portable symbol references by checking all
@@ -10320,6 +10454,16 @@ impl<'a> DeclarationEmitter<'a> {
                             return None;
                         }
 
+                        // Also check whether ANY accessible module in this
+                        // package re-exports from the same source file.
+                        if self.source_file_is_reexported_from_public_module(
+                            &source_path,
+                            binder,
+                            &package_root,
+                        ) {
+                            return None;
+                        }
+
                         let mut from_path = self.strip_ts_extensions(
                             &self.calculate_relative_path(current_file_path, &source_path),
                         );
@@ -10391,6 +10535,78 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 // Module IS the package root (index file).
                 return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check whether ANY accessible module in the package re-exports from
+    /// the source file.  When a public entry point does
+    /// `export { x } from "./other.js"`, types from `other.d.ts` are
+    /// indirectly reachable and TS2883 should be suppressed.
+    fn source_file_is_reexported_from_public_module(
+        &self,
+        source_path: &str,
+        binder: &BinderState,
+        package_root: &std::path::Path,
+    ) -> bool {
+        use std::path::Path;
+
+        let package_root_str = package_root.to_string_lossy();
+
+        let source_relative = source_path
+            .strip_prefix(package_root_str.as_ref())
+            .map(|p| p.trim_start_matches('/'));
+        let Some(source_relative) = source_relative else {
+            return false;
+        };
+        let source_relative_stripped = self.strip_ts_extensions(source_relative);
+
+        for (module_path, exports) in &binder.module_exports {
+            if module_path == source_path || !module_path.starts_with(package_root_str.as_ref()) {
+                continue;
+            }
+            let module_relative = module_path.strip_prefix(package_root_str.as_ref());
+            let module_relative = module_relative.map(|p| p.trim_start_matches('/'));
+            let is_accessible = if let Some(rel) = module_relative
+                && !rel.is_empty()
+            {
+                self.declaration_runtime_relative_path(rel)
+                    .and_then(|runtime| {
+                        self.reverse_export_specifier_for_runtime_path(package_root, &runtime)
+                    })
+                    .is_some()
+            } else {
+                true
+            };
+            if !is_accessible {
+                continue;
+            }
+
+            let module_rel_dir = module_relative
+                .and_then(|r| Path::new(r).parent())
+                .unwrap_or_else(|| Path::new(""));
+
+            for (_, &exported_sym_id) in exports.iter() {
+                if let Some(symbol) = binder.symbols.get(exported_sym_id)
+                    && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                    && let Some(import_module) = &symbol.import_module
+                    && import_module.starts_with('.')
+                {
+                    let resolved = module_rel_dir.join(import_module);
+                    let resolved_str = resolved.to_string_lossy();
+                    let resolved_stripped = self.strip_ts_extensions(&resolved_str);
+                    let resolved_stripped = resolved_stripped
+                        .strip_prefix("./")
+                        .unwrap_or(&resolved_stripped);
+                    let source_cmp = source_relative_stripped
+                        .strip_prefix("./")
+                        .unwrap_or(&source_relative_stripped);
+                    if resolved_stripped == source_cmp {
+                        return true;
+                    }
+                }
             }
         }
 
