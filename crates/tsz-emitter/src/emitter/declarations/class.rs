@@ -951,12 +951,8 @@ impl<'a> Printer<'a> {
         }
 
         if let Some(class_name) = self.get_identifier_text_opt(class.name)
-            && let Some(output) = self.render_simple_tc39_decorated_class_es5(
-                node,
-                idx,
-                &class_name,
-                &class_name,
-            )
+            && let Some(output) =
+                self.render_simple_tc39_decorated_class_es5(node, idx, &class_name, &class_name)
         {
             self.write(&output);
             while self.comment_emit_idx < self.all_comments.len()
