@@ -765,12 +765,21 @@ impl<'a> CheckerState<'a> {
                         None
                     };
                     let iife_arg_type = if contextual_type.is_none() {
-                        self.infer_iife_parameter_type_from_arguments(
+                        let raw = self.infer_iife_parameter_type_from_arguments(
                             idx,
                             contextual_index,
                             param.dot_dot_dot_token,
                             param.question_token || param.initializer.is_some(),
-                        )
+                        );
+                        // When the IIFE returns `undefined` (no argument provided) but
+                        // the parameter has a default value, discard the IIFE inference
+                        // so the default value type is used instead. E.g.:
+                        //   (({ u = 22 } = { u: 23 }) => u)()
+                        if raw == Some(TypeId::UNDEFINED) && param.initializer.is_some() {
+                            None
+                        } else {
+                            raw
+                        }
                     } else {
                         None
                     };
