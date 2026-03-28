@@ -30,6 +30,14 @@ thread_local! {
     static GLOBAL_SUBTYPE_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+/// Reset subtype depth and fuel counters.
+/// Called between compilation sessions to prevent stale state from a previous
+/// compilation (e.g., if it panicked and left counters dirty).
+pub fn reset_subtype_thread_local_state() {
+    GLOBAL_SUBTYPE_DEPTH.with(|d| d.set(0));
+    GLOBAL_SUBTYPE_FUEL.with(|f| f.set(0));
+}
+
 // Maximum number of non-trivial subtype checks per top-level call chain.
 // Generous enough for complex real-world types (react, fp-ts) but restrictive
 // enough to prevent runaway recursion from hanging.

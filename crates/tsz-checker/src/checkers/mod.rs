@@ -65,6 +65,28 @@ pub fn reset_stack_overflow_flag() {
     STACK_STATE.set(STACK_STATE.get() & !STACK_TRIPPED_BIT);
 }
 
+/// Clear all thread-local state in the checker.
+///
+/// MUST be called between independent compilation sessions (e.g., in batch
+/// mode) to prevent stale cached entries from a previous compilation from
+/// affecting subsequent compilations. Thread-local caches use arena-local
+/// indices (NodeIndex) as keys, and these indices get reused across
+/// compilations, causing cross-compilation contamination.
+pub fn clear_all_thread_local_state() {
+    // Reset stack overflow breaker
+    STACK_STATE.set(0);
+
+    // Clear enum evaluation memos (use NodeIndex keys that are arena-local)
+    crate::types_domain::utilities::enum_utils::clear_enum_eval_memo();
+    crate::types_domain::utilities::const_enum_eval::clear_const_eval_memo();
+
+    // Clear cycle guard visited sets
+    crate::types_domain::utilities::cycle_guard::clear_visited_sets();
+
+    // Reset resolution fuel and depth counters
+    crate::state_domain::type_environment::lazy::reset_all_thread_local_state();
+}
+
 /// Explicit context for synthesized JSX children, threaded from dispatch
 /// into the JSX checking path instead of stored as ambient mutable state
 /// on `CheckerContext`.

@@ -58,9 +58,9 @@ mod symbols_domain;
 mod types_domain;
 
 pub use checkers_domain::{
-    accessor_checker, call_checker, enum_checker, generic_checker, iterable_checker, jsx,
-    parameter_checker, promise_checker, property_checker, reset_stack_overflow_flag,
-    signature_builder,
+    accessor_checker, call_checker, clear_all_thread_local_state, enum_checker, generic_checker,
+    iterable_checker, jsx, parameter_checker, promise_checker, property_checker,
+    reset_stack_overflow_flag, signature_builder,
 };
 
 pub use assignability_domain::{

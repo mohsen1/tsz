@@ -66,6 +66,17 @@ pub(crate) fn reset_global_resolution_fuel() {
     GLOBAL_RESOLUTION_FUEL.set(0);
 }
 
+/// Reset ALL thread-local state in the lazy resolution module.
+/// Called between compilation sessions to prevent cross-compilation contamination.
+pub(crate) fn reset_all_thread_local_state() {
+    APP_SYMBOL_RESOLUTION_DEPTH.set(0);
+    APP_SYMBOL_RESOLUTION_FUEL.set(0);
+    REFS_RESOLUTION_FUEL.set(0);
+    REFS_RESOLUTION_ACTIVE.set(false);
+    EVAL_ENV_DEPTH.set(0);
+    GLOBAL_RESOLUTION_FUEL.set(0);
+}
+
 // Maximum depth for nested `ensure_application_symbols_resolved` calls.
 // Prevents explosive recursion when resolving lazy DefIds triggers type evaluation
 // (compute_type_of_symbol → evaluate_application_type → evaluate_type_with_env)

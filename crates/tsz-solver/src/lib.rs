@@ -232,7 +232,7 @@ pub use relations::lawyer::AnyPropagationRules;
 pub use relations::relation_queries::*;
 pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
-    are_types_structurally_identical, is_subtype_of,
+    are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,
 };
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
