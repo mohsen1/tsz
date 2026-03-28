@@ -1859,15 +1859,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return CallResult::Success(combined.return_type);
                 }
                 // When the combined (intersected) parameter type is `never` and all
-                // per-member calls fail, this is likely a false positive from correlated
+                // per-member calls fail, this MAY be a false positive from correlated
                 // type parameters. For example, calling a union of functions obtained
                 // from `MappedType[K]` where the argument type correlates with K.
                 // In tsc, K links the handler and argument, so the call succeeds.
-                // As a fallback, check if each argument is assignable to the UNION
-                // of all parameter types (rather than the intersection). This correctly
-                // handles the correlated mapped-type pattern without being unsound for
-                // truly incompatible union calls (those still fail per-member).
-                if combined.param_types.contains(&TypeId::NEVER) {
+                //
+                // Only apply this fallback when the argument types contain type
+                // parameters — this indicates a generic/correlated context where
+                // the caller's type parameter determines which union member is
+                // actually reached. When all arguments are fully concrete (e.g.,
+                // `string | number` passed to `((a: string) => void) | ((a: number) => void)`),
+                // tsc correctly rejects the call (TS2345).
+                let has_generic_args = arg_types.iter().any(|&arg_type| {
+                    crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
+                });
+                if has_generic_args && combined.param_types.contains(&TypeId::NEVER) {
                     let all_arg_mismatch = failures
                         .iter()
                         .all(|f| matches!(f, CallResult::ArgumentTypeMismatch { .. }));
