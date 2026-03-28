@@ -490,6 +490,11 @@ impl<'a> CheckerState<'a> {
                         .types
                         .resolve_atom_ref(missing_props[0])
                         .to_string();
+                    if prop_name.starts_with("__js_ctor_brand_") {
+                        // Synthetic brand from JS constructor functions — TSC
+                        // doesn't report these as missing properties.
+                        return;
+                    }
                     if prop_name.starts_with("__private_brand") {
                         if let Some((display_prop, owner_name, visibility)) =
                             self.private_or_protected_brand_backing_member_display(target, None)
