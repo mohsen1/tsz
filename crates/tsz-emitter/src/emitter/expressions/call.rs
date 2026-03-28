@@ -301,11 +301,14 @@ impl<'a> Printer<'a> {
 
         // Signal access position so `(new a)()` keeps parens (vs `new a()`).
         let prev = self.paren_in_access_position;
+        let prev_call = self.paren_is_direct_call_callee;
         self.paren_in_access_position = true;
+        self.paren_is_direct_call_callee = true;
         // When the callee is ExpressionWithTypeArguments (e.g., `f<T>(args)`),
         // unwrap without parens since the call parens provide grouping.
         self.emit_unwrapping_type_args(call.expression);
         self.paren_in_access_position = prev;
+        self.paren_is_direct_call_callee = prev_call;
         // Map the opening `(` to its source position
         if let Some(expr_node) = self.arena.get(call.expression) {
             self.map_token_after(expr_node.end, node.end, b'(');
