@@ -1276,8 +1276,12 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(base_type_param_updates);
 
         let base_chain_summary = self.summarize_class_chain(base_idx);
-        let base_instance_member_names = base_chain_summary.visible_instance_names.clone();
-        let base_static_member_names = base_chain_summary.visible_static_names.clone();
+        let base_instance_member_names: rustc_hash::FxHashSet<String> = base_chain_summary
+            .visible_instance_names()
+            .cloned()
+            .collect();
+        let base_static_member_names: rustc_hash::FxHashSet<String> =
+            base_chain_summary.visible_static_names().cloned().collect();
 
         self.check_constructor_parameter_property_overrides(
             class_data,

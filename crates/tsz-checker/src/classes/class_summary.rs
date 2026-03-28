@@ -51,21 +51,23 @@ impl ClassInitializationSummary {
     }
 }
 
+/// Unified per-member entry that stores all attributes in one allocation.
+/// Replaces 3 separate hashmaps (lookup, display_name, kind) per axis.
+#[derive(Clone)]
+pub(crate) struct MemberEntry {
+    pub(crate) info: ClassMemberInfo,
+    pub(crate) display_name: String,
+    pub(crate) kind: ClassMemberKind,
+    pub(crate) is_visible: bool,
+}
+
 #[derive(Clone, Default)]
 struct ClassOwnMemberSummary {
     initialization: ClassInitializationSummary,
-    visible_instance_members: Vec<ClassMemberInfo>,
-    visible_static_members: Vec<ClassMemberInfo>,
-    all_instance_members: Vec<ClassMemberInfo>,
-    all_static_members: Vec<ClassMemberInfo>,
-    visible_instance_member_display_names: FxHashMap<String, String>,
-    visible_static_member_display_names: FxHashMap<String, String>,
-    all_instance_member_display_names: FxHashMap<String, String>,
-    all_static_member_display_names: FxHashMap<String, String>,
-    visible_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
-    visible_static_member_kinds: FxHashMap<String, ClassMemberKind>,
-    all_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
-    all_static_member_kinds: FxHashMap<String, ClassMemberKind>,
+    /// Unified instance member map: name -> entry (replaces 6 separate maps)
+    instance_members: FxHashMap<String, MemberEntry>,
+    /// Unified static member map: name -> entry (replaces 6 separate maps)
+    static_members: FxHashMap<String, MemberEntry>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -76,20 +78,10 @@ pub(crate) enum ClassMemberKind {
 
 #[derive(Clone, Default)]
 pub(crate) struct ClassChainSummary {
-    visible_instance_lookup: FxHashMap<String, ClassMemberInfo>,
-    visible_static_lookup: FxHashMap<String, ClassMemberInfo>,
-    all_instance_lookup: FxHashMap<String, ClassMemberInfo>,
-    all_static_lookup: FxHashMap<String, ClassMemberInfo>,
-    visible_instance_member_display_names: FxHashMap<String, String>,
-    visible_static_member_display_names: FxHashMap<String, String>,
-    all_instance_member_display_names: FxHashMap<String, String>,
-    all_static_member_display_names: FxHashMap<String, String>,
-    visible_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
-    visible_static_member_kinds: FxHashMap<String, ClassMemberKind>,
-    all_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
-    all_static_member_kinds: FxHashMap<String, ClassMemberKind>,
-    pub(crate) visible_instance_names: FxHashSet<String>,
-    pub(crate) visible_static_names: FxHashSet<String>,
+    /// Unified instance member map: name -> entry (replaces 6 maps + 1 set)
+    instance_members: FxHashMap<String, MemberEntry>,
+    /// Unified static member map: name -> entry (replaces 6 maps + 1 set)
+    static_members: FxHashMap<String, MemberEntry>,
 }
 
 impl ClassChainSummary {
@@ -99,13 +91,18 @@ impl ClassChainSummary {
         target_is_static: bool,
         skip_private: bool,
     ) -> Option<&ClassMemberInfo> {
-        let map = match (target_is_static, skip_private) {
-            (false, true) => &self.visible_instance_lookup,
-            (true, true) => &self.visible_static_lookup,
-            (false, false) => &self.all_instance_lookup,
-            (true, false) => &self.all_static_lookup,
+        let map = if target_is_static {
+            &self.static_members
+        } else {
+            &self.instance_members
         };
-        map.get(target_name)
+        map.get(target_name).and_then(|entry| {
+            if skip_private && !entry.is_visible {
+                None
+            } else {
+                Some(&entry.info)
+            }
+        })
     }
 
     pub(crate) fn member_kind(
@@ -114,13 +111,18 @@ impl ClassChainSummary {
         target_is_static: bool,
         skip_private: bool,
     ) -> Option<ClassMemberKind> {
-        let map = match (target_is_static, skip_private) {
-            (false, true) => &self.visible_instance_member_kinds,
-            (true, true) => &self.visible_static_member_kinds,
-            (false, false) => &self.all_instance_member_kinds,
-            (true, false) => &self.all_static_member_kinds,
+        let map = if target_is_static {
+            &self.static_members
+        } else {
+            &self.instance_members
         };
-        map.get(target_name).copied()
+        map.get(target_name).and_then(|entry| {
+            if skip_private && !entry.is_visible {
+                None
+            } else {
+                Some(entry.kind)
+            }
+        })
     }
 
     pub(crate) fn member_display_name(
@@ -129,13 +131,34 @@ impl ClassChainSummary {
         target_is_static: bool,
         skip_private: bool,
     ) -> Option<&str> {
-        let map = match (target_is_static, skip_private) {
-            (false, true) => &self.visible_instance_member_display_names,
-            (true, true) => &self.visible_static_member_display_names,
-            (false, false) => &self.all_instance_member_display_names,
-            (true, false) => &self.all_static_member_display_names,
+        let map = if target_is_static {
+            &self.static_members
+        } else {
+            &self.instance_members
         };
-        map.get(target_name).map(String::as_str)
+        map.get(target_name).and_then(|entry| {
+            if skip_private && !entry.is_visible {
+                None
+            } else {
+                Some(entry.display_name.as_str())
+            }
+        })
+    }
+
+    /// Get the set of visible instance member names.
+    pub(crate) fn visible_instance_names(&self) -> impl Iterator<Item = &String> {
+        self.instance_members
+            .iter()
+            .filter(|(_, entry)| entry.is_visible)
+            .map(|(name, _)| name)
+    }
+
+    /// Get the set of visible static member names.
+    pub(crate) fn visible_static_names(&self) -> impl Iterator<Item = &String> {
+        self.static_members
+            .iter()
+            .filter(|(_, entry)| entry.is_visible)
+            .map(|(name, _)| name)
     }
 }
 
@@ -156,14 +179,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect only member info (names, types, visibility, kinds) for a class.
-    /// Skips all initialization tracking (`property_requires_initialization`,
-    /// constructor assignment analysis, field key sets) since chain summaries
-    /// only need member info for override/property access checks.
-    ///
-    /// Uses single-pass extraction: each member is extracted once with
-    /// `skip_private=false`, then cloned into the visible collections if
-    /// non-private. This halves the extraction work compared to extracting
-    /// twice per member.
+    /// Uses a single unified map per axis (instance/static) instead of 6 separate maps.
     fn collect_class_members_for_chain(
         &mut self,
         class: &tsz_parser::parser::node::ClassData,
@@ -177,35 +193,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Single-pass: extract once with skip_private=false (all members)
             if let Some(info) = self.extract_class_member_info(member_idx, false) {
                 let is_visible = info.visibility != MemberVisibility::Private;
-
-                // Record into "visible" collections if non-private (clone before moving)
-                if is_visible {
-                    Self::record_own_member_info(
-                        info.clone(),
-                        &mut summary.visible_instance_members,
-                        &mut summary.visible_static_members,
-                        &mut summary.visible_instance_member_display_names,
-                        &mut summary.visible_static_member_display_names,
-                        &mut summary.visible_instance_member_kinds,
-                        &mut summary.visible_static_member_kinds,
-                        self,
-                    );
-                }
-
-                // Record into "all" collections (consumes info)
-                Self::record_own_member_info(
-                    info,
-                    &mut summary.all_instance_members,
-                    &mut summary.all_static_members,
-                    &mut summary.all_instance_member_display_names,
-                    &mut summary.all_static_member_display_names,
-                    &mut summary.all_instance_member_kinds,
-                    &mut summary.all_static_member_kinds,
-                    self,
-                );
+                Self::record_unified_member(info, is_visible, &mut summary, self);
             }
 
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
@@ -222,32 +212,10 @@ impl<'a> CheckerState<'a> {
                     if !self.has_parameter_property_modifier(&param.modifiers) {
                         continue;
                     }
-                    // Single-pass: extract once with skip_private=false
                     if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
                     {
                         let is_visible = info.visibility != MemberVisibility::Private;
-                        if is_visible {
-                            Self::record_own_member_info(
-                                info.clone(),
-                                &mut summary.visible_instance_members,
-                                &mut summary.visible_static_members,
-                                &mut summary.visible_instance_member_display_names,
-                                &mut summary.visible_static_member_display_names,
-                                &mut summary.visible_instance_member_kinds,
-                                &mut summary.visible_static_member_kinds,
-                                self,
-                            );
-                        }
-                        Self::record_own_member_info(
-                            info,
-                            &mut summary.all_instance_members,
-                            &mut summary.all_static_members,
-                            &mut summary.all_instance_member_display_names,
-                            &mut summary.all_static_member_display_names,
-                            &mut summary.all_instance_member_kinds,
-                            &mut summary.all_static_member_kinds,
-                            self,
-                        );
+                        Self::record_unified_member(info, is_visible, &mut summary, self);
                     }
                 }
             }
@@ -284,33 +252,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Single-pass: extract once with skip_private=false (all members)
             if let Some(info) = self.extract_class_member_info(member_idx, false) {
                 let is_visible = info.visibility != crate::class_checker::MemberVisibility::Private;
-
-                if is_visible {
-                    Self::record_own_member_info(
-                        info.clone(),
-                        &mut summary.visible_instance_members,
-                        &mut summary.visible_static_members,
-                        &mut summary.visible_instance_member_display_names,
-                        &mut summary.visible_static_member_display_names,
-                        &mut summary.visible_instance_member_kinds,
-                        &mut summary.visible_static_member_kinds,
-                        self,
-                    );
-                }
-
-                Self::record_own_member_info(
-                    info,
-                    &mut summary.all_instance_members,
-                    &mut summary.all_static_members,
-                    &mut summary.all_instance_member_display_names,
-                    &mut summary.all_static_member_display_names,
-                    &mut summary.all_instance_member_kinds,
-                    &mut summary.all_static_member_kinds,
-                    self,
-                );
+                Self::record_unified_member(info, is_visible, &mut summary, self);
             }
 
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
@@ -334,33 +278,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(name) = self.get_property_name(param.name) {
                         summary.initialization.parameter_property_names.insert(name);
                     }
-                    // Single-pass: extract once with skip_private=false
                     if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
                     {
                         let is_visible =
                             info.visibility != crate::class_checker::MemberVisibility::Private;
-                        if is_visible {
-                            Self::record_own_member_info(
-                                info.clone(),
-                                &mut summary.visible_instance_members,
-                                &mut summary.visible_static_members,
-                                &mut summary.visible_instance_member_display_names,
-                                &mut summary.visible_static_member_display_names,
-                                &mut summary.visible_instance_member_kinds,
-                                &mut summary.visible_static_member_kinds,
-                                self,
-                            );
-                        }
-                        Self::record_own_member_info(
-                            info,
-                            &mut summary.all_instance_members,
-                            &mut summary.all_static_members,
-                            &mut summary.all_instance_member_display_names,
-                            &mut summary.all_static_member_display_names,
-                            &mut summary.all_instance_member_kinds,
-                            &mut summary.all_static_member_kinds,
-                            self,
-                        );
+                        Self::record_unified_member(info, is_visible, &mut summary, self);
                     }
                 }
 
@@ -495,6 +417,14 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn summarize_class_chain(&mut self, class_idx: NodeIndex) -> ClassChainSummary {
+        // Check cache first
+        {
+            let cache = self.ctx.class_chain_summary_cache.borrow();
+            if let Some(cached) = cache.get(&class_idx) {
+                return cached.clone();
+            }
+        }
+
         let mut summary = ClassChainSummary::default();
         let mut visited = FxHashSet::default();
         let mut current = Some(class_idx);
@@ -508,77 +438,25 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
-            // Use the lighter member-info-only path: skips property_requires_initialization,
-            // constructor assignment analysis, and field key set tracking — none of which
-            // are used by the chain summary.
             let own_summary = self.collect_class_members_for_chain(class);
 
-            for info in own_summary.visible_instance_members {
-                let name = info.name.clone();
-                summary.visible_instance_names.insert(name.clone());
-                summary.visible_instance_lookup.entry(name).or_insert(info);
+            // Merge own instance members into chain summary (first insertion wins)
+            for (name, entry) in own_summary.instance_members {
+                summary.instance_members.entry(name).or_insert(entry);
             }
-            for info in own_summary.visible_static_members {
-                let name = info.name.clone();
-                summary.visible_static_names.insert(name.clone());
-                summary.visible_static_lookup.entry(name).or_insert(info);
-            }
-            for info in own_summary.all_instance_members {
-                let name = info.name.clone();
-                summary.all_instance_lookup.entry(name).or_insert(info);
-            }
-            for info in own_summary.all_static_members {
-                let name = info.name.clone();
-                summary.all_static_lookup.entry(name).or_insert(info);
-            }
-            for (name, display_name) in own_summary.visible_instance_member_display_names {
-                summary
-                    .visible_instance_member_display_names
-                    .entry(name)
-                    .or_insert(display_name);
-            }
-            for (name, display_name) in own_summary.visible_static_member_display_names {
-                summary
-                    .visible_static_member_display_names
-                    .entry(name)
-                    .or_insert(display_name);
-            }
-            for (name, display_name) in own_summary.all_instance_member_display_names {
-                summary
-                    .all_instance_member_display_names
-                    .entry(name)
-                    .or_insert(display_name);
-            }
-            for (name, display_name) in own_summary.all_static_member_display_names {
-                summary
-                    .all_static_member_display_names
-                    .entry(name)
-                    .or_insert(display_name);
-            }
-            for (name, kind) in own_summary.visible_instance_member_kinds {
-                summary
-                    .visible_instance_member_kinds
-                    .entry(name)
-                    .or_insert(kind);
-            }
-            for (name, kind) in own_summary.visible_static_member_kinds {
-                summary
-                    .visible_static_member_kinds
-                    .entry(name)
-                    .or_insert(kind);
-            }
-            for (name, kind) in own_summary.all_instance_member_kinds {
-                summary
-                    .all_instance_member_kinds
-                    .entry(name)
-                    .or_insert(kind);
-            }
-            for (name, kind) in own_summary.all_static_member_kinds {
-                summary.all_static_member_kinds.entry(name).or_insert(kind);
+            // Merge own static members into chain summary
+            for (name, entry) in own_summary.static_members {
+                summary.static_members.entry(name).or_insert(entry);
             }
 
             current = self.get_base_class_idx(current_idx);
         }
+
+        // Cache the result
+        self.ctx
+            .class_chain_summary_cache
+            .borrow_mut()
+            .insert(class_idx, summary.clone());
 
         summary
     }
@@ -631,14 +509,12 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn record_own_member_info(
+    /// Record a member into the unified map structure.
+    /// Each member is stored once with all its attributes (info, display_name, kind, visibility).
+    fn record_unified_member(
         info: ClassMemberInfo,
-        instance_members: &mut Vec<ClassMemberInfo>,
-        static_members: &mut Vec<ClassMemberInfo>,
-        instance_member_display_names: &mut FxHashMap<String, String>,
-        static_member_display_names: &mut FxHashMap<String, String>,
-        instance_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
-        static_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
+        is_visible: bool,
+        summary: &mut ClassOwnMemberSummary,
         state: &Self,
     ) {
         let kind = Self::member_kind_from_info(&info);
@@ -646,19 +522,17 @@ impl<'a> CheckerState<'a> {
         let display_name = state
             .get_member_name_display_text(info.name_idx)
             .unwrap_or_else(|| name.clone());
-        if info.is_static {
-            static_member_display_names
-                .entry(name.clone())
-                .or_insert(display_name);
-            static_member_kinds.entry(name).or_insert(kind);
-            static_members.push(info);
+        let map = if info.is_static {
+            &mut summary.static_members
         } else {
-            instance_member_display_names
-                .entry(name.clone())
-                .or_insert(display_name);
-            instance_member_kinds.entry(name).or_insert(kind);
-            instance_members.push(info);
-        }
+            &mut summary.instance_members
+        };
+        map.entry(name).or_insert(MemberEntry {
+            info,
+            display_name,
+            kind,
+            is_visible,
+        });
     }
 
     const fn member_kind_from_info(info: &ClassMemberInfo) -> ClassMemberKind {
@@ -748,25 +622,12 @@ impl<'a> CheckerState<'a> {
         };
 
         for name in self.collect_expando_properties_for_root(ident.escaped_text.as_str()) {
-            Self::record_member_kind(
-                name.clone(),
-                name.clone(),
-                true,
-                ClassMemberKind::FieldLike,
-                &mut summary.visible_instance_member_display_names,
-                &mut summary.visible_static_member_display_names,
-                &mut summary.visible_instance_member_kinds,
-                &mut summary.visible_static_member_kinds,
-            );
-            Self::record_member_kind(
+            Self::record_member_kind_unified(
                 name.clone(),
                 name,
                 true,
                 ClassMemberKind::FieldLike,
-                &mut summary.all_instance_member_display_names,
-                &mut summary.all_static_member_display_names,
-                &mut summary.all_instance_member_kinds,
-                &mut summary.all_static_member_kinds,
+                summary,
             );
         }
     }
@@ -791,50 +652,51 @@ impl<'a> CheckerState<'a> {
             let Some(name) = self.js_implicit_member_name(stmt_idx, &this_aliases) else {
                 continue;
             };
-            Self::record_member_kind(
-                name.lookup_name.clone(),
-                name.display_name.clone(),
-                is_static,
-                ClassMemberKind::FieldLike,
-                &mut summary.visible_instance_member_display_names,
-                &mut summary.visible_static_member_display_names,
-                &mut summary.visible_instance_member_kinds,
-                &mut summary.visible_static_member_kinds,
-            );
-            Self::record_member_kind(
+            Self::record_member_kind_unified(
                 name.lookup_name,
                 name.display_name,
                 is_static,
                 ClassMemberKind::FieldLike,
-                &mut summary.all_instance_member_display_names,
-                &mut summary.all_static_member_display_names,
-                &mut summary.all_instance_member_kinds,
-                &mut summary.all_static_member_kinds,
+                summary,
             );
         }
     }
 
-    fn record_member_kind(
+    /// Record a JS-implicit member kind into the unified map structure.
+    /// These members have no ClassMemberInfo (they come from `this.x = ...` patterns),
+    /// so we create a minimal placeholder entry with just the kind and display_name.
+    fn record_member_kind_unified(
         name: String,
         display_name: String,
         is_static: bool,
         kind: ClassMemberKind,
-        instance_member_display_names: &mut FxHashMap<String, String>,
-        static_member_display_names: &mut FxHashMap<String, String>,
-        instance_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
-        static_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
+        summary: &mut ClassOwnMemberSummary,
     ) {
-        if is_static {
-            static_member_display_names
-                .entry(name.clone())
-                .or_insert(display_name);
-            static_member_kinds.entry(name).or_insert(kind);
+        use crate::class_checker::MemberVisibility;
+        let map = if is_static {
+            &mut summary.static_members
         } else {
-            instance_member_display_names
-                .entry(name.clone())
-                .or_insert(display_name);
-            instance_member_kinds.entry(name).or_insert(kind);
-        }
+            &mut summary.instance_members
+        };
+        map.entry(name.clone()).or_insert(MemberEntry {
+            info: ClassMemberInfo {
+                name: name.clone(),
+                type_id: TypeId::ANY,
+                name_idx: NodeIndex::NONE,
+                visibility: MemberVisibility::Public,
+                is_method: false,
+                is_static,
+                is_accessor: false,
+                is_abstract: false,
+                has_override: false,
+                is_jsdoc_override: false,
+                has_dynamic_name: false,
+                has_computed_non_literal_name: false,
+            },
+            display_name,
+            kind,
+            is_visible: true,
+        });
     }
 
     fn collect_js_this_aliases(&self, statements: &[NodeIndex]) -> FxHashSet<String> {
