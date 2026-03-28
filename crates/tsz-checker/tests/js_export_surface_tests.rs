@@ -323,7 +323,10 @@ tseslint.config(shared);
         "./typescript-eslint.js",
     );
 
-    let ts2345: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2345).collect();
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
     assert!(
         ts2345.is_empty(),
         "Expected no TS2345 when a CommonJS-exported JSDoc rest function is called through require(), got: {diagnostics:#?}"
