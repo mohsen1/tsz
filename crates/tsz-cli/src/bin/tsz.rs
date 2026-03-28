@@ -301,6 +301,13 @@ fn run_batch_mode() -> Result<()> {
             continue;
         }
 
+        // Clear the thread-local type interner cache between compilations.
+        // The cache holds TypeId→TypeData and TypeData→TypeId mappings from the
+        // previous compilation's TypeInterner. Without clearing, a new interner
+        // reusing the same TypeId values would get stale TypeData from the old
+        // interner, causing incorrect type resolution and panics.
+        tsz_solver::clear_thread_local_cache();
+
         let project_path = std::path::Path::new(project_dir);
 
         // Build args matching what the conformance runner passes per test

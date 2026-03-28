@@ -147,6 +147,31 @@ thread_local! {
     static TL_CACHE: TypeInternerCache = TypeInternerCache::new();
 }
 
+/// Clear the thread-local type interner cache.
+///
+/// This MUST be called between independent compilation sessions (e.g., in batch
+/// mode) to prevent stale cached entries from a previous `TypeInterner` instance
+/// from being returned for `TypeId` values that have been reused by a new interner.
+/// Without this, the lookup cache may return `TypeData` from a dropped interner,
+/// causing incorrect type resolution and panics.
+pub fn clear_thread_local_cache() {
+    TL_CACHE.with(|cache| {
+        // Reset lookup cache entries
+        let lookup = unsafe { &mut (*cache.lookup.get()) };
+        for entry in lookup.iter_mut() {
+            entry.tag = 0;
+            entry.data = TypeData::Error;
+        }
+        // Reset intern cache entries
+        let intern = unsafe { &mut (*cache.intern.get()) };
+        for entry in intern.iter_mut() {
+            entry.hash = 0;
+            entry.key = TypeData::Error;
+            entry.result = TypeId::NONE;
+        }
+    });
+}
+
 pub(super) const SHARD_BITS: u32 = 6;
 pub(super) const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
 pub(super) const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;
