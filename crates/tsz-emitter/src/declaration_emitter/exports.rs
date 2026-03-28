@@ -345,6 +345,22 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
             } else if expr_node.kind == SyntaxKind::Identifier as u16 {
+                // TS2883: Check for non-portable inferred type references
+                // in `export default <identifier>` expressions.
+                if let Some(file_path) = self.current_file_path.clone()
+                    && let Some(type_id) = self
+                        .get_node_type_or_names(&[assign.expression])
+                        .or_else(|| self.get_type_via_symbol(assign.expression))
+                {
+                    self.emit_non_portable_type_diagnostic(
+                        type_id,
+                        "default",
+                        &file_path,
+                        assign_node.pos,
+                        assign_node.end - assign_node.pos,
+                    );
+                }
+
                 // export default <identifier> — emit directly
                 self.write("export default ");
                 self.emit_node(assign.expression);

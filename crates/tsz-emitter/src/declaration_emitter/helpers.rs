@@ -6841,8 +6841,12 @@ impl<'a> DeclarationEmitter<'a> {
                     let mut ran_symbol_check = false;
                     if self.diagnostics.len() == diagnostics_before
                         && !self.type_text_is_directly_nameable_reference(&printed_type_text)
-                        && self.printed_type_contains_non_portable_import(&printed_type_text)
                     {
+                        // Run the structural type check unconditionally —
+                        // the printed type text may use local names instead
+                        // of import("...") syntax, so the text-based guard
+                        // can miss non-portable references that the deep
+                        // type walker will find.
                         ran_symbol_check = true;
                         self.check_non_portable_type_references(
                             type_id,
