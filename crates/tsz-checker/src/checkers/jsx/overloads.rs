@@ -1,8 +1,8 @@
 //! JSX overload resolution for overloaded Stateless Function Components.
 //!
-//! When a component has multiple non-generic call signatures, tries each
-//! overload against the provided JSX attributes. If no overload matches,
-//! emits TS2769 ("No overload matches this call.").
+//! When a component has multiple call signatures (generic or non-generic),
+//! tries each overload against the provided JSX attributes. If no overload
+//! matches, emits TS2769 ("No overload matches this call.").
 
 use crate::context::speculation::DiagnosticSpeculationGuard;
 use crate::state::CheckerState;
@@ -31,13 +31,17 @@ struct JsxAttrsInfo {
 impl<'a> CheckerState<'a> {
     /// JSX overload resolution for overloaded Stateless Function Components.
     ///
-    /// When a component has multiple non-generic call signatures, tries each
-    /// overload against the provided JSX attributes. If no overload matches,
-    /// emits TS2769 ("No overload matches this call.").
+    /// When a component has multiple call signatures (generic or non-generic),
+    /// tries each overload against the provided JSX attributes. If no overload
+    /// matches, emits TS2769 ("No overload matches this call.").
     ///
     /// JSX overloads differ from regular function overloads: instead of positional
     /// arguments, the "call" is a single attributes object checked with excess
     /// property checking (like a fresh object literal).
+    ///
+    /// Generic overloads are instantiated with constraint/default substitutions
+    /// before checking, matching tsc's behavior of attempting inference for each
+    /// candidate signature.
     pub(crate) fn check_jsx_overloaded_sfc(
         &mut self,
         component_type: TypeId,
@@ -51,9 +55,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Collect non-generic call signatures
-        let non_generic: Vec<_> = sigs.iter().filter(|s| s.type_params.is_empty()).collect();
-        if non_generic.len() < 2 {
+        if sigs.len() < 2 {
             return;
         }
 
@@ -82,14 +84,14 @@ impl<'a> CheckerState<'a> {
         // The `any` spread dominates the merged type, making it `any`.
         // Skip detailed attribute checking (it would false-positive on explicit attrs).
         if attrs_info.has_any_spread {
-            let has_non_zero_param = non_generic.iter().any(|s| !s.params.is_empty());
+            let has_non_zero_param = sigs.iter().any(|s| !s.params.is_empty());
             if has_non_zero_param {
                 guard.rollback(&mut self.ctx);
                 return;
             }
         }
 
-        for sig in &non_generic {
+        for sig in &sigs {
             // For 0-param overloads: only match when NO attributes are provided.
             // tsc treats JSX as a 1-arg call (the attributes object), so 0-param
             // overloads fail on arg count when any attributes exist.
@@ -102,6 +104,18 @@ impl<'a> CheckerState<'a> {
             }
 
             let props_type = sig.params[0].type_id;
+
+            // For generic signatures, instantiate with constraint/default substitutions
+            // so that type parameters are resolved to concrete types for matching.
+            // Unconstrained type params are substituted with `any`, which makes type
+            // compatibility checks pass while still catching structural issues
+            // (missing required properties, excess properties).
+            let props_type = if !sig.type_params.is_empty() {
+                self.instantiate_props_with_constraints(props_type, &sig.type_params)
+            } else {
+                props_type
+            };
+
             let evaluated = self.evaluate_type_with_env(props_type);
             let props_resolved = self.resolve_type_for_property_access(evaluated);
 
@@ -122,6 +136,28 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL,
             diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
         );
+    }
+
+    /// Instantiate a props type by substituting type parameters with their
+    /// constraints, defaults, or `any` (for unconstrained params).
+    ///
+    /// Using `any` for unconstrained type parameters is conservative: it means
+    /// type compatibility checks will pass (any is assignable to anything), but
+    /// structural checks (required properties, excess properties) still work
+    /// correctly because property names don't depend on type arguments.
+    fn instantiate_props_with_constraints(
+        &mut self,
+        props_type: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> TypeId {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+
+        let type_args: Vec<TypeId> = type_params
+            .iter()
+            .map(|param| param.default.or(param.constraint).unwrap_or(TypeId::ANY))
+            .collect();
+        let substitution = TypeSubstitution::from_args(self.ctx.types, type_params, &type_args);
+        instantiate_type(self.ctx.types, props_type, &substitution)
     }
 
     /// Collect provided JSX attributes as `JsxAttrsInfo`.
