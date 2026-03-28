@@ -550,17 +550,22 @@ impl<'a> NarrowingContext<'a> {
                 .cloned()?
         };
 
-        // Compute complement: all members from OTHER buckets
-        let excluded_set = index.get(&excluded_literal);
-        let mut kept = Vec::new();
-        for (_, bucket_members) in index.iter() {
+        // Compute complement: all members NOT in the excluded bucket.
+        // Use a FxHashSet to avoid O(N^2) duplicate checking.
+        let mut kept = Vec::with_capacity(members.len());
+        let mut seen = FxHashSet::default();
+        for (&key, bucket_members) in index.iter() {
+            if key == excluded_literal {
+                continue; // Skip the entire excluded bucket
+            }
             for &m in bucket_members {
-                if excluded_set.is_none_or(|excluded| !excluded.contains(&m)) && !kept.contains(&m)
-                {
+                if seen.insert(m) {
                     kept.push(m);
                 }
             }
         }
+        // Note: members that appear in BOTH the excluded bucket and other buckets
+        // are already included via the other buckets (seen set deduplicates).
 
         if kept.is_empty() {
             Some(TypeId::NEVER)
