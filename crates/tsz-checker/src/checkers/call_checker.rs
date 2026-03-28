@@ -1686,7 +1686,7 @@ impl<'a> CheckerState<'a> {
                     // If we did the instantiated retry, node_types already contains the
                     // refreshed entries; otherwise merge the first-pass temp_node_types.
                     if !did_instantiated_retry {
-                        self.ctx.node_types.extend(temp_node_types);
+                        self.ctx.node_types.merge(&temp_node_types);
                     }
                     self.validate_non_tuple_spreads_for_signature(args, func_type);
 
@@ -1714,7 +1714,7 @@ impl<'a> CheckerState<'a> {
                         self.find_prior_non_tuple_spread_for_mismatch(args, index)
                     {
                         self.error_spread_must_be_tuple_or_rest_at(spread_idx);
-                        self.ctx.node_types.extend(temp_node_types);
+                        self.ctx.node_types.merge(&temp_node_types);
                         return Some(OverloadResolution {
                             arg_types: arg_types.clone(),
                             result: CallResult::Success(sig.return_type),
@@ -1730,7 +1730,7 @@ impl<'a> CheckerState<'a> {
                     if signatures.len() > 1 {
                         continue;
                     }
-                    self.ctx.node_types.extend(temp_node_types);
+                    self.ctx.node_types.merge(&temp_node_types);
                     return Some(OverloadResolution {
                         arg_types: arg_types.clone(),
                         result: CallResult::Success(return_type),
@@ -1756,7 +1756,8 @@ impl<'a> CheckerState<'a> {
         let mut max_expected = 0usize;
         let mut type_mismatch_count = 0usize;
         let mut has_non_count_non_type_failure = false;
-        let mut best_type_mismatch: Option<(OverloadResolution, FxHashMap<u32, TypeId>)> = None;
+        let mut best_type_mismatch: Option<(OverloadResolution, crate::context::NodeTypeCache)> =
+            None;
         // When an overload returns TypeParameterConstraintViolation and there are
         // more overloads to try, we store it as a fallback and continue. If no
         // later overload succeeds, we use this fallback (e.g., for single-overload
@@ -2022,7 +2023,7 @@ impl<'a> CheckerState<'a> {
                             .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                         let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                         self.ctx.node_types = std::mem::take(&mut original_node_types);
-                        self.ctx.node_types.extend(sig_node_types);
+                        self.ctx.node_types.merge_owned(sig_node_types);
                         self.validate_non_tuple_spreads_for_signature(args, func_type);
                         self.check_call_argument_excess_properties(
                             args,
@@ -2053,7 +2054,7 @@ impl<'a> CheckerState<'a> {
                         .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                     self.ctx.node_types = std::mem::take(&mut original_node_types);
-                    self.ctx.node_types.extend(sig_node_types);
+                    self.ctx.node_types.merge_owned(sig_node_types);
                     self.validate_non_tuple_spreads_for_signature(args, func_type);
 
                     self.check_call_argument_excess_properties(
@@ -2154,7 +2155,7 @@ impl<'a> CheckerState<'a> {
                         .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                     self.ctx.node_types = std::mem::take(&mut original_node_types);
-                    self.ctx.node_types.extend(sig_node_types);
+                    self.ctx.node_types.merge_owned(sig_node_types);
                     return Some(OverloadResolution {
                         arg_types: sig_arg_types,
                         result: CallResult::Success(return_type),
@@ -2183,7 +2184,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
             self.ctx.node_types = std::mem::take(&mut original_node_types);
-            self.ctx.node_types.extend(sig_node_types);
+            self.ctx.node_types.merge_owned(sig_node_types);
             return Some(best_type_mismatch);
         }
 

@@ -68,7 +68,7 @@ impl TypeCache {
         self.symbol_types.extend(other.symbol_types);
         self.symbol_instance_types
             .extend(other.symbol_instance_types);
-        self.node_types.extend(other.node_types);
+        self.node_types.extend(other.node_types.iter());
         self.class_instance_type_to_decl
             .extend(other.class_instance_type_to_decl);
         self.class_instance_type_cache
@@ -1304,7 +1304,7 @@ mod tests {
         TypeCache {
             symbol_types: FxHashMap::default(),
             symbol_instance_types: FxHashMap::default(),
-            node_types: FxHashMap::default(),
+            node_types: crate::context::NodeTypeCache::new(),
             symbol_dependencies: FxHashMap::default(),
             def_to_symbol: FxHashMap::default(),
             flow_analysis_cache: FxHashMap::default(),

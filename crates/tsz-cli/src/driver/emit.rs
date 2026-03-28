@@ -263,7 +263,7 @@ pub(crate) fn emit_outputs(
                 let mut emitter = if let Some(ref cache) = type_cache {
                     use tsz_emitter::type_cache_view::TypeCacheView;
                     let cache_view = TypeCacheView {
-                        node_types: cache.node_types.clone(),
+                        node_types: cache.node_types.to_hash_map(),
                         symbol_types: cache.symbol_types.clone(),
                         def_to_symbol: cache.def_to_symbol.clone(),
                     };
@@ -338,7 +338,7 @@ pub(crate) fn emit_outputs(
                     // Empty import_name_map for this usage (not needed for auto-import calculation)
                     let import_name_map = FxHashMap::default();
                     let cache_view = TypeCacheView {
-                        node_types: cache.node_types.clone(),
+                        node_types: cache.node_types.to_hash_map(),
                         symbol_types: cache.symbol_types.clone(),
                         def_to_symbol: cache.def_to_symbol.clone(),
                     };

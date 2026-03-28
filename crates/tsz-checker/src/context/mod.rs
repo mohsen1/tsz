@@ -167,6 +167,152 @@ pub struct PendingImplicitAnyVar {
     pub kind: PendingImplicitAnyKind,
 }
 
+/// Dense flat-vec cache for node-index-keyed `TypeId` lookups.
+///
+/// Replaces `FxHashMap<u32, TypeId>` with a `Vec<TypeId>` indexed directly by
+/// `NodeIndex.0`. Since node indices are densely allocated from a `NodeArena`,
+/// this gives O(1) get/insert with zero hashing overhead. Uses `TypeId::NONE`
+/// (0) as the sentinel for "not cached".
+///
+/// Memory: 4 bytes per arena node (one `u32`). For a 50k-node file this is
+/// only 200KB, far less than the HashMap overhead for the same entry count.
+#[derive(Clone, Debug)]
+pub struct NodeTypeCache {
+    data: Vec<TypeId>,
+}
+
+impl NodeTypeCache {
+    /// Create a cache pre-sized for `capacity` node indices.
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            data: vec![TypeId::NONE; capacity],
+        }
+    }
+
+    /// Create an empty cache (zero capacity).
+    #[inline]
+    pub fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+
+    /// Look up a cached type by raw node index.
+    #[inline]
+    pub fn get(&self, key: &u32) -> Option<&TypeId> {
+        let idx = *key as usize;
+        self.data.get(idx).filter(|t| **t != TypeId::NONE)
+    }
+
+    /// Insert a type for a raw node index.
+    #[inline]
+    pub fn insert(&mut self, key: u32, value: TypeId) {
+        let idx = key as usize;
+        if idx >= self.data.len() {
+            self.data.resize(idx + 1, TypeId::NONE);
+        }
+        self.data[idx] = value;
+    }
+
+    /// Check if a type is cached for this node index.
+    #[inline]
+    pub fn contains_key(&self, key: &u32) -> bool {
+        let idx = *key as usize;
+        self.data.get(idx).map_or(false, |t| *t != TypeId::NONE)
+    }
+
+    /// Remove a cached type, returning the old value if present.
+    #[inline]
+    pub fn remove(&mut self, key: &u32) -> Option<TypeId> {
+        let idx = *key as usize;
+        if let Some(slot) = self.data.get_mut(idx) {
+            if *slot != TypeId::NONE {
+                let old = *slot;
+                *slot = TypeId::NONE;
+                return Some(old);
+            }
+        }
+        None
+    }
+
+    /// Insert `value` only if the slot is currently empty (NONE).
+    /// Returns a mutable reference to the (possibly pre-existing) value.
+    #[inline]
+    pub fn or_insert(&mut self, key: u32, value: TypeId) -> TypeId {
+        let idx = key as usize;
+        if idx >= self.data.len() {
+            self.data.resize(idx + 1, TypeId::NONE);
+        }
+        if self.data[idx] == TypeId::NONE {
+            self.data[idx] = value;
+        }
+        self.data[idx]
+    }
+
+    /// Iterate over all cached (key, value) pairs.
+    /// Used by TypeCache merge and emitter export.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, TypeId)> + '_ {
+        self.data
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| **t != TypeId::NONE)
+            .map(|(i, t)| (i as u32, *t))
+    }
+
+    /// Clear all entries (resets to NONE without deallocating).
+    pub fn clear(&mut self) {
+        self.data.fill(TypeId::NONE);
+    }
+
+    /// Merge all non-NONE entries from `other` into `self`.
+    /// More efficient than `.extend(other.iter())` because it avoids iterator overhead.
+    pub fn merge(&mut self, other: &NodeTypeCache) {
+        if other.data.len() > self.data.len() {
+            self.data.resize(other.data.len(), TypeId::NONE);
+        }
+        for (i, &t) in other.data.iter().enumerate() {
+            if t != TypeId::NONE {
+                self.data[i] = t;
+            }
+        }
+    }
+
+    /// Merge all entries from a consumed `NodeTypeCache` into `self`.
+    /// Takes ownership to allow optimized bulk transfer.
+    pub fn merge_owned(&mut self, other: NodeTypeCache) {
+        if other.data.len() > self.data.len() {
+            self.data.resize(other.data.len(), TypeId::NONE);
+        }
+        for (i, t) in other.data.into_iter().enumerate() {
+            if t != TypeId::NONE {
+                self.data[i] = t;
+            }
+        }
+    }
+
+    /// Extend from an iterator of (key, value) pairs.
+    pub fn extend<I: IntoIterator<Item = (u32, TypeId)>>(&mut self, iter: I) {
+        for (key, value) in iter {
+            self.insert(key, value);
+        }
+    }
+
+    /// Number of cached entries (non-NONE slots).
+    pub fn len(&self) -> usize {
+        self.data.iter().filter(|t| **t != TypeId::NONE).count()
+    }
+
+    /// Convert to a `FxHashMap<u32, TypeId>` for interop with emitter.
+    pub fn to_hash_map(&self) -> FxHashMap<u32, TypeId> {
+        self.iter().collect()
+    }
+}
+
+impl Default for NodeTypeCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Persistent cache for type checking results across LSP queries.
 /// This cache survives between LSP requests but is invalidated when the file changes.
 #[derive(Clone, Debug)]
@@ -178,8 +324,8 @@ pub struct TypeCache {
     /// Distinguishes from `symbol_types` which holds constructor types for VALUE position.
     pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
 
-    /// Cached types for nodes.
-    pub node_types: FxHashMap<u32, TypeId>,
+    /// Cached types for nodes (dense flat-vec, O(1) lookup by node index).
+    pub node_types: NodeTypeCache,
 
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
@@ -339,8 +485,8 @@ pub struct CheckerContext<'a> {
     /// mutual recursion (e.g., Array extends ReadonlyArray which extends Iterable ...).
     pub lib_heritage_in_progress: FxHashSet<String>,
 
-    /// Cached types for nodes.
-    pub node_types: FxHashMap<u32, TypeId>,
+    /// Cached types for nodes (dense flat-vec, O(1) lookup by node index).
+    pub node_types: NodeTypeCache,
 
     /// Request-aware cache for audited non-empty request paths only.
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,

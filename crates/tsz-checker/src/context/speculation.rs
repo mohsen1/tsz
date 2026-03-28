@@ -76,8 +76,8 @@ pub(crate) struct FullSnapshot {
 /// Cache snapshot for return-type inference, which also corrupts `node_types`
 /// and `flow_analysis_cache`.
 pub(crate) struct CacheSnapshot {
-    /// Set of `node_types` keys that existed before speculation.
-    pub node_type_keys: std::collections::HashSet<u32>,
+    /// Clone of the flat `node_types` cache before speculation.
+    pub node_types: super::NodeTypeCache,
     /// Full request-aware cache snapshot. Speculation may overwrite existing
     /// entries, so rollback must restore values, not just prune additions.
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
@@ -134,7 +134,7 @@ impl CheckerContext<'_> {
         ReturnTypeSnapshot {
             full: self.snapshot_full(),
             cache: CacheSnapshot {
-                node_type_keys: self.node_types.keys().copied().collect(),
+                node_types: self.node_types.clone(),
                 request_node_types: self.request_node_types.clone(),
                 flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
             },
@@ -195,8 +195,7 @@ impl CheckerContext<'_> {
     /// dedup state, and cache entries added during speculation.
     pub(crate) fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
         self.rollback_full(&snap.full);
-        self.node_types
-            .retain(|k, _| snap.cache.node_type_keys.contains(k));
+        self.node_types.clone_from(&snap.cache.node_types);
         self.request_node_types
             .clone_from(&snap.cache.request_node_types);
         *self.flow_analysis_cache.borrow_mut() = snap.cache.flow_analysis_cache.clone();

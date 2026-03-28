@@ -4,7 +4,6 @@
 //! Reference matching, literal parsing, and symbol resolution utilities are in
 //! `references.rs`.
 
-use rustc_hash::FxHashMap;
 use tsz_binder::symbol_flags;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
@@ -390,7 +389,7 @@ impl<'a> FlowAnalyzer<'a> {
         params: &[ParamInfo],
         call: &CallExprData,
         callee_type: TypeId,
-        node_types: &FxHashMap<u32, TypeId>,
+        node_types: &crate::context::NodeTypeCache,
     ) -> TypePredicate {
         let Some(pred_type) = predicate.type_id else {
             return *predicate;
