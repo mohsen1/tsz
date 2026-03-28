@@ -1412,8 +1412,10 @@ impl<'a> Printer<'a> {
         }
 
         if let Some((keyword, binding_name)) = assignment_prefix.as_ref() {
-            self.write(keyword);
-            self.write(" ");
+            if !keyword.is_empty() {
+                self.write(keyword);
+                self.write(" ");
+            }
             self.write(binding_name);
             self.write(" = ");
         }

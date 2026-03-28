@@ -373,6 +373,19 @@ impl SourceWriter {
     /// declarations that turn out to be invisible in .d.ts output).
     pub fn truncate(&mut self, len: usize) {
         self.output.truncate(len);
+        self.line = self.output.matches(&self.new_line).count() as u32;
+        if self.output.is_empty() || self.output.ends_with(&self.new_line) {
+            self.column = 0;
+            self.at_line_start = true;
+            return;
+        }
+
+        let line_start = self
+            .output
+            .rfind(&self.new_line)
+            .map_or(0, |idx| idx + self.new_line.len());
+        self.column = (self.output.len() - line_start) as u32;
+        self.at_line_start = false;
     }
 
     /// Get the output buffer capacity in bytes.

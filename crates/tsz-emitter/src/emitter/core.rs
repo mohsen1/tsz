@@ -351,6 +351,10 @@ pub struct Printer<'a> {
     /// instead of their own try/catch wrapper. The tuple is (`env_name`, `is_async`).
     pub(crate) block_using_env: Option<(String, bool)>,
 
+    /// True while emitting statements inside a wrapped top-level using region.
+    /// This distinguishes post-`using` lowered statements from pre-`using` ones.
+    pub(crate) in_top_level_using_scope: bool,
+
     /// Type parameter names of the class currently being decorated (for metadata serialization).
     /// Set during `emit_legacy_member_decorator_calls` so `serialize_type_for_metadata` can
     /// resolve generic type parameters to "Object".
@@ -385,6 +389,11 @@ pub struct Printer<'a> {
     /// Names of variables exported from the current CJS module.
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
     pub(crate) commonjs_exported_var_names: FxHashSet<String>,
+
+    /// Deferred local export bindings active for the current wrapped region.
+    /// Maps local variable names to their exported names so nested variable
+    /// statements can append the right export binding after initialization.
+    pub(crate) deferred_local_export_bindings: Option<FxHashMap<String, String>>,
 
     /// When true, an inline block comment (`/* ... */`) was just emitted without a trailing
     /// newline. The next `write()` call should insert a space before non-whitespace text.
@@ -686,6 +695,7 @@ impl<'a> Printer<'a> {
             anonymous_default_export_name: None,
             next_disposable_env_id: 1,
             block_using_env: None,
+            in_top_level_using_scope: false,
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
@@ -695,6 +705,7 @@ impl<'a> Printer<'a> {
             namespace_prior_exports: FxHashMap::default(),
             namespace_exported_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),
+            deferred_local_export_bindings: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
