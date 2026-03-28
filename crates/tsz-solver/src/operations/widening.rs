@@ -318,7 +318,7 @@ fn widen_type_cached(
                 .params
                 .iter()
                 .map(|param| {
-                    let mut widened = param.clone();
+                    let mut widened = *param;
                     widened.type_id = widen_type_cached(
                         db,
                         param.type_id,
@@ -378,7 +378,7 @@ fn widen_type_cached(
                         .params
                         .iter()
                         .map(|param| {
-                            let mut widened = param.clone();
+                            let mut widened = *param;
                             widened.type_id = widen_type_cached(
                                 db,
                                 param.type_id,

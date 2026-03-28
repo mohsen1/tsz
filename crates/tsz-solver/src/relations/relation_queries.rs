@@ -375,10 +375,6 @@ pub fn check_application_variance<R: TypeResolver>(
         return None;
     }
 
-    // Keep Arc refs to avoid borrow conflicts (cheaper than Vec allocation)
-    let s_app = s_app.clone();
-    let t_app = t_app.clone();
-
     // Set up a compat checker for the argument checks
     let mut checker = configured_compat_checker(db, resolver, policy, context);
     if let Some(qdb) = query_db {

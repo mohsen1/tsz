@@ -1121,7 +1121,7 @@ impl<'a> TypeFormatter<'a> {
     }
 
     /// Recognize a full (parent-level) enum type — `TypeData::Enum(def_id, structural_type)`
-    /// where the symbol has the ENUM flag (not ENUM_MEMBER).
+    /// where the symbol has the ENUM flag (not `ENUM_MEMBER`).
     /// Returns `(DefId, structural_type, name)`.
     fn enum_parent_name_for_display(
         &mut self,
@@ -1145,7 +1145,7 @@ impl<'a> TypeFormatter<'a> {
         Some((def_id, structural_type, symbol.escaped_name.to_string()))
     }
 
-    /// Check if all bare literal TypeIds are covered by the enum's structural type.
+    /// Check if all bare literal `TypeIds` are covered by the enum's structural type.
     ///
     /// Uses the `structural_type` from `TypeData::Enum(def_id, structural_type)`, which
     /// contains the actual resolved member type IDs (a union of literals or Enum members).
@@ -1171,7 +1171,7 @@ impl<'a> TypeFormatter<'a> {
         true
     }
 
-    /// Collect the leaf literal TypeIds from a type, recursing through unions
+    /// Collect the leaf literal `TypeIds` from a type, recursing through unions
     /// and Enum wrappers to find the actual literal values.
     fn collect_leaf_literal_ids(&self, type_id: TypeId) -> Vec<TypeId> {
         match self.interner.lookup(type_id) {

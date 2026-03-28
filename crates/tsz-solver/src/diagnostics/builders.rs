@@ -145,7 +145,7 @@ impl<'a> DiagnosticBuilder<'a> {
                     .iter()
                     .map(|param| crate::ParamInfo {
                         type_id: self.normalize_excess_display_type(param.type_id),
-                        ..param.clone()
+                        ..*param
                     })
                     .collect();
                 let return_type = self.normalize_excess_display_type(shape.return_type);
@@ -159,7 +159,7 @@ impl<'a> DiagnosticBuilder<'a> {
                         params,
                         this_type: shape.this_type,
                         return_type,
-                        type_predicate: shape.type_predicate.clone(),
+                        type_predicate: shape.type_predicate,
                         is_constructor: shape.is_constructor,
                         is_method: shape.is_method,
                     })

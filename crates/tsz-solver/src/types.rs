@@ -1043,7 +1043,7 @@ impl FunctionShape {
             params,
             this_type: self.this_type,
             return_type: self.return_type,
-            type_predicate: self.type_predicate.clone(),
+            type_predicate: self.type_predicate,
             is_constructor: self.is_constructor,
             is_method: self.is_method,
         }

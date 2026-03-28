@@ -369,7 +369,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         params: func.params.clone(),
                         this_type: func.this_type,
                         return_type: func.return_type,
-                        type_predicate: func.type_predicate.clone(),
+                        type_predicate: func.type_predicate,
                         is_method: func.is_method,
                     };
                     result.push((i, vec![sig]));
@@ -661,7 +661,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             this_type: sig.this_type,
             return_type: sig.return_type,
             type_params: sig.type_params.clone(),
-            type_predicate: sig.type_predicate.clone(),
+            type_predicate: sig.type_predicate,
             is_constructor: false,
             is_method: sig.is_method,
         };
@@ -713,7 +713,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 params: sig.params.clone(),
                 this_type: sig.this_type,
                 return_type: sig.return_type,
-                type_predicate: sig.type_predicate.clone(),
+                type_predicate: sig.type_predicate,
                 is_constructor: false,
                 is_method: sig.is_method,
             }
@@ -808,7 +808,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .iter()
                 .all(|sig| sig.type_predicate == first.type_predicate)
             {
-                first.type_predicate.clone()
+                first.type_predicate
             } else {
                 None
             };
@@ -902,7 +902,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .iter()
                 .all(|shape| shape.type_predicate == first.type_predicate)
             {
-                first.type_predicate.clone()
+                first.type_predicate
             } else {
                 None
             };
@@ -1037,7 +1037,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .as_ref()
                         .map(|pred| TypePredicate {
                             asserts: pred.asserts,
-                            target: pred.target.clone(),
+                            target: pred.target,
                             type_id: pred.type_id.map(|t| instantiate_type(self.db, t, &subst)),
                             parameter_index: pred.parameter_index,
                         });
@@ -2170,7 +2170,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 this_type: sig.this_type,
                 return_type: sig.return_type,
                 type_params: sig.type_params.clone(),
-                type_predicate: sig.type_predicate.clone(),
+                type_predicate: sig.type_predicate,
                 is_constructor: false,
                 is_method: sig.is_method,
             };
@@ -2200,7 +2200,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 this_type: sig.this_type,
                 return_type: sig.return_type,
                 type_params: sig.type_params.clone(),
-                type_predicate: sig.type_predicate.clone(),
+                type_predicate: sig.type_predicate,
                 is_constructor: false,
                 is_method: sig.is_method,
             };

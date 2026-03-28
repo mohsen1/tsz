@@ -387,7 +387,7 @@ impl TypeInterner {
                         params: func.params.clone(),
                         this_type: func.this_type,
                         return_type: func.return_type,
-                        type_predicate: func.type_predicate.clone(),
+                        type_predicate: func.type_predicate,
                         is_method: func.is_method,
                     });
                 }
@@ -420,7 +420,7 @@ impl TypeInterner {
                     }
                     // Merge index signatures
                     match (&callable.string_index, &string_index) {
-                        (Some(idx), None) => string_index = Some(idx.clone()),
+                        (Some(idx), None) => string_index = Some(*idx),
                         (Some(idx), Some(existing)) => {
                             string_index = Some(IndexSignature {
                                 key_type: existing.key_type,
@@ -434,7 +434,7 @@ impl TypeInterner {
                         _ => {}
                     }
                     match (&callable.number_index, &number_index) {
-                        (Some(idx), None) => number_index = Some(idx.clone()),
+                        (Some(idx), None) => number_index = Some(*idx),
                         (Some(idx), Some(existing)) => {
                             number_index = Some(IndexSignature {
                                 key_type: existing.key_type,

@@ -64,7 +64,7 @@ struct CachedUnionMember {
     data: Option<TypeData>,
     /// For Object/ObjectWithIndex: the symbol's raw u32 (if the shape has a symbol)
     obj_symbol: Option<u32>,
-    /// For anonymous Object/ObjectWithIndex: the ShapeId's raw u32
+    /// For anonymous Object/ObjectWithIndex: the `ShapeId`'s raw u32
     obj_anon_shape: Option<u32>,
     /// For Callable: the symbol's raw u32 (if the shape has a symbol)
     callable_symbol: Option<u32>,
@@ -372,7 +372,7 @@ pub struct TypeInterner {
     ///
     /// When `Application(Lazy(Dictionary), [string])` evaluates to
     /// `ObjectWithIndex({ [index: string]: string })`, this maps
-    /// the ObjectWithIndex TypeId back to the Application TypeId.
+    /// the `ObjectWithIndex` TypeId back to the Application TypeId.
     /// The formatter checks this to show `Dictionary<string>` instead
     /// of `{ [index: string]: string; }` in error messages.
     display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
@@ -564,7 +564,6 @@ impl TypeInterner {
         self.string_interner.resolve(atom)
     }
 
-    #[inline]
     #[inline]
     pub fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
         self.type_lists
@@ -1212,12 +1211,12 @@ impl TypeInterner {
                     return left;
                 }
             }
-        } else if left.is_nullable() {
-            if let Some(TypeData::Union(list_id)) = self.lookup(right) {
-                let members = self.type_list(list_id);
-                if members.contains(&left) {
-                    return right;
-                }
+        } else if left.is_nullable()
+            && let Some(TypeData::Union(list_id)) = self.lookup(right)
+        {
+            let members = self.type_list(list_id);
+            if members.contains(&left) {
+                return right;
             }
         }
         self.union_from_iter([left, right])
@@ -1493,7 +1492,7 @@ impl TypeInterner {
         }
     }
 
-    /// Sort union members using pre-cached lookups to avoid redundant DashMap reads.
+    /// Sort union members using pre-cached lookups to avoid redundant `DashMap` reads.
     ///
     /// Instead of `sort_by(compare_union_members)` which does 4-6 DashMap/arena lookups
     /// per comparison (O(N log N * lookups)), this pre-caches all lookup data for each

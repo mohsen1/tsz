@@ -669,7 +669,7 @@ pub fn get_callable_shape_for_type(
                 params: func.params.clone(),
                 this_type: func.this_type,
                 return_type: func.return_type,
-                type_predicate: func.type_predicate.clone(),
+                type_predicate: func.type_predicate,
                 is_method: func.is_method,
             }],
             construct_signatures: Vec::new(),
@@ -1067,7 +1067,7 @@ pub fn unpack_tuple_rest_parameter(
 ) -> Vec<crate::types::ParamInfo> {
     // Non-rest parameters pass through unchanged
     if !param.rest {
-        return vec![param.clone()];
+        return vec![*param];
     }
 
     // Check if the rest parameter type is a tuple
@@ -1114,7 +1114,7 @@ pub fn unpack_tuple_rest_parameter(
     } else {
         // Not a tuple - keep the rest parameter as-is
         // This handles cases like `...args: string[]` which should remain a rest parameter
-        vec![param.clone()]
+        vec![*param]
     }
 }
 
@@ -1623,7 +1623,7 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
             } else {
                 p.type_id
             },
-            ..p.clone()
+            ..*p
         })
         .collect();
     let return_type = if shape.return_type == TypeId::ERROR {
@@ -1637,7 +1637,7 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
         params,
         this_type: shape.this_type,
         return_type,
-        type_predicate: shape.type_predicate.clone(),
+        type_predicate: shape.type_predicate,
         is_constructor: shape.is_constructor,
         is_method: shape.is_method,
     })
@@ -1665,7 +1665,7 @@ pub fn replace_function_return_type(
         params: shape.params.clone(),
         this_type: shape.this_type,
         return_type: new_return,
-        type_predicate: shape.type_predicate.clone(),
+        type_predicate: shape.type_predicate,
         is_constructor: shape.is_constructor,
         is_method: shape.is_method,
     })
@@ -1695,7 +1695,7 @@ pub fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: TypeId)
         .iter()
         .map(|p| crate::types::ParamInfo {
             type_id: instantiate_type(db, p.type_id, &subst),
-            ..p.clone()
+            ..*p
         })
         .collect();
     let return_type = instantiate_type(db, shape.return_type, &subst);
@@ -1706,7 +1706,7 @@ pub fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: TypeId)
         params,
         this_type,
         return_type,
-        type_predicate: shape.type_predicate.clone(),
+        type_predicate: shape.type_predicate,
         is_constructor: shape.is_constructor,
         is_method: shape.is_method,
     })

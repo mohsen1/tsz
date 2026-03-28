@@ -244,7 +244,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                             .as_ref()
                             .map(|pred| crate::types::TypePredicate {
                                 asserts: pred.asserts,
-                                target: pred.target.clone(),
+                                target: pred.target,
                                 type_id: pred.type_id.map(|t| self.canonicalize(t)),
                                 parameter_index: pred.parameter_index,
                             });
@@ -578,7 +578,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 .as_ref()
                 .map(|pred| crate::types::TypePredicate {
                     asserts: pred.asserts,
-                    target: pred.target.clone(),
+                    target: pred.target,
                     type_id: pred.type_id.map(|t| self.canonicalize(t)),
                     parameter_index: pred.parameter_index,
                 });

@@ -157,7 +157,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             params: sig.params.clone(),
             this_type: sig.this_type,
             return_type: sig.return_type,
-            type_predicate: sig.type_predicate.clone(),
+            type_predicate: sig.type_predicate,
             is_constructor: false,
             is_method: sig.is_method,
         })
@@ -2278,7 +2278,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some(ref predicate) = func.type_predicate {
             let instantiated_predicate = TypePredicate {
                 asserts: predicate.asserts,
-                target: predicate.target.clone(),
+                target: predicate.target,
                 type_id: predicate.type_id.map(|tid| {
                     instantiate_call_type(self.interner, tid, &final_subst, actual_this_type)
                 }),
@@ -2369,11 +2369,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .copied()
             .filter(|&ty| !self.tuple_contains_any_or_unknown(ty));
 
-        if let Some(first) = specific_iter.next() {
-            if specific_iter.next().is_none() {
-                // Exactly one specific bound
-                return Some(self.sanitize_tuple_inference_candidate(first));
-            }
+        if let Some(first) = specific_iter.next()
+            && specific_iter.next().is_none()
+        {
+            // Exactly one specific bound
+            return Some(self.sanitize_tuple_inference_candidate(first));
         }
 
         None
@@ -2854,7 +2854,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             type_params: vec![],
             type_predicate: func.type_predicate.as_ref().map(|predicate| TypePredicate {
                 asserts: predicate.asserts,
-                target: predicate.target.clone(),
+                target: predicate.target,
                 type_id: predicate
                     .type_id
                     .map(|tid| instantiate_type(self.interner, tid, &substitution)),

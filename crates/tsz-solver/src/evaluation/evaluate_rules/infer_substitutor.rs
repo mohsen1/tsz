@@ -332,7 +332,7 @@ impl<'a> InferSubstitutor<'a> {
                         this_type,
                         return_type,
                         type_params: shape.type_params.clone(),
-                        type_predicate: shape.type_predicate.clone(),
+                        type_predicate: shape.type_predicate,
                         is_constructor: shape.is_constructor,
                         is_method: shape.is_method,
                     })
@@ -377,7 +377,7 @@ impl<'a> InferSubstitutor<'a> {
                             this_type,
                             return_type,
                             type_params: sig.type_params.clone(),
-                            type_predicate: sig.type_predicate.clone(),
+                            type_predicate: sig.type_predicate,
                             is_method: sig.is_method,
                         }
                     })
@@ -416,7 +416,7 @@ impl<'a> InferSubstitutor<'a> {
                             this_type,
                             return_type,
                             type_params: sig.type_params.clone(),
-                            type_predicate: sig.type_predicate.clone(),
+                            type_predicate: sig.type_predicate,
                             is_method: sig.is_method,
                         }
                     })

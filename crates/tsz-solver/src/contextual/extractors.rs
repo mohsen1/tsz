@@ -814,7 +814,7 @@ pub(crate) fn extract_rest_param_type_at(
 
     if index >= rest_start {
         if let Some(rp) = rest_param {
-            let mut normalized = rp.clone();
+            let mut normalized = *rp;
             if let Some(evaluated) = evaluate_rest_like_type(db, normalized.type_id) {
                 normalized.type_id = evaluated;
             }

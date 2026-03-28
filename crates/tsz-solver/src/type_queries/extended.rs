@@ -460,7 +460,7 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                 this_type: function.this_type,
                 return_type: function.return_type,
                 type_params: function.type_params.clone(),
-                type_predicate: function.type_predicate.clone(),
+                type_predicate: function.type_predicate,
                 is_method: function.is_method,
             };
             CallSignaturesKind::MultipleSignatures(vec![signature])
@@ -484,7 +484,7 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                             this_type: function.this_type,
                             return_type: function.return_type,
                             type_params: function.type_params.clone(),
-                            type_predicate: function.type_predicate.clone(),
+                            type_predicate: function.type_predicate,
                             is_method: function.is_method,
                         });
                     }

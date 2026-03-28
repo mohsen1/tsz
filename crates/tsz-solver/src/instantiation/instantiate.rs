@@ -489,7 +489,7 @@ impl<'a> TypeInstantiator<'a> {
     fn instantiate_type_predicate(&mut self, predicate: &TypePredicate) -> TypePredicate {
         TypePredicate {
             asserts: predicate.asserts,
-            target: predicate.target.clone(),
+            target: predicate.target,
             type_id: predicate.type_id.map(|type_id| self.instantiate(type_id)),
             parameter_index: predicate.parameter_index,
         }
@@ -749,8 +749,8 @@ impl<'a> TypeInstantiator<'a> {
                     call_signatures: instantiated_call,
                     construct_signatures: instantiated_construct,
                     properties: instantiated_props,
-                    string_index: shape.string_index.clone(),
-                    number_index: shape.number_index.clone(),
+                    string_index: shape.string_index,
+                    number_index: shape.number_index,
                     symbol: shape.symbol,
                     is_abstract: shape.is_abstract,
                 })

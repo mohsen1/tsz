@@ -82,7 +82,7 @@ pub fn extract_predicate_signature(
     match classify_for_predicate_signature(db, type_id) {
         PredicateSignatureKind::Function(shape_id) => {
             let shape = db.function_shape(shape_id);
-            let predicate = shape.type_predicate.clone()?;
+            let predicate = shape.type_predicate?;
             Some(ExtractedPredicateSignature {
                 predicate,
                 params: shape.params.clone(),
@@ -94,7 +94,7 @@ pub fn extract_predicate_signature(
             for sig in &shape.call_signatures {
                 if let Some(predicate) = &sig.type_predicate {
                     return Some(ExtractedPredicateSignature {
-                        predicate: predicate.clone(),
+                        predicate: *predicate,
                         params: sig.params.clone(),
                         type_params: sig.type_params.clone(),
                     });

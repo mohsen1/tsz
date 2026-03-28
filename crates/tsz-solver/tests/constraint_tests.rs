@@ -244,7 +244,7 @@ fn test_constraint_function_extends() {
 
     let upper = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![param.clone()],
+        params: vec![param],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,

@@ -1095,7 +1095,7 @@ fn test_resolve_bounds_function_return_covariance_extends() {
 
     let lower_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![param.clone()],
+        params: vec![param],
         this_type: None,
         return_type: interner.literal_string("ok"),
         type_predicate: None,

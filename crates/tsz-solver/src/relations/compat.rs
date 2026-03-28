@@ -1051,7 +1051,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     crate::visitor::intersection_list_id(self.interner, resolved_source)
                 {
                     let members = self.interner.type_list(members_id);
-                    members.iter().any(|&m| m == resolved_target)
+                    members.contains(&resolved_target)
                 } else {
                     false
                 };
@@ -1878,7 +1878,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// When true, the relation result is unreliable because the checker gave up
     /// before reaching a definitive answer. The caller should emit TS2859
     /// ("Excessive complexity comparing types").
-    pub fn depth_exceeded(&self) -> bool {
+    pub const fn depth_exceeded(&self) -> bool {
         self.subtype.depth_exceeded()
     }
 }
