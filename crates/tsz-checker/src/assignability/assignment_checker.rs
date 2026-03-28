@@ -1812,19 +1812,19 @@ impl<'a> CheckerState<'a> {
         // e.g. DeepPartial<number> (conditional: number extends object ? ... : number) → number
         let left_eval = self.evaluate_type_for_binary_ops(left_type);
         let right_eval = self.evaluate_type_for_binary_ops(right_type);
-        let left_is_valid = self.is_arithmetic_operand(left_eval);
-        let right_is_valid = self.is_arithmetic_operand(right_eval);
 
-        // When strictNullChecks is on, null/undefined operands get TS18050 ("The value
-        // 'null'/'undefined' cannot be used here") which takes priority over TS2362/TS2363.
-        // When strictNullChecks is off, null/undefined are in number's domain and
-        // should not trigger arithmetic errors either.
-        let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
-        let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+        // Strip null/undefined before checking arithmetic validity.
+        // tsc calls checkNonNullType() first (emitting TS18048/TS2532), then checks the
+        // remaining type. So `number | undefined` → strip to `number` → valid arithmetic.
+        // Pure null/undefined becomes NEVER after stripping, which is also valid.
+        let left_stripped = tsz_solver::remove_nullish(self.ctx.types, left_eval);
+        let right_stripped = tsz_solver::remove_nullish(self.ctx.types, right_eval);
+        let left_is_valid = self.is_arithmetic_operand(left_stripped);
+        let right_is_valid = self.is_arithmetic_operand(right_stripped);
 
         let mut emitted = false;
 
-        if !left_is_valid && !(left_is_nullish) {
+        if !left_is_valid {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
@@ -1833,7 +1833,7 @@ impl<'a> CheckerState<'a> {
             emitted = true;
         }
 
-        if !right_is_valid && !(right_is_nullish) {
+        if !right_is_valid {
             self.error_at_node(
                 right_idx,
                 "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
