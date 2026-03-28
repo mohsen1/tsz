@@ -1682,7 +1682,7 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
 fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
-    use tsz_cli::fs::{FileDiscoveryOptions, default_include_patterns, discover_ts_files};
+    use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
     // --ignoreConfig: skip tsconfig loading
     let tsconfig_path = if args.ignore_config {
