@@ -374,6 +374,16 @@ impl<'a> CheckerState<'a> {
 
     /// Check a static class member for references to class type parameters (TS2302).
     pub(crate) fn check_static_member_for_class_type_param_refs(&mut self, member_idx: NodeIndex) {
+        // Fast path: skip clone when there are no type params (common case)
+        let has_type_params = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|c| !c.type_param_names.is_empty());
+        if !has_type_params {
+            return;
+        }
+
         let class_type_param_names: Vec<String> = self
             .ctx
             .enclosing_class
@@ -391,6 +401,16 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_idx: NodeIndex,
     ) {
+        // Fast path: skip clone when there are no type params (common case)
+        let has_type_params = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|c| !c.type_param_names.is_empty());
+        if !has_type_params {
+            return;
+        }
+
         let class_type_param_names: Vec<String> = self
             .ctx
             .enclosing_class
