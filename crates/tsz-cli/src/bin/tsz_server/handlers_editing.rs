@@ -154,6 +154,12 @@ impl Server {
                             return None;
                         }
 
+                        // Don't auto-close if the closing tag already follows the cursor
+                        let expected_close = format!("</{}>", tag_name);
+                        if source_text[byte_offset..].starts_with(&expected_close) {
+                            return None;
+                        }
+
                         return Some(serde_json::json!({
                             "newText": format!("$0</{}>", tag_name)
                         }));

@@ -490,10 +490,7 @@ function patchSessionClient(SessionClient, ts) {
         } catch { /* ignore */ }
 
         if (result && result.entries && result.entries.length === 0) {
-            // tsz returned empty entries. If native LS has results, use them.
-            if (nativeResult && nativeResult.entries && nativeResult.entries.length > 0) {
-                return nativeResult;
-            }
+            // tsz explicitly returned empty entries — this is a valid "no completions" answer.
             return undefined;
         }
 
