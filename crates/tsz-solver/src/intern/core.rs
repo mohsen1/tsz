@@ -52,6 +52,26 @@ pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
 type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
 
+/// Cached data for a union member, pre-fetched to avoid redundant DashMap/arena
+/// lookups during sort comparisons. Each field corresponds to a lookup that
+/// `compare_union_members` would otherwise perform per comparison.
+struct CachedUnionMember {
+    /// The original TypeId
+    id: TypeId,
+    /// Result of `builtin_sort_key(id)` - `Some` for intrinsic/builtin types
+    builtin_key: Option<u32>,
+    /// Result of `self.lookup(id)` - the TypeData for non-builtin types
+    data: Option<TypeData>,
+    /// For Object/ObjectWithIndex: the symbol's raw u32 (if the shape has a symbol)
+    obj_symbol: Option<u32>,
+    /// For anonymous Object/ObjectWithIndex: the ShapeId's raw u32
+    obj_anon_shape: Option<u32>,
+    /// For Callable: the symbol's raw u32 (if the shape has a symbol)
+    callable_symbol: Option<u32>,
+    /// Result of `self.alloc_order.get(&id)` - monotonic allocation counter
+    alloc_order: Option<u32>,
+}
+
 /// Inner data for a `TypeShard`, lazily initialized.
 struct TypeShardInner {
     /// Map from `TypeData` to local index within this shard
@@ -1121,7 +1141,7 @@ impl TypeInterner {
             }
         }
 
-        flat.sort_by(|a, b| self.compare_union_members(*a, *b));
+        self.sort_union_members(&mut flat);
         flat.dedup();
         flat.retain(|id| *id != TypeId::NEVER);
 
@@ -1238,6 +1258,213 @@ impl TypeInterner {
         }
     }
 
+    /// Pre-compute cached data for a type to avoid repeated lookups during sort.
+    ///
+    /// This gathers `builtin_sort_key`, `lookup` (TypeData), object/callable symbol,
+    /// and `alloc_order` in a single pass per union member.
+    fn cache_union_member(&self, id: TypeId) -> CachedUnionMember {
+        let builtin_key = Self::builtin_sort_key(id);
+        if builtin_key.is_some() {
+            // Builtins don't need further lookups
+            return CachedUnionMember {
+                id,
+                builtin_key,
+                data: None,
+                obj_symbol: None,
+                obj_anon_shape: None,
+                callable_symbol: None,
+                alloc_order: None,
+            };
+        }
+
+        let data = self.lookup(id);
+        let alloc_order = self.alloc_order.get(&id).map(|r| *r.value());
+
+        let mut obj_symbol = None;
+        let mut obj_anon_shape = None;
+        let mut callable_symbol = None;
+
+        if let Some(ref d) = data {
+            match d {
+                TypeData::Object(s) | TypeData::ObjectWithIndex(s) => {
+                    let shape = self.object_shape(*s);
+                    if let Some(sym) = shape.symbol {
+                        obj_symbol = Some(sym.0);
+                    } else {
+                        obj_anon_shape = Some(s.0);
+                    }
+                }
+                TypeData::Callable(s) => {
+                    let shape = self.callable_shape(*s);
+                    if let Some(sym) = shape.symbol {
+                        callable_symbol = Some(sym.0);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        CachedUnionMember {
+            id,
+            builtin_key,
+            data,
+            obj_symbol,
+            obj_anon_shape,
+            callable_symbol,
+            alloc_order,
+        }
+    }
+
+    /// Compare two cached union members using pre-fetched data.
+    ///
+    /// This is semantically identical to `compare_union_members` but avoids
+    /// all DashMap/arena lookups since data was pre-fetched into `CachedUnionMember`.
+    fn compare_cached_members(
+        &self,
+        a: &CachedUnionMember,
+        b: &CachedUnionMember,
+    ) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        // Fast path: built-in types have fixed sort positions
+        match (a.builtin_key, b.builtin_key) {
+            (Some(ka), Some(kb)) => return ka.cmp(&kb),
+            (Some(ka), None) => return ka.cmp(&100),
+            (None, Some(kb)) => return 100u32.cmp(&kb),
+            (None, None) => {}
+        }
+
+        // Both are non-built-in types -- use cached type data
+        if let (Some(data_a), Some(data_b)) = (&a.data, &b.data) {
+            match (data_a, data_b) {
+                (
+                    TypeData::Literal(LiteralValue::String(sa)),
+                    TypeData::Literal(LiteralValue::String(sb)),
+                ) => {
+                    let str_a = self.string_interner.resolve(*sa);
+                    let str_b = self.string_interner.resolve(*sb);
+                    let a_short = str_a.len() <= 2;
+                    let b_short = str_b.len() <= 2;
+                    match (a_short, b_short) {
+                        (true, true) => {
+                            let cmp = str_a.cmp(&str_b);
+                            if cmp != Ordering::Equal {
+                                return cmp;
+                            }
+                        }
+                        (true, false) => return Ordering::Less,
+                        (false, true) => return Ordering::Greater,
+                        (false, false) => {}
+                    }
+                }
+                (
+                    TypeData::Literal(LiteralValue::Number(na)),
+                    TypeData::Literal(LiteralValue::Number(nb)),
+                ) => {
+                    let a_small = na.0.abs() < 10.0;
+                    let b_small = nb.0.abs() < 10.0;
+                    match (a_small, b_small) {
+                        (true, true) => {
+                            let cmp = na.0.partial_cmp(&nb.0).unwrap_or(Ordering::Equal);
+                            if cmp != Ordering::Equal {
+                                return cmp;
+                            }
+                        }
+                        (true, false) => return Ordering::Less,
+                        (false, true) => return Ordering::Greater,
+                        (false, false) => {}
+                    }
+                }
+                (TypeData::Lazy(d1), TypeData::Lazy(d2))
+                | (TypeData::Enum(d1, _), TypeData::Enum(d2, _)) => {
+                    let cmp = d1.0.cmp(&d2.0);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
+                (TypeData::Object(_), TypeData::Object(_))
+                | (TypeData::ObjectWithIndex(_), TypeData::ObjectWithIndex(_))
+                | (TypeData::Object(_), TypeData::ObjectWithIndex(_))
+                | (TypeData::ObjectWithIndex(_), TypeData::Object(_)) => {
+                    // Use pre-fetched symbol data instead of re-looking up shapes
+                    if let (Some(sym1), Some(sym2)) = (a.obj_symbol, b.obj_symbol) {
+                        let cmp = sym1.cmp(&sym2);
+                        if cmp != Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                    // Anonymous objects: use pre-fetched ShapeId
+                    if let (Some(shape1), Some(shape2)) = (a.obj_anon_shape, b.obj_anon_shape) {
+                        let cmp = shape1.cmp(&shape2);
+                        if cmp != Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                }
+                (TypeData::Callable(_), TypeData::Callable(_)) => {
+                    // Use pre-fetched symbol data
+                    if let (Some(sym1), Some(sym2)) = (a.callable_symbol, b.callable_symbol) {
+                        let cmp = sym1.cmp(&sym2);
+                        if cmp != Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                }
+                (TypeData::Application(app1), TypeData::Application(app2)) => {
+                    // Application types still need recursive comparison for base/args,
+                    // but the top-level union members' lookups are already cached.
+                    let a1 = self.type_application(*app1);
+                    let a2 = self.type_application(*app2);
+                    let cmp = self.compare_union_members(a1.base, a2.base);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                    for (arg1, arg2) in a1.args.iter().zip(a2.args.iter()) {
+                        let cmp = self.compare_union_members(*arg1, *arg2);
+                        if cmp != Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                    let cmp = a1.args.len().cmp(&a2.args.len());
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Fallback: use pre-fetched allocation order
+        match (a.alloc_order, b.alloc_order) {
+            (Some(oa), Some(ob)) => oa.cmp(&ob),
+            _ => a.id.0.cmp(&b.id.0),
+        }
+    }
+
+    /// Sort union members using pre-cached lookups to avoid redundant DashMap reads.
+    ///
+    /// Instead of `sort_by(compare_union_members)` which does 4-6 DashMap/arena lookups
+    /// per comparison (O(N log N * lookups)), this pre-caches all lookup data for each
+    /// member in O(N) reads, then sorts using the cached data with zero further lookups.
+    fn sort_union_members(&self, flat: &mut TypeListBuffer) {
+        if flat.len() <= 1 {
+            return;
+        }
+
+        // Pre-cache all lookup data for each member in a single pass: O(N) reads
+        let mut cached: SmallVec<[CachedUnionMember; TYPE_LIST_INLINE]> =
+            flat.iter().map(|&id| self.cache_union_member(id)).collect();
+
+        // Sort using cached data: O(N log N) comparisons with zero further lookups
+        // (except for Application types which still recurse via compare_union_members)
+        cached.sort_by(|a, b| self.compare_cached_members(a, b));
+
+        // Write sorted TypeIds back
+        for (i, member) in cached.iter().enumerate() {
+            flat[i] = member.id;
+        }
+    }
+
     /// Compare two union members for ordering.
     ///
     /// For built-in/intrinsic types: uses fixed sort keys for consistent ordering
@@ -1249,6 +1476,9 @@ impl TypeInterner {
     /// interning order, and `C | D` for `class C {}; class D extends C {}`.
     ///
     /// Fallback: raw TypeId comparison.
+    ///
+    /// NOTE: This is kept for the rare recursive Application comparison path.
+    /// The primary sort path uses `sort_union_members` with pre-computed keys.
     fn compare_union_members(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         use std::cmp::Ordering;
 
@@ -1410,7 +1640,7 @@ impl TypeInterner {
     pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
         // Deduplicate and sort for consistent identity.
         // Sort order uses semantic comparison to match tsc's union display.
-        flat.sort_by(|a, b| self.compare_union_members(*a, *b));
+        self.sort_union_members(&mut flat);
         flat.dedup();
 
         // Single-pass scan for special sentinel types instead of multiple contains() calls.
@@ -1526,7 +1756,7 @@ impl TypeInterner {
     /// same normalization as `normalize_union` (sort, dedup, special cases, literal
     /// absorption) but skips the `reduce_union_subtypes` step.
     fn normalize_union_literal_only(&self, mut flat: TypeListBuffer) -> TypeId {
-        flat.sort_by(|a, b| self.compare_union_members(*a, *b));
+        self.sort_union_members(&mut flat);
         flat.dedup();
 
         // Single-pass scan for special sentinel types
