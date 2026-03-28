@@ -2507,7 +2507,8 @@ declare namespace JSX {
         relevant_diags.iter().any(|(code, msg)| {
             *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
                 && msg.contains("Property 'ref' is missing")
-                && msg.contains("IntrinsicClassAttributes")
+                && (msg.contains("IntrinsicClassAttributesAlias")
+                    || msg.contains("IntrinsicClassAttributes"))
         }),
         "Expected TS2741 for missing required 'ref' from alias-based IntrinsicClassAttributes<T>, got: {relevant_diags:?}"
     );
