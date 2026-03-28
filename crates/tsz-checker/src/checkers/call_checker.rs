@@ -313,9 +313,15 @@ impl<'a> CheckerState<'a> {
                                     !self.is_assignable_to(expected_next, actual_next)
                                 });
 
+                        // When the expected return type is `void`, there is never
+                        // a return type mismatch — void return means "ignore the
+                        // return value", so any actual return type is acceptable.
+                        // This is the function-level void-return-substitutability
+                        // rule, which differs from type-level `is_assignable_to`.
                         (
                             generator_component_mismatch
-                                || !self.is_assignable_to(actual_return, expected_return),
+                                || (expected_return != TypeId::VOID
+                                    && !self.is_assignable_to(actual_return, expected_return)),
                             generator_component_mismatch,
                         )
                     })
