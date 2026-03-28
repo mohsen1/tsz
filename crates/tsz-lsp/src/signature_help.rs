@@ -484,6 +484,29 @@ impl<'a> SignatureHelpProvider<'a> {
                     }
                 }
 
+                // Stop at function boundaries — if the cursor is inside a nested
+                // function body (arrow, function expression, method), don't provide
+                // signature help for the outer call expression.
+                if node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                {
+                    // Only stop if the cursor is inside a multi-line function BODY.
+                    // For single-line bodies like `foo(() => {/**/})`, still show
+                    // signature help since the user is effectively still at the argument.
+                    if let Some(fn_data) = self.arena.get_function(node) {
+                        if let Some(body_node) = self.arena.get(fn_data.body) {
+                            if cursor_offset >= body_node.pos && cursor_offset <= body_node.end {
+                                let body_text = &self.source_text
+                                    [body_node.pos as usize..body_node.end as usize];
+                                if body_text.contains('\n') {
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Move up to parent
                 if let Some(extended) = self.arena.get_extended(current) {
                     current = extended.parent;
