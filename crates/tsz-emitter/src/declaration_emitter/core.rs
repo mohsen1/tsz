@@ -83,6 +83,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) function_names_with_overloads: FxHashSet<String>,
     /// Track whether current class has constructor overloads (to skip implementation constructor)
     pub(super) class_has_constructor_overloads: bool,
+    /// Track whether current class extends another class
+    pub(super) class_extends_another: bool,
     /// Track method names that have overload signatures in current class (to skip implementation signatures)
     pub(super) method_names_with_overloads: FxHashSet<String>,
     pub(super) all_comments: Vec<CommentRange>,
@@ -224,6 +226,7 @@ impl<'a> DeclarationEmitter<'a> {
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
+            class_extends_another: false,
             method_names_with_overloads: FxHashSet::default(),
             all_comments: Vec::new(),
             comment_emit_idx: 0,
@@ -297,6 +300,7 @@ impl<'a> DeclarationEmitter<'a> {
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
+            class_extends_another: false,
             method_names_with_overloads: FxHashSet::default(),
             all_comments: Vec::new(),
             comment_emit_idx: 0,
@@ -1409,6 +1413,13 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Reset constructor and method overload tracking for this class
         self.class_has_constructor_overloads = false;
+        self.class_extends_another = class.heritage_clauses.as_ref().is_some_and(|hc| {
+            hc.nodes.iter().any(|&clause_idx| {
+                self.arena
+                    .get_heritage_clause_at(clause_idx)
+                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+            })
+        });
         self.method_names_with_overloads = FxHashSet::default();
 
         // Emit parameter properties from constructor first (before other members)
@@ -2154,7 +2165,11 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
 
-        if self.source_is_js_file && ctor.parameters.nodes.is_empty() && !has_visibility_modifier {
+        if self.source_is_js_file
+            && ctor.parameters.nodes.is_empty()
+            && !has_visibility_modifier
+            && !self.class_extends_another
+        {
             if let Some(body_node) = self.arena.get(ctor.body) {
                 self.skip_comments_in_node(body_node.pos, body_node.end);
             }
@@ -3573,6 +3588,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.increase_indent();
 
         self.class_has_constructor_overloads = false;
+        self.class_extends_another = class.heritage_clauses.as_ref().is_some_and(|hc| {
+            hc.nodes.iter().any(|&clause_idx| {
+                self.arena
+                    .get_heritage_clause_at(clause_idx)
+                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+            })
+        });
         self.method_names_with_overloads = FxHashSet::default();
 
         self.emit_parameter_properties(&class.members);
