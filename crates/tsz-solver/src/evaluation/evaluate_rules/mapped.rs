@@ -796,6 +796,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 keys.string_literals.push(s);
                 Some(keys)
             }
+            // Numeric literals become string property names (e.g., enum value 0 → "0").
+            // This handles the case where a single-member enum is used as a mapped type
+            // constraint: `Record<E, any>` where `enum E { A = 0 }` produces constraint
+            // Enum(_, Literal(Number(0))) → key "0".
+            TypeData::Literal(LiteralValue::Number(n)) => {
+                let s = self.interner().intern_string(
+                    &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
+                );
+                keys.string_literals.push(s);
+                Some(keys)
+            }
             // `AB[K]` in mapped constraints: resolve to the union of property
             // value types for index keys compatible with K, then recurse.
             TypeData::IndexAccess(object_type, index_type) => {
