@@ -614,6 +614,34 @@ impl BinderState {
         arena.has_modifier_ref(modifiers, SyntaxKind::DeclareKeyword)
     }
 
+    /// Extract all class-member modifier flags in a single pass through the modifier list.
+    /// Returns a bitmask of `symbol_flags` (ABSTRACT, STATIC, PRIVATE, PROTECTED).
+    /// This avoids multiple separate walks through the modifier list per class member.
+    pub(crate) fn extract_member_modifier_flags(
+        arena: &NodeArena,
+        modifiers: Option<&NodeList>,
+    ) -> u32 {
+        let Some(mods) = modifiers else {
+            return 0;
+        };
+        let mut flags = 0u32;
+        for &mod_idx in &mods.nodes {
+            if let Some(mod_node) = arena.get(mod_idx) {
+                let kind = mod_node.kind;
+                if kind == SyntaxKind::AbstractKeyword as u16 {
+                    flags |= crate::symbol_flags::ABSTRACT;
+                } else if kind == SyntaxKind::StaticKeyword as u16 {
+                    flags |= crate::symbol_flags::STATIC;
+                } else if kind == SyntaxKind::PrivateKeyword as u16 {
+                    flags |= crate::symbol_flags::PRIVATE;
+                } else if kind == SyntaxKind::ProtectedKeyword as u16 {
+                    flags |= crate::symbol_flags::PROTECTED;
+                }
+            }
+        }
+        flags
+    }
+
     /// Check if modifiers include a parameter property keyword
     /// (public, private, protected, or readonly).
     pub(crate) fn has_parameter_property_modifier(
