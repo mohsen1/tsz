@@ -50,6 +50,9 @@ pub struct TypePrinter<'a> {
     namespace_alias_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
     /// Optional resolver for deciding whether a local import alias survives in emitted output.
     local_import_alias_name_resolver: Option<&'a dyn Fn(SymbolId) -> bool>,
+    /// Optional resolver for checking whether a foreign symbol has a local import
+    /// alias that will be emitted, so the symbol can be referenced by name.
+    has_local_import_alias_resolver: Option<&'a dyn Fn(SymbolId) -> bool>,
     /// When false, standalone `null` and `undefined` widen to `any` and are
     /// filtered from union members (matching tsc's DTS behaviour).
     strict_null_checks: bool,
@@ -69,6 +72,7 @@ impl<'a> TypePrinter<'a> {
             module_path_resolver: None,
             namespace_alias_resolver: None,
             local_import_alias_name_resolver: None,
+            has_local_import_alias_resolver: None,
             strict_null_checks: true,
         }
     }
@@ -137,6 +141,15 @@ impl<'a> TypePrinter<'a> {
         resolver: &'a dyn Fn(SymbolId) -> bool,
     ) -> Self {
         self.local_import_alias_name_resolver = Some(resolver);
+        self
+    }
+
+    /// Set a resolver for checking whether a foreign symbol has a local import alias.
+    pub fn with_has_local_import_alias_resolver(
+        mut self,
+        resolver: &'a dyn Fn(SymbolId) -> bool,
+    ) -> Self {
+        self.has_local_import_alias_resolver = Some(resolver);
         self
     }
 
@@ -462,7 +475,32 @@ impl<'a> TypePrinter<'a> {
     fn import_qualified_symbol_name(&self, sym_id: SymbolId) -> Option<String> {
         let module_path = self.resolve_symbol_module_path(sym_id)?;
         let name = self.resolve_symbol_qualified_name(sym_id)?;
-        Some(format!("import(\"{module_path}\").{name}"))
+
+        // When the qualified name starts with the module specifier (e.g.
+        // `url.Url` from `declare module "url"`), strip the redundant prefix
+        // since the import() wrapper already specifies the module.
+        let stripped_name = self.strip_module_prefix_from_qualified_name(&module_path, &name);
+        Some(format!("import(\"{module_path}\").{stripped_name}"))
+    }
+
+    /// If `qualified_name` starts with `<module_last_segment>.`, strip that
+    /// prefix. For example, `url.Url` with module path `url` becomes `Url`.
+    fn strip_module_prefix_from_qualified_name<'b>(
+        &self,
+        module_path: &str,
+        qualified_name: &'b str,
+    ) -> &'b str {
+        // Get the last segment of the module path (e.g., "url" from "@types/url")
+        let module_last = module_path.rsplit('/').next().unwrap_or(module_path);
+        // Check if qualified name starts with `<module_last>.`
+        if let Some(rest) = qualified_name.strip_prefix(module_last) {
+            if let Some(stripped) = rest.strip_prefix('.') {
+                if !stripped.is_empty() {
+                    return stripped;
+                }
+            }
+        }
+        qualified_name
     }
 
     fn is_local_import_alias(&self, sym_id: SymbolId) -> bool {
@@ -496,6 +534,25 @@ impl<'a> TypePrinter<'a> {
             } else {
                 name
             });
+        }
+
+        // If a local import alias brings this symbol into scope, use the
+        // symbol's bare name instead of an import("...") wrapper. The import
+        // statement will be emitted separately.
+        if self
+            .has_local_import_alias_resolver
+            .is_some_and(|resolver| resolver(sym_id))
+        {
+            if let Some(arena) = self.symbol_arena
+                && let Some(sym) = arena.get(sym_id)
+            {
+                let name = &sym.escaped_name;
+                return Some(if needs_typeof {
+                    format!("typeof {name}")
+                } else {
+                    name.clone()
+                });
+            }
         }
 
         if let Some(name) = self.import_qualified_symbol_name(sym_id) {
