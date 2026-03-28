@@ -2618,6 +2618,12 @@ impl<'a> Printer<'a> {
                     &format!("{binding_name} = "),
                     1,
                 );
+                if self.in_system_execute_body {
+                    let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+                    if let Some(stripped) = rewritten.strip_prefix(&leading_indent) {
+                        rewritten = stripped.to_string();
+                    }
+                }
                 if self.in_system_execute_body && export_name == "default" && class.name.is_none() {
                     self.write(&rewritten);
                     if !rewritten.trim_end().ends_with(';') {

@@ -610,6 +610,9 @@ impl<'a> Printer<'a> {
                         if let Some(class_decl) = self.arena.get_class(clause_node) {
                             let class_name = self.get_identifier_text_idx(class_decl.name);
                             if has_top_level_using && class_name.is_empty() {
+                                if self.ctx.target_es5 && seen.insert("default_1".to_string()) {
+                                    names.push("default_1".to_string());
+                                }
                                 if seen_top_level_using && seen.insert("_default".to_string()) {
                                     names.push("_default".to_string());
                                 }
