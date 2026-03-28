@@ -44,12 +44,199 @@ pub fn emit_commonjs_preamble(writer: &mut impl std::fmt::Write) -> std::fmt::Re
     Ok(())
 }
 
+/// Check whether an `import X = Y.Z` entity-name reference targets a value declaration.
+fn is_import_alias_referencing_value(
+    arena: &NodeArena,
+    entity_name_idx: NodeIndex,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> bool {
+    let mut parts: Vec<String> = Vec::new();
+    fn flatten(arena: &NodeArena, idx: NodeIndex, parts: &mut Vec<String>) {
+        let Some(node) = arena.get(idx) else { return };
+        if let Some(qn) = arena.get_qualified_name(node) {
+            flatten(arena, qn.left, parts);
+            if let Some(name) = get_identifier_text(arena, qn.right) {
+                parts.push(name);
+            }
+        } else if let Some(name) = get_identifier_text(arena, idx) {
+            parts.push(name);
+        }
+    }
+    flatten(arena, entity_name_idx, &mut parts);
+    if parts.is_empty() {
+        return true;
+    }
+    resolve_entity_chain_has_value(arena, &parts, statements, preserve_const_enums)
+}
+
+fn resolve_entity_chain_has_value(
+    arena: &NodeArena,
+    parts: &[String],
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> bool {
+    if parts.is_empty() {
+        return true;
+    }
+    let target_name = &parts[0];
+    let rest = &parts[1..];
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        let inner_node = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                arena.get(ed.export_clause)
+            } else {
+                None
+            }
+        } else {
+            Some(node)
+        };
+        let Some(inner) = inner_node else {
+            continue;
+        };
+        match inner.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if rest.is_empty() {
+                    if let Some(vs) = arena.get_variable(inner) {
+                        let mut names = Vec::new();
+                        for &di in &vs.declarations.nodes {
+                            collect_declaration_names(arena, di, &mut names);
+                        }
+                        if names.iter().any(|n| n == target_name) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(f) = arena.get_function(inner)
+                    && let Some(n) = get_identifier_text(arena, f.name)
+                    && n == *target_name
+                    && rest.is_empty()
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(c) = arena.get_class(inner)
+                    && let Some(n) = get_identifier_text(arena, c.name)
+                    && n == *target_name
+                    && rest.is_empty()
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(e) = arena.get_enum(inner)
+                    && let Some(n) = get_identifier_text(arena, e.name)
+                    && n == *target_name
+                    && rest.is_empty()
+                {
+                    if arena.has_modifier(&e.modifiers, SyntaxKind::ConstKeyword)
+                        && !preserve_const_enums
+                    {
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(m) = arena.get_module(inner)
+                    && let Some(n) = get_identifier_text(arena, m.name)
+                    && n == *target_name
+                {
+                    if rest.is_empty() {
+                        return super::emit_utils::is_instantiated_module_ext(
+                            arena,
+                            m.body,
+                            preserve_const_enums,
+                        );
+                    }
+                    if let Some(body) = arena.get(m.body)
+                        && let Some(block) = arena.get_module_block(body)
+                        && let Some(ref stmts) = block.statements
+                    {
+                        return resolve_entity_chain_has_value(
+                            arena,
+                            rest,
+                            &stmts.nodes,
+                            preserve_const_enums,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                if let Some(i) = arena.get_interface(inner)
+                    && let Some(n) = get_identifier_text(arena, i.name)
+                    && n == *target_name
+                    && rest.is_empty()
+                {
+                    continue;
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                if let Some(t) = arena.get_type_alias(inner)
+                    && let Some(n) = get_identifier_text(arena, t.name)
+                    && n == *target_name
+                    && rest.is_empty()
+                {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+    }
+    let found_type_only = statements.iter().any(|&si| {
+        let Some(node) = arena.get(si) else {
+            return false;
+        };
+        let inner = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                arena.get(ed.export_clause)
+            } else {
+                None
+            }
+        } else {
+            Some(node)
+        };
+        let Some(inner) = inner else {
+            return false;
+        };
+        if inner.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            arena
+                .get_interface(inner)
+                .and_then(|i| get_identifier_text(arena, i.name))
+                .as_deref()
+                == Some(target_name)
+        } else if inner.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            arena
+                .get_type_alias(inner)
+                .and_then(|t| get_identifier_text(arena, t.name))
+                .as_deref()
+                == Some(target_name)
+        } else {
+            false
+        }
+    });
+    !found_type_only
+}
+
 /// Helper function to collect export name from a single declaration node
 fn collect_export_name_from_declaration(
     arena: &NodeArena,
     decl_node: &Node,
     exports: &mut Vec<String>,
     preserve_const_enums: bool,
+    statements: &[NodeIndex],
 ) {
     match decl_node.kind {
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -125,7 +312,22 @@ fn collect_export_name_from_declaration(
             if let Some(import_decl) = arena.get_import_decl(decl_node)
                 && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
             {
-                exports.push(name);
+                if import_decl.is_type_only {
+                    return;
+                }
+                if let Some(ref_node) = arena.get(import_decl.module_specifier)
+                    && ref_node.kind == SyntaxKind::StringLiteral as u16
+                {
+                    return;
+                }
+                if is_import_alias_referencing_value(
+                    arena,
+                    import_decl.module_specifier,
+                    statements,
+                    preserve_const_enums,
+                ) {
+                    exports.push(name);
+                }
             }
         }
         _ => {
@@ -217,14 +419,27 @@ pub fn build_value_declaration_names(
                         clause_node,
                         &mut value_names,
                         preserve_const_enums,
+                        statements,
                     );
                 }
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                 if let Some(import_decl) = arena.get_import_decl(node)
                     && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+                    && !import_decl.is_type_only
                 {
-                    value_names.insert(name);
+                    if let Some(ref_node) = arena.get(import_decl.module_specifier)
+                        && ref_node.kind == SyntaxKind::StringLiteral as u16
+                    {
+                        value_names.insert(name);
+                    } else if is_import_alias_referencing_value(
+                        arena,
+                        import_decl.module_specifier,
+                        statements,
+                        preserve_const_enums,
+                    ) {
+                        value_names.insert(name);
+                    }
                 }
             }
             // Import bindings create value names (unless `import type`)
@@ -360,6 +575,7 @@ fn collect_value_names_from_declaration(
     decl_node: &Node,
     value_names: &mut rustc_hash::FxHashSet<String>,
     preserve_const_enums: bool,
+    statements: &[NodeIndex],
 ) {
     match decl_node.kind {
         k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
@@ -409,8 +625,20 @@ fn collect_value_names_from_declaration(
         k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
             if let Some(import_decl) = arena.get_import_decl(decl_node)
                 && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+                && !import_decl.is_type_only
             {
-                value_names.insert(name);
+                if let Some(ref_node) = arena.get(import_decl.module_specifier)
+                    && ref_node.kind == SyntaxKind::StringLiteral as u16
+                {
+                    value_names.insert(name);
+                } else if is_import_alias_referencing_value(
+                    arena,
+                    import_decl.module_specifier,
+                    statements,
+                    preserve_const_enums,
+                ) {
+                    value_names.insert(name);
+                }
             }
         }
         _ => {
@@ -538,6 +766,7 @@ pub fn collect_export_names_with_options(
                                 clause_node,
                                 &mut exports,
                                 preserve_const_enums,
+                                statements,
                             );
                         }
                     }
