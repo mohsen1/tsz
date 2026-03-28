@@ -398,6 +398,52 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::query_boundaries::class::build_own_member_summary;
 
+        // Fast path: if noImplicitOverride is off, we only care about explicit `override`
+        // modifiers. Do a quick scan of members to see if any have the override keyword
+        // before building the expensive full member summary.
+        if !no_implicit_override {
+            let has_any_override = class_data.members.nodes.iter().any(|&member_idx| {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    return false;
+                };
+                match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .is_some_and(|p| self.has_override_modifier(&p.modifiers)),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(member_node)
+                        .is_some_and(|m| self.has_override_modifier(&m.modifiers)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.ctx
+                            .arena
+                            .get_accessor(member_node)
+                            .is_some_and(|a| self.has_override_modifier(&a.modifiers))
+                    }
+                    _ => false,
+                }
+            });
+            if !has_any_override {
+                // No explicit override modifiers and noImplicitOverride is off.
+                // Still need to check constructor parameter property overrides.
+                self.check_constructor_parameter_property_overrides(
+                    class_data,
+                    None,
+                    None,
+                    derived_class_name,
+                    derived_class_name,
+                    &rustc_hash::FxHashSet::default(),
+                    no_implicit_override,
+                );
+                return;
+            }
+        }
+
         let own = build_own_member_summary(self, class_data);
 
         // Check class body members
