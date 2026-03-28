@@ -890,7 +890,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|t| *t)
                 .filter(|&t| t != TypeId::UNKNOWN && t != TypeId::ERROR);
 
-            if let Some(ctx_type) = contextual_type {
+            if let Some(mut ctx_type) = contextual_type {
                 if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ctx_type)
                     && crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
@@ -899,6 +899,14 @@ impl<'a> CheckerState<'a> {
                     .is_none()
                 {
                     continue;
+                }
+                // When the parameter has a default value (e.g., `{ x } = {}`),
+                // strip `undefined` from the contextual type since the default
+                // guarantees the destructured value is not undefined. Without
+                // this, `T | undefined` causes false TS2339 on destructured
+                // property access.
+                if param.initializer.is_some() {
+                    ctx_type = tsz_solver::remove_undefined(self.ctx.types, ctx_type);
                 }
                 // Assign the contextual type to the binding pattern elements
                 let request = crate::context::TypingRequest::with_contextual_type(ctx_type);
