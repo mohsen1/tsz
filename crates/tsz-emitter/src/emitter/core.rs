@@ -875,10 +875,9 @@ impl<'a> Printer<'a> {
     pub(crate) fn fast_source_position(&self, pos: u32) -> Option<SourcePosition> {
         if let Some(ref lm) = self.line_map {
             Some(lm.source_position(pos))
-        } else if let Some(text) = self.source_text_for_map() {
-            Some(source_position_from_offset(text, pos))
         } else {
-            None
+            self.source_text_for_map()
+                .map(|text| source_position_from_offset(text, pos))
         }
     }
 

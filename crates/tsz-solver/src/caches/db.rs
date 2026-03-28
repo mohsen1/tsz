@@ -885,8 +885,8 @@ impl QueryDatabase for TypeInterner {
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.object_shape(shape_id);
                 IndexInfo {
-                    string_index: shape.string_index.clone(),
-                    number_index: shape.number_index.clone(),
+                    string_index: shape.string_index,
+                    number_index: shape.number_index,
                 }
             }
             Some(TypeData::Array(element)) => {

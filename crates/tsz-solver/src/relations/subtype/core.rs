@@ -1746,8 +1746,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 Some(ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties: props,
-                    string_index: callable.string_index.clone(),
-                    number_index: callable.number_index.clone(),
+                    string_index: callable.string_index,
+                    number_index: callable.number_index,
                     symbol: callable.symbol,
                 })
             } else {

@@ -341,7 +341,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 // Readonly only if ALL are readonly
                 existing.readonly = existing.readonly && idx.readonly;
             } else {
-                self.string_index = Some(idx.clone());
+                self.string_index = Some(*idx);
             }
         }
 
@@ -355,7 +355,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 // Readonly only if ALL are readonly
                 existing.readonly = existing.readonly && idx.readonly;
             } else {
-                self.number_index = Some(idx.clone());
+                self.number_index = Some(*idx);
             }
         }
     }

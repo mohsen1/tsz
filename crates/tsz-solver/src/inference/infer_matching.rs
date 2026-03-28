@@ -1430,7 +1430,7 @@ impl<'a> InferenceContext<'a> {
                                 ..*p
                             }
                         } else {
-                            p.clone()
+                            *p
                         }
                     })
                     .collect();
@@ -1463,7 +1463,7 @@ impl<'a> InferenceContext<'a> {
                                         ..*p
                                     }
                                 } else {
-                                    p.clone()
+                                    *p
                                 }
                             })
                             .collect();

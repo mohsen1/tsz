@@ -76,13 +76,8 @@ fn test_type_guard_more_specific_than_no_predicate() {
     let helper = type_predicate(&interner, "x", TypeId::STRING);
     let helper_asserts = asserts_predicate(&interner, "x", TypeId::STRING);
     let helper_bare_asserts = bare_asserts(&interner, "x");
-    let helper_fn_with_predicate = fn_with_predicate(
-        &interner,
-        "x",
-        TypeId::STRING,
-        TypeId::STRING,
-        Some(helper.clone()),
-    );
+    let helper_fn_with_predicate =
+        fn_with_predicate(&interner, "x", TypeId::STRING, TypeId::STRING, Some(helper));
 
     assert_eq!(helper.type_id, Some(TypeId::STRING));
     assert!(helper_asserts.asserts);

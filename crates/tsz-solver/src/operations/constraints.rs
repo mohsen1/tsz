@@ -1284,7 +1284,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let instantiated_predicate =
                         s_fn.type_predicate.as_ref().map(|pred| TypePredicate {
                             asserts: pred.asserts,
-                            target: pred.target.clone(),
+                            target: pred.target,
                             type_id: pred
                                 .type_id
                                 .map(|t| instantiate_type(self.interner, t, &source_subst)),
@@ -1493,7 +1493,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             params: sig.params.clone(),
                             this_type: sig.this_type,
                             return_type: sig.return_type,
-                            type_predicate: sig.type_predicate.clone(),
+                            type_predicate: sig.type_predicate,
                             is_constructor: false,
                             is_method: false,
                         });
@@ -3055,7 +3055,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             params: sig.params.clone(),
             this_type: sig.this_type,
             return_type: sig.return_type,
-            type_predicate: sig.type_predicate.clone(),
+            type_predicate: sig.type_predicate,
             is_constructor,
             is_method: false,
         })
@@ -3090,7 +3090,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .this_type
                 .map(|t| instantiate_type(self.interner, t, &sub)),
             return_type: instantiate_type(self.interner, sig.return_type, &sub),
-            type_predicate: sig.type_predicate.clone(),
+            type_predicate: sig.type_predicate,
             is_method: sig.is_method,
         }
     }

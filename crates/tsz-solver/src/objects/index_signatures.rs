@@ -261,16 +261,16 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         IndexInfo {
-            string_index: shape.string_index.clone(),
-            number_index: shape.number_index.clone(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
         }
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
         IndexInfo {
-            string_index: shape.string_index.clone(),
-            number_index: shape.number_index.clone(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
         }
     }
 

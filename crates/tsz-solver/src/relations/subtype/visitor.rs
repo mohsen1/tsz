@@ -638,8 +638,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             let s_shape = ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties: s_callable.properties.clone(),
-                string_index: s_callable.string_index.clone(),
-                number_index: s_callable.number_index.clone(),
+                string_index: s_callable.string_index,
+                number_index: s_callable.number_index,
                 symbol: s_callable.symbol,
             };
             self.checker.check_object_subtype(
@@ -661,8 +661,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             let s_shape = ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties: s_callable.properties.clone(),
-                string_index: s_callable.string_index.clone(),
-                number_index: s_callable.number_index.clone(),
+                string_index: s_callable.string_index,
+                number_index: s_callable.number_index,
                 symbol: s_callable.symbol,
             };
             self.checker.check_object_to_indexed(

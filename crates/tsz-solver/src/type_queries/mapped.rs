@@ -75,7 +75,7 @@ fn specialize_mapped_property_value_type_for_key(
                         param.type_id,
                         key_literal,
                     ),
-                    ..param.clone()
+                    ..*param
                 })
                 .collect();
             let return_type =
@@ -90,7 +90,7 @@ fn specialize_mapped_property_value_type_for_key(
                     params,
                     this_type: shape.this_type,
                     return_type,
-                    type_predicate: shape.type_predicate.clone(),
+                    type_predicate: shape.type_predicate,
                     is_constructor: shape.is_constructor,
                     is_method: shape.is_method,
                 })

@@ -362,7 +362,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// That keeps `(x: string) => void` assignable to `(x?: string) => void`
     /// and vice versa, matching the solver unit tests and tsc's behavior for
     /// regular function signature relation checks.
-    pub(crate) fn effective_param_type(&self, param: &ParamInfo) -> TypeId {
+    pub(crate) const fn effective_param_type(&self, param: &ParamInfo) -> TypeId {
         param.type_id
     }
 
@@ -530,7 +530,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let return_type = instantiate_type(self.interner, shape.return_type, substitution);
         let type_predicate = shape.type_predicate.as_ref().map(|pred| TypePredicate {
             asserts: pred.asserts,
-            target: pred.target.clone(),
+            target: pred.target,
             type_id: pred
                 .type_id
                 .map(|ty| instantiate_type(self.interner, ty, substitution)),
@@ -663,7 +663,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return_type: instantiate_type(self.interner, source.return_type, &rename_substitution),
             type_predicate: source.type_predicate.as_ref().map(|pred| TypePredicate {
                 asserts: pred.asserts,
-                target: pred.target.clone(),
+                target: pred.target,
                 type_id: pred
                     .type_id
                     .map(|ty| instantiate_type(self.interner, ty, &rename_substitution)),
@@ -1370,7 +1370,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     let evaluated = self.evaluate_type(p.type_id);
                     if evaluated != p.type_id {
-                        let mut ep = p.clone();
+                        let mut ep = *p;
                         ep.type_id = evaluated;
                         return unpack_tuple_rest_parameter(self.interner, &ep);
                     }
@@ -1390,7 +1390,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     let evaluated = self.evaluate_type(p.type_id);
                     if evaluated != p.type_id {
-                        let mut ep = p.clone();
+                        let mut ep = *p;
                         ep.type_id = evaluated;
                         return unpack_tuple_rest_parameter(self.interner, &ep);
                     }
@@ -1450,7 +1450,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let member_param = ParamInfo {
                         type_id: *member_type_id,
                         rest: true,
-                        ..last_target_param.clone()
+                        ..*last_target_param
                     };
                     let member_unpacked = unpack_tuple_rest_parameter(self.interner, &member_param);
 
@@ -1743,8 +1743,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let target_shape = ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties: target_props,
-                string_index: t_callable.string_index.clone(),
-                number_index: t_callable.number_index.clone(),
+                string_index: t_callable.string_index,
+                number_index: t_callable.number_index,
                 symbol: t_callable.symbol,
             };
             if !self
@@ -1858,7 +1858,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             params: instantiated_params,
             this_type: s_sig.this_type,
             return_type: instantiated_return,
-            type_predicate: s_sig.type_predicate.clone(),
+            type_predicate: s_sig.type_predicate,
             is_method: s_sig.is_method,
         };
 
@@ -1964,15 +1964,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_shape = ObjectShape {
             flags: ObjectFlags::empty(),
             properties: source_props,
-            string_index: source.string_index.clone(),
-            number_index: source.number_index.clone(),
+            string_index: source.string_index,
+            number_index: source.number_index,
             symbol: source.symbol,
         };
         let target_shape = ObjectShape {
             flags: ObjectFlags::empty(),
             properties: target_props,
-            string_index: target.string_index.clone(),
-            number_index: target.number_index.clone(),
+            string_index: target.string_index,
+            number_index: target.number_index,
             symbol: target.symbol,
         };
         if !self
@@ -2013,7 +2013,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             params: source.params.clone(),
             this_type: source.this_type,
             return_type: source.return_type,
-            type_predicate: source.type_predicate.clone(),
+            type_predicate: source.type_predicate,
             is_constructor,
             is_method: source.is_method,
         };
@@ -2022,7 +2022,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             params: target.params.clone(),
             this_type: target.this_type,
             return_type: target.return_type,
-            type_predicate: target.type_predicate.clone(),
+            type_predicate: target.type_predicate,
             is_constructor,
             is_method: target.is_method,
         };
@@ -2076,7 +2076,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             params: source.params.clone(),
             this_type: source.this_type,
             return_type: source.return_type,
-            type_predicate: source.type_predicate.clone(),
+            type_predicate: source.type_predicate,
             is_constructor: target.is_constructor,
             is_method: source.is_method,
         };
@@ -2094,7 +2094,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             params: target.params.clone(),
             this_type: target.this_type,
             return_type: target.return_type,
-            type_predicate: target.type_predicate.clone(),
+            type_predicate: target.type_predicate,
             is_constructor: source.is_constructor,
             is_method: target.is_method,
         };
