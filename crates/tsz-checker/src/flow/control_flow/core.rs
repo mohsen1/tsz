@@ -523,6 +523,14 @@ impl<'a> FlowAnalyzer<'a> {
         initial_type: TypeId,
         flow_node: FlowNodeId,
     ) -> TypeId {
+        // Short-circuit for error types: flow narrowing must not transform ERROR
+        // into a concrete type. When the declared/initial type is ERROR (e.g.,
+        // property access on an unresolved type), condition narrowing handlers
+        // like `== null` can produce `null | undefined` regardless of the input
+        // type, turning a suppressed error into a false positive diagnostic.
+        if initial_type == TypeId::ERROR {
+            return initial_type;
+        }
         let narrowed = self.get_flow_type_uncorrelated(reference, initial_type, flow_node);
         self.apply_correlated_destructured_narrowing(reference, initial_type, narrowed, flow_node)
     }
