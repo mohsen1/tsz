@@ -14,7 +14,7 @@ use tsz_common::position::Position;
 use tsz_parser::parser::node::{CallExprData, NodeAccess};
 use tsz_parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, TypeId, TypePredicateTarget, visitor};
+use tsz_solver::{FunctionShape, TypeData, TypeId, TypePredicateTarget, visitor};
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -864,6 +864,43 @@ impl<'a> SignatureHelpProvider<'a> {
         let has_rest = shape.params.iter().any(|p| p.rest);
 
         for param in &shape.params {
+            // When a rest parameter has a tuple type, expand the tuple elements
+            // as individual parameters. e.g. `...args: [...names: string[], allCaps: boolean]`
+            // becomes `...names: string[], allCaps: boolean`.
+            if param.rest {
+                if let Some(TypeData::Tuple(list_id)) = checker.ctx.types.lookup(param.type_id) {
+                    let elements = checker.ctx.types.tuple_list(list_id);
+                    let param_base_name = param.name.map_or_else(
+                        || "arg".to_string(),
+                        |atom| checker.ctx.types.resolve_atom(atom),
+                    );
+                    for (i, elem) in elements.iter().enumerate() {
+                        let elem_name = elem.name.map_or_else(
+                            || format!("{}_{}", param_base_name, i),
+                            |atom| checker.ctx.types.resolve_atom(atom),
+                        );
+                        let type_str = if elem.type_id == TypeId::UNKNOWN {
+                            "any".to_string()
+                        } else {
+                            checker.format_type(elem.type_id)
+                        };
+                        let optional = if elem.optional { "?" } else { "" };
+                        let rest = if elem.rest { "..." } else { "" };
+
+                        let param_label = format!("{rest}{elem_name}{optional}: {type_str}");
+                        parameters.push(ParameterInformation {
+                            name: elem_name.clone(),
+                            label: param_label.clone(),
+                            documentation: None,
+                            is_optional: elem.optional,
+                            is_rest: elem.rest,
+                        });
+                        param_labels.push(param_label);
+                    }
+                    continue;
+                }
+            }
+
             let name = param.name.map_or_else(
                 || "arg".to_string(),
                 |atom| checker.ctx.types.resolve_atom(atom),
