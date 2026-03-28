@@ -785,8 +785,7 @@ impl<'a> TypeFormatter<'a> {
 
         // tsc displays optional object properties WITH `| undefined`:
         // `n?: number | undefined`. If the stored type doesn't already contain
-        // undefined, we append it. For function params, tsc strips `| undefined`
-        // (handled in format_params).
+        // undefined, we append it.
         let type_str: String = if prop.optional {
             let formatted = self.format(prop.type_id).into_owned();
             if self.preserve_optional_property_surface_syntax {
@@ -817,9 +816,17 @@ impl<'a> TypeFormatter<'a> {
         false
     }
 
+    /// Check if a type already encompasses `undefined` (any, unknown, void).
+    /// These types should not get `| undefined` appended since it's redundant.
+    fn type_encompasses_undefined(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || type_id == TypeId::VOID
+            || type_id == TypeId::UNDEFINED
+    }
+
     /// Format a type while stripping `undefined` from it.
-    /// Used for optional function parameters where the `?` already implies optionality,
-    /// so displaying `| undefined` is redundant.
+    /// Used for optional tuple elements where the `?` already implies optionality.
     fn format_stripping_undefined(&mut self, type_id: TypeId) -> String {
         if type_id == TypeId::UNDEFINED {
             // Edge case: type is just `undefined` — display it as-is since
@@ -884,7 +891,24 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            let type_str: String = self.format(p.type_id).into_owned();
+            let type_str: String = if p.optional && !p.rest {
+                // tsc displays optional params WITH `| undefined`:
+                // `(x?: string | undefined) => void`
+                // But NOT for types that already encompass undefined
+                // (any, unknown, void) or never (which becomes just `undefined`).
+                let formatted = self.format(p.type_id).into_owned();
+                if p.type_id == TypeId::NEVER {
+                    "undefined".to_string()
+                } else if self.type_encompasses_undefined(p.type_id) {
+                    formatted
+                } else if !self.type_contains_undefined(p.type_id) {
+                    format!("{formatted} | undefined")
+                } else {
+                    formatted
+                }
+            } else {
+                self.format(p.type_id).into_owned()
+            };
             rendered.push(format!("{rest}{name}{optional}: {type_str}"));
         }
 
@@ -3520,8 +3544,8 @@ mod tests {
 
     #[test]
     fn optional_param_shows_undefined() {
-        // tsc displays optional params WITHOUT `| undefined` in diagnostic error messages
-        // The `?` suffix already implies optionality.
+        // tsc displays optional params WITH `| undefined` in diagnostic error messages:
+        // `(a?: string | undefined) => any`
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -3541,15 +3565,15 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string) => any",
-            "Optional param omits '| undefined' — ? already implies optionality"
+            result, "(a?: string | undefined) => any",
+            "Optional param shows '| undefined' — matches tsc display"
         );
     }
 
     #[test]
     fn optional_param_with_union_undefined_keeps_it() {
-        // When the type is internally `string | undefined`, the formatter strips
-        // `undefined` for optional params since `?` already implies optionality.
+        // When the type is internally `string | undefined`, the formatter keeps
+        // `undefined` for optional params — matches tsc behavior.
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
