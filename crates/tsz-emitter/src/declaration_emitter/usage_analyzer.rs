@@ -399,8 +399,22 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(ident) = self.arena.get_identifier(name_node) else {
             return;
         };
-        let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) else {
-            return;
+        // Look up the symbol by name: first in file_locals, then in scope tables
+        // (needed for import aliases inside namespaces).
+        let sym_id = if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
+            sym_id
+        } else {
+            let mut found = None;
+            for scope in &self.binder.scopes {
+                if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
+                    found = Some(sym_id);
+                    break;
+                }
+            }
+            let Some(sym_id) = found else {
+                return;
+            };
+            sym_id
         };
         if !seen_symbols.insert(sym_id) {
             return;
@@ -424,6 +438,9 @@ impl<'a> UsageAnalyzer<'a> {
                 continue;
             };
             if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                // Mark the import alias symbol itself as used so it survives
+                // elision in the .d.ts output.
+                self.mark_symbol_used(sym_id, UsageKind::TYPE | UsageKind::VALUE);
                 self.analyze_import_equals_declaration(decl_idx);
                 if let Some(import) = self.arena.get_import_decl(decl_node)
                     && import.module_specifier.is_some()
@@ -840,6 +857,25 @@ impl<'a> UsageAnalyzer<'a> {
             self.analyze_local_import_equals_dependency(decl.initializer);
             self.in_value_pos = old;
         }
+
+        // When there is no explicit type annotation, the declaration emitter
+        // may use the initializer's referenced name as the emitted type (e.g.
+        // `var d: X` for `var d = new X()`, or `typeof b` for `var b2 = b`).
+        // We must mark import alias dependencies from the initializer so that
+        // non-exported `import =` aliases are preserved in the .d.ts.
+        if decl.type_annotation.is_none() && decl.initializer.is_some() {
+            // Unwrap `new X()` / `X()` to get the callee, or use the
+            // initializer directly if it's a plain identifier/expression.
+            let callee = self.unwrap_export_default_expression(decl.initializer);
+            self.analyze_entity_name(callee);
+            self.analyze_local_import_equals_dependency(callee);
+            // If the initializer itself was different (i.e. it IS a plain
+            // identifier, not a new/call), also track it directly.
+            if callee != decl.initializer {
+                self.analyze_entity_name(decl.initializer);
+                self.analyze_local_import_equals_dependency(decl.initializer);
+            }
+        }
     }
 
     /// Analyze heritage clauses (extends/implements).
@@ -1040,6 +1076,9 @@ impl<'a> UsageAnalyzer<'a> {
                     // Set in_value_pos = true for typeof expressions
                     self.in_value_pos = true;
                     self.analyze_entity_name(type_query.expr_name);
+                    // Also track import alias dependencies so that non-exported
+                    // `import =` aliases referenced via `typeof` are preserved.
+                    self.analyze_local_import_equals_dependency(type_query.expr_name);
                     self.in_value_pos = false; // Restore after
 
                     // Walk type arguments (e.g., typeof X<A, B>)
