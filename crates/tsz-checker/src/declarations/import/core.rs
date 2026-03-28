@@ -2152,7 +2152,7 @@ impl<'a> CheckerState<'a> {
         // Special case: function + class default exports emit TS2323 + TS2813 + TS2814 instead.
         if export_default_indices.len() > 1 {
             // Classify each default export
-            let mut _has_interface = false;
+            let mut has_interface = false;
             let mut has_class = false;
             let mut has_function = false;
             let mut value_count = 0;
@@ -2169,7 +2169,7 @@ impl<'a> CheckerState<'a> {
 
                 match wrapped_kind {
                     Some(k) if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                        _has_interface = true;
+                        has_interface = true;
                     }
                     Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         has_function = true;
@@ -2182,12 +2182,12 @@ impl<'a> CheckerState<'a> {
                             .and_then(|n| self.ctx.arena.get_function(n))
                             .map(|f| self.node_text(f.name).unwrap_or_default());
                         match (&function_name, name) {
-                            (None, Some(n)) => {
+                            (None, Some(n)) if !n.is_empty() => {
                                 function_name = Some(n);
                                 value_count += 1;
                             }
-                            (Some(existing), Some(n)) if *existing == n => {
-                                // Same function name: overload, don't count again
+                            (Some(existing), Some(n)) if !n.is_empty() && *existing == n => {
+                                // Same non-empty function name: overload, don't count again
                             }
                             _ => {
                                 all_same_function = false;
@@ -2209,7 +2209,7 @@ impl<'a> CheckerState<'a> {
 
             // Emit TS2528 for any multiple default exports that are not
             // function overloads. tsc only allows multiple export default
-            let is_conflict = !all_same_function || value_count > 1;
+            let is_conflict = !all_same_function || value_count > 1 || (has_interface && has_function);
             if is_conflict {
                 if has_function && has_class {
                     // When function + class both export as default, tsc emits
@@ -2323,6 +2323,18 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                             );
                         }
+                    }
+                } else if has_interface && has_function {
+                    // Interface + function default exports: TS2323 for all declarations.
+                    // tsc treats this as a conflict where both the type (interface)
+                    // and value (function) declarations compete for the "default" slot.
+                    for &export_idx in &export_default_indices {
+                        let anchor = self.get_default_export_anchor(export_idx);
+                        self.error_at_node(
+                            anchor,
+                            "Cannot redeclare exported variable 'default'.",
+                            diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                        );
                     }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
