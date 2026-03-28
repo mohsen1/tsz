@@ -136,9 +136,8 @@ impl<'a> CheckerState<'a> {
                         access.name_or_argument,
                         index_type,
                     ) {
-                        use tsz_solver::operations::property::{
-                            PropertyAccessResult, is_readonly_tuple_fixed_element,
-                        };
+                        use crate::query_boundaries::common::PropertyAccessResult;
+                        use tsz_solver::operations::property::is_readonly_tuple_fixed_element;
                         let from_idx_sig = if name == "index signature" {
                             true
                         } else if is_readonly_tuple_fixed_element(
@@ -327,9 +326,8 @@ impl<'a> CheckerState<'a> {
                         // Exception: readonly tuple fixed elements (e.g., v[0] on
                         // `readonly [number, number, ...number[]]`) are named properties
                         // even though resolve_array_property reports from_index_signature.
-                        use tsz_solver::operations::property::{
-                            PropertyAccessResult, is_readonly_tuple_fixed_element,
-                        };
+                        use crate::query_boundaries::common::PropertyAccessResult;
+                        use tsz_solver::operations::property::is_readonly_tuple_fixed_element;
                         let from_idx_sig = if name == "index signature" {
                             true
                         } else if is_readonly_tuple_fixed_element(
@@ -513,7 +511,7 @@ impl<'a> CheckerState<'a> {
         // mapped type's homomorphic source. The solver's property_is_readonly
         // can only detect explicit +readonly modifiers, but homomorphic mapped
         // types inherit readonly from source properties.
-        if tsz_solver::is_mapped_type(self.ctx.types, readonly_check_type)
+        if crate::query_boundaries::common::is_mapped_type(self.ctx.types, readonly_check_type)
             && self.is_mapped_type_property_readonly(readonly_check_type, &prop_name)
         {
             if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
@@ -586,10 +584,11 @@ impl<'a> CheckerState<'a> {
     /// - The index is `K extends keyof T` — a type parameter constrained to keyof
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
     fn is_generic_indexed_write(&mut self, object_type: TypeId, index_type: TypeId) -> bool {
-        use tsz_solver::is_type_parameter;
-
         // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
-        if !is_type_parameter(self.ctx.types, object_type) {
+        if !crate::query_boundaries::state::checking::is_type_parameter(
+            self.ctx.types,
+            object_type,
+        ) {
             return false;
         }
 
@@ -599,7 +598,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(key_source) =
-            tsz_solver::type_queries::get_keyof_type(self.ctx.types, index_type)
+            crate::query_boundaries::state::checking::keyof_target(self.ctx.types, index_type)
             && key_source != object_type
         {
             let evaluated_index = self.evaluate_type_with_env(index_type);
@@ -618,9 +617,8 @@ impl<'a> CheckerState<'a> {
     /// Application/Lazy wrappers (e.g., `Record<string, any>` → `{ [key: string]: any }`).
     fn constraint_has_index_signature(&mut self, type_param: TypeId, index_type: TypeId) -> bool {
         use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
-        use tsz_solver::type_param_info;
 
-        let Some(info) = type_param_info(self.ctx.types, type_param) else {
+        let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, type_param) else {
             return false;
         };
         let Some(constraint) = info.constraint else {
@@ -658,7 +656,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's a union where ALL members are broad index types
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             return !members.is_empty() && members.iter().all(|&m| self.is_broad_index_type(m));
         }
