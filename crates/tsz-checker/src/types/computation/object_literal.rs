@@ -158,6 +158,26 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::PropertyInfo;
         let mut contextual_type = request.contextual_type;
 
+        // Strip nullish types from contextual type for object literals.
+        // When a parameter is optional (e.g., `options?: Opts`), the contextual type
+        // includes `undefined`. Since an object literal can never be `undefined` or
+        // `null`, using nullish types as contextual type causes incorrect `this` typing
+        // (e.g., `this` becomes `undefined` inside method bodies) and breaks ThisType
+        // marker extraction from intersection types like `Opts & ThisType<T>`.
+        if let Some(ctx) = contextual_type {
+            if ctx == TypeId::UNDEFINED || ctx == TypeId::NULL || ctx == TypeId::VOID {
+                contextual_type = None;
+            } else {
+                let (non_nullish, _) =
+                    tsz_solver::split_nullish_type(self.ctx.types.as_type_database(), ctx);
+                if let Some(non_nullish) = non_nullish {
+                    if non_nullish != ctx {
+                        contextual_type = Some(non_nullish);
+                    }
+                }
+            }
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
