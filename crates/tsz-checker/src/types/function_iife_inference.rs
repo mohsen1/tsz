@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
                                             self.ctx
                                                 .types
                                                 .factory()
-                                                .union(vec![nested_elem.type_id, TypeId::UNDEFINED])
+                                                .union2(nested_elem.type_id, TypeId::UNDEFINED)
                                         } else {
                                             nested_elem.type_id
                                         });
@@ -57,7 +57,7 @@ impl<'a> CheckerState<'a> {
                                 self.ctx
                                     .types
                                     .factory()
-                                    .union(vec![elem.type_id, TypeId::UNDEFINED])
+                                    .union2(elem.type_id, TypeId::UNDEFINED)
                             } else {
                                 elem.type_id
                             });

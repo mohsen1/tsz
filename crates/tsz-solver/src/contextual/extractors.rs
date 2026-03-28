@@ -99,7 +99,7 @@ fn add_undefined_if_missing(db: &dyn TypeDatabase, ty: TypeId) -> TypeId {
     if crate::narrowing::type_contains_undefined(db, ty) {
         ty
     } else {
-        db.union(vec![ty, TypeId::UNDEFINED])
+        db.union2(ty, TypeId::UNDEFINED)
     }
 }
 

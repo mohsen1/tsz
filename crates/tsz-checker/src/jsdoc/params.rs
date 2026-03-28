@@ -940,7 +940,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .types
                     .factory()
-                    .union(vec![base_type, tsz_solver::TypeId::UNDEFINED]),
+                    .union2(base_type, tsz_solver::TypeId::UNDEFINED),
             )
         } else {
             Some(base_type)
@@ -1090,7 +1090,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .types
                         .factory()
-                        .union(vec![prop_type_id, tsz_solver::TypeId::UNDEFINED]);
+                        .union2(prop_type_id, tsz_solver::TypeId::UNDEFINED);
                 }
                 let name_atom = self.ctx.types.intern_string(prop_name);
                 properties.push(tsz_solver::PropertyInfo {

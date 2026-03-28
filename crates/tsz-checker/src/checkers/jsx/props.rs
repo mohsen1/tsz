@@ -184,12 +184,7 @@ impl<'a> CheckerState<'a> {
                 vec![tsz_solver::ParamInfo::required(param_name, instance_type)],
                 TypeId::ANY,
             ));
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .union(vec![TypeId::STRING, callback]),
-        )
+        Some(self.ctx.types.factory().union2(TypeId::STRING, callback))
     }
 
     fn get_jsx_intrinsic_class_attribute_from_heritage(

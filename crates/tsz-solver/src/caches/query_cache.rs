@@ -541,7 +541,7 @@ impl<'a> QueryCache<'a> {
                                 .entry(prop.name)
                                 .or_insert((prop.type_id, prop.optional, 0));
                         if entry.0 != prop.type_id {
-                            entry.0 = self.interner.union(vec![entry.0, prop.type_id]);
+                            entry.0 = self.interner.union2(entry.0, prop.type_id);
                         }
                         entry.1 = entry.1 && prop.optional;
                         entry.2 += 1;

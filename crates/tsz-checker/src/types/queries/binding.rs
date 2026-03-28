@@ -105,11 +105,7 @@ impl<'a> CheckerState<'a> {
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                             element_type = init_type;
                         } else if !self.is_assignable_to(init_type, element_type) {
-                            element_type = self
-                                .ctx
-                                .types
-                                .factory()
-                                .union(vec![element_type, init_type]);
+                            element_type = self.ctx.types.factory().union2(element_type, init_type);
                         }
                     } else if element_type == TypeId::ANY
                         && let Some(name_node) = self.ctx.arena.get(element_data.name)
@@ -184,11 +180,7 @@ impl<'a> CheckerState<'a> {
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                             element_type = init_type;
                         } else if !self.is_assignable_to(init_type, element_type) {
-                            element_type = self
-                                .ctx
-                                .types
-                                .factory()
-                                .union(vec![element_type, init_type]);
+                            element_type = self.ctx.types.factory().union2(element_type, init_type);
                         }
                     } else if element_type == TypeId::ANY
                         && let Some(name_node) = self.ctx.arena.get(element_data.name)

@@ -248,7 +248,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(inner_type) = self.resolve_jsdoc_type_str(inner)
             {
                 let factory = self.ctx.types.factory();
-                return Some(factory.union(vec![inner_type, TypeId::NULL]));
+                return Some(factory.union2(inner_type, TypeId::NULL));
             }
         }
         if let Some(inner) = type_expr.strip_prefix('!') {
@@ -261,12 +261,12 @@ impl<'a> CheckerState<'a> {
             if let Some(inner) = type_expr.strip_suffix('?') {
                 if let Some(inner_type) = self.resolve_jsdoc_type_str(inner) {
                     let factory = self.ctx.types.factory();
-                    return Some(factory.union(vec![inner_type, TypeId::NULL]));
+                    return Some(factory.union2(inner_type, TypeId::NULL));
                 }
             } else if let Some(inner) = type_expr.strip_suffix('=') {
                 if let Some(inner_type) = self.resolve_jsdoc_type_str(inner) {
                     let factory = self.ctx.types.factory();
-                    return Some(factory.union(vec![inner_type, TypeId::UNDEFINED]));
+                    return Some(factory.union2(inner_type, TypeId::UNDEFINED));
                 }
             } else if let Some(inner) = type_expr.strip_suffix('!') {
                 return self.resolve_jsdoc_type_str(inner);

@@ -776,16 +776,14 @@ impl<'a> CheckerState<'a> {
                         let merged_type = if prop.type_id == member_prop.type_id {
                             prop.type_id
                         } else {
-                            self.ctx
-                                .types
-                                .union(vec![prop.type_id, member_prop.type_id])
+                            self.ctx.types.union2(prop.type_id, member_prop.type_id)
                         };
                         let merged_write_type = if prop.write_type == member_prop.write_type {
                             prop.write_type
                         } else {
                             self.ctx
                                 .types
-                                .union(vec![prop.write_type, member_prop.write_type])
+                                .union2(prop.write_type, member_prop.write_type)
                         };
                         prop.type_id = merged_type;
                         prop.write_type = merged_write_type;
@@ -799,10 +797,8 @@ impl<'a> CheckerState<'a> {
                     common_string_index = match (common_string_index.take(), member_string_index) {
                         (Some(mut left), Some(right)) => {
                             if left.value_type != right.value_type {
-                                left.value_type = self
-                                    .ctx
-                                    .types
-                                    .union(vec![left.value_type, right.value_type]);
+                                left.value_type =
+                                    self.ctx.types.union2(left.value_type, right.value_type);
                             }
                             left.readonly &= right.readonly;
                             Some(left)
@@ -812,10 +808,8 @@ impl<'a> CheckerState<'a> {
                     common_number_index = match (common_number_index.take(), member_number_index) {
                         (Some(mut left), Some(right)) => {
                             if left.value_type != right.value_type {
-                                left.value_type = self
-                                    .ctx
-                                    .types
-                                    .union(vec![left.value_type, right.value_type]);
+                                left.value_type =
+                                    self.ctx.types.union2(left.value_type, right.value_type);
                             }
                             left.readonly &= right.readonly;
                             Some(left)

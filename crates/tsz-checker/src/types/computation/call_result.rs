@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .types
                 .factory()
-                .union(vec![return_type, TypeId::UNDEFINED])
+                .union2(return_type, TypeId::UNDEFINED)
         } else {
             return_type
         }
@@ -214,7 +214,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .types
                     .factory()
-                    .union(vec![target_param.type_id, TypeId::UNDEFINED])
+                    .union2(target_param.type_id, TypeId::UNDEFINED)
             } else {
                 target_param.type_id
             };

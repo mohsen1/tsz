@@ -959,7 +959,7 @@ impl<'a> CheckerState<'a> {
                     is_abstract: false,
                 });
                 let callable_or_undefined = if method.question_token {
-                    factory.union(vec![callable_type, TypeId::UNDEFINED])
+                    factory.union2(callable_type, TypeId::UNDEFINED)
                 } else {
                     callable_type
                 };
@@ -1750,7 +1750,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .types
                     .factory()
-                    .union(vec![existing.value_type, incoming.value_type]);
+                    .union2(existing.value_type, incoming.value_type);
             }
             existing.readonly &= incoming.readonly;
         } else {

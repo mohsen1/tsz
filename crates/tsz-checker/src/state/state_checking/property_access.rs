@@ -527,7 +527,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .types
                     .factory()
-                    .union(vec![property_type, TypeId::UNDEFINED]),
+                    .union2(property_type, TypeId::UNDEFINED),
                 Some(tsz_solver::MappedModifier::Remove) | None => property_type,
             };
             property_types.push(property_type);

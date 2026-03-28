@@ -564,7 +564,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         combined.return_type = self
                             .interner
                             .factory()
-                            .union(vec![combined.return_type, other_sig.return_type]);
+                            .union2(combined.return_type, other_sig.return_type);
                     }
                 }
             }

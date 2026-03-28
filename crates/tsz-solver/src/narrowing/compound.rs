@@ -341,7 +341,7 @@ impl<'a> NarrowingContext<'a> {
 
         if source_type == TypeId::UNKNOWN {
             if keep_nullish {
-                return self.db.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+                return self.db.union2(TypeId::NULL, TypeId::UNDEFINED);
             }
             let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
             return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);

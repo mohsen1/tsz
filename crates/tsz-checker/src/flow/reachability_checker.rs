@@ -276,7 +276,7 @@ impl<'a> CheckerState<'a> {
         if left_non_nullish == TypeId::NEVER {
             return Some(right_type);
         }
-        Some(self.ctx.types.union(vec![left_non_nullish, right_type]))
+        Some(self.ctx.types.union2(left_non_nullish, right_type))
     }
 
     fn normalize_enum_union_members(&self, type_id: TypeId) -> TypeId {

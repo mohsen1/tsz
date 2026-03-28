@@ -181,7 +181,7 @@ impl<'a> CheckerState<'a> {
             // Add this-properties from prototype methods (with | undefined)
             for (name, mut prop) in this_props {
                 let factory = self.ctx.types.factory();
-                let widened_prop_type = factory.union(vec![prop.type_id, TypeId::UNDEFINED]);
+                let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
                 if let Some(existing) = properties.get_mut(&name) {
                     if existing.write_type == TypeId::ANY {
                         existing.type_id = factory.union2(existing.type_id, widened_prop_type);

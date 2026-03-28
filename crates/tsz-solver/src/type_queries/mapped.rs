@@ -38,7 +38,7 @@ fn add_mapped_property_optional_undefined(
     value_type: TypeId,
 ) -> TypeId {
     if mapped.optional_modifier == Some(MappedModifier::Add) {
-        db.union(vec![value_type, TypeId::UNDEFINED])
+        db.union2(value_type, TypeId::UNDEFINED)
     } else {
         value_type
     }

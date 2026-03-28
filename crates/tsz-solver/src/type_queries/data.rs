@@ -860,7 +860,7 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
             elem.type_id
         };
         if elem.optional {
-            ty = db.union(vec![ty, TypeId::UNDEFINED]);
+            ty = db.union2(ty, TypeId::UNDEFINED);
         }
         members.push(ty);
     }
@@ -2616,14 +2616,14 @@ mod tests {
         assert!(!super::union_has_direct_type_parameter(&interner, tp));
 
         // Union containing a type parameter
-        let union_with_tp = interner.union(vec![TypeId::STRING, tp]);
+        let union_with_tp = interner.union2(TypeId::STRING, tp);
         assert!(super::union_has_direct_type_parameter(
             &interner,
             union_with_tp
         ));
 
         // Union without type parameters
-        let plain_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let plain_union = interner.union2(TypeId::STRING, TypeId::NUMBER);
         assert!(!super::union_has_direct_type_parameter(
             &interner,
             plain_union
@@ -2801,7 +2801,7 @@ mod tests {
         assert!(super::is_constructor_like_type(&interner, callable_ctor));
 
         // Union containing a constructor — should be constructor-like
-        let union_with_ctor = interner.union(vec![TypeId::STRING, fn_ctor]);
+        let union_with_ctor = interner.union2(TypeId::STRING, fn_ctor);
         assert!(super::is_constructor_like_type(&interner, union_with_ctor));
 
         // Plain type — not constructor-like
@@ -3230,7 +3230,7 @@ mod tests {
     fn deeply_any_for_union_of_any() {
         let interner = TypeInterner::new();
         // Manually create a union with all-any members
-        let union = interner.union(vec![TypeId::ANY, TypeId::ANY]);
+        let union = interner.union2(TypeId::ANY, TypeId::ANY);
         assert!(super::is_type_deeply_any(&interner, union));
     }
 
@@ -3238,7 +3238,7 @@ mod tests {
     #[ignore = "Pre-existing failure from recent merges"]
     fn deeply_any_for_union_with_non_any() {
         let interner = TypeInterner::new();
-        let union = interner.union(vec![TypeId::ANY, TypeId::STRING]);
+        let union = interner.union2(TypeId::ANY, TypeId::STRING);
         assert!(!super::is_type_deeply_any(&interner, union));
     }
 
@@ -3280,7 +3280,7 @@ mod tests {
         let interner = TypeInterner::new();
         let base = interner.lazy(crate::def::DefId(1));
         let app = interner.application(base, vec![TypeId::STRING]);
-        let union = interner.union(vec![TypeId::NUMBER, app]);
+        let union = interner.union2(TypeId::NUMBER, app);
         assert!(super::contains_application_in_structure(&interner, union));
     }
 
@@ -3310,7 +3310,7 @@ mod tests {
     #[test]
     fn contains_application_union_without_app() {
         let interner = TypeInterner::new();
-        let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let union = interner.union2(TypeId::STRING, TypeId::NUMBER);
         assert!(!super::contains_application_in_structure(&interner, union));
     }
 }

@@ -158,7 +158,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .types
                     .factory()
-                    .union(vec![TypeId::NUMBER, TypeId::STRING]),
+                    .union2(TypeId::NUMBER, TypeId::STRING),
             ),
         }
     }

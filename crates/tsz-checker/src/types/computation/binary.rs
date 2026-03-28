@@ -1134,7 +1134,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     let result = match non_nullish {
                         None => right_type,
-                        Some(non_nullish) => factory.union(vec![non_nullish, right_type]),
+                        Some(non_nullish) => factory.union2(non_nullish, right_type),
                     };
                     type_stack.push(result);
                 }
@@ -1854,7 +1854,7 @@ impl<'a> CheckerState<'a> {
                                 true
                             } else {
                                 let number_or_bigint =
-                                    self.ctx.types.union(vec![TypeId::NUMBER, TypeId::BIGINT]);
+                                    self.ctx.types.union2(TypeId::NUMBER, TypeId::BIGINT);
                                 let left_to_num = self.is_assignable_to(cmp_left, number_or_bigint);
                                 let right_to_num =
                                     self.is_assignable_to(cmp_right, number_or_bigint);

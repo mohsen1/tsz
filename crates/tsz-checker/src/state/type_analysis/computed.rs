@@ -1315,7 +1315,7 @@ impl<'a> CheckerState<'a> {
                             && type_id != TypeId::UNKNOWN
                             && type_id != TypeId::ERROR
                         {
-                            type_id = factory.union(vec![type_id, TypeId::UNDEFINED]);
+                            type_id = factory.union2(type_id, TypeId::UNDEFINED);
                         }
                         return (type_id, Vec::new());
                     }

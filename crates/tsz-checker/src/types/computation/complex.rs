@@ -776,7 +776,7 @@ impl<'a> CheckerState<'a> {
                                                 .ctx
                                                 .types
                                                 .factory()
-                                                .union(vec![inner, promise_like_inner]);
+                                                .union2(inner, promise_like_inner);
                                             first_param.type_id =
                                                 self.ctx.types.function(resolve_shape);
                                             Some(self.ctx.types.function(exec_shape))
