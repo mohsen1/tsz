@@ -35,6 +35,10 @@ impl<'a> CheckerState<'a> {
         if sf.comments.is_empty() {
             return None;
         }
+        // JSDoc requires multi-line comments (/** ... */).
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
 
         let source_text = sf.text.to_string();
         let comments = sf.comments.clone();
@@ -55,6 +59,10 @@ impl<'a> CheckerState<'a> {
 
         let sf = self.source_file_data_for_node(idx)?;
         if sf.comments.is_empty() {
+            return None;
+        }
+        // JSDoc requires multi-line comments (/** ... */).
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
             return None;
         }
 
@@ -230,6 +238,10 @@ impl<'a> CheckerState<'a> {
         if sf.comments.is_empty() {
             return None;
         }
+        // JSDoc requires multi-line comments (/** ... */).
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
         let node = self.ctx.arena.get(idx)?;
@@ -403,6 +415,13 @@ impl<'a> CheckerState<'a> {
         if sf.comments.is_empty() {
             return None;
         }
+        // Fast path: JSDoc annotations require multi-line comments (/** ... */).
+        // If the file has only single-line comments (//), skip the expensive
+        // source text copy. This eliminates ~47GB of memmove on expression-heavy
+        // files with only // comments (e.g., optional-chain benchmarks).
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
         let jsdoc = self.try_leading_jsdoc(
@@ -425,6 +444,10 @@ impl<'a> CheckerState<'a> {
         }
         let sf = self.source_file_data_for_node(idx)?;
         if sf.comments.is_empty() {
+            return None;
+        }
+        // Fast path: @satisfies requires multi-line comments (/** ... */).
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
             return None;
         }
         let source_text: String = sf.text.to_string();
