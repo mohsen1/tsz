@@ -760,6 +760,48 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     self.check_merged_class_interface_declaration_diagnostics(&decls_in_scope);
+
+                    // TS2428: check that merged class+interface declarations have
+                    // identical type parameters. The interface-only check above handles
+                    // interface+interface merges; this handles class+interface merges.
+                    let has_class = decls_in_scope.iter().any(|&idx| {
+                        self.ctx
+                            .arena
+                            .get(idx)
+                            .is_some_and(|n| self.ctx.arena.get_class(n).is_some())
+                    });
+                    let has_interface = decls_in_scope.iter().any(|&idx| {
+                        self.ctx
+                            .arena
+                            .get(idx)
+                            .is_some_and(|n| self.ctx.arena.get_interface(n).is_some())
+                    });
+                    if has_class && has_interface {
+                        let mismatch = decls_in_scope.as_slice().split_first().is_some_and(
+                            |(baseline, rest)| {
+                                rest.iter().any(|&decl_idx| {
+                                    !self.class_interface_type_parameters_are_merge_compatible(
+                                        *baseline, decl_idx,
+                                    )
+                                })
+                            },
+                        );
+                        if mismatch {
+                            let message = format_message(
+                                diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                                &[&symbol.escaped_name],
+                            );
+                            for &decl_idx in &decls_in_scope {
+                                let error_node =
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                                self.error_at_node(
+                                    error_node,
+                                    &message,
+                                    diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                                );
+                            }
+                        }
+                    }
                 }
             }
 
