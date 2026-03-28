@@ -497,19 +497,36 @@ pub(crate) fn declaration_substitution_for_main(path: &Path) -> Option<PathBuf> 
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)] // Fields deserialized from JSON; not all read directly
 pub(crate) struct PackageJson {
+    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub version: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub main: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub module: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub types: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub typings: Option<String>,
     #[serde(rename = "type")]
+    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub package_type: Option<String>,
     pub exports: Option<PackageExports>,
     pub imports: Option<FxHashMap<String, PackageExports>>,
     /// TypeScript typesVersions field for version-specific type definitions
     #[serde(rename = "typesVersions")]
     pub types_versions: Option<serde_json::Value>,
+}
+
+fn deserialize_optional_string_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(value.and_then(|value: serde_json::Value| value.as_str().map(ToOwned::to_owned)))
 }
 
 /// Package exports field can be a string, map, or conditional

@@ -378,6 +378,20 @@ fn test_package_json_deserialize_types_versions() {
     assert!(package_json.types_versions.is_some());
 }
 
+#[test]
+fn test_package_json_deserialize_invalid_types_field_is_ignored() {
+    let json = r#"{
+        "name": "csv-parse",
+        "main": "./lib",
+        "types": ["./lib/index.d.ts", "./lib/sync.d.ts"]
+    }"#;
+
+    let package_json: PackageJson = serde_json::from_str(json).unwrap();
+    assert_eq!(package_json.name, Some("csv-parse".to_string()));
+    assert_eq!(package_json.main, Some("./lib".to_string()));
+    assert_eq!(package_json.types, None);
+}
+
 // =========================================================================
 // TS2307 Diagnostic Emission Tests
 // =========================================================================
@@ -1480,6 +1494,45 @@ fn test_resolver_package_types_js_without_allow_js_is_ignored() {
     assert!(
         result.is_err(),
         "Expected package types .js to be ignored without allowJs"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_resolver_invalid_types_field_falls_back_to_main_declaration() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_invalid_types_field");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules").join("csv-parse").join("lib")).unwrap();
+
+    fs::write(
+        dir.join("app.ts"),
+        "type Parser = typeof import(\"csv-parse\");",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("csv-parse").join("lib").join("index.d.ts"),
+        "export function bar(): number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("csv-parse").join("package.json"),
+        r#"{
+            "name": "csv-parse",
+            "main": "./lib",
+            "types": ["./lib/index.d.ts", "./lib/sync.d.ts"]
+        }"#,
+    )
+    .unwrap();
+
+    let mut resolver = ModuleResolver::node_resolver();
+    let result = resolver.resolve("csv-parse", &dir.join("app.ts"), Span::new(0, 10));
+
+    let resolved = result.expect("invalid package.json types field should be ignored");
+    assert_eq!(
+        resolved.resolved_path,
+        dir.join("node_modules").join("csv-parse").join("lib").join("index.d.ts")
     );
 
     let _ = fs::remove_dir_all(&dir);

@@ -333,7 +333,7 @@ impl<'a> CheckerState<'a> {
         Some((literal.text.clone(), first_arg))
     }
 
-    fn get_import_type_resolution_mode_override(
+    pub(crate) fn get_import_type_resolution_mode_override(
         &self,
         call_idx: NodeIndex,
     ) -> Option<crate::context::ResolutionModeOverride> {

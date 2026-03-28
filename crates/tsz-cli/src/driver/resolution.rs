@@ -637,28 +637,18 @@ fn collect_import_type_specifiers(
     use tsz::module_resolver::ImportKind;
     use tsz::parser::syntax_kind_ext;
 
-    for i in 0..arena.nodes.len() {
-        let node = &arena.nodes[i];
-        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
-            continue;
-        }
-        let Some(type_ref) = arena.get_type_ref(node) else {
-            continue;
-        };
-        let Some(call_idx) = leftmost_import_type_call(arena, type_ref.type_name) else {
-            continue;
-        };
+    let mut push_import_type_specifier = |call_idx: NodeIndex| {
         let Some(call_node) = arena.get(call_idx) else {
-            continue;
+            return;
         };
         let Some(call) = arena.get_call_expr(call_node) else {
-            continue;
+            return;
         };
         let Some(args) = call.arguments.as_ref() else {
-            continue;
+            return;
         };
         let Some(&arg_idx) = args.nodes.first() else {
-            continue;
+            return;
         };
         if let Some(text) = arena.get_literal_text(arg_idx) {
             specifiers.push((
@@ -667,6 +657,31 @@ fn collect_import_type_specifiers(
                 ImportKind::EsmImport,
                 import_type_resolution_mode_override(arena, call),
             ));
+        }
+    };
+
+    for i in 0..arena.nodes.len() {
+        let node = &arena.nodes[i];
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = arena.get_type_ref(node) else {
+                    continue;
+                };
+                let Some(call_idx) = leftmost_import_type_call(arena, type_ref.type_name) else {
+                    continue;
+                };
+                push_import_type_specifier(call_idx);
+            }
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                let Some(type_query) = arena.get_type_query(node) else {
+                    continue;
+                };
+                let Some(call_idx) = leftmost_import_type_call(arena, type_query.expr_name) else {
+                    continue;
+                };
+                push_import_type_specifier(call_idx);
+            }
+            _ => {}
         }
     }
 }
