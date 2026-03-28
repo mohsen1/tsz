@@ -272,16 +272,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // For type parameters, check if their constraint is assignable to object.
-        // Unconstrained type params are NOT valid (could be primitive).
+        // Type parameters are always considered "valid" RHS for `in` — TSC
+        // emits TS2638 (may represent primitive) for them, not TS2322.
+        // This is handled by the type_may_represent_primitive check.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            return match crate::query_boundaries::state::checking::type_parameter_constraint(
-                self.ctx.types,
-                ty,
-            ) {
-                Some(c) => self.is_type_param_constraint_valid_for_in(c),
-                None => false,
-            };
+            return true;
         }
 
         if query::is_object_like_type(self.ctx.types, ty) {
@@ -301,14 +296,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    /// For type parameter constraints: ALL constituents must be valid for `in`.
-    /// `T extends object` is valid, but `T extends object | "hello"` is not
-    /// because T could be instantiated with `"hello"` (a primitive).
-    fn is_type_param_constraint_valid_for_in(&mut self, constraint: TypeId) -> bool {
-        // Just delegate to the main check — the constraint itself must be fully valid
-        self.is_valid_in_operator_rhs(constraint)
     }
 
     /// Check if an AST node is a nullish coalescing expression (`??`) or a
