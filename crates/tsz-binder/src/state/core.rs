@@ -458,10 +458,26 @@ impl BinderState {
     /// Enter a new persistent scope (in addition to legacy scope chain).
     /// This method is called when binding begins for a scope-creating node.
     pub(crate) fn enter_persistent_scope(&mut self, kind: ContainerKind, node: NodeIndex) {
+        self.enter_persistent_scope_with_capacity(kind, node, 0);
+    }
+
+    /// Enter a persistent scope with a pre-allocated symbol table capacity.
+    /// This avoids hash map resizing for scopes where the approximate member
+    /// count is known (e.g., class bodies).
+    pub(crate) fn enter_persistent_scope_with_capacity(
+        &mut self,
+        kind: ContainerKind,
+        node: NodeIndex,
+        capacity: usize,
+    ) {
         // Create new scope linked to current
         let new_scope_id =
             ScopeId(u32::try_from(self.scopes.len()).expect("persistent scope count exceeds u32"));
-        let new_scope = Scope::new(self.current_scope_id, kind, node);
+        let new_scope = if capacity > 0 {
+            Scope::with_capacity(self.current_scope_id, kind, node, capacity)
+        } else {
+            Scope::new(self.current_scope_id, kind, node)
+        };
         self.scopes.push(new_scope);
 
         // Map node to this scope
@@ -762,12 +778,34 @@ impl BinderState {
             .collect();
         let has_lib_symbols = !lib_symbols.is_empty();
 
+        // Estimate top-level declaration count for pre-sizing hash maps.
+        // This avoids repeated resizing for files with many declarations (e.g., 5000 const exports).
+        let estimated_decl_count = arena
+            .get(root)
+            .and_then(|node| arena.get_source_file(node))
+            .map_or(0, |sf| sf.statements.nodes.len());
+
+        // Pre-size node_symbols and node_flow maps based on estimated AST node count.
+        // A rough estimate: ~3-5 nodes per top-level statement.
+        if estimated_decl_count > 16 {
+            let estimated_nodes = estimated_decl_count * 4;
+            self.node_symbols.clear();
+            self.node_symbols.reserve(estimated_nodes);
+            self.node_flow.clear();
+            self.node_flow.reserve(estimated_nodes);
+        }
+
         // Initialize scope chain with source file scope (legacy)
         self.scope_chain.clear();
         self.scope_chain
             .push(ScopeContext::new(ContainerKind::SourceFile, root, None));
         self.current_scope_idx = 0;
-        self.current_scope = SymbolTable::new();
+        // Pre-size current_scope for top-level declarations
+        self.current_scope = if estimated_decl_count > 16 {
+            SymbolTable::with_capacity(estimated_decl_count)
+        } else {
+            SymbolTable::new()
+        };
 
         // Initialize persistent scope system
         self.scopes.clear();
@@ -775,8 +813,12 @@ impl BinderState {
         self.current_scope_id = ScopeId::NONE;
         self.top_level_flow.clear();
 
-        // Create root persistent scope for the source file
-        self.enter_persistent_scope(ContainerKind::SourceFile, root);
+        // Create root persistent scope for the source file, pre-sized for declarations
+        self.enter_persistent_scope_with_capacity(
+            ContainerKind::SourceFile,
+            root,
+            estimated_decl_count,
+        );
 
         // Pre-populate root persistent scope with lib symbols if they were merged before binding
         if has_lib_symbols {
@@ -793,6 +835,15 @@ impl BinderState {
                     self.current_scope.set(name.clone(), *sym_id);
                 }
             }
+        }
+
+        // Pre-reserve symbol arena capacity based on estimated declarations.
+        // Each top-level declaration creates at least 1 symbol; classes/interfaces create more.
+        if estimated_decl_count > 16 {
+            let current_len = self.symbols.len();
+            let target = current_len + estimated_decl_count * 2;
+            // symbols.symbols is Vec<Symbol>, reserve additional capacity
+            self.symbols.reserve(target.saturating_sub(current_len));
         }
 
         // Create START flow node for the file

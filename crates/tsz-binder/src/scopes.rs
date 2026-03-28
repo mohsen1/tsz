@@ -70,6 +70,23 @@ impl Scope {
         }
     }
 
+    /// Create a scope with pre-allocated capacity for its symbol table.
+    /// Useful for class scopes where the member count is known from the AST.
+    #[must_use]
+    pub fn with_capacity(
+        parent: ScopeId,
+        kind: ContainerKind,
+        node: NodeIndex,
+        capacity: usize,
+    ) -> Self {
+        Self {
+            parent,
+            table: SymbolTable::with_capacity(capacity),
+            kind,
+            container_node: node,
+        }
+    }
+
     /// Check if this scope is a function scope (where var hoisting happens)
     #[must_use]
     pub const fn is_function_scope(&self) -> bool {
