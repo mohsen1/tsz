@@ -568,6 +568,25 @@ impl<'a> CheckerState<'a> {
             if parent.is_none() {
                 break;
             }
+            // Stop before checking statement-level containers whose "leading
+            // JSDoc" belongs to their first child statement, not to the node
+            // we started the walk from. Without this guard, `var res` in:
+            //   /** @type {Foo} */ export const x = ...
+            //   var res = x()
+            // would inherit Foo through SourceFile's leading-comment position.
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                use tsz_parser::parser::syntax_kind_ext as sk;
+                if matches!(
+                    parent_node.kind,
+                    sk::SOURCE_FILE
+                        | sk::BLOCK
+                        | sk::MODULE_BLOCK
+                        | sk::CASE_CLAUSE
+                        | sk::DEFAULT_CLAUSE
+                ) {
+                    break;
+                }
+            }
             let jsdoc = self.try_leading_jsdoc(
                 comments,
                 self.effective_jsdoc_pos_for_node(parent, comments, source_text)?,
@@ -604,6 +623,20 @@ impl<'a> CheckerState<'a> {
             let parent = ext.parent;
             if parent.is_none() {
                 break;
+            }
+            // Same container guard as try_jsdoc_with_ancestor_walk.
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                use tsz_parser::parser::syntax_kind_ext as sk;
+                if matches!(
+                    parent_node.kind,
+                    sk::SOURCE_FILE
+                        | sk::BLOCK
+                        | sk::MODULE_BLOCK
+                        | sk::CASE_CLAUSE
+                        | sk::DEFAULT_CLAUSE
+                ) {
+                    break;
+                }
             }
             if let Some((content, pos)) = self.try_leading_jsdoc_with_pos(
                 comments,
