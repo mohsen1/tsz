@@ -10148,10 +10148,8 @@ impl<'a> DeclarationEmitter<'a> {
                         if self.export_entry_matches_subpath(key, value, subpath) {
                             return true;
                         }
-                    } else {
-                        if self.exports_map_allows_subpath(value, subpath) {
-                            return true;
-                        }
+                    } else if self.exports_map_allows_subpath(value, subpath) {
+                        return true;
                     }
                 }
                 false
