@@ -565,6 +565,7 @@ impl TypeInterner {
     }
 
     #[inline]
+    #[inline]
     pub fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
         self.type_lists
             .get(id.0)
