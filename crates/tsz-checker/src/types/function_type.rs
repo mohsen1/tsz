@@ -899,14 +899,18 @@ impl<'a> CheckerState<'a> {
                     });
                 let mut type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some()
-                        || (has_contextual_type && type_id != TypeId::ANY)
+                        || ((has_contextual_type || has_external_binding_context)
+                            && type_id != TypeId::ANY)
                     {
-                        // When a type annotation or concrete contextual type is
-                        // available, preserve it.  The binding pattern only determines
-                        // individual variable bindings, not the parameter's overall type.
-                        // Without this guard, array destructuring `([a])` would
-                        // reconstruct a tuple `[T]` instead of keeping the contextual
-                        // array type `T[]`, causing a false TS2345.
+                        // When a type annotation, concrete contextual type, or IIFE
+                        // argument type is available, preserve it.  The binding pattern
+                        // only determines individual variable bindings, not the
+                        // parameter's overall type.  Without this guard, array
+                        // destructuring `([a])` would reconstruct a tuple `[T]` instead
+                        // of keeping the contextual array type `T[]`, causing a false
+                        // TS2345.  Including `has_external_binding_context` ensures IIFE
+                        // argument types are preserved for destructuring parameters:
+                        //   (({ a, b }) => a)({ a: 1, b: 2 })
                         type_id
                     } else {
                         pattern_type
@@ -1062,7 +1066,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.maybe_report_implicit_any_parameter_with_type_hint(
                             param,
-                            has_effective_contextual_type || has_jsdoc_param,
+                            has_effective_contextual_type
+                                || has_jsdoc_param
+                                || has_external_binding_context,
                             contextual_index,
                             implicit_any_type_hint,
                         );
