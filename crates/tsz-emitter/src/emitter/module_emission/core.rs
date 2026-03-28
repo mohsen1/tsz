@@ -223,12 +223,27 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.emit_node_default(node, idx);
         } else {
-            // Class/other: declaration first, then exports.default
-            self.emit_node_default(node, idx);
-            self.write_line();
-            self.write_export_binding_start("default");
-            self.write("default_1");
-            self.write_export_binding_end();
+            let before_len = self.writer.len();
+            if self.emit_tc39_decorated_class_expression(idx, "default") {
+                let after_len = self.writer.len();
+                let full_output = self.writer.get_output().to_string();
+                let expr = full_output[before_len..after_len]
+                    .trim_end_matches('\n')
+                    .to_string();
+                self.writer.truncate(before_len);
+                self.write_export_binding_start("default");
+                self.write(&expr);
+                self.write_export_binding_end();
+                self.write_line();
+            } else {
+                self.writer.truncate(before_len);
+                // Class/other: declaration first, then exports.default
+                self.emit_node_default(node, idx);
+                self.write_line();
+                self.write_export_binding_start("default");
+                self.write("default_1");
+                self.write_export_binding_end();
+            }
         }
         self.anonymous_default_export_name = prev;
     }
@@ -259,6 +274,21 @@ impl<'a> Printer<'a> {
 
         if node.kind != syntax_kind_ext::CLASS_DECLARATION {
             self.emit_node_default(node, class_node);
+            return;
+        }
+
+        if let Some(output) = self.render_simple_tc39_decorated_class_es5(
+            node,
+            class_node,
+            "default_1",
+            "default",
+        ) {
+            self.write(&output);
+            self.write_line();
+            self.write_export_binding_start("default");
+            self.write("default_1");
+            self.write_export_binding_end();
+            self.write_line();
             return;
         }
 
@@ -464,6 +494,40 @@ impl<'a> Printer<'a> {
                     if let Some(cn) = self.arena.get(export.export_clause)
                         && let Some(class) = self.arena.get_class(cn)
                     {
+                        if class.name.is_none() {
+                            if self.ctx.target_es5 {
+                                if let Some(output) = self.render_simple_tc39_decorated_class_es5(
+                                    cn,
+                                    export.export_clause,
+                                    "default_1",
+                                    "default",
+                                ) {
+                                    self.write(&output);
+                                    self.write_line();
+                                    self.write("export default default_1;");
+                                    return;
+                                }
+                            } else {
+                                let before_len = self.writer.len();
+                                if self.emit_tc39_decorated_class_expression(
+                                    export.export_clause,
+                                    "default",
+                                ) {
+                                    let after_len = self.writer.len();
+                                    let full_output = self.writer.get_output().to_string();
+                                    let expr = full_output[before_len..after_len]
+                                        .trim_end_matches('\n')
+                                        .to_string();
+                                    self.writer.truncate(before_len);
+                                    self.write("export default ");
+                                    self.write(&expr);
+                                    self.write(";");
+                                    return;
+                                }
+                                self.writer.truncate(before_len);
+                            }
+                        }
+
                         let decorators = self.collect_class_decorators(&class.modifiers);
                         for dec_idx in &decorators {
                             self.emit(*dec_idx);
