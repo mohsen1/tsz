@@ -519,9 +519,7 @@ pub(crate) struct PackageJson {
     pub types_versions: Option<serde_json::Value>,
 }
 
-fn deserialize_optional_string_field<'de, D>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error>
+fn deserialize_optional_string_field<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

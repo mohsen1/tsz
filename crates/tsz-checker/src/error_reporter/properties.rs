@@ -1229,8 +1229,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.lib_contexts.iter().any(|lib_ctx| {
             lib_ctx.arena.source_files.iter().any(|sf| {
                 let file_name = sf.file_name.as_str();
-                file_name.ends_with("lib.dom.d.ts")
-                    || file_name.ends_with("lib.dom.iterable.d.ts")
+                file_name.ends_with("lib.dom.d.ts") || file_name.ends_with("lib.dom.iterable.d.ts")
             })
         })
     }

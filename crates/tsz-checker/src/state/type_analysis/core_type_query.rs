@@ -534,7 +534,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn decompose_typeof_import_query(&self, expr_name: NodeIndex) -> Option<(NodeIndex, Vec<String>)> {
+    fn decompose_typeof_import_query(
+        &self,
+        expr_name: NodeIndex,
+    ) -> Option<(NodeIndex, Vec<String>)> {
         let mut current = expr_name;
         let mut segments = Vec::new();
 
@@ -580,8 +583,8 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use tsz_common::Visibility;
 
-        if let Some(json_namespace_type) = self
-            .json_module_namespace_type_for_module(module_name, Some(self.ctx.current_file_idx))
+        if let Some(json_namespace_type) =
+            self.json_module_namespace_type_for_module(module_name, Some(self.ctx.current_file_idx))
         {
             return Some(json_namespace_type);
         }
@@ -625,7 +628,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(target_idx) = target_idx {
-                    self.ctx.register_symbol_file_target(export_sym_id, target_idx);
+                    self.ctx
+                        .register_symbol_file_target(export_sym_id, target_idx);
                 }
                 let prop_type = self.get_type_of_symbol(export_sym_id);
                 props.push(PropertyInfo {
@@ -647,11 +651,14 @@ impl<'a> CheckerState<'a> {
                 self.imported_namespace_display_module_name(module_name),
             );
             Some(namespace_type)
-        } else if let Some(surface) = self.resolve_js_export_surface_for_module(
-            module_name,
-            Some(self.ctx.current_file_idx),
-        ) {
-            let namespace_type = self.ctx.types.factory().object(surface.named_exports.clone());
+        } else if let Some(surface) =
+            self.resolve_js_export_surface_for_module(module_name, Some(self.ctx.current_file_idx))
+        {
+            let namespace_type = self
+                .ctx
+                .types
+                .factory()
+                .object(surface.named_exports.clone());
             self.ctx.namespace_module_names.insert(
                 namespace_type,
                 self.imported_namespace_display_module_name(module_name),
@@ -672,16 +679,14 @@ impl<'a> CheckerState<'a> {
         let (module_name, _) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
 
-        let mut current = self.build_typeof_import_namespace_type(
-            &module_name,
-            resolution_mode_override,
-        )?;
+        let mut current =
+            self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)?;
         for segment in segments {
             let access = self.resolve_property_access_with_env(current, &segment);
             current = match access {
-                crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
-                    self.resolve_type_query_type(type_id)
-                }
+                crate::query_boundaries::common::PropertyAccessResult::Success {
+                    type_id, ..
+                } => self.resolve_type_query_type(type_id),
                 _ => return Some(TypeId::ERROR),
             };
         }

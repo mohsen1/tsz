@@ -1512,12 +1512,17 @@ fn test_resolver_invalid_types_field_falls_back_to_main_declaration() {
     )
     .unwrap();
     fs::write(
-        dir.join("node_modules").join("csv-parse").join("lib").join("index.d.ts"),
+        dir.join("node_modules")
+            .join("csv-parse")
+            .join("lib")
+            .join("index.d.ts"),
         "export function bar(): number;",
     )
     .unwrap();
     fs::write(
-        dir.join("node_modules").join("csv-parse").join("package.json"),
+        dir.join("node_modules")
+            .join("csv-parse")
+            .join("package.json"),
         r#"{
             "name": "csv-parse",
             "main": "./lib",
@@ -1532,7 +1537,10 @@ fn test_resolver_invalid_types_field_falls_back_to_main_declaration() {
     let resolved = result.expect("invalid package.json types field should be ignored");
     assert_eq!(
         resolved.resolved_path,
-        dir.join("node_modules").join("csv-parse").join("lib").join("index.d.ts")
+        dir.join("node_modules")
+            .join("csv-parse")
+            .join("lib")
+            .join("index.d.ts")
     );
 
     let _ = fs::remove_dir_all(&dir);

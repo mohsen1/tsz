@@ -644,8 +644,7 @@ fn test_collect_module_specifiers_finds_typeof_import_dependencies() {
 fn test_collect_module_specifiers_extracts_typeof_import_resolution_mode_override() {
     use tsz::module_resolver::{ImportKind, ImportingModuleKind};
 
-    let text =
-        r#"type Parser = typeof import("pkg", { with: { "resolution-mode": "require" } });"#;
+    let text = r#"type Parser = typeof import("pkg", { with: { "resolution-mode": "require" } });"#;
     let file_name = "index.ts".to_string();
     let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();

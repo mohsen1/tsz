@@ -34,9 +34,13 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(resolved_name)
                 .trim_start_matches('/');
 
-            let components: Vec<_> = trimmed.split('/').filter(|segment| !segment.is_empty()).collect();
-            if let Some(node_modules_idx) =
-                components.iter().position(|segment| *segment == "node_modules")
+            let components: Vec<_> = trimmed
+                .split('/')
+                .filter(|segment| !segment.is_empty())
+                .collect();
+            if let Some(node_modules_idx) = components
+                .iter()
+                .position(|segment| *segment == "node_modules")
             {
                 if node_modules_idx > 0 {
                     let previous = components[node_modules_idx - 1];
