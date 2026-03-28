@@ -1244,8 +1244,7 @@ impl<'a> Printer<'a> {
                         && (inner.kind == syntax_kind_ext::TYPE_ASSERTION
                             || inner.kind == syntax_kind_ext::AS_EXPRESSION
                             || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
-                            || inner.kind
-                                == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
+                            || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
                     {
                         callee_idx = paren.expression;
                     } else {
