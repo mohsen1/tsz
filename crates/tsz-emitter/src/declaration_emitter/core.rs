@@ -788,7 +788,7 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(ref mut used) = self.used_symbols {
                 for (_export_name, local_name) in &self.js_cjs_export_aliases {
                     if let Some(sym_id) = binder.file_locals.get(local_name) {
-                        used.entry(*sym_id).or_insert(
+                        used.entry(sym_id).or_insert(
                             crate::declaration_emitter::usage_analyzer::UsageKind::VALUE
                                 | crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
                         );
