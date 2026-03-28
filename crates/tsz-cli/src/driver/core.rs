@@ -1727,7 +1727,7 @@ pub(super) fn no_input_diagnostics_for_config(
     // Emit TS18003: No inputs were found in config file.
     // Match tsc: use the resolved config path shown to the compiler.
     let config_name = tsconfig_path
-        .map(|path| path.to_string_lossy().to_string())
+        .map(|path| canonicalize_or_owned(path).to_string_lossy().to_string())
         .unwrap_or_else(|| "tsconfig.json".to_string());
     let include_str = match include {
         Some(v) if !v.is_empty() => v
