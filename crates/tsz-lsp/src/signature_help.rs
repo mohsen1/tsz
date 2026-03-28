@@ -453,8 +453,15 @@ impl<'a> SignatureHelpProvider<'a> {
                         if let Some(backtick_rel) = tmpl_text.find('`') {
                             let backtick_pos = (tmpl_start + backtick_rel) as u32;
                             // Cursor must be strictly after opening backtick
-                            // and strictly before closing backtick
-                            if cursor_offset > backtick_pos && cursor_offset < tmpl_node.end {
+                            // and strictly before closing backtick.
+                            // For incomplete templates (missing closing backtick),
+                            // the parser sets tmpl_node.end before the cursor,
+                            // so relax the upper bound check.
+                            let template_incomplete = tmpl_end <= tmpl_start
+                                || self.source_text.as_bytes()[tmpl_end - 1] != b'`';
+                            if cursor_offset > backtick_pos
+                                && (template_incomplete || cursor_offset < tmpl_node.end)
+                            {
                                 return Some((
                                     current,
                                     CallSite::TaggedTemplate(data),
