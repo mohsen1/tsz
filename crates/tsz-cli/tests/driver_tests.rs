@@ -827,8 +827,7 @@ fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_oute
         ts2345
             .iter()
             .all(|diag| diag.message_text.contains("Generator<number, void, any>")),
-        "Expected outer TS2345 diagnostics to preserve the unannotated generator surface `Generator<number, void, any>`, got diagnostics: {:?}",
-        ts2345
+        "Expected outer TS2345 diagnostics to preserve the unannotated generator surface `Generator<number, void, any>`, got diagnostics: {ts2345:?}",
     );
     assert!(
         ts2488[0].message_text.contains("Type '() => T'"),
