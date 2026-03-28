@@ -370,18 +370,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.interner().mapped(*mapped);
                 };
 
-            subst.clear();
-            subst.insert(mapped.type_param.name, key_literal);
-
-            // Substitute into the template
-            let instantiated_template = instantiate_type(self.interner(), mapped.template, &subst);
-            let mut property_type = self.evaluate(instantiated_template);
-
-            // Check if evaluation hit depth limit
-            if property_type == TypeId::ERROR && self.is_depth_exceeded() {
-                return TypeId::ERROR;
-            }
-
             // Get modifiers for this specific key (preserves homomorphic behavior)
             // Use memoized source property info for O(1) lookup.
             // Delegate to centralized modifier computation in type_queries.
@@ -396,27 +384,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_readonly,
             );
 
-            // TypeScript identity homomorphic mapped type behavior: the template `T[P]`
-            // evaluates via IndexAccess which adds `| undefined` for optional source
-            // properties. In identity homomorphic mapped types (template IS `T[P]`),
-            // since optionality is already captured by the `?` modifier on the output
-            // property, we should use the DECLARED type (without the extra `| undefined`)
-            // to avoid double-encoding optionality.
-            //
-            // This applies ONLY when:
-            // 1. The mapped type is identity homomorphic (template is `T[P]`)
-            // 2. The source property is optional
-            //
-            // For non-identity homomorphic types (e.g., `{ [K in keyof Partial<M0>]: M0[K] }`),
-            // the template is `M0[K]` which evaluates independently of the source's
-            // optionality. We must NOT substitute the declared type here because M0 is a
-            // different type from the keyof source (Partial<M0>).
-            if is_identity_homomorphic
-                && source_optional
-                && let Some((_, _, declared_type)) = source_info
-            {
-                property_type = *declared_type;
-            }
+            // PERF: For identity homomorphic mapped types (template is `T[P]`),
+            // skip the expensive instantiate_type + evaluate cycle when source
+            // property info is available. The declared type IS the property type
+            // (with optionality handled by the modifier, not by the type itself).
+            // For non-optional properties in identity homomorphic types, the
+            // evaluated T[K] equals the declared type, so we can also skip.
+            let mut property_type =
+                if is_identity_homomorphic && let Some(&(_, _, declared_type)) = source_info {
+                    declared_type
+                } else {
+                    subst.clear();
+                    subst.insert(mapped.type_param.name, key_literal);
+
+                    // Substitute into the template
+                    let instantiated_template =
+                        instantiate_type(self.interner(), mapped.template, &subst);
+                    let evaluated = self.evaluate(instantiated_template);
+
+                    // Check if evaluation hit depth limit
+                    if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
+                        return TypeId::ERROR;
+                    }
+                    evaluated
+                };
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
