@@ -1736,7 +1736,7 @@ pub(super) fn no_input_diagnostics_for_config(
             .collect::<Vec<_>>()
             .join(","),
         Some(_) => String::new(),
-        None => default_include_patterns(allow_js)
+        None => default_include_patterns(allow_js, false)
             .into_iter()
             .map(|s| format!("\"{s}\""))
             .collect::<Vec<_>>()

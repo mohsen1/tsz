@@ -144,7 +144,7 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
             // `"files"`. A solution-style config like `{ "files": [], "references": [...] }`
             // must not trigger a full directory walk — tsc treats it as zero input files.
             if options.files.is_empty() && !options.files_explicitly_set {
-                default_include_patterns(options.allow_js)
+                default_include_patterns(options.allow_js, options.resolve_json_module)
             } else {
                 Vec::new()
             }
@@ -152,7 +152,7 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
     }
 }
 
-pub fn default_include_patterns(allow_js: bool) -> Vec<String> {
+pub fn default_include_patterns(allow_js: bool, resolve_json_module: bool) -> Vec<String> {
     let mut patterns = vec![
         "*.ts".to_string(),
         "*.tsx".to_string(),
@@ -166,6 +166,9 @@ pub fn default_include_patterns(allow_js: bool) -> Vec<String> {
             "**/*.js".to_string(),
             "**/*.jsx".to_string(),
         ]);
+    }
+    if resolve_json_module {
+        patterns.extend(["*.json".to_string(), "**/*.json".to_string()]);
     }
     patterns
 }
@@ -431,6 +434,33 @@ mod tests {
             ..implicit_options
         };
         assert!(build_include_patterns(&explicit_options).is_empty());
+    }
+
+    #[test]
+    fn test_build_include_patterns_include_json_when_enabled() {
+        let options = FileDiscoveryOptions {
+            base_dir: PathBuf::from("."),
+            files: Vec::new(),
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: true,
+        };
+
+        assert_eq!(
+            build_include_patterns(&options),
+            vec![
+                "*.ts",
+                "*.tsx",
+                "**/*.ts",
+                "**/*.tsx",
+                "*.json",
+                "**/*.json"
+            ]
+        );
     }
 
     #[test]
