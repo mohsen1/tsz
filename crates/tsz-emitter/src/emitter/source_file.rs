@@ -356,20 +356,23 @@ impl<'a> Printer<'a> {
             found
         };
 
-        // Pre-compute whether JSX auto-import will generate ESM `import` statements.
-        // When it does, the output becomes an ES module (implicitly strict), so we
-        // must suppress "use strict" and reorder header comments accordingly.
-        let jsx_will_add_esm_imports = matches!(
+        // Pre-compute whether JSX auto-import will generate import/require statements.
+        // `jsx_will_add_any_import` is true for both ESM and CJS.
+        // `jsx_will_add_esm_imports` is only true for ESM (non-CJS).
+        let jsx_will_add_any_import = matches!(
             self.ctx.options.jsx,
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
-        ) && !self.ctx.is_effectively_commonjs()
-            && {
-                let usage = self.scan_jsx_usage();
-                usage.needs_jsx
-                    || usage.needs_jsxs
-                    || usage.needs_fragment
-                    || usage.needs_create_element
-            };
+        ) && {
+            let usage = self.scan_jsx_usage();
+            usage.needs_jsx
+                || usage.needs_jsxs
+                || usage.needs_fragment
+                || usage.needs_create_element
+        };
+        // When JSX adds ESM imports, the output becomes an ES module (implicitly
+        // strict), so we must suppress "use strict" and reorder header comments.
+        let jsx_will_add_esm_imports =
+            jsx_will_add_any_import && !self.ctx.is_effectively_commonjs();
 
         // TypeScript emits "use strict" when:
         // 1. CommonJS AND the file is actually an ES module (has import/export).
@@ -601,6 +604,21 @@ impl<'a> Printer<'a> {
                     let is_triple_slash_reference = trimmed_comment.starts_with("///<reference")
                         || trimmed_comment.starts_with("/// <reference");
                     let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
+
+                    // When JSX auto-import will generate import/require statements,
+                    // tsc's transform creates a synthetic statement list (pos = -1),
+                    // which causes emitDetachedComments to skip all leading comments
+                    // including triple-slash directives. If the first statement is
+                    // erased (e.g., unused `import React`), strip triple-slash
+                    // reference directives to match tsc behavior.
+                    if is_triple_slash_reference
+                        && jsx_will_add_any_import
+                        && first_erased_stmt_pos.is_some()
+                        && first_erased_is_import_export
+                    {
+                        self.comment_emit_idx += 1;
+                        continue;
+                    }
 
                     // Auto-accessor class declarations emit comments themselves right
                     // after helper storage declarations. Keep their leading comments
@@ -2634,7 +2652,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn top_level_using_export_binding_suffix(&self) -> &'static str {
+    const fn top_level_using_export_binding_suffix(&self) -> &'static str {
         if self.in_system_execute_body {
             ");"
         } else {

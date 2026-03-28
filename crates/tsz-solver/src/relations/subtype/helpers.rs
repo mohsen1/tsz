@@ -59,10 +59,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<TypeId> {
         // Check the shared QueryCache first to avoid expensive property collection
         // for large intersections checked across multiple SubtypeChecker instances.
-        if let Some(db) = self.query_db {
-            if let Some(cached) = db.lookup_intersection_merge(target_intersection) {
-                return cached;
-            }
+        if let Some(db) = self.query_db
+            && let Some(cached) = db.lookup_intersection_merge(target_intersection)
+        {
+            return cached;
         }
 
         use crate::objects::{PropertyCollectionResult, collect_properties};

@@ -35,8 +35,8 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
 /// TS2344 false positive: `typeof Input` against constraint when same-name
 /// type alias exists (e.g., `type Input = GetValue<typeof Input>` + `const Input = ...`).
 ///
-/// Root cause: For a merged TYPE_ALIAS + VARIABLE symbol, `get_type_of_symbol`
-/// returns the type alias's Lazy(DefId) during circular resolution. But `typeof`
+/// Root cause: For a merged `TYPE_ALIAS` + `VARIABLE` symbol, `get_type_of_symbol`
+/// returns the type alias's `Lazy(DefId)` during circular resolution. But `typeof`
 /// always refers to the value side, so the value declaration type should be used.
 #[test]
 fn test_no_false_ts2344_for_typeof_with_merged_type_alias_value() {

@@ -219,7 +219,7 @@ pub struct QueryCache<'a> {
     canonical_cache: RefCell<FxHashMap<TypeId, TypeId>>,
     /// Cache for intersection-to-merged-object results.
     /// Avoids expensive `collect_properties` calls for the same intersection target
-    /// across multiple SubtypeChecker instances (common in constraint checking).
+    /// across multiple `SubtypeChecker` instances (common in constraint checking).
     /// `Some(type_id)` = successfully merged, `None` = not eligible for merging.
     intersection_merge_cache: RefCell<FxHashMap<TypeId, Option<TypeId>>>,
     subtype_cache_hits: Cell<u64>,
