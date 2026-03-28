@@ -552,11 +552,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Filter out UNKNOWN members - they shouldn't cause the entire union to be unknown
         // Only return IsUnknown if ALL members are UNKNOWN
-        let mut non_unknown_members: Vec<_> = members
-            .iter()
-            .filter(|&&t| t != TypeId::UNKNOWN)
-            .copied()
-            .collect();
+        let has_unknown = members.contains(&TypeId::UNKNOWN);
+        let mut non_unknown_members: Vec<_> = if has_unknown {
+            members
+                .iter()
+                .filter(|&&t| t != TypeId::UNKNOWN)
+                .copied()
+                .collect()
+        } else {
+            members.to_vec()
+        };
 
         if non_unknown_members.is_empty() {
             // All members are UNKNOWN
@@ -573,16 +578,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
             non_unknown_members = normalized;
         }
 
-        let pruned_union = crate::type_queries::prune_impossible_object_union_members(
-            self.interner(),
-            self.interner().union_from_slice(&non_unknown_members),
-        );
-        match self.interner().lookup(pruned_union) {
-            Some(TypeData::Union(pruned_members)) => {
-                non_unknown_members = self.interner().type_list(pruned_members).to_vec();
-            }
-            _ => {
-                non_unknown_members = vec![pruned_union];
+        // Only prune if the union is small enough for pruning to be useful.
+        // For large unions (e.g., 200-member discriminated unions), pruning is
+        // expensive (O(N) type lookups + union reconstruction) and rarely eliminates
+        // any members since type alias union members are typically valid.
+        if non_unknown_members.len() <= 64 {
+            let pruned_union = crate::type_queries::prune_impossible_object_union_members(
+                self.interner(),
+                self.interner().union_from_slice(&non_unknown_members),
+            );
+            match self.interner().lookup(pruned_union) {
+                Some(TypeData::Union(pruned_members)) => {
+                    non_unknown_members = self.interner().type_list(pruned_members).to_vec();
+                }
+                _ => {
+                    non_unknown_members = vec![pruned_union];
+                }
             }
         }
 
