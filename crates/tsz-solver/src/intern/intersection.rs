@@ -316,8 +316,36 @@ impl TypeInterner {
         // → Merge callables: (x: number) => void
         // → Result: Callable with properties (merging both)
 
+        // Capture original object members before merging so we can store a
+        // display alias that preserves the `{ a: T; } & { b: U; }` form tsc
+        // uses in error messages.
+        let original_objects: SmallVec<[TypeId; 4]> = flat
+            .iter()
+            .filter(|&&id| {
+                matches!(
+                    self.lookup(id),
+                    Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                )
+            })
+            .copied()
+            .collect();
+
         // Step 1: Extract and merge objects from mixed intersection
         let (merged_object, remaining_after_objects) = self.extract_and_merge_objects(&flat);
+
+        // When 2+ objects are merged into one, store a display alias from the
+        // merged object back to the raw (un-normalized) intersection of the
+        // original members.  This lets the formatter show `{ a: T; } & { b: U; }`
+        // instead of the flattened `{ a: T; b: U; }`, matching tsc behavior.
+        if let Some(merged_id) = merged_object {
+            if original_objects.len() >= 2 {
+                let raw_list = self.intern_type_list_from_slice(&original_objects);
+                let raw_intersection = self.intern(TypeData::Intersection(raw_list));
+                if raw_intersection != merged_id {
+                    self.store_display_alias(merged_id, raw_intersection);
+                }
+            }
+        }
 
         // Step 2: Extract and merge callables from remaining members
         let (merged_callable, remaining_after_callables) =
