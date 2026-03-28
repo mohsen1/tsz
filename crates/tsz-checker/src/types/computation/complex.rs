@@ -742,6 +742,36 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+
+                    // For Promise constructors, when type parameters have no useful
+                    // inference from Round 1 or contextual type, default to void.
+                    // TSC infers T=void for `new Promise((resolve) => { resolve(); })`
+                    // because calling resolve() with 0 args implies the value param
+                    // should be void-compatible (making it optional). Our architecture
+                    // doesn't propagate this inference from the callback body back to
+                    // the outer generic context, so we apply the default here.
+                    {
+                        let return_type_for_promise_check =
+                            self.evaluate_type_with_env(shape.return_type);
+                        if self.is_promise_type(return_type_for_promise_check)
+                            || self.is_promise_type(shape.return_type)
+                        {
+                            for tp in &shape.type_params {
+                                let needs_void_default = match substitution.get(tp.name) {
+                                    None => true,
+                                    Some(mapped) => {
+                                        query::type_parameter_info(self.ctx.types, mapped).is_some()
+                                            || mapped == TypeId::ANY
+                                            || mapped == TypeId::UNKNOWN
+                                    }
+                                };
+                                if needs_void_default {
+                                    substitution.insert(tp.name, TypeId::VOID);
+                                }
+                            }
+                        }
+                    }
+
                     // Round 2: apply inferred types as contextual types for sensitive args
                     let arg_count = args.len();
                     let mut round2_contextual_types: Vec<Option<TypeId>> =
@@ -756,6 +786,11 @@ impl<'a> CheckerState<'a> {
                                         self.find_promise_in_contextual_type(contextual)
                                     && let Some(inner) =
                                         self.promise_like_return_type_argument(promise_member)
+                                    // Skip building a custom executor context when the inner
+                                    // type is any/unknown — it doesn't add useful information
+                                    // and would override the void default from the substitution.
+                                    && inner != TypeId::ANY
+                                    && inner != TypeId::UNKNOWN
                                     && let Some(exec_shape) =
                                         query::get_function_shape(self.ctx.types, param_type)
                                 {
