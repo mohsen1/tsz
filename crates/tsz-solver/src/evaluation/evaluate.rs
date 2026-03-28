@@ -762,6 +762,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 *d = d.saturating_sub(1);
             }
 
+            // Store reverse mapping for diagnostic display: when the evaluated
+            // result differs from the original Application, record the mapping
+            // so the formatter can display `Dictionary<string>` instead of the
+            // expanded `{ [index: string]: string; }`.
+            // Only store when args are fully concrete to avoid conflating
+            // generic contexts where the same type arises from different sources.
+            if result != original_type_id
+                && !app.args.iter().any(|&arg| {
+                    crate::type_queries::contains_type_parameters_db(self.interner, arg)
+                })
+            {
+                self.interner.store_display_alias(result, original_type_id);
+            }
+
             result
         } else {
             // If we can't expand, return the original application

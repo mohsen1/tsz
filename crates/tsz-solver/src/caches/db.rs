@@ -151,6 +151,16 @@ pub trait TypeDatabase {
         None
     }
 
+    /// Store a reverse mapping from an evaluated Application result back to
+    /// its original Application TypeId for diagnostic display.
+    fn store_display_alias(&self, _evaluated: TypeId, _application: TypeId) {}
+
+    /// Look up the original Application TypeId for a type produced by
+    /// evaluating an Application. Returns `None` if no mapping exists.
+    fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
     /// Atomically read and clear the "union too complex" flag.
     ///
     /// Returns `true` if a union construction was aborted due to complexity
@@ -461,6 +471,14 @@ impl TypeDatabase for TypeInterner {
 
     fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
         Self::get_display_properties(self, type_id)
+    }
+
+    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        Self::store_display_alias(self, evaluated, application);
+    }
+
+    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::get_display_alias(self, type_id)
     }
 
     fn take_union_too_complex(&self) -> bool {

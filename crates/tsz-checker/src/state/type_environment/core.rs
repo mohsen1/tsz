@@ -297,6 +297,33 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Store reverse mapping for diagnostic display: when the evaluated
+        // result differs from the original Application, record the mapping
+        // so the formatter can display `Dictionary<string>` instead of the
+        // expanded `{ [index: string]: string; }`.
+        // Only store when the Application's type args are fully concrete
+        // (no type parameters) to avoid conflating generic contexts where
+        // the same evaluated TypeId may arise from both explicit annotations
+        // and Application evaluation (e.g., `{ [key: string]: T }` vs
+        // `Record<string, T>`). Concrete args like `Dictionary<string>` or
+        // `Uint8Array<ArrayBuffer>` are safe to alias.
+        if result != type_id {
+            let has_param_args = if let Some(app) = query::application_info(self.ctx.types, type_id)
+            {
+                app.1.iter().any(|&arg| {
+                    tsz_solver::type_queries::contains_type_parameters_db(
+                        self.ctx.types.as_type_database(),
+                        arg,
+                    )
+                })
+            } else {
+                false
+            };
+            if !has_param_args {
+                self.ctx.types.store_display_alias(result, type_id);
+            }
+        }
+
         // Also store in env_eval_cache so that the solver's TypeEvaluator
         // (pre-seeded from env_eval_cache) can reuse this result when
         // evaluating the same Application type during arg expansion.

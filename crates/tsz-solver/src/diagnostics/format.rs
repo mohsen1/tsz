@@ -332,6 +332,13 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
+        // Check if this type was produced by evaluating an Application (e.g.,
+        // `Dictionary<string>` evaluated to `{ [index: string]: string }`).
+        // If so, format the original Application type instead of the expanded form.
+        if let Some(alias_origin) = self.interner.get_display_alias(type_id) {
+            return self.format(alias_origin);
+        }
+
         // Check if this type is a module namespace object that should display
         // as `typeof import("module")` instead of its expanded object shape.
         if matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_))
