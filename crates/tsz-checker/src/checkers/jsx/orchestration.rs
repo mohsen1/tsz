@@ -471,36 +471,28 @@ impl<'a> CheckerState<'a> {
 
         let children_prop_name = self.get_jsx_children_prop_name();
         let provided_attrs = self.collect_jsx_union_resolution_attrs(attributes_idx)?;
-        let has_concrete_attr = provided_attrs
-            .iter()
-            .any(|(name, ty)| name != &children_prop_name && ty.is_some());
-        let provided_attrs: Vec<(String, Option<TypeId>)> = provided_attrs
-            .into_iter()
-            .filter_map(|(name, ty)| {
-                if name == children_prop_name {
-                    return None;
-                }
 
-                // Function-valued JSX attrs need contextual typing from the
-                // recovered props type, but they should not override a more
-                // specific concrete attribute such as `as="button"` when we
-                // infer/default generic props.
-                match ty {
-                    Some(ty) => Some((name, Some(ty))),
-                    None if has_concrete_attr => None,
-                    None => Some((name, Some(TypeId::ANY))),
-                }
-            })
-            .collect();
-        let typed_attrs: Vec<(String, TypeId)> = provided_attrs
-            .into_iter()
-            .filter_map(|(name, ty)| ty.map(|ty| (name, ty)))
-            .collect();
+        // Two-pass inference for JSX generics, mirroring the regular call path
+        // in call.rs.  Function-valued attrs (callbacks with untyped params)
+        // return None from collect_jsx_union_resolution_attrs; they need
+        // contextual typing from inferred type params.
+        let mut concrete_attrs: Vec<(String, TypeId)> = Vec::new();
+        let mut has_function_valued_attrs = false;
+        for (name, ty) in &provided_attrs {
+            if name == &children_prop_name {
+                continue;
+            }
+            match ty {
+                Some(ty) => concrete_attrs.push((name.clone(), *ty)),
+                None => has_function_valued_attrs = true,
+            }
+        }
 
-        let mut substitution = if typed_attrs.is_empty() {
+        // === Round 1: Infer type params from concrete attrs only ===
+        let mut substitution = if concrete_attrs.is_empty() {
             crate::query_boundaries::common::TypeSubstitution::new()
         } else {
-            let attrs_type = self.build_jsx_provided_attrs_object_type(&typed_attrs);
+            let attrs_type = self.build_jsx_provided_attrs_object_type(&concrete_attrs);
             let env = self.ctx.type_env.borrow();
             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
                 self.ctx.types,
@@ -512,11 +504,58 @@ impl<'a> CheckerState<'a> {
             )
         };
 
+        // Fill unresolved type params with defaults/constraints.
         for tp in &function_shape.type_params {
             if substitution.get(tp.name).is_none()
                 && let Some(replacement) = tp.default.or(tp.constraint)
             {
                 substitution.insert(tp.name, replacement);
+            }
+        }
+
+        // === Round 2: Contextually type function-valued attrs ===
+        // Use the Round 1 substitution to provide contextual types for
+        // callback attrs.  Their return types can then refine inference.
+        if has_function_valued_attrs && !substitution.is_empty() {
+            let r1_instantiated = self
+                .instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+            if let Some(r1_props_param) = r1_instantiated.params.first() {
+                let r1_props_type = r1_props_param.type_id;
+                let r1_props_type = self.resolve_type_for_property_access(r1_props_type);
+                let r1_props_type = self.evaluate_type_with_env(r1_props_type);
+
+                let mut all_attrs = concrete_attrs;
+                self.collect_function_valued_jsx_attr_types(
+                    attributes_idx,
+                    r1_props_type,
+                    &children_prop_name,
+                    &mut all_attrs,
+                );
+
+                if !all_attrs.is_empty() {
+                    let full_attrs_type = self.build_jsx_provided_attrs_object_type(&all_attrs);
+                    let round2_sub = {
+                        let env = self.ctx.type_env.borrow();
+                        crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
+                            self.ctx.types,
+                            &self.ctx,
+                            &env,
+                            &function_shape,
+                            &[full_attrs_type],
+                            None,
+                        )
+                    };
+                    for (&name, &ty) in round2_sub.map() {
+                        substitution.insert(name, ty);
+                    }
+                    for tp in &function_shape.type_params {
+                        if substitution.get(tp.name).is_none()
+                            && let Some(replacement) = tp.default.or(tp.constraint)
+                        {
+                            substitution.insert(tp.name, replacement);
+                        }
+                    }
+                }
             }
         }
 
@@ -542,6 +581,85 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(props_type)
+    }
+
+    /// Contextually type function-valued JSX attributes using the expected
+    /// props type from Round 1 inference.
+    fn collect_function_valued_jsx_attr_types(
+        &mut self,
+        attributes_idx: NodeIndex,
+        props_type: TypeId,
+        children_prop_name: &str,
+        out: &mut Vec<(String, TypeId)>,
+    ) {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return;
+        };
+
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
+                continue;
+            }
+            let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                continue;
+            };
+            let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
+                continue;
+            };
+            if attr_name == "key" || attr_name == "ref" || attr_name == children_prop_name {
+                continue;
+            }
+
+            // Only process function-valued attributes.
+            let Some(init_node) = self.ctx.arena.get(attr_data.initializer) else {
+                continue;
+            };
+            let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_jsx_expression(init_node)
+                    .map(|expr| expr.expression)
+                    .unwrap_or(attr_data.initializer)
+            } else {
+                attr_data.initializer
+            };
+            let Some(value_node) = self.ctx.arena.get(value_idx) else {
+                continue;
+            };
+            if value_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                && value_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                continue;
+            }
+
+            // Look up the expected type for this property in the Round 1 props.
+            let expected_type = match self.resolve_property_access_with_env(props_type, &attr_name)
+            {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                _ => continue,
+            };
+
+            let contextual_type = self.refine_jsx_callable_contextual_type(expected_type);
+            let typed = self.compute_type_of_node_with_request(
+                value_idx,
+                &crate::context::TypingRequest::NONE
+                    .read()
+                    .normal_origin()
+                    .contextual(contextual_type),
+            );
+            out.push((attr_name, typed));
+        }
     }
 
     fn recover_jsx_component_props_type(
