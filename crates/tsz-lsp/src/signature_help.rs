@@ -97,6 +97,9 @@ struct SignatureCandidate {
     total_params: usize,
     has_rest: bool,
     param_names: Vec<Option<String>>,
+    /// Type parameter names from the function signature, used for substitution
+    /// when no explicit type arguments are provided at the call site.
+    type_param_names: Vec<String>,
 }
 
 struct SignatureDocCandidate {
@@ -277,14 +280,35 @@ impl<'a> SignatureHelpProvider<'a> {
         } else {
             call_kind
         };
-        let mut signatures =
-            self.get_signatures_from_type(callee_type, &checker, effective_call_kind, &callee_name);
+        let has_explicit_type_args = match &call_site {
+            CallSite::Regular(data) => data.type_arguments.is_some(),
+            CallSite::TaggedTemplate(_) => false,
+        };
+        let mut signatures = self.get_signatures_from_type(
+            callee_type,
+            &checker,
+            effective_call_kind,
+            &callee_name,
+            has_explicit_type_args,
+        );
 
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
         }
         if let Some(symbol_id) = symbol_id {
             self.apply_source_signature_type_overrides(&mut signatures, symbol_id);
+        }
+
+        // When no explicit type arguments are provided, substitute type parameter
+        // names with "unknown" in the displayed signature. This must happen after
+        // apply_source_signature_type_overrides since that can overwrite labels
+        // with raw source text containing type parameter names.
+        if !has_explicit_type_args {
+            for sig in &mut signatures {
+                if !sig.type_param_names.is_empty() {
+                    apply_type_param_substitution(&mut sig.info, &sig.type_param_names);
+                }
+            }
         }
 
         // Extract and save the updated cache for future queries
@@ -768,10 +792,17 @@ impl<'a> SignatureHelpProvider<'a> {
         checker: &CheckerState,
         call_kind: CallKind,
         callee_name: &str,
+        has_explicit_type_args: bool,
     ) -> Vec<SignatureCandidate> {
         if let Some(shape_id) = visitor::function_shape_id(self.interner, type_id) {
             let shape = self.interner.function_shape(shape_id);
-            return vec![self.signature_candidate(&shape, checker, false, callee_name)];
+            return vec![self.signature_candidate(
+                &shape,
+                checker,
+                false,
+                callee_name,
+                has_explicit_type_args,
+            )];
         }
 
         if let Some(shape_id) = visitor::callable_shape_id(self.interner, type_id) {
@@ -793,7 +824,13 @@ impl<'a> SignatureHelpProvider<'a> {
                         is_constructor: false,
                         is_method: false,
                     };
-                    sigs.push(self.signature_candidate(&func_shape, checker, false, callee_name));
+                    sigs.push(self.signature_candidate(
+                        &func_shape,
+                        checker,
+                        false,
+                        callee_name,
+                        has_explicit_type_args,
+                    ));
                 }
             }
             if include_construct {
@@ -808,7 +845,13 @@ impl<'a> SignatureHelpProvider<'a> {
                         is_constructor: true,
                         is_method: false,
                     };
-                    sigs.push(self.signature_candidate(&func_shape, checker, true, callee_name));
+                    sigs.push(self.signature_candidate(
+                        &func_shape,
+                        checker,
+                        true,
+                        callee_name,
+                        has_explicit_type_args,
+                    ));
                 }
             }
             return sigs;
@@ -819,7 +862,13 @@ impl<'a> SignatureHelpProvider<'a> {
             let members = self.interner.type_list(members);
             let mut sigs = Vec::new();
             for &member in members.iter() {
-                sigs.extend(self.get_signatures_from_type(member, checker, call_kind, callee_name));
+                sigs.extend(self.get_signatures_from_type(
+                    member,
+                    checker,
+                    call_kind,
+                    callee_name,
+                    has_explicit_type_args,
+                ));
             }
             return sigs;
         }
@@ -834,11 +883,13 @@ impl<'a> SignatureHelpProvider<'a> {
         checker: &CheckerState,
         is_constructor: bool,
         callee_name: &str,
+        has_explicit_type_args: bool,
     ) -> SignatureInformation {
         let mut parameters = Vec::new();
 
-        // Build type parameters string for generics
-        let type_params_str = if !shape.type_params.is_empty() {
+        // Build type parameters string for generics.
+        // When no explicit type arguments are provided, hide the type parameter list.
+        let type_params_str = if !shape.type_params.is_empty() && has_explicit_type_args {
             let tp_parts: Vec<String> = shape
                 .type_params
                 .iter()
@@ -989,6 +1040,7 @@ impl<'a> SignatureHelpProvider<'a> {
         checker: &CheckerState,
         is_constructor: bool,
         callee_name: &str,
+        has_explicit_type_args: bool,
     ) -> SignatureCandidate {
         let (required_params, total_params, has_rest) = self.signature_meta(&shape.params);
         let param_names = shape
@@ -996,12 +1048,28 @@ impl<'a> SignatureHelpProvider<'a> {
             .iter()
             .map(|param| param.name.map(|atom| checker.ctx.types.resolve_atom(atom)))
             .collect();
+        let type_param_names = if !has_explicit_type_args && !shape.type_params.is_empty() {
+            shape
+                .type_params
+                .iter()
+                .map(|tp| checker.ctx.types.resolve_atom(tp.name))
+                .collect()
+        } else {
+            Vec::new()
+        };
         SignatureCandidate {
-            info: self.format_signature(shape, checker, is_constructor, callee_name),
+            info: self.format_signature(
+                shape,
+                checker,
+                is_constructor,
+                callee_name,
+                has_explicit_type_args,
+            ),
             required_params,
             total_params,
             has_rest,
             param_names,
+            type_param_names,
         }
     }
 
@@ -1811,6 +1879,58 @@ impl<'a> SignatureHelpProvider<'a> {
 
         Some((required_params, total_params, has_rest))
     }
+}
+
+/// Apply type parameter substitution to a `SignatureInformation`, replacing all
+/// type parameter names with `unknown` in parameter labels, prefix, suffix, and
+/// the full label.
+fn apply_type_param_substitution(info: &mut SignatureInformation, type_param_names: &[String]) {
+    // Substitute in each parameter label
+    for param in &mut info.parameters {
+        param.label = substitute_type_params(&param.label, type_param_names);
+    }
+    // Substitute in suffix (contains return type)
+    info.suffix = substitute_type_params(&info.suffix, type_param_names);
+    // Rebuild full label from prefix + substituted param labels + substituted suffix
+    let param_labels: Vec<&str> = info.parameters.iter().map(|p| p.label.as_str()).collect();
+    info.label = format!("{}{}{}", info.prefix, param_labels.join(", "), info.suffix);
+}
+
+/// Substitute occurrences of type parameter names with `unknown` in a formatted
+/// type string. Uses word-boundary-aware replacement so that e.g. type param `T`
+/// does not replace the `T` inside `Tuple`.
+fn substitute_type_params(s: &str, type_param_names: &[String]) -> String {
+    let mut result = s.to_string();
+    for name in type_param_names {
+        // Replace whole-word occurrences of the type parameter name with "unknown".
+        // A "word boundary" here means the character before/after is not alphanumeric
+        // or underscore (matching TypeScript identifier characters).
+        let mut out = String::with_capacity(result.len());
+        let name_len = name.len();
+        let bytes = result.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            if i + name_len <= len && &result[i..i + name_len] == name.as_str() {
+                let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
+                let after_ok = i + name_len == len || !is_ident_char(bytes[i + name_len]);
+                if before_ok && after_ok {
+                    out.push_str("unknown");
+                    i += name_len;
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        result = out;
+    }
+    result
+}
+
+#[inline]
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 #[cfg(test)]
