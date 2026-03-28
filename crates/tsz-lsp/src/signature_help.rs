@@ -956,11 +956,15 @@ impl<'a> SignatureHelpProvider<'a> {
                 || "arg".to_string(),
                 |atom| checker.ctx.types.resolve_atom(atom),
             );
-            let type_str = if param.type_id == TypeId::UNKNOWN {
+            let mut type_str = if param.type_id == TypeId::UNKNOWN {
                 "any".to_string()
             } else {
                 checker.format_type(param.type_id)
             };
+            // Rest parameters with bare 'any' type should display as 'any[]'
+            if param.rest && type_str == "any" {
+                type_str = "any[]".to_string();
+            }
             let optional = if param.optional { "?" } else { "" };
             let rest = if param.rest { "..." } else { "" };
 
