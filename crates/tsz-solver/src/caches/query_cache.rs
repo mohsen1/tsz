@@ -857,6 +857,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.get_display_properties(type_id)
     }
 
+    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        self.interner.store_display_alias(evaluated, application);
+    }
+
+    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.get_display_alias(type_id)
+    }
+
     fn take_union_too_complex(&self) -> bool {
         self.interner.take_union_too_complex()
     }

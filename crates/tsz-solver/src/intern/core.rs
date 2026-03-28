@@ -367,6 +367,15 @@ pub struct TypeInterner {
     /// Key: `ObjectShapeId` of the widened (interned) shape.
     /// Value: Vec of `PropertyInfo` with original (non-widened) `type_ids`.
     display_properties: DashMap<TypeId, Arc<Vec<PropertyInfo>>, FxBuildHasher>,
+    /// Reverse mapping from evaluated Application results back to their
+    /// original Application TypeId for diagnostic display.
+    ///
+    /// When `Application(Lazy(Dictionary), [string])` evaluates to
+    /// `ObjectWithIndex({ [index: string]: string })`, this maps
+    /// the ObjectWithIndex TypeId back to the Application TypeId.
+    /// The formatter checks this to show `Dictionary<string>` instead
+    /// of `{ [index: string]: string; }` in error messages.
+    display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
     /// Flag set when union normalization detects that a union type is too complex
     /// to represent (would require > 1M pairwise subtype comparisons during
     /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
@@ -415,6 +424,7 @@ impl TypeInterner {
             alloc_order: DashMap::with_hasher(FxBuildHasher),
             no_unchecked_indexed_access: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
+            display_alias: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
         }
     }
@@ -874,6 +884,28 @@ impl TypeInterner {
     /// object type was not a fresh literal or had no widened properties).
     pub fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
         self.display_properties.get(&type_id).map(|r| r.clone())
+    }
+
+    /// Store a reverse mapping from an evaluated Application result to its
+    /// original Application TypeId for diagnostic display.
+    ///
+    /// Called during Application evaluation so that the formatter can recover
+    /// the named form (e.g., `Dictionary<string>`) when it encounters the
+    /// evaluated type (e.g., `{ [index: string]: string }`).
+    pub fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        // Only store if the evaluated type differs from the application
+        // (i.e., evaluation actually produced a different type).
+        if evaluated != application {
+            self.display_alias.insert(evaluated, application);
+        }
+    }
+
+    /// Look up the original Application TypeId for a type that was produced
+    /// by evaluating an Application.
+    ///
+    /// Returns `None` if this type was not produced from an Application evaluation.
+    pub fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+        self.display_alias.get(&type_id).map(|r| *r)
     }
 
     fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
@@ -2341,6 +2373,8 @@ impl TypeInterner {
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<TypeId>()
                 + std::mem::size_of::<Arc<Vec<PropertyInfo>>>());
+        size +=
+            self.display_alias.len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() * 2);
         size += self.boxed_types.len() * (DASHMAP_ENTRY_OVERHEAD + 16);
         size += self.boxed_def_ids.len() * (DASHMAP_ENTRY_OVERHEAD + 32);
         size += self.this_type_marker_def_ids.len() * (DASHMAP_ENTRY_OVERHEAD + 8);

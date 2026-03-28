@@ -316,6 +316,29 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.factory().union_preserve_members(normalized);
         }
 
+        // Preserve Application types with named bases (Lazy(DefId)) for display.
+        // When a named generic type like `Dictionary<string>` is evaluated, it loses
+        // its alias identity (becoming e.g. `{ [index: string]: string }`). By
+        // preserving the Application form, the formatter can display `Dictionary<string>`
+        // using the Application path which resolves the base DefId name + args.
+        if let Some(app) = query::type_application(self.ctx.types, ty) {
+            if matches!(
+                self.ctx.types.lookup(app.base),
+                Some(tsz_solver::TypeData::Lazy(_)) | Some(tsz_solver::TypeData::TypeQuery(_))
+            ) {
+                let args: Vec<_> = app
+                    .args
+                    .iter()
+                    .map(|&arg| self.normalize_assignability_display_type(arg))
+                    .collect();
+                return if args == app.args {
+                    ty
+                } else {
+                    self.ctx.types.factory().application(app.base, args)
+                };
+            }
+        }
+
         let ty = if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
             && tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
         {
