@@ -18,6 +18,7 @@ use crate::types::{
     TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
@@ -229,7 +230,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(TypeData::Union(members)) = self.interner().lookup(inferred) {
             let members = self.interner().type_list(members);
-            let mut filtered = Vec::new();
+            let mut filtered: SmallVec<[TypeId; 8]> = SmallVec::new();
             for &member in members.iter() {
                 if checker.is_subtype_of(member, constraint) {
                     filtered.push(member);
@@ -238,7 +239,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match filtered.len() {
                 0 => None,
                 1 => Some(filtered[0]),
-                _ => Some(self.interner().union(filtered)),
+                _ => Some(self.interner().union_from_slice(&filtered)),
             };
         }
 
@@ -263,7 +264,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(TypeData::Union(members)) = self.interner().lookup(inferred) {
             let members = self.interner().type_list(members);
-            let mut filtered = Vec::new();
+            let mut filtered: SmallVec<[TypeId; 8]> = SmallVec::new();
             let mut had_non_matching = false;
             for &member in members.iter() {
                 if checker.is_subtype_of(member, constraint) {
@@ -280,7 +281,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match filtered.len() {
                 0 => TypeId::UNDEFINED,
                 1 => filtered[0],
-                _ => self.interner().union(filtered),
+                _ => self.interner().union_from_slice(&filtered),
             };
         }
 
