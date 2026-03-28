@@ -272,11 +272,21 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Type parameters are always considered "valid" RHS for `in` — TSC
-        // emits TS2638 (may represent primitive) for them, not TS2322.
-        // This is handled by the type_may_represent_primitive check.
+        // Type parameters: behavior depends on strict mode.
+        // In strict mode, TSC wraps in NonNullable<T> which has apparent type `{}`
+        // → valid for `in` but triggers TS2638 (may represent primitive).
+        // In non-strict mode, unconstrained params fail → TS2322 (not assignable to object).
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            return true;
+            if self.ctx.strict_null_checks() {
+                return true;
+            }
+            return match crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                ty,
+            ) {
+                Some(c) => self.is_valid_in_operator_rhs(c),
+                None => false,
+            };
         }
 
         if query::is_object_like_type(self.ctx.types, ty) {
