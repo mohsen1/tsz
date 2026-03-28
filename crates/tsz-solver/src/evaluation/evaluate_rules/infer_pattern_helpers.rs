@@ -1326,25 +1326,71 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
+            Some(TypeData::Callable(callable_shape_id)) => {
+                // Callable types (class constructors) have properties (static members)
+                // that can match object patterns with infer. For example:
+                // `typeof MyClass extends { defaultProps: infer D }` should match
+                // when MyClass has a static `defaultProps` property.
+                let callable_shape = self.interner().callable_shape(callable_shape_id);
+                let pattern_shape = self.interner().object_shape(pattern_shape_id);
+                for pattern_prop in &pattern_shape.properties {
+                    let source_prop = callable_shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == pattern_prop.name);
+                    let Some(source_prop) = source_prop else {
+                        if pattern_prop.optional {
+                            if self.type_contains_infer(pattern_prop.type_id)
+                                && !self.match_infer_pattern(
+                                    TypeId::UNDEFINED,
+                                    pattern_prop.type_id,
+                                    bindings,
+                                    visited,
+                                    checker,
+                                )
+                            {
+                                return false;
+                            }
+                            continue;
+                        }
+                        return false;
+                    };
+                    let source_type = self.optional_property_type(source_prop);
+                    if !self.match_infer_pattern(
+                        source_type,
+                        pattern_prop.type_id,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                }
+                true
+            }
             Some(TypeData::Intersection(members)) => {
                 let members = self.interner().type_list(members);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
                     let mut merged_type = None;
                     for &member in members.iter() {
-                        let shape_id = match self.interner().lookup(member) {
-                            Some(
-                                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id),
-                            ) => shape_id,
-                            _ => return false,
-                        };
-                        let shape = self.interner().object_shape(shape_id);
-                        if let Some(source_prop) = shape
-                            .properties
-                            .iter()
-                            .find(|prop| prop.name == pattern_prop.name)
-                        {
-                            let source_type = self.optional_property_type(source_prop);
+                        let found_type =
+                            self.find_property_type_in_structural(member, pattern_prop.name);
+                        if found_type.is_none() && !pattern_prop.optional {
+                            // Non-optional pattern prop not found in this intersection
+                            // member — if the member isn't Object/Callable, fail.
+                            if !matches!(
+                                self.interner().lookup(member),
+                                Some(
+                                    TypeData::Object(_)
+                                        | TypeData::ObjectWithIndex(_)
+                                        | TypeData::Callable(_)
+                                )
+                            ) {
+                                return false;
+                            }
+                        }
+                        if let Some(source_type) = found_type {
                             merged_type = Some(match merged_type {
                                 Some(existing) => {
                                     self.interner().intersection2(existing, source_type)
@@ -1412,6 +1458,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Find a named property's type in a structural type (Object, ObjectWithIndex, or Callable).
+    /// Returns `Some(type_id)` if the property is found, respecting optional property unwrapping.
+    fn find_property_type_in_structural(&self, type_id: TypeId, prop_name: Atom) -> Option<TypeId> {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == prop_name)
+                    .map(|p| self.optional_property_type(p))
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let shape = self.interner().callable_shape(callable_id);
+                shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == prop_name)
+                    .map(|p| self.optional_property_type(p))
+            }
+            _ => None,
         }
     }
 
