@@ -855,8 +855,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS18046: 'x' is of type 'unknown'.
-                // TSC emits TS18046 for `unknown` RHS before other checks.
-                if right_type == TypeId::UNKNOWN {
+                // In strict mode, TSC's checkNonNullExpression emits TS18046 for
+                // `unknown` and returns error type, skipping further `in` checks.
+                // In non-strict mode, `unknown` falls through to TS2638.
+                if right_type == TypeId::UNKNOWN && self.ctx.strict_null_checks() {
                     self.error_is_of_type_unknown(right_idx);
                     type_stack.push(TypeId::BOOLEAN);
                     continue;
