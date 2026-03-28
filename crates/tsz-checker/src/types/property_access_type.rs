@@ -1726,13 +1726,11 @@ impl<'a> CheckerState<'a> {
                         // above returns false. Re-resolve with `this` binding
                         // deferred to recover raw `ThisType`, then substitute with
                         // the nominal receiver (e.g., Thing5 instead of {a,b,c}).
-                        let evaluator =
-                            tsz_solver::operations::property::PropertyAccessEvaluator::new(
-                                self.ctx.types,
-                            );
-                        evaluator.set_skip_this_binding(true);
-                        let raw = evaluator
-                            .resolve_property_access(object_type_for_access, property_name);
+                        let raw = crate::query_boundaries::property_access::resolve_property_access_raw_this(
+                            self.ctx.types,
+                            object_type_for_access,
+                            property_name,
+                        );
                         if let PropertyAccessResult::Success {
                             type_id: raw_type, ..
                         } = raw

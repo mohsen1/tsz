@@ -340,12 +340,9 @@ impl<'a> CheckerState<'a> {
     /// 2. Getting its call signature
     /// 3. Extracting the first param of the `onfulfilled` callback (which is T)
     fn extract_awaited_type_from_thenable(&self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::operations::property::PropertyAccessEvaluator;
+        use crate::query_boundaries::property_access::resolve_property_access;
 
-        let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
-        let then_type = evaluator
-            .resolve_property_access(type_id, "then")
-            .success_type()?;
+        let then_type = resolve_property_access(self.ctx.types, type_id, "then").success_type()?;
 
         // Get call signatures of `then`
         let sigs = query::call_signatures_for_type(self.ctx.types, then_type)?;

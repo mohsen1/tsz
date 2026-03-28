@@ -1,8 +1,38 @@
-use tsz_solver::{FunctionShape, TypeDatabase, TypeId};
+use tsz_solver::{FunctionShape, QueryDatabase, TypeDatabase, TypeId};
 
+pub(crate) use super::common::PropertyAccessResult;
 pub(crate) use super::common::{
     array_element_type, callable_shape_for_type as callable_shape, is_string_type, unwrap_readonly,
 };
+
+/// Resolve a named property on a type through the solver's property evaluator.
+///
+/// This is the canonical boundary for property access resolution. Checker code
+/// must use this instead of directly instantiating `PropertyAccessEvaluator`.
+pub(crate) fn resolve_property_access(
+    db: &dyn QueryDatabase,
+    obj_type: TypeId,
+    prop_name: &str,
+) -> PropertyAccessResult {
+    let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    evaluator.resolve_property_access(obj_type, prop_name)
+}
+
+/// Like [`resolve_property_access`] but preserves raw `ThisType` in the result.
+///
+/// When `skip_this_binding` is set, the solver does not eagerly bind `this` to
+/// the structural object shape. The caller can then substitute `this` with the
+/// correct nominal receiver type (e.g., the class type instead of the flattened
+/// intersection shape).
+pub(crate) fn resolve_property_access_raw_this(
+    db: &dyn QueryDatabase,
+    obj_type: TypeId,
+    prop_name: &str,
+) -> PropertyAccessResult {
+    let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    evaluator.set_skip_this_binding(true);
+    evaluator.resolve_property_access(obj_type, prop_name)
+}
 
 pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_function_type(db, type_id)
