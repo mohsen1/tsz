@@ -780,7 +780,7 @@ impl<'a> CheckerState<'a> {
     ///   foo(x: any) { }          // implementation - this is valid!
     pub(crate) fn check_duplicate_class_members(&mut self, members: &[NodeIndex]) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use rustc_hash::FxHashMap;
+        use rustc_hash::{FxHashMap, FxHashSet};
 
         // Track member names with their info
         struct MemberInfo {
@@ -1068,15 +1068,84 @@ impl<'a> CheckerState<'a> {
         }
 
         // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name).
-        // Private names report on all same-kind accessor declarations; regular names only on the
-        // subsequent declaration(s).
-        for info in seen_accessors.values() {
-            if info.indices.len() <= 1 {
-                continue;
+        //
+        // tsc behaviour:
+        // - When there are duplicate accessors of one kind (e.g., 2 setters) AND a paired
+        //   accessor of the other kind (getter) exists, ALL accessor declarations for that
+        //   name are flagged (the entire accessor group is invalid).
+        // - When there are only duplicates of one kind with NO paired accessor, only the
+        //   subsequent (non-first) duplicate declarations are flagged.
+        // - Private names always report on all same-kind declarations.
+        {
+            // Collect plain names that have both a duplicate accessor AND a paired accessor
+            // of the other kind (indicating the entire accessor group is broken).
+            let mut names_with_paired_dup_accessors: FxHashSet<String> = FxHashSet::default();
+            for (key, info) in &seen_accessors {
+                if info.indices.len() <= 1 {
+                    continue;
+                }
+                let static_prefix = key.starts_with("static:");
+                let rest = key.strip_prefix("static:").unwrap_or(key);
+                let (kind, plain) = if let Some(p) = rest.strip_prefix("get:") {
+                    ("get", p)
+                } else if let Some(p) = rest.strip_prefix("set:") {
+                    ("set", p)
+                } else {
+                    continue;
+                };
+                // Check if the other kind exists
+                let other_kind = if kind == "get" { "set" } else { "get" };
+                let other_key = if static_prefix {
+                    format!("static:{other_kind}:{plain}")
+                } else {
+                    format!("{other_kind}:{plain}")
+                };
+                if seen_accessors.contains_key(&other_key) {
+                    let plain_key = if static_prefix {
+                        format!("static:{plain}")
+                    } else {
+                        plain.to_string()
+                    };
+                    names_with_paired_dup_accessors.insert(plain_key);
+                }
             }
-            let start = if info.is_private { 0 } else { 1 };
-            for &idx in info.indices.iter().skip(start) {
-                self.report_duplicate_class_member_ts2300(idx);
+
+            // For names with paired duplicate accessors, report on ALL accessor declarations
+            if !names_with_paired_dup_accessors.is_empty() {
+                for (plain_key, indices) in &accessor_plain_names {
+                    if names_with_paired_dup_accessors.contains(plain_key) {
+                        for &idx in indices {
+                            self.report_duplicate_class_member_ts2300(idx);
+                        }
+                    }
+                }
+            }
+
+            // For remaining duplicate accessor keys (no paired accessor of other kind),
+            // use the original single-kind duplicate logic: report only subsequent declarations.
+            for (key, info) in &seen_accessors {
+                if info.indices.len() <= 1 {
+                    continue;
+                }
+                let static_prefix = key.starts_with("static:");
+                let rest = key.strip_prefix("static:").unwrap_or(key);
+                let plain = rest
+                    .strip_prefix("get:")
+                    .or_else(|| rest.strip_prefix("set:"))
+                    .unwrap_or(rest);
+                let plain_key = if static_prefix {
+                    format!("static:{plain}")
+                } else {
+                    plain.to_string()
+                };
+                if names_with_paired_dup_accessors.contains(&plain_key) {
+                    // Already handled above via accessor_plain_names
+                    continue;
+                }
+                let start = if info.is_private { 0 } else { 1 };
+                for &idx in info.indices.iter().skip(start) {
+                    self.report_duplicate_class_member_ts2300(idx);
+                }
             }
         }
 
