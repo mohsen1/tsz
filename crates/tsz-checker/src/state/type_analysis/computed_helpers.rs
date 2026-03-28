@@ -77,12 +77,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(constraint) = type_parameter_constraint(self.ctx.types, type_id)
-            && constraint != type_id
-            && constraint != TypeId::UNKNOWN
-            && constraint != TypeId::ERROR
-        {
-            return self.contextual_type_for_expression(constraint);
+        // Don't resolve type parameters to their constraints here.
+        // In tsc, the contextual type preserves the type parameter (e.g., `T`),
+        // and constraint resolution happens deeper in the system when structural
+        // information is needed. Resolving early causes compute_return_context_substitution
+        // to map inner generic type params to the constraint instead of the outer type
+        // parameter, destroying inference placeholders (e.g., `new Proxy(obj, handler)`
+        // returning `object` instead of `T`).
+        if type_parameter_constraint(self.ctx.types, type_id).is_some() {
+            return type_id;
         }
 
         // Preserve direct callable shapes as contextual types. Re-evaluating them
