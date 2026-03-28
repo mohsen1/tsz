@@ -1688,17 +1688,23 @@ impl<'a> CheckerState<'a> {
                                 message,
                                 2362, // TS2362
                             );
-                        } else if !evaluator.is_arithmetic_operand(left_type)
-                            && !self.is_enum_type(left_type)
-                        {
-                            if let Some(node) = self.ctx.arena.get(left_idx) {
-                                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                                self.ctx.error(
-                                    node.pos,
-                                    node.end - node.pos,
-                                    message,
-                                    2362, // TS2362
-                                );
+                        } else {
+                            // Strip null/undefined before checking — tsc calls checkNonNullType()
+                            // first (emitting TS18048/TS2532), then checks the remaining type.
+                            let left_stripped =
+                                tsz_solver::remove_nullish(self.ctx.types, left_type);
+                            if !evaluator.is_arithmetic_operand(left_stripped)
+                                && !self.is_enum_type(left_stripped)
+                            {
+                                if let Some(node) = self.ctx.arena.get(left_idx) {
+                                    let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                    self.ctx.error(
+                                        node.pos,
+                                        node.end - node.pos,
+                                        message,
+                                        2362, // TS2362
+                                    );
+                                }
                             }
                         }
                         if right_is_boxed && let Some(node) = self.ctx.arena.get(right_idx) {
@@ -1709,17 +1715,21 @@ impl<'a> CheckerState<'a> {
                                 message,
                                 2363, // TS2363
                             );
-                        } else if !evaluator.is_arithmetic_operand(right_type)
-                            && !self.is_enum_type(right_type)
-                        {
-                            if let Some(node) = self.ctx.arena.get(right_idx) {
-                                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                                self.ctx.error(
-                                    node.pos,
-                                    node.end - node.pos,
-                                    message,
-                                    2363, // TS2363
-                                );
+                        } else {
+                            let right_stripped =
+                                tsz_solver::remove_nullish(self.ctx.types, right_type);
+                            if !evaluator.is_arithmetic_operand(right_stripped)
+                                && !self.is_enum_type(right_stripped)
+                            {
+                                if let Some(node) = self.ctx.arena.get(right_idx) {
+                                    let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                    self.ctx.error(
+                                        node.pos,
+                                        node.end - node.pos,
+                                        message,
+                                        2363, // TS2363
+                                    );
+                                }
                             }
                         }
                     }
