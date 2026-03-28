@@ -68,7 +68,7 @@ struct CachedUnionMember {
     obj_anon_shape: Option<u32>,
     /// For Callable: the symbol's raw u32 (if the shape has a symbol)
     callable_symbol: Option<u32>,
-    /// Result of `self.alloc_order.get(&id)` - monotonic allocation counter
+    /// Monotonic allocation counter for source-order sorting
     alloc_order: Option<u32>,
 }
 
@@ -81,6 +81,9 @@ struct TypeShardInner {
     /// Protected by RwLock: reads are uncontended in single-threaded use (~1 cycle),
     /// writes only happen during intern (append-only).
     index_to_key: RwLock<Vec<TypeData>>,
+    /// Per-shard allocation order (parallel to index_to_key).
+    /// Stores the global monotonic order counter at time of interning.
+    alloc_order: RwLock<Vec<u32>>,
 }
 
 /// A single shard of the type interned storage.
@@ -109,6 +112,7 @@ impl TypeShard {
         self.inner.get_or_init(|| TypeShardInner {
             key_to_index: DashMap::with_hasher(FxBuildHasher),
             index_to_key: RwLock::new(Vec::with_capacity(256)),
+            alloc_order: RwLock::new(Vec::with_capacity(256)),
         })
     }
 
@@ -356,9 +360,6 @@ pub struct TypeInterner {
     alloc_counter: AtomicU32,
     /// Circuit breaker: once set, all intern/lookup calls return early.
     poisoned: std::sync::atomic::AtomicBool,
-    /// Maps TypeId -> allocation order for types that need ordering.
-    /// Only populated for non-intrinsic types. Used by `compare_union_members`.
-    alloc_order: DashMap<TypeId, u32, FxBuildHasher>,
     /// Effective value for `noUncheckedIndexedAccess` used by query-boundary helpers.
     no_unchecked_indexed_access: AtomicBool,
     /// Display properties for fresh object literal types.
@@ -426,7 +427,6 @@ impl TypeInterner {
             this_type_marker_def_ids: DashMap::with_hasher(FxBuildHasher),
             alloc_counter: AtomicU32::new(0),
             poisoned: std::sync::atomic::AtomicBool::new(false),
-            alloc_order: DashMap::with_hasher(FxBuildHasher),
             no_unchecked_indexed_access: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
@@ -809,18 +809,20 @@ impl TypeInterner {
         match inner.key_to_index.entry(key) {
             Entry::Vacant(e) => {
                 e.insert(local_index);
-                {
-                    let mut vec = inner.index_to_key.write().unwrap();
-                    if vec.len() <= local_index as usize {
-                        vec.resize(local_index as usize + 1, TypeData::Error);
-                    }
-                    vec[local_index as usize] = key;
-                }
-                let id = self.make_id(local_index, shard_idx as u32);
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
-                self.alloc_order.insert(id, order);
-                id
+                {
+                    let mut vec = inner.index_to_key.write().unwrap();
+                    let mut ord = inner.alloc_order.write().unwrap();
+                    let target_len = local_index as usize + 1;
+                    if vec.len() < target_len {
+                        vec.resize(target_len, TypeData::Error);
+                        ord.resize(target_len, u32::MAX);
+                    }
+                    vec[local_index as usize] = key;
+                    ord[local_index as usize] = order;
+                }
+                self.make_id(local_index, shard_idx as u32)
             }
             Entry::Occupied(e) => {
                 // Another thread inserted first, use their ID
@@ -853,6 +855,25 @@ impl TypeInterner {
         }
         let vec = shard.get_inner().index_to_key.read().ok()?;
         vec.get(local_index as usize).copied()
+    }
+
+    /// Look up the allocation order for a given `TypeId`.
+    /// Returns `None` for intrinsic/error types (they have no alloc order).
+    #[inline]
+    fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+        if id.is_intrinsic() || id.is_error() {
+            return None;
+        }
+        let raw_val = id.0.checked_sub(TypeId::FIRST_USER)?;
+        let shard_idx = (raw_val & SHARD_MASK) as usize;
+        let local_index = raw_val >> SHARD_BITS;
+        let shard = self.shards.get(shard_idx)?;
+        if shard.is_empty() {
+            return None;
+        }
+        let ord = shard.get_inner().alloc_order.read().ok()?;
+        let val = ord.get(local_index as usize).copied()?;
+        if val == u32::MAX { None } else { Some(val) }
     }
 
     pub(super) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
@@ -1350,7 +1371,7 @@ impl TypeInterner {
         }
 
         let data = self.lookup(id);
-        let alloc_order = self.alloc_order.get(&id).map(|r| *r.value());
+        let alloc_order = self.lookup_alloc_order(id);
 
         let mut obj_symbol = None;
         let mut obj_anon_shape = None;
@@ -1700,8 +1721,8 @@ impl TypeInterner {
         // Fallback: compare by allocation order (monotonic counter).
         // This approximates tsc's type ID allocation order, unlike raw TypeId
         // comparison which is hash-dependent due to the sharded interner.
-        let order_a = self.alloc_order.get(&a).map(|r| *r.value());
-        let order_b = self.alloc_order.get(&b).map(|r| *r.value());
+        let order_a = self.lookup_alloc_order(a);
+        let order_b = self.lookup_alloc_order(b);
         match (order_a, order_b) {
             (Some(oa), Some(ob)) => oa.cmp(&ob),
             // Intrinsic types have no alloc_order entry; use raw TypeId
@@ -2408,8 +2429,8 @@ impl TypeInterner {
         // --- Auxiliary caches ---
         size += self.identity_comparable_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size +=
-            self.alloc_order.len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 4);
+        // alloc_order is now stored per-shard alongside index_to_key (4 bytes per type)
+        size += type_count * 4;
         size += self.display_properties.len()
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<TypeId>()
