@@ -1242,23 +1242,27 @@ impl<'a> CheckerState<'a> {
         }
 
         if use_node_cache && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-            let is_super_sensitive_access = self.ctx.arena.get(idx).is_some_and(|node| {
-                use tsz_parser::parser::syntax_kind_ext;
-                (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                    && self
-                        .ctx
-                        .arena
-                        .get_access_expr(node)
-                        .is_some_and(|access| self.is_super_expression(access.expression))
-            });
-            let is_super_keyword = self
-                .ctx
-                .arena
-                .get(idx)
-                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16);
+            // PERF: Skip super-sensitivity checks when not inside a class.
+            // The `super` keyword can only appear inside class members, so
+            // checking for it outside classes is pure overhead.
+            let is_super_sensitive =
+                self.ctx.enclosing_class.is_some() && {
+                    let is_super_sensitive_access =
+                        self.ctx.arena.get(idx).is_some_and(|node| {
+                            use tsz_parser::parser::syntax_kind_ext;
+                            (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                                && self.ctx.arena.get_access_expr(node).is_some_and(|access| {
+                                    self.is_super_expression(access.expression)
+                                })
+                        });
+                    let is_super_keyword = self.ctx.arena.get(idx).is_some_and(|node| {
+                        node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16
+                    });
+                    is_super_sensitive_access || is_super_keyword
+                };
 
-            if is_super_sensitive_access || is_super_keyword {
+            if is_super_sensitive {
                 // `super` diagnostics depend on the current class-member context.
                 // Reusing a silent cache entry from type-environment building can
                 // suppress TS17011/TS2336/TS2855 on the checked path.
@@ -1371,8 +1375,7 @@ impl<'a> CheckerState<'a> {
                     node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                         || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 })
-                || is_super_sensitive_access
-                || is_super_keyword
+                || is_super_sensitive
             {
                 // Fall through to recompute with write-type awareness
             } else {
