@@ -1496,6 +1496,119 @@ impl Server {
         None
     }
 
+    /// AST-based "add missing new" fix: given a 2348 diagnostic offset, finds the
+    /// enclosing call expression and inserts `new` before the callee.
+    ///
+    /// Returns `(start_offset, end_offset, replacement_text, description)`.
+    /// Handles patterns like `x[0]()`, `(cond ? A : B)()`, `(() => C)()()`,
+    /// and `foo()!()`.
+    pub(super) fn apply_add_missing_new_ast(
+        arena: &tsz::parser::node::NodeArena,
+        content: &str,
+        diag_start: u32,
+    ) -> Option<(u32, u32, String, String)> {
+        use tsz::parser::syntax_kind_ext::{CALL_EXPRESSION, PARENTHESIZED_EXPRESSION};
+
+        // Find the call expression at the diagnostic position by walking up from
+        // the innermost node.
+        let node_idx = tsz::lsp::utils::find_node_at_offset(arena, diag_start);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        // Walk up to find the outermost call expression at the diagnostic
+        // position. We walk through non-null assertions, type assertions, and
+        // other transparent wrappers to find nested call chains like `foo()!()`.
+        const NON_NULL_EXPRESSION: u16 = 236;
+        const AS_EXPRESSION: u16 = 235;
+        const TYPE_ASSERTION: u16 = 217;
+
+        let mut current = node_idx;
+        let mut call_idx = tsz::parser::NodeIndex::NONE;
+        for _ in 0..50 {
+            let node = arena.get(current)?;
+            if node.kind == CALL_EXPRESSION && node.pos <= diag_start && node.end > diag_start {
+                call_idx = current;
+            }
+            // Keep walking up through call expressions and transparent wrappers
+            // (non-null, type assertions) that start at the same position.
+            if let Some(ext) = arena.get_extended(current) {
+                if ext.parent.is_some() {
+                    if let Some(parent_node) = arena.get(ext.parent) {
+                        let same_pos = parent_node.pos == node.pos;
+                        let is_transparent = matches!(
+                            parent_node.kind,
+                            CALL_EXPRESSION | NON_NULL_EXPRESSION | AS_EXPRESSION | TYPE_ASSERTION
+                        );
+                        if same_pos && is_transparent {
+                            current = ext.parent;
+                            continue;
+                        }
+                    }
+                }
+            }
+            // If we already found a call, stop. Otherwise, walk up to parent.
+            if call_idx.is_some() {
+                break;
+            }
+            let ext = arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        if call_idx.is_none() {
+            return None;
+        }
+
+        let call_node = arena.get(call_idx)?;
+        let call_data = arena.get_call_expr(call_node)?;
+        let callee_node = arena.get(call_data.expression)?;
+
+        let call_start = call_node.pos as usize;
+        let callee_start = callee_node.pos as usize;
+        let mut callee_end = callee_node.end as usize;
+
+        // The parser may position the callee `end` to include the opening
+        // paren of the argument list. Trim it back to exclude `(`.
+        while callee_end > callee_start && content.as_bytes().get(callee_end - 1) == Some(&b'(') {
+            callee_end -= 1;
+        }
+
+        // Determine if the callee needs parenthesization for correct `new`
+        // operator precedence. `new X()` parses X as a MemberExpression, so
+        // only identifiers, property/element access, and already-parenthesized
+        // expressions are safe without extra parens.
+        let callee_kind = callee_node.kind;
+        let callee_text = content.get(callee_start..callee_end)?;
+
+        const IDENTIFIER: u16 = 80;
+        use tsz::parser::syntax_kind_ext::{ELEMENT_ACCESS_EXPRESSION, PROPERTY_ACCESS_EXPRESSION};
+        let needs_parens = !matches!(
+            callee_kind,
+            IDENTIFIER
+                | PROPERTY_ACCESS_EXPRESSION
+                | ELEMENT_ACCESS_EXPRESSION
+                | PARENTHESIZED_EXPRESSION
+        );
+
+        // Build the replacement text. We replace the callee span with
+        // "new " + callee (optionally wrapped in parens).
+        let replacement = if needs_parens {
+            format!("new ({callee_text})")
+        } else {
+            format!("new {callee_text}")
+        };
+
+        Some((
+            call_start as u32,
+            callee_end as u32,
+            replacement,
+            "Add missing 'new' operator to call".to_string(),
+        ))
+    }
+
     /// Apply "add missing new" to ALL class constructor calls.
     pub(super) fn apply_add_missing_new_all_fallback(content: &str) -> Option<String> {
         let class_names = Self::collect_class_names(content);
