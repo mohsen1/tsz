@@ -906,7 +906,13 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
-                let prop_atom = self.ctx.types.intern_string(property_name);
+                // PERF: Reuse the pre-interned atom from the identifier when available,
+                // avoiding a DashMap lookup in intern_string on every property access.
+                let prop_atom = if ident.atom != tsz_common::interner::Atom::none() {
+                    ident.atom
+                } else {
+                    self.ctx.types.intern_string(property_name)
+                };
 
                 // property_cache stores Option<TypeId>: Some(id) = resolved type,
                 // None = property not found (fall through for TS2339 diagnostics).
