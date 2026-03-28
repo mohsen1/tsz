@@ -347,13 +347,17 @@ impl<'a> FlowAnalyzer<'a> {
                     return None;
                 }
                 if is_structural_literal {
+                    // tsc's getAssignmentReducedType narrows regardless of
+                    // whether the assignment is valid (no assignability guard).
+                    // Skipping the guard is safe: narrow_assignment returns the
+                    // declared type unchanged when no union member matches, and
+                    // for non-union types it returns the declared type directly.
                     if let Some(annotation_type) =
                         self.annotation_type_from_var_decl_node(assignment_node)
                         && let Some(rhs_type) = self
                             .node_types
                             .and_then(|nt| nt.get(&rhs.0).copied())
                             .or_else(|| self.fallback_expression_type_from_syntax(rhs))
-                        && self.is_assignable_to(rhs_type, annotation_type)
                     {
                         let reduced = self.narrow_assignment(annotation_type, rhs_type);
                         if reduced != annotation_type {

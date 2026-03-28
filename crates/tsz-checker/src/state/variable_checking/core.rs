@@ -666,6 +666,19 @@ impl<'a> CheckerState<'a> {
                     checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                     let init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
+                    // Ensure the contextually-typed init type is stored in node_types
+                    // for the initializer expression. Error elaboration may re-check
+                    // the initializer without contextual type, which widens literal
+                    // types (e.g., "ok" -> string) and overwrites node_types. By
+                    // seeding node_types here, subsequent context-free lookups
+                    // (including flow analysis for assignment narrowing) reuse the
+                    // contextually-inferred result.
+                    if !request.is_empty() && init_type != TypeId::ERROR {
+                        checker
+                            .ctx
+                            .node_types
+                            .insert(var_decl.initializer.0, init_type);
+                    }
                     let init_type_for_relation = checker.resolve_lazy_type(init_type);
                     if let Some(branch_ranges) = conditional_branch_ranges {
                         // Preserve non-assignability diagnostics from the branch expressions
