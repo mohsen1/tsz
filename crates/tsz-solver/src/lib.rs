@@ -164,6 +164,7 @@ pub mod construction {
     pub use crate::intern::type_factory::*;
 }
 pub use intern::TypeInterner;
+pub use intern::clear_thread_local_cache;
 pub use operations::infer_generic_function;
 pub use operations::widening;
 pub use visitors::visitor::{

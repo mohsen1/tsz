@@ -28,6 +28,7 @@ pub mod type_factory;
 
 // Re-export primary public type from core implementation
 pub use self::core::TypeInterner;
+pub use self::core::clear_thread_local_cache;
 pub(crate) use self::core::{TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeListBuffer};
 // Used by intern_tests.rs (included via #[path] below)
 #[allow(unused_imports)]
