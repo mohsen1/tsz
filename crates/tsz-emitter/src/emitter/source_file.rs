@@ -1378,7 +1378,9 @@ impl<'a> Printer<'a> {
                 && !self.ctx.target_es5
                 && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 && let Some(class_decl) = self.arena.get_class(stmt_node)
-                && !self.collect_class_decorators(&class_decl.modifiers).is_empty()
+                && !self
+                    .collect_class_decorators(&class_decl.modifiers)
+                    .is_empty()
                 && let Some(local_name) = self.get_identifier_text_opt(class_decl.name)
                 && let Some(export_name) = cjs_deferred_export_bindings.get(&local_name)
             {
@@ -1835,73 +1837,71 @@ impl<'a> Printer<'a> {
         })
     }
 
-            fn top_level_using_scope_has_runtime_export(
-                &self,
-                statements: &NodeList,
-                start_idx: usize,
-            ) -> bool {
-                statements.nodes[start_idx..].iter().any(|&stmt_idx| {
-                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                        return false;
-                    };
-                    match stmt_node.kind {
-                        k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => self
-                            .arena
-                            .get_export_assignment(stmt_node)
-                            .is_some_and(|export_assignment| !export_assignment.is_export_equals),
-                        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                            self.arena.get_export_decl(stmt_node).is_some_and(|export_decl| {
-                                if export_decl.is_type_only {
-                                    return false;
-                                }
-                                if export_decl.module_specifier.is_some() {
-                                    return true;
-                                }
-                                self.arena
-                                    .get(export_decl.export_clause)
-                                    .is_some_and(|clause_node| match clause_node.kind {
-                                        k if k == syntax_kind_ext::NAMED_EXPORTS => self
-                                            .arena
-                                            .get_named_imports(clause_node)
-                                            .is_some_and(|named_exports| {
-                                                named_exports.elements.nodes.iter().any(|&spec_idx| {
-                                                    self.arena
-                                                        .get(spec_idx)
-                                                        .and_then(|spec_node| {
-                                                            self.arena.get_specifier(spec_node)
-                                                        })
-                                                        .is_some_and(|spec| !spec.is_type_only)
-                                                })
-                                            }),
-                                        _ => true,
-                                    })
-                            })
+    fn top_level_using_scope_has_runtime_export(
+        &self,
+        statements: &NodeList,
+        start_idx: usize,
+    ) -> bool {
+        statements.nodes[start_idx..].iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => self
+                    .arena
+                    .get_export_assignment(stmt_node)
+                    .is_some_and(|export_assignment| !export_assignment.is_export_equals),
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => self
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .is_some_and(|export_decl| {
+                        if export_decl.is_type_only {
+                            return false;
                         }
-                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
-                            .arena
-                            .get_variable(stmt_node)
-                            .is_some_and(|var_stmt| {
-                                self.arena
-                                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-                            }),
-                        k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                            .arena
-                            .get_class(stmt_node)
-                            .is_some_and(|class_decl| {
-                                self.arena
-                                    .has_modifier(&class_decl.modifiers, SyntaxKind::ExportKeyword)
-                            }),
-                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                            .arena
-                            .get_function(stmt_node)
-                            .is_some_and(|func_decl| {
-                                self.arena
-                                    .has_modifier(&func_decl.modifiers, SyntaxKind::ExportKeyword)
-                            }),
-                        _ => false,
-                    }
-                })
+                        if export_decl.module_specifier.is_some() {
+                            return true;
+                        }
+                        self.arena
+                            .get(export_decl.export_clause)
+                            .is_some_and(|clause_node| match clause_node.kind {
+                                k if k == syntax_kind_ext::NAMED_EXPORTS => self
+                                    .arena
+                                    .get_named_imports(clause_node)
+                                    .is_some_and(|named_exports| {
+                                        named_exports.elements.nodes.iter().any(|&spec_idx| {
+                                            self.arena
+                                                .get(spec_idx)
+                                                .and_then(|spec_node| {
+                                                    self.arena.get_specifier(spec_node)
+                                                })
+                                                .is_some_and(|spec| !spec.is_type_only)
+                                        })
+                                    }),
+                                _ => true,
+                            })
+                    }),
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.arena.get_variable(stmt_node).is_some_and(|var_stmt| {
+                        self.arena
+                            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                    })
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    self.arena.get_class(stmt_node).is_some_and(|class_decl| {
+                        self.arena
+                            .has_modifier(&class_decl.modifiers, SyntaxKind::ExportKeyword)
+                    })
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    self.arena.get_function(stmt_node).is_some_and(|func_decl| {
+                        self.arena
+                            .has_modifier(&func_decl.modifiers, SyntaxKind::ExportKeyword)
+                    })
+                }
+                _ => false,
             }
+        })
+    }
 
     fn has_aliased_value_named_exports(&self, clause_node: &Node) -> bool {
         let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
@@ -2296,7 +2296,7 @@ impl<'a> Printer<'a> {
                         .and_then(|class| self.get_identifier_text_opt(class.name))
                         .filter(|name| cjs_deferred_export_names.contains(name))
                 };
-                    self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
+                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 let export_name = if is_es_module_output {
@@ -2666,10 +2666,7 @@ impl<'a> Printer<'a> {
 
         if is_legacy_decorator_class && self.ctx.target_es5 {
             let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
-            emitted = emitted.replace(
-                &exported_decorate,
-                &format!("{binding_name} = __decorate("),
-            );
+            emitted = emitted.replace(&exported_decorate, &format!("{binding_name} = __decorate("));
         }
 
         if is_legacy_decorator_class && !self.ctx.target_es5 {
@@ -3619,7 +3616,8 @@ class RegularClass {\n    accessor shouldError;\n}\n";
 
     #[test]
     fn commonjs_top_level_using_direct_exported_legacy_class_stays_inline() {
-        let source = "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
+        let source =
+            "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
 
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
@@ -3794,7 +3792,8 @@ class RegularClass {\n    accessor shouldError;\n}\n";
 
     #[test]
     fn esm_top_level_using_real_export_suppresses_export_empty() {
-        let source = "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
+        let source =
+            "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
 
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();

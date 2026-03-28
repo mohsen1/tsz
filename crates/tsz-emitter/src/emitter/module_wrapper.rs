@@ -2332,7 +2332,8 @@ export const y = x;
 
     #[test]
     fn system_top_level_using_direct_exported_legacy_class_stays_inline() {
-        let source = "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
+        let source =
+            "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
 
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
