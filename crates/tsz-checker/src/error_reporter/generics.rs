@@ -70,8 +70,8 @@ impl<'a> CheckerState<'a> {
                     call_signatures,
                     construct_signatures,
                     properties: shape.properties.clone(),
-                    string_index: shape.string_index.clone(),
-                    number_index: shape.number_index.clone(),
+                    string_index: shape.string_index,
+                    number_index: shape.number_index,
                     symbol: shape.symbol,
                     is_abstract: shape.is_abstract,
                 });
@@ -106,7 +106,7 @@ impl<'a> CheckerState<'a> {
                 .this_type
                 .map(|this_type| instantiate_type(self.ctx.types, this_type, &subst)),
             return_type: instantiate_type(self.ctx.types, sig.return_type, &subst),
-            type_predicate: sig.type_predicate.clone(),
+            type_predicate: sig.type_predicate,
             is_method: sig.is_method,
         })
     }

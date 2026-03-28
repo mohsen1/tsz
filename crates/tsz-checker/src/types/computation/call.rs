@@ -971,7 +971,7 @@ impl<'a> CheckerState<'a> {
                             return_type: shape.return_type,
                             this_type: shape.this_type,
                             type_params: shape.type_params.clone(),
-                            type_predicate: shape.type_predicate.clone(),
+                            type_predicate: shape.type_predicate,
                             is_constructor: shape.is_constructor,
                             is_method: shape.is_method,
                         }

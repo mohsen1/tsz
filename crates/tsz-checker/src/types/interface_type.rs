@@ -844,12 +844,10 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape
                         .string_index
-                        .clone()
-                        .or_else(|| base_shape.string_index.clone()),
+                        .or_else(|| base_shape.string_index),
                     number_index: derived_shape
                         .number_index
-                        .clone()
-                        .or_else(|| base_shape.number_index.clone()),
+                        .or_else(|| base_shape.number_index),
                     symbol: derived_shape.symbol,
                     is_abstract: false,
                 })
@@ -866,8 +864,8 @@ impl<'a> CheckerState<'a> {
                     call_signatures: derived_shape.call_signatures.clone(),
                     construct_signatures: derived_shape.construct_signatures.clone(),
                     properties,
-                    string_index: derived_shape.string_index.clone(),
-                    number_index: derived_shape.number_index.clone(),
+                    string_index: derived_shape.string_index,
+                    number_index: derived_shape.number_index,
                     symbol: derived_shape.symbol,
                     is_abstract: false,
                 })
@@ -886,12 +884,10 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape
                         .string_index
-                        .clone()
-                        .or_else(|| base_shape.string_index.clone()),
+                        .or_else(|| base_shape.string_index),
                     number_index: derived_shape
                         .number_index
-                        .clone()
-                        .or_else(|| base_shape.number_index.clone()),
+                        .or_else(|| base_shape.number_index),
                     symbol: derived_shape.symbol,
                     is_abstract: false,
                 })
@@ -908,8 +904,8 @@ impl<'a> CheckerState<'a> {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),
                     properties,
-                    string_index: base_shape.string_index.clone(),
-                    number_index: base_shape.number_index.clone(),
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
                     symbol: derived_shape.symbol,
                     is_abstract: false,
                 })
@@ -928,12 +924,10 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape
                         .string_index
-                        .clone()
-                        .or_else(|| base_shape.string_index.clone()),
+                        .or_else(|| base_shape.string_index),
                     number_index: derived_shape
                         .number_index
-                        .clone()
-                        .or_else(|| base_shape.number_index.clone()),
+                        .or_else(|| base_shape.number_index),
                     symbol: derived_shape.symbol,
                     is_abstract: false,
                 })
@@ -965,8 +959,8 @@ impl<'a> CheckerState<'a> {
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
                 let result = factory.object_with_index(ObjectShape {
                     properties,
-                    string_index: base_shape.string_index.clone(),
-                    number_index: base_shape.number_index.clone(),
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 });
@@ -983,8 +977,8 @@ impl<'a> CheckerState<'a> {
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
                 factory.object_with_index(ObjectShape {
                     properties,
-                    string_index: derived_shape.string_index.clone(),
-                    number_index: derived_shape.number_index.clone(),
+                    string_index: derived_shape.string_index,
+                    number_index: derived_shape.number_index,
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 })
@@ -1001,12 +995,10 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape
                         .string_index
-                        .clone()
-                        .or_else(|| base_shape.string_index.clone()),
+                        .or_else(|| base_shape.string_index),
                     number_index: derived_shape
                         .number_index
-                        .clone()
-                        .or_else(|| base_shape.number_index.clone()),
+                        .or_else(|| base_shape.number_index),
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 })

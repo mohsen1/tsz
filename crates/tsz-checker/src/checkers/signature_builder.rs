@@ -264,7 +264,7 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .map(|predicate| tsz_solver::TypePredicate {
                     asserts: predicate.asserts,
-                    target: predicate.target.clone(),
+                    target: predicate.target,
                     type_id: predicate
                         .type_id
                         .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),

@@ -1120,8 +1120,8 @@ impl<'a> CheckerState<'a> {
                     call_signatures: Vec::new(),
                     construct_signatures: Vec::new(),
                     properties: partial_ctor_props,
-                    string_index: static_string_index.clone(),
-                    number_index: static_number_index.clone(),
+                    string_index: static_string_index,
+                    number_index: static_number_index,
                     symbol: current_sym,
                     is_abstract: false,
                 });
@@ -1845,8 +1845,8 @@ impl<'a> CheckerState<'a> {
             call_signatures: Vec::new(),
             construct_signatures: construct_signatures.to_vec(),
             properties: partial_ctor_props,
-            string_index: static_string_index.clone(),
-            number_index: static_number_index.clone(),
+            string_index: *static_string_index,
+            number_index: *static_number_index,
             symbol: current_sym,
             is_abstract: false,
         })
@@ -1872,7 +1872,7 @@ impl<'a> CheckerState<'a> {
                         sig.params
                             .iter()
                             .map(|param| {
-                                let mut p = param.clone();
+                                let mut p = *param;
                                 p.type_id = instantiate_type(self.ctx.types, p.type_id, subst);
                                 p
                             })
@@ -1889,7 +1889,7 @@ impl<'a> CheckerState<'a> {
                         params,
                         this_type,
                         return_type: instance_type,
-                        type_predicate: sig.type_predicate.clone(),
+                        type_predicate: sig.type_predicate,
                         is_method: sig.is_method,
                     }
                 })
@@ -1932,7 +1932,7 @@ impl<'a> CheckerState<'a> {
                     return_type: instance_type,
                     type_predicate: sig.type_predicate.as_ref().map(|pred| TypePredicate {
                         asserts: pred.asserts,
-                        target: pred.target.clone(),
+                        target: pred.target,
                         type_id: pred
                             .type_id
                             .map(|t| instantiate_type(self.ctx.types, t, substitution)),

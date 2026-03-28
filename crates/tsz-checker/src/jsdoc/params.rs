@@ -1787,12 +1787,12 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_jsdoc_type_str(&type_expr)?;
         if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, resolved)
         {
-            return shape.type_predicate.clone();
+            return shape.type_predicate;
         }
         if let Some(sigs) = tsz_solver::type_queries::get_call_signatures(self.ctx.types, resolved)
             && let Some(sig) = sigs.first()
         {
-            return sig.type_predicate.clone();
+            return sig.type_predicate;
         }
         None
     }

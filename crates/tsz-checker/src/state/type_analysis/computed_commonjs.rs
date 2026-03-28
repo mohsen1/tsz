@@ -1048,8 +1048,8 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().object_with_index(ObjectShape {
             flags: shape.flags,
             properties: properties.into_values().collect(),
-            string_index: shape.string_index.clone(),
-            number_index: shape.number_index.clone(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
             symbol: shape.symbol,
         })
     }
@@ -1087,7 +1087,7 @@ impl<'a> CheckerState<'a> {
                 params: function_shape.params.clone(),
                 this_type: function_shape.this_type,
                 return_type: function_shape.return_type,
-                type_predicate: function_shape.type_predicate.clone(),
+                type_predicate: function_shape.type_predicate,
                 is_method: function_shape.is_method,
             };
             (
@@ -1812,7 +1812,7 @@ impl<'a> CheckerState<'a> {
                 params: func.params.clone(),
                 this_type: func.this_type,
                 return_type: func.return_type,
-                type_predicate: func.type_predicate.clone(),
+                type_predicate: func.type_predicate,
                 is_method: func.is_method,
             };
             let construct_sig = tsz_solver::CallSignature {

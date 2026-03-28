@@ -153,8 +153,8 @@ impl JsExportSurface {
             let merged_shape = ObjectShape {
                 flags: shape.flags,
                 properties: merged_props,
-                string_index: shape.string_index.clone(),
-                number_index: shape.number_index.clone(),
+                string_index: shape.string_index,
+                number_index: shape.number_index,
                 symbol: shape.symbol,
             };
 

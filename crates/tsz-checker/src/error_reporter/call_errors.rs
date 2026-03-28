@@ -858,7 +858,7 @@ impl<'a> CheckerState<'a> {
                         params: shape.params.clone(),
                         this_type: shape.this_type,
                         return_type: shape.return_type,
-                        type_predicate: shape.type_predicate.clone(),
+                        type_predicate: shape.type_predicate,
                         is_method: shape.is_method,
                     };
                     if self.call_signature_accepts_arg_count(&sig, arg_count) {
@@ -930,13 +930,13 @@ impl<'a> CheckerState<'a> {
                 string_index: arg_shape.string_index.as_ref().map(|sig| {
                     tsz_solver::IndexSignature {
                         value_type: TypeId::UNKNOWN,
-                        ..sig.clone()
+                        ..*sig
                     }
                 }),
                 number_index: arg_shape.number_index.as_ref().map(|sig| {
                     tsz_solver::IndexSignature {
                         value_type: TypeId::UNKNOWN,
-                        ..sig.clone()
+                        ..*sig
                     }
                 }),
                 ..Default::default()
@@ -972,7 +972,7 @@ impl<'a> CheckerState<'a> {
                         params: shape.params.clone(),
                         this_type: shape.this_type,
                         return_type: shape.return_type,
-                        type_predicate: shape.type_predicate.clone(),
+                        type_predicate: shape.type_predicate,
                         is_method: shape.is_method,
                     };
                     if self.call_signature_accepts_arg_count(&sig, arg_count) {
