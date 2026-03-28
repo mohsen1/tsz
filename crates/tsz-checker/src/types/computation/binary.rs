@@ -849,13 +849,10 @@ impl<'a> CheckerState<'a> {
                     self.check_private_identifier_in_expression(left_idx, right_type);
                 }
 
-                // TS18046: 'x' is of type 'unknown'.
-                // TSC emits TS18046 for `unknown` in the `in` operator context.
-                // We also let the TS2638 check run since `unknown` may represent
-                // a primitive — this matches TSC's combined diagnostics.
-                if right_type == TypeId::UNKNOWN {
-                    self.error_is_of_type_unknown(right_idx);
-                }
+                // Note: tsc does NOT emit TS18046 for `unknown` in `in` operator
+                // context. The `in` operator has its own checks (TS2638 for types
+                // that may represent primitives, or TS2360/TS2361 for invalid RHS).
+                // TS18046 is only for property access / call on unknown.
 
                 // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
                 // This prevents using 'in' with primitives like string | number
