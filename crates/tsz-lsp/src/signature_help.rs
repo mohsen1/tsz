@@ -239,14 +239,12 @@ impl<'a> SignatureHelpProvider<'a> {
 
         // Interfaces and type aliases are type-only declarations — don't provide
         // signature help when they're used as call targets (e.g. `C()`).
-        if let Some(symbol_id) = symbol_id {
-            if let Some(symbol) = self.binder.get_symbol(symbol_id) {
-                if symbol.flags & symbol_flags::INTERFACE != 0
-                    && symbol.flags & symbol_flags::VALUE == 0
-                {
-                    return None;
-                }
-            }
+        if let Some(symbol_id) = symbol_id
+            && let Some(symbol) = self.binder.get_symbol(symbol_id)
+            && symbol.flags & symbol_flags::INTERFACE != 0
+            && symbol.flags & symbol_flags::VALUE == 0
+        {
+            return None;
         }
 
         let (callee_type, docs) = if let Some(symbol_id) = symbol_id {
@@ -550,15 +548,15 @@ impl<'a> SignatureHelpProvider<'a> {
                     // Only stop if the cursor is inside a multi-line function BODY.
                     // For single-line bodies like `foo(() => {/**/})`, still show
                     // signature help since the user is effectively still at the argument.
-                    if let Some(fn_data) = self.arena.get_function(node) {
-                        if let Some(body_node) = self.arena.get(fn_data.body) {
-                            if cursor_offset >= body_node.pos && cursor_offset <= body_node.end {
-                                let body_text = &self.source_text
-                                    [body_node.pos as usize..body_node.end as usize];
-                                if body_text.contains('\n') {
-                                    return None;
-                                }
-                            }
+                    if let Some(fn_data) = self.arena.get_function(node)
+                        && let Some(body_node) = self.arena.get(fn_data.body)
+                        && cursor_offset >= body_node.pos
+                        && cursor_offset <= body_node.end
+                    {
+                        let body_text =
+                            &self.source_text[body_node.pos as usize..body_node.end as usize];
+                        if body_text.contains('\n') {
+                            return None;
                         }
                     }
                 }
@@ -854,7 +852,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         params: sig.params.clone(),
                         this_type: sig.this_type,
                         return_type: sig.return_type,
-                        type_predicate: sig.type_predicate.clone(),
+                        type_predicate: sig.type_predicate,
                         is_constructor: false,
                         is_method: false,
                     };
@@ -876,7 +874,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         params: sig.params.clone(),
                         this_type: sig.this_type,
                         return_type: sig.return_type,
-                        type_predicate: sig.type_predicate.clone(),
+                        type_predicate: sig.type_predicate,
                         is_constructor: true,
                         is_method: false,
                     };
@@ -955,38 +953,38 @@ impl<'a> SignatureHelpProvider<'a> {
             // When a rest parameter has a tuple type, expand the tuple elements
             // as individual parameters. e.g. `...args: [...names: string[], allCaps: boolean]`
             // becomes `...names: string[], allCaps: boolean`.
-            if param.rest {
-                if let Some(TypeData::Tuple(list_id)) = checker.ctx.types.lookup(param.type_id) {
-                    let elements = checker.ctx.types.tuple_list(list_id);
-                    let param_base_name = param.name.map_or_else(
-                        || "arg".to_string(),
+            if param.rest
+                && let Some(TypeData::Tuple(list_id)) = checker.ctx.types.lookup(param.type_id)
+            {
+                let elements = checker.ctx.types.tuple_list(list_id);
+                let param_base_name = param.name.map_or_else(
+                    || "arg".to_string(),
+                    |atom| checker.ctx.types.resolve_atom(atom),
+                );
+                for (i, elem) in elements.iter().enumerate() {
+                    let elem_name = elem.name.map_or_else(
+                        || format!("{param_base_name}_{i}"),
                         |atom| checker.ctx.types.resolve_atom(atom),
                     );
-                    for (i, elem) in elements.iter().enumerate() {
-                        let elem_name = elem.name.map_or_else(
-                            || format!("{}_{}", param_base_name, i),
-                            |atom| checker.ctx.types.resolve_atom(atom),
-                        );
-                        let type_str = if elem.type_id == TypeId::UNKNOWN {
-                            "any".to_string()
-                        } else {
-                            checker.format_type(elem.type_id)
-                        };
-                        let optional = if elem.optional { "?" } else { "" };
-                        let rest = if elem.rest { "..." } else { "" };
+                    let type_str = if elem.type_id == TypeId::UNKNOWN {
+                        "any".to_string()
+                    } else {
+                        checker.format_type(elem.type_id)
+                    };
+                    let optional = if elem.optional { "?" } else { "" };
+                    let rest = if elem.rest { "..." } else { "" };
 
-                        let param_label = format!("{rest}{elem_name}{optional}: {type_str}");
-                        parameters.push(ParameterInformation {
-                            name: elem_name.clone(),
-                            label: param_label.clone(),
-                            documentation: None,
-                            is_optional: elem.optional,
-                            is_rest: elem.rest,
-                        });
-                        param_labels.push(param_label);
-                    }
-                    continue;
+                    let param_label = format!("{rest}{elem_name}{optional}: {type_str}");
+                    parameters.push(ParameterInformation {
+                        name: elem_name.clone(),
+                        label: param_label.clone(),
+                        documentation: None,
+                        is_optional: elem.optional,
+                        is_rest: elem.rest,
+                    });
+                    param_labels.push(param_label);
                 }
+                continue;
             }
 
             let name = param.name.map_or_else(
@@ -2015,7 +2013,7 @@ fn substitute_type_params(s: &str, type_param_substitutions: &[(String, String)]
 }
 
 #[inline]
-fn is_ident_char(b: u8) -> bool {
+const fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 

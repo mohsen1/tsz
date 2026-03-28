@@ -1144,10 +1144,10 @@ impl<'a> HoverProvider<'a> {
         let mut init_type_text = checker.format_type(init_type);
         // `new X()` produces an instance of X, not `typeof X`.
         // Strip the `typeof ` prefix when the initializer is a new-expression.
-        if init_node.kind == tsz_parser::syntax_kind_ext::NEW_EXPRESSION {
-            if let Some(stripped) = init_type_text.strip_prefix("typeof ") {
-                init_type_text = stripped.to_string();
-            }
+        if init_node.kind == tsz_parser::syntax_kind_ext::NEW_EXPRESSION
+            && let Some(stripped) = init_type_text.strip_prefix("typeof ")
+        {
+            init_type_text = stripped.to_string();
         }
         if init_node.kind == tsz_parser::syntax_kind_ext::NEW_EXPRESSION
             && !init_type_text.is_empty()
