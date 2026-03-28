@@ -82,10 +82,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check CallableFunction/NewableFunction when Function is missing OR when
-        // --noLib is explicitly set. With --noLib, the user defines Function manually
-        // but may omit these auxiliary types — tsc still requires them and emits TS2318.
-        if !function_available || self.ctx.capabilities.no_lib {
+        // Check CallableFunction/NewableFunction only when Function itself is
+        // missing. When Function IS available (even with --noLib), tsc does not
+        // separately require CallableFunction/NewableFunction — they are only
+        // reported alongside the core Function type absence.
+        if !function_available {
             for &type_name in FUNCTION_AUX_TYPES {
                 if !self.ctx.has_name_in_lib(type_name) {
                     self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
