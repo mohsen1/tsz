@@ -409,7 +409,7 @@ impl<'a> CheckerState<'a> {
                     &failure_reason
                 {
                     let pn = self.ctx.types.resolve_atom_ref(*property_name);
-                    if pn.starts_with("[Symbol.") {
+                    if pn.starts_with("[Symbol.") || pn.starts_with("__js_ctor_brand_") {
                         return;
                     }
                 }
