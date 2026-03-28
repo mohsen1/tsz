@@ -167,22 +167,30 @@ impl<'a> CheckerState<'a> {
         let result = {
             // First pass: evaluate with TypeEnvironment resolver.
             let env = self.ctx.type_env.borrow();
+            // PERF: Only collect seed entries when cache is non-empty.
+            // The collect is necessary because env_eval_cache's RefCell borrow
+            // must not overlap with evaluate_type_with_cache. Checking is_empty()
+            // first avoids an unnecessary Vec allocation when the cache is cold.
             let seed_iter = if use_cache {
                 let cache = self.ctx.env_eval_cache.borrow();
-                // Collect seed entries — cache borrow must not overlap with evaluate_type_with_cache.
-                cache
-                    .iter()
-                    .map(|(&k, v)| (k, v.result))
-                    .collect::<Vec<_>>()
+                if cache.is_empty() {
+                    Vec::new()
+                } else {
+                    cache
+                        .iter()
+                        .map(|(&k, v)| (k, v.result))
+                        .collect::<Vec<_>>()
+                }
             } else {
                 Vec::new()
             };
+            let has_seed = !seed_iter.is_empty();
             let eval_result = evaluate_type_with_cache(
                 self.ctx.types,
                 &*env,
                 type_id,
                 seed_iter.into_iter(),
-                use_cache,
+                has_seed,
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
