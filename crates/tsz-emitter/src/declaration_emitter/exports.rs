@@ -595,6 +595,13 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Reset constructor and method overload tracking for this class
         self.class_has_constructor_overloads = false;
+        self.class_extends_another = class.heritage_clauses.as_ref().is_some_and(|hc| {
+            hc.nodes.iter().any(|&clause_idx| {
+                self.arena
+                    .get_heritage_clause_at(clause_idx)
+                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+            })
+        });
         self.method_names_with_overloads = rustc_hash::FxHashSet::default();
 
         // Emit parameter properties from constructor first (before other members)
@@ -942,6 +949,13 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Reset constructor and method overload tracking for this class
         self.class_has_constructor_overloads = false;
+        self.class_extends_another = class.heritage_clauses.as_ref().is_some_and(|hc| {
+            hc.nodes.iter().any(|&clause_idx| {
+                self.arena
+                    .get_heritage_clause_at(clause_idx)
+                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+            })
+        });
         self.method_names_with_overloads = FxHashSet::default();
 
         // Emit parameter properties from constructor first (before other members)

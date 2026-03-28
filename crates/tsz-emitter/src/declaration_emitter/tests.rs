@@ -2050,6 +2050,35 @@ export class Preferences {
 }
 
 #[test]
+fn test_js_subclass_zero_arg_constructor_is_emitted() {
+    let source = r#"
+export class Super {
+    /**
+     * @param {string} firstArg
+     * @param {string} secondArg
+     */
+    constructor(firstArg, secondArg) { }
+}
+
+export class Sub extends Super {
+    constructor() {
+        super('first', 'second');
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("constructor();"),
+        "Expected zero-arg JS constructor in subclass to be emitted in declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_equals_emits_before_target_declaration() {
     let source = r#"
 const a = {};
