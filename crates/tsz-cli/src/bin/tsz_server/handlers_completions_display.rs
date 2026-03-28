@@ -692,32 +692,37 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
 
             // When trigger reason is "characterTyped", suppress signature help
-            // if cursor is inside a string, comment, or template literal.
+            // if cursor is inside a string, comment, or template literal,
+            // or if the typed character is not a direct syntactic part of a call.
             let trigger_reason = request
                 .arguments
                 .get("triggerReason")
                 .and_then(|v| v.as_object());
-            if let Some(reason) = trigger_reason {
-                let kind = reason.get("kind").and_then(|v| v.as_str());
-                if kind == Some("characterTyped") {
-                    // Compute byte offset from line/character position
-                    let byte_offset = {
-                        let mut off = 0usize;
-                        let mut current_line = 0u32;
-                        for (i, ch) in source_text.char_indices() {
-                            if current_line == position.line {
-                                off = i + position.character as usize;
-                                break;
-                            }
-                            if ch == '\n' {
-                                current_line += 1;
-                            }
+            let is_character_typed = trigger_reason
+                .as_ref()
+                .and_then(|r| r.get("kind"))
+                .and_then(|v| v.as_str())
+                == Some("characterTyped");
+            if is_character_typed {
+                // Compute byte offset from line/character position
+                let byte_offset = {
+                    let mut off = 0usize;
+                    let mut current_line = 0u32;
+                    for (i, ch) in source_text.char_indices() {
+                        if current_line == position.line {
+                            off = i + position.character as usize;
+                            break;
                         }
-                        off
-                    };
-                    if Self::is_in_string_or_comment(&source_text, byte_offset) {
-                        return None;
+                        if ch == '\n' {
+                            current_line += 1;
+                        }
                     }
+                    off
+                };
+                // Check the position of the just-typed character (offset - 1),
+                // since the cursor is positioned after the typed character.
+                if byte_offset > 0 && Self::is_in_string_or_comment(&source_text, byte_offset - 1) {
+                    return None;
                 }
             }
 
@@ -732,6 +737,40 @@ impl Server {
             );
             let mut type_cache = None;
             let sig_help = provider.get_signature_help(root, position, &mut type_cache)?;
+
+            // For "characterTyped", verify the typed trigger character is a direct
+            // syntactic part of the call expression (syntactic owner check).
+            // This suppresses signature help when e.g. `(` creates a nested call,
+            // or `,` is inside an object/array literal argument.
+            if is_character_typed {
+                let trigger_char = trigger_reason
+                    .as_ref()
+                    .and_then(|r| r.get("triggerCharacter"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.chars().next());
+                if let Some(tc) = trigger_char {
+                    let byte_offset = {
+                        let mut off = 0usize;
+                        let mut current_line = 0u32;
+                        for (i, ch) in source_text.char_indices() {
+                            if current_line == position.line {
+                                off = i + position.character as usize;
+                                break;
+                            }
+                            if ch == '\n' {
+                                current_line += 1;
+                            }
+                        }
+                        off
+                    };
+                    let typed_pos = byte_offset.saturating_sub(1);
+                    let span_start = sig_help.applicable_span_start as usize;
+                    if !Self::is_trigger_syntactic_owner(&source_text, tc, typed_pos, span_start) {
+                        return None;
+                    }
+                }
+            }
+
             let items: Vec<serde_json::Value> = sig_help
                 .signatures
                 .iter()
@@ -1088,5 +1127,106 @@ impl Server {
             }
         }
         false
+    }
+
+    /// Check whether a typed trigger character is a "syntactic owner" of the
+    /// call expression whose applicable span starts at `span_start`.
+    ///
+    /// For `(`: the typed `(` must be the opening delimiter of the call (right
+    ///   before `span_start`).
+    /// For `,`: the typed `,` must be at bracket-nesting depth 0 between
+    ///   `span_start` and the cursor, meaning it separates top-level arguments.
+    /// For `<`: the typed `<` must immediately precede the call's type argument
+    ///   span (similar to `(`).
+    ///
+    /// This mirrors TypeScript's `isSyntacticOwner` check which prevents
+    /// `characterTyped` from triggering signature help for nested expressions
+    /// (e.g., `(` inside an object literal argument, `,` inside array literals).
+    fn is_trigger_syntactic_owner(
+        source: &str,
+        trigger_char: char,
+        typed_pos: usize,
+        span_start: usize,
+    ) -> bool {
+        let bytes = source.as_bytes();
+        match trigger_char {
+            '(' => {
+                // The typed `(` should be the opening paren of the call.
+                // The applicable span starts right after the `(`, so the
+                // `(` should be at span_start - 1 (or typed_pos == span_start - 1).
+                // Allow a small tolerance for whitespace differences.
+                span_start > 0 && typed_pos == span_start - 1
+            }
+            '<' => {
+                // Similar to `(`: the `<` should be right before the span.
+                span_start > 0 && typed_pos == span_start - 1
+            }
+            ',' => {
+                // The `,` must be at nesting depth 0 within the call's argument
+                // list (between span_start and typed_pos).
+                if typed_pos < span_start || typed_pos >= bytes.len() {
+                    return false;
+                }
+                let mut depth_paren = 0i32;
+                let mut depth_bracket = 0i32;
+                let mut depth_brace = 0i32;
+                let mut i = span_start;
+                while i < typed_pos && i < bytes.len() {
+                    match bytes[i] {
+                        b'(' => depth_paren += 1,
+                        b')' => depth_paren -= 1,
+                        b'[' => depth_bracket += 1,
+                        b']' => depth_bracket -= 1,
+                        b'{' => depth_brace += 1,
+                        b'}' => depth_brace -= 1,
+                        b'\'' | b'"' => {
+                            // Skip string literals
+                            let quote = bytes[i];
+                            i += 1;
+                            while i < bytes.len() && bytes[i] != quote {
+                                if bytes[i] == b'\\' {
+                                    i += 1;
+                                }
+                                i += 1;
+                            }
+                        }
+                        b'`' => {
+                            // Template literal: if typed_pos falls inside it
+                            // (including expression parts), the trigger is nested.
+                            i += 1;
+                            let mut tdepth = 0u32;
+                            while i < bytes.len() {
+                                if i == typed_pos {
+                                    // The trigger character is inside this template literal
+                                    return false;
+                                }
+                                if bytes[i] == b'\\' {
+                                    i += 2;
+                                    continue;
+                                }
+                                if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                                    tdepth += 1;
+                                    i += 2;
+                                    continue;
+                                }
+                                if bytes[i] == b'}' && tdepth > 0 {
+                                    tdepth -= 1;
+                                    i += 1;
+                                    continue;
+                                }
+                                if bytes[i] == b'`' && tdepth == 0 {
+                                    break;
+                                }
+                                i += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                depth_paren == 0 && depth_bracket == 0 && depth_brace == 0
+            }
+            _ => true,
+        }
     }
 }
