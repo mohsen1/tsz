@@ -6,7 +6,7 @@ impl<'a> CheckerState<'a> {
     pub(super) fn build_object_literal_method_synthetic_this_type(
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
-        obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, NodeIndex>,
+        obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, (NodeIndex, u32)>,
         current_method_idx: NodeIndex,
         current_method_name: &str,
         current_method_type_override: Option<TypeId>,
@@ -20,7 +20,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let current_method_name_atom = self.ctx.types.intern_string(current_method_name);
-        for (&method_name_atom, &other_elem_idx) in obj_all_method_names {
+        for (&method_name_atom, &(other_elem_idx, decl_order)) in obj_all_method_names {
             if this_props.iter().any(|p| p.name == method_name_atom) {
                 continue;
             }
@@ -174,7 +174,7 @@ impl<'a> CheckerState<'a> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order: 0,
+                declaration_order: decl_order,
             });
         }
 
@@ -191,7 +191,7 @@ impl<'a> CheckerState<'a> {
     pub(super) fn build_object_literal_fn_property_synthetic_this_type(
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
-        obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, NodeIndex>,
+        obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, (NodeIndex, u32)>,
         _current_property_name: &str,
     ) -> TypeId {
         let mut this_props: Vec<tsz_solver::PropertyInfo> = properties.values().cloned().collect();
@@ -203,7 +203,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Add placeholder callable types for pre-scanned method declarations
-        for (&method_name_atom, &other_elem_idx) in obj_all_method_names {
+        for (&method_name_atom, &(other_elem_idx, decl_order)) in obj_all_method_names {
             if this_props.iter().any(|p| p.name == method_name_atom) {
                 continue;
             }
@@ -291,7 +291,7 @@ impl<'a> CheckerState<'a> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order: 0,
+                declaration_order: decl_order,
             });
         }
 
