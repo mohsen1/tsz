@@ -6009,12 +6009,20 @@ impl<'a> DeclarationEmitter<'a> {
             let namespace_alias_resolver = |sym_id| self.resolve_namespace_import_alias(sym_id);
             let local_import_alias_name_resolver =
                 |sym_id| self.can_reference_local_import_alias_by_name(sym_id);
+            let has_local_import_alias_resolver = |sym_id| {
+                if let Some(binder) = self.binder {
+                    self.symbol_has_local_import_alias(binder, sym_id)
+                } else {
+                    false
+                }
+            };
             let mut printer = TypePrinter::new(interner)
                 .with_indent_level(self.indent_level)
                 .with_node_arena(self.arena)
                 .with_module_path_resolver(&module_path_resolver)
                 .with_namespace_alias_resolver(&namespace_alias_resolver)
                 .with_local_import_alias_name_resolver(&local_import_alias_name_resolver)
+                .with_has_local_import_alias_resolver(&has_local_import_alias_resolver)
                 .with_strict_null_checks(self.strict_null_checks);
 
             // Add symbol arena if available for visibility checking
@@ -6144,19 +6152,33 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         };
 
-        if let Some(resolved_sym_id) = binder
+        // Determine the "original" symbol (following import aliases).
+        let original_sym_id = binder
             .resolve_import_symbol(sym_id)
-            .filter(|resolved_sym_id| *resolved_sym_id != sym_id)
-            && let Some(path) =
-                self.resolve_symbol_module_path_from_source(resolved_sym_id, binder, current_path)
+            .filter(|resolved| *resolved != sym_id)
+            .unwrap_or(sym_id);
+
+        if let Some(path) =
+            self.resolve_symbol_module_path_from_source(original_sym_id, binder, current_path)
         {
+            // If the symbol is globally accessible (e.g. from a non-module .d.ts
+            // or a triple-slash referenced global), suppress the import qualifier.
+            if self.symbol_is_globally_accessible(binder, sym_id, original_sym_id) {
+                return None;
+            }
             return Some(path);
         }
 
-        if let Some(path) =
-            self.resolve_symbol_module_path_from_source(sym_id, binder, current_path)
-        {
-            return Some(path);
+        // Try the non-resolved symbol if it differs.
+        if original_sym_id != sym_id {
+            if let Some(path) =
+                self.resolve_symbol_module_path_from_source(sym_id, binder, current_path)
+            {
+                if self.symbol_is_globally_accessible(binder, sym_id, original_sym_id) {
+                    return None;
+                }
+                return Some(path);
+            }
         }
 
         // Fall back to the raw import text for imported symbols when we
@@ -6166,6 +6188,168 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         binder.symbols.get(sym_id)?.import_module.clone()
+    }
+
+    /// Check whether a foreign symbol has a local import alias in this file
+    /// that will be emitted, making it referenceable by name.
+    fn symbol_has_local_import_alias(
+        &self,
+        binder: &BinderState,
+        original_sym_id: SymbolId,
+    ) -> bool {
+        let symbol = match binder.symbols.get(original_sym_id) {
+            Some(s) => s,
+            None => return false,
+        };
+        let target_name = &symbol.escaped_name;
+
+        // Check import_symbol_map: each entry is (alias_sym_id, module_specifier).
+        // If an alias resolves to the same original symbol, the name is in scope.
+        for (&alias_sym_id, _module_spec) in &self.import_symbol_map {
+            if let Some(resolved) = binder.resolve_import_symbol(alias_sym_id)
+                && resolved == original_sym_id
+            {
+                return true;
+            }
+            // Also match by name + module when resolve_import_symbol doesn't
+            // link them (e.g. cross-file merges).
+            if let Some(alias_symbol) = binder.symbols.get(alias_sym_id) {
+                let alias_import_name = alias_symbol
+                    .import_name
+                    .as_deref()
+                    .unwrap_or(&alias_symbol.escaped_name);
+                if alias_import_name == target_name && alias_symbol.import_module.is_some() {
+                    // Verify the alias points to the same foreign module.
+                    if let Some(current_path) = &self.current_file_path {
+                        if let Some(source_arena) = binder.symbol_arenas.get(&original_sym_id) {
+                            let arena_addr = std::sync::Arc::as_ptr(source_arena) as usize;
+                            if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
+                                let rel = self.calculate_relative_path(current_path, source_path);
+                                let stripped = self.strip_ts_extensions(&rel);
+                                if alias_symbol.import_module.as_deref() == Some(&stripped)
+                                    || alias_symbol.import_module.as_deref()
+                                        == Some(source_path.as_str())
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check whether a symbol is globally accessible (from a non-module .d.ts,
+    /// triple-slash reference, or ambient global declaration) so it doesn't
+    /// need an import("...") qualifier.
+    fn symbol_is_globally_accessible(
+        &self,
+        binder: &BinderState,
+        sym_id: SymbolId,
+        original_sym_id: SymbolId,
+    ) -> bool {
+        let check_sym_id = if original_sym_id != sym_id {
+            original_sym_id
+        } else {
+            sym_id
+        };
+        let symbol = match binder.symbols.get(check_sym_id) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // Import aliases are never "global" in this sense.
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module.is_some() {
+            return false;
+        }
+
+        // Walk up to the root parent symbol to find the top-level name.
+        // For `M.C`, the root is `M`; for top-level `X`, the root is `X` itself.
+        let mut root_id = check_sym_id;
+        let mut root_name = &symbol.escaped_name;
+        let mut cur_id = check_sym_id;
+        // Walk up parent chain (max 20 levels to avoid infinite loops)
+        for _ in 0..20 {
+            let Some(cur_sym) = binder.symbols.get(cur_id) else {
+                break;
+            };
+            if !cur_sym.parent.is_some() {
+                root_id = cur_id;
+                root_name = &cur_sym.escaped_name;
+                break;
+            }
+            let parent_id = cur_sym.parent;
+            match binder.symbols.get(parent_id) {
+                Some(parent_sym) => {
+                    // Symbols inside `declare module "..."` are module-scoped,
+                    // not globally accessible. Return false immediately.
+                    // Check: string-literal module names (starts with `"`) or
+                    // MODULE-flagged parents that come from ambient module
+                    // declarations (like @types/node's `declare module "url"`).
+                    if parent_sym.escaped_name.starts_with('"') {
+                        return false;
+                    }
+                    // A parent with MODULE flags whose name appears in
+                    // module_exports indicates an ambient external module
+                    // (e.g. `declare module "url"`). Its children are
+                    // module-scoped, not globally accessible.
+                    if parent_sym.has_any_flags(tsz_binder::symbol_flags::MODULE)
+                        && binder.module_exports.contains_key(&parent_sym.escaped_name)
+                    {
+                        return false;
+                    }
+                    // Stop at source-file-like internal parents.
+                    if parent_sym.escaped_name.starts_with("__") {
+                        root_id = cur_id;
+                        root_name = &cur_sym.escaped_name;
+                        break;
+                    }
+                    cur_id = parent_id;
+                }
+                None => {
+                    root_id = cur_id;
+                    root_name = &cur_sym.escaped_name;
+                    break;
+                }
+            }
+        }
+
+        // Check if the root symbol is accessible from file_locals or current_scope.
+        self.symbol_name_is_locally_accessible(binder, root_id, root_name)
+    }
+
+    /// Check whether a symbol with the given name/id is reachable in the
+    /// local scope (file_locals or current_scope) without an import qualifier.
+    fn symbol_name_is_locally_accessible(
+        &self,
+        binder: &BinderState,
+        sym_id: SymbolId,
+        name: &str,
+    ) -> bool {
+        if let Some(local_sym_id) = binder.file_locals.get(name) {
+            if local_sym_id == sym_id {
+                return true;
+            }
+            if let Some(resolved) = binder.resolve_import_symbol(local_sym_id)
+                && resolved == sym_id
+            {
+                return true;
+            }
+        }
+        if let Some(scope_sym_id) = binder.current_scope.get(name) {
+            if scope_sym_id == sym_id {
+                return true;
+            }
+            if let Some(resolved) = binder.resolve_import_symbol(scope_sym_id)
+                && resolved == sym_id
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn resolve_symbol_module_path_from_source(
