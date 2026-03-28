@@ -853,7 +853,10 @@ impl TypeInterner {
         if shard.is_empty() {
             return None;
         }
-        let vec = shard.get_inner().index_to_key.read().ok()?;
+        // Use inner.get() instead of get_or_init() -- if shard is non-empty,
+        // inner is guaranteed initialized (intern sets it before incrementing counter).
+        let inner = shard.inner.get()?;
+        let vec = inner.index_to_key.read().ok()?;
         vec.get(local_index as usize).copied()
     }
 
@@ -871,7 +874,8 @@ impl TypeInterner {
         if shard.is_empty() {
             return None;
         }
-        let ord = shard.get_inner().alloc_order.read().ok()?;
+        let inner = shard.inner.get()?;
+        let ord = inner.alloc_order.read().ok()?;
         let val = ord.get(local_index as usize).copied()?;
         if val == u32::MAX { None } else { Some(val) }
     }
