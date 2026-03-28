@@ -246,9 +246,16 @@ impl ProcessPool {
         // consuming all RAM and triggering the OOM killer on the entire
         // runner. The process crashes with SIGABRT, which the pool detects
         // as a crash and respawns cleanly.
+        //
+        // RLIMIT_AS limits virtual address space, which is typically much
+        // larger than RSS due to memory-mapped files, thread stacks, and
+        // other virtual regions. Use a 4x multiplier over the RSS limit
+        // to avoid false positives while still catching runaway allocation.
+        // RSS-based recycling (checked after each compilation) handles the
+        // normal memory management; RLIMIT_AS is a safety net for crashes.
         #[cfg(target_os = "linux")]
         if max_rss_bytes > 0 {
-            let limit = max_rss_bytes as u64;
+            let limit = (max_rss_bytes as u64).saturating_mul(4);
             unsafe {
                 cmd.pre_exec(move || {
                     let rlim = libc::rlimit {
