@@ -539,6 +539,25 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
                 }
+                // When duplicate class declarations exist, tsc also flags interface
+                // declarations that share the same name. The interface merges into the
+                // class symbol, but since the class declarations themselves conflict,
+                // every declaration of the name is marked as a duplicate.
+                let local_interface_decls: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(_, flags, is_local, _, _)| {
+                        *is_local && (flags & symbol_flags::INTERFACE) != 0
+                    })
+                    .map(|(decl_idx, _, _, _, _)| *decl_idx)
+                    .collect();
+                for decl_idx in local_interface_decls {
+                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
                 continue;
             }
 
