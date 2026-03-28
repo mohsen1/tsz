@@ -1461,7 +1461,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Find a named property's type in a structural type (Object, ObjectWithIndex, or Callable).
+    /// Find a named property's type in a structural type (`Object`, `ObjectWithIndex`, or `Callable`).
     /// Returns `Some(type_id)` if the property is found, respecting optional property unwrapping.
     fn find_property_type_in_structural(&self, type_id: TypeId, prop_name: Atom) -> Option<TypeId> {
         match self.interner().lookup(type_id) {
