@@ -911,7 +911,19 @@ impl<'a> TypePrinter<'a> {
 
                 // Property type
                 line.push_str(": ");
-                line.push_str(&nested.print_type(nested.declaration_property_type(property)));
+                let prop_type = nested.declaration_property_type(property);
+                let printed = nested.print_type(prop_type);
+                line.push_str(&printed);
+                // When an optional property's type is a union containing
+                // `undefined` but the printer stripped it (e.g. because
+                // strictNullChecks is off), re-append `| undefined` so the
+                // declaration output matches tsc.
+                if property.optional
+                    && !printed.ends_with("undefined")
+                    && nested.type_has_undefined_in_union(prop_type)
+                {
+                    line.push_str(" | undefined");
+                }
 
                 line.push(';');
                 lines.push(line);
@@ -1009,7 +1021,17 @@ impl<'a> TypePrinter<'a> {
 
                 // Property type
                 member.push_str(": ");
-                member.push_str(&self.print_type(self.declaration_property_type(property)));
+                let prop_type = self.declaration_property_type(property);
+                let printed = self.print_type(prop_type);
+                member.push_str(&printed);
+                // Preserve `| undefined` for optional properties (see indented
+                // path above for detailed comment).
+                if property.optional
+                    && !printed.ends_with("undefined")
+                    && self.type_has_undefined_in_union(prop_type)
+                {
+                    member.push_str(" | undefined");
+                }
 
                 members.push(member);
             }
@@ -1309,6 +1331,18 @@ impl<'a> TypePrinter<'a> {
             property.write_type
         } else {
             property.type_id
+        }
+    }
+
+    /// Check if a type is a union that contains `undefined` as a direct member.
+    fn type_has_undefined_in_union(&self, type_id: TypeId) -> bool {
+        if let Some(list_id) = visitor::union_list_id(self.interner, type_id) {
+            self.interner
+                .type_list(list_id)
+                .iter()
+                .any(|&t| t == TypeId::UNDEFINED)
+        } else {
+            type_id == TypeId::UNDEFINED
         }
     }
 
