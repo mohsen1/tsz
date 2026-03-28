@@ -829,28 +829,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // type IS that constraint. Skip the check for constrained type parameters
         // to avoid false positives from TypeId dedup issues with recursive types.
         // For unconstrained type parameters, use `unknown` as the implicit constraint.
-        let resolved_predicate =
-            if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, predicate_type) {
-                match crate::query_boundaries::common::type_param_info(self.ctx.types, predicate_type)
-                    .and_then(|info| info.constraint)
-                {
-                    Some(_) => return, // Constrained type param: always assignable to its constraint
-                    None => TypeId::UNKNOWN,
-                }
-            } else {
-                predicate_type
-            };
-        let resolved_param =
-            if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, param_type) {
-                match crate::query_boundaries::common::type_param_info(self.ctx.types, param_type)
-                    .and_then(|info| info.constraint)
-                {
-                    Some(c) => c,
-                    None => TypeId::UNKNOWN,
-                }
-            } else {
-                param_type
-            };
+        let resolved_predicate = if crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            predicate_type,
+        ) {
+            match crate::query_boundaries::common::type_param_info(self.ctx.types, predicate_type)
+                .and_then(|info| info.constraint)
+            {
+                Some(_) => return, // Constrained type param: always assignable to its constraint
+                None => TypeId::UNKNOWN,
+            }
+        } else {
+            predicate_type
+        };
+        let resolved_param = if crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            param_type,
+        ) {
+            match crate::query_boundaries::common::type_param_info(self.ctx.types, param_type)
+                .and_then(|info| info.constraint)
+            {
+                Some(c) => c,
+                None => TypeId::UNKNOWN,
+            }
+        } else {
+            param_type
+        };
 
         if !self
             .ctx
@@ -885,7 +889,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .iter()
                 .any(|&m| self.predicate_type_contains_unevaluable_application(m));
         }
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             return members
                 .iter()

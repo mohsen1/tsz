@@ -370,14 +370,20 @@ impl<'a> CheckerState<'a> {
                 let r = self
                     .literal_type_from_initializer(right_idx)
                     .expect("checked is_some above");
-                let l_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, l) == TypeId::NUMBER
-                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
-                let r_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, r) == TypeId::NUMBER
-                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
+                let l_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, l)
+                    == TypeId::NUMBER
+                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, l)
+                        == TypeId::BIGINT;
+                let r_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, r)
+                    == TypeId::NUMBER
+                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, r)
+                        == TypeId::BIGINT;
                 let l_is_bigint =
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, l)
+                        == TypeId::BIGINT;
                 let r_is_bigint =
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, r)
+                        == TypeId::BIGINT;
                 l_num && r_num && (l_is_bigint != r_is_bigint)
             };
 

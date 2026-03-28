@@ -233,8 +233,11 @@ impl<'a> CheckerState<'a> {
                         structural_type = delegate_type;
                     }
                     let preserve_deferred_keyof =
-                        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, structural_type)
-                            .is_some();
+                        crate::query_boundaries::state::checking::keyof_target(
+                            self.ctx.types,
+                            structural_type,
+                        )
+                        .is_some();
                     let structural_type = if structural_type != TypeId::ERROR
                         && structural_type != TypeId::UNKNOWN
                         && !preserve_deferred_keyof

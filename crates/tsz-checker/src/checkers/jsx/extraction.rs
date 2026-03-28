@@ -381,7 +381,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             return members
                 .iter()

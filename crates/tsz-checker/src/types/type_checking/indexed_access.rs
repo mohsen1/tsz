@@ -54,7 +54,8 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keyof_object: TypeId,
     ) -> bool {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, index_type)
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
         else {
             return false;
         };
@@ -374,13 +375,19 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         object_type_for_check: TypeId,
     ) -> bool {
-        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, ty).is_some_and(|operand| {
-            let evaluated_operand = self.evaluate_type_with_env(operand);
-            same_object_key_space(self.ctx.types, operand, object_type)
-                || same_object_key_space(self.ctx.types, operand, object_type_for_check)
-                || same_object_key_space(self.ctx.types, evaluated_operand, object_type)
-                || same_object_key_space(self.ctx.types, evaluated_operand, object_type_for_check)
-        })
+        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, ty).is_some_and(
+            |operand| {
+                let evaluated_operand = self.evaluate_type_with_env(operand);
+                same_object_key_space(self.ctx.types, operand, object_type)
+                    || same_object_key_space(self.ctx.types, operand, object_type_for_check)
+                    || same_object_key_space(self.ctx.types, evaluated_operand, object_type)
+                    || same_object_key_space(
+                        self.ctx.types,
+                        evaluated_operand,
+                        object_type_for_check,
+                    )
+            },
+        )
     }
 
     /// Resolve a type parameter's constraint from its AST declaration when the TypeId
@@ -700,10 +707,11 @@ impl<'a> CheckerState<'a> {
         .unwrap_or(object_type_for_check);
         if let Some((base_object_type, access_index_type)) =
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, object_type_for_check)
-            && let Some(base_constraint) = crate::query_boundaries::common::type_parameter_constraint(
-                self.ctx.types,
-                base_object_type,
-            )
+            && let Some(base_constraint) =
+                crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    base_object_type,
+                )
         {
             let constrained_access = self
                 .ctx
@@ -755,7 +763,10 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::state::checking::keyof_target(self.ctx.types, index_type)
             {
                 if let Some(constraint_operand) =
-                    crate::query_boundaries::state::checking::keyof_target(self.ctx.types, mapped_constraint)
+                    crate::query_boundaries::state::checking::keyof_target(
+                        self.ctx.types,
+                        mapped_constraint,
+                    )
                     && same_object_key_space(self.ctx.types, index_operand, constraint_operand)
                 {
                     return;
@@ -776,13 +787,14 @@ impl<'a> CheckerState<'a> {
         let is_self_derived_key_space = |candidate: TypeId| {
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, candidate).is_some_and(
                 |(derived_object, derived_index)| {
-                    crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
-                        && !crate::query_boundaries::common::is_type_parameter_like(
-                            self.ctx.types,
-                            derived_object,
-                        )
-                        && (derived_index == index_type
-                            || same_type_param_name(self.ctx.types, derived_index, index_type))
+                    crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        index_type,
+                    ) && !crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        derived_object,
+                    ) && (derived_index == index_type
+                        || same_type_param_name(self.ctx.types, derived_index, index_type))
                 },
             )
         };
@@ -873,7 +885,10 @@ impl<'a> CheckerState<'a> {
                 return;
             }
             // Continue following if still a type parameter.
-            if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, next_evaluated) {
+            if !crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                next_evaluated,
+            ) {
                 index_type_for_check = next_evaluated;
                 break;
             }

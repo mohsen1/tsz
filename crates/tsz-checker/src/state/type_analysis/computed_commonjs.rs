@@ -1017,7 +1017,8 @@ impl<'a> CheckerState<'a> {
         let mut changed = false;
 
         for (prop_name, prop_type) in expando_props {
-            let prop_type = crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop_type);
+            let prop_type =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop_type);
             let prop_atom = self.ctx.types.intern_string(&prop_name);
             if properties.contains_key(&prop_atom) {
                 continue;
@@ -1122,7 +1123,8 @@ impl<'a> CheckerState<'a> {
         let mut changed = false;
 
         for (prop_name, prop_type) in expando_props {
-            let prop_type = crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop_type);
+            let prop_type =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop_type);
             let prop_atom = self.ctx.types.intern_string(&prop_name);
             if let Some(existing) = properties.get_mut(&prop_atom) {
                 let existing_is_placeholder = matches!(

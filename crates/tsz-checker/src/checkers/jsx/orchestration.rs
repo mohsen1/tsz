@@ -13,7 +13,8 @@ impl<'a> CheckerState<'a> {
     pub(super) fn refine_jsx_callable_contextual_type(&mut self, type_id: TypeId) -> TypeId {
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.evaluate_type_with_env(resolved);
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
         else {
             return resolved;
         };

@@ -831,7 +831,10 @@ impl<'a> CheckerState<'a> {
                             // result is fully resolved (no outer-scope type params).
                             // (See matching logic in call.rs Round 2.)
                             let instantiated = if let Some(tp_info) =
-                                crate::query_boundaries::common::type_param_info(self.ctx.types, instantiated)
+                                crate::query_boundaries::common::type_param_info(
+                                    self.ctx.types,
+                                    instantiated,
+                                )
                                 && let Some(constraint) = tp_info.constraint
                             {
                                 let instantiated_constraint =

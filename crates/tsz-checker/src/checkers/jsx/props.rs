@@ -894,7 +894,8 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         props_type: TypeId,
     ) -> TypeId {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, props_type)
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, props_type)
         else {
             return props_type;
         };
@@ -1976,7 +1977,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get union members — bail if not a union
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, props_type)
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, props_type)
         else {
             return;
         };
