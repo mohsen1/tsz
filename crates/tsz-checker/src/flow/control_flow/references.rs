@@ -751,7 +751,12 @@ impl<'a> FlowAnalyzer<'a> {
         };
         let decl_node = self.arena.get(decl_idx)?;
         if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-            return None;
+            // For non-`import =` aliases (ImportSpecifier, ImportClause,
+            // NamespaceImport), we can't resolve through to the original
+            // export target. Return the alias symbol itself so that
+            // is_matching_reference can still match two references to the
+            // same imported binding (e.g. `if (a0) x = a0` narrows `a0`).
+            return Some(sym_id);
         }
         let import = self.arena.get_import_decl(decl_node)?;
         self.reference_symbol_inner(import.module_specifier, visited)
