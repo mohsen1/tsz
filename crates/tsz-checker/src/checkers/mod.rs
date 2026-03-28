@@ -28,11 +28,25 @@ use tsz_solver::TypeId;
 // Reset between files in batch mode via `reset_stack_overflow_flag()`.
 thread_local! {
     static STACK_OVERFLOW_TRIPPED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Counter for amortizing the `stacker::remaining_stack()` syscall.
+    /// We only probe the real stack depth every Nth call.
+    static STACK_CHECK_COUNTER: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
 /// Returns `true` if the stack overflow breaker has been tripped.
+#[inline]
 pub fn stack_overflow_tripped() -> bool {
     STACK_OVERFLOW_TRIPPED.get()
+}
+
+/// Returns `true` if the stack should be probed on this call.
+/// Amortizes the `stacker::remaining_stack()` cost by only returning
+/// `true` every 64th invocation.
+#[inline]
+pub fn should_probe_stack() -> bool {
+    let c = STACK_CHECK_COUNTER.get().wrapping_add(1);
+    STACK_CHECK_COUNTER.set(c);
+    c & 63 == 0
 }
 
 /// Trip the stack overflow breaker.  Called from guards in `dispatch.rs` and

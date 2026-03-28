@@ -1491,7 +1491,8 @@ impl<'a> CheckerState<'a> {
         // `type ReactInstance = Component<any>` where `Component` references
         // `ReactInstance`).
         if crate::checkers_domain::stack_overflow_tripped()
-            || stacker::remaining_stack().is_some_and(|r| r < 256 * 1024)
+            || (crate::checkers_domain::should_probe_stack()
+                && stacker::remaining_stack().is_some_and(|r| r < 256 * 1024))
         {
             crate::checkers_domain::trip_stack_overflow();
             self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);

@@ -53,8 +53,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         request: &TypingRequest,
     ) -> TypeId {
         // Hard stack guard: bail when remaining stack is critically low.
+        // Amortize the stacker probe (involves reading the stack pointer) to
+        // every 64th call. 256 KB of headroom is enough to absorb 64 nested
+        // frames (~4 KB each) between probes.
         if crate::checkers_domain::stack_overflow_tripped()
-            || stacker::remaining_stack().is_some_and(|r| r < 256 * 1024)
+            || (crate::checkers_domain::should_probe_stack()
+                && stacker::remaining_stack().is_some_and(|r| r < 256 * 1024))
         {
             crate::checkers_domain::trip_stack_overflow();
             return TypeId::ERROR;
