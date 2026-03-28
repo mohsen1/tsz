@@ -655,6 +655,28 @@ impl<'a> CheckerState<'a> {
         self.resolve_effective_module_exports_from_file(module_specifier, None)
     }
 
+    /// Like `resolve_effective_module_exports` but uses an explicit `resolution-mode`
+    /// override from import attributes (e.g., `with { "resolution-mode": "require" }`).
+    /// Falls back to the non-mode-aware path when no override is provided.
+    pub(crate) fn resolve_effective_module_exports_with_mode(
+        &self,
+        module_specifier: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<tsz_binder::SymbolTable> {
+        if let Some(mode) = resolution_mode {
+            if let Some(target_idx) = self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_specifier,
+                Some(mode),
+            ) && let Some(exports) =
+                self.resolve_cross_file_namespace_exports_for_file(target_idx)
+            {
+                return Some(exports);
+            }
+        }
+        self.resolve_effective_module_exports(module_specifier)
+    }
+
     /// Like `resolve_effective_module_exports` but optionally resolves relative paths
     /// from a specific source file. This is needed for cross-file namespace re-exports
     /// where the module specifier (e.g., `"./b"`) is relative to the declaring file,

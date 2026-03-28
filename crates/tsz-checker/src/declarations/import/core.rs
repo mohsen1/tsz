@@ -4,6 +4,7 @@ use crate::diagnostics::format_message;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
@@ -16,6 +17,51 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /// Extract the `resolution-mode` override from an import/export declaration's
+    /// attributes (e.g., `with { "resolution-mode": "require" }`).
+    pub(crate) fn get_resolution_mode_override(
+        &self,
+        attributes_idx: NodeIndex,
+    ) -> Option<crate::context::ResolutionModeOverride> {
+        use crate::context::ResolutionModeOverride;
+
+        let attr_node = self.ctx.arena.get(attributes_idx)?;
+        let attrs = self.ctx.arena.get_import_attributes_data(attr_node)?;
+
+        for &elem_idx in &attrs.elements.nodes {
+            let elem_node = match self.ctx.arena.get(elem_idx) {
+                Some(node) if node.kind == syntax_kind_ext::IMPORT_ATTRIBUTE => node,
+                _ => continue,
+            };
+            let attr = self.ctx.arena.get_import_attribute_data(elem_node)?;
+
+            let name = if let Some(ident) = self
+                .ctx
+                .arena
+                .get(attr.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+            {
+                ident.escaped_text.as_str()
+            } else if let Some(lit) = self.ctx.arena.get_literal_text(attr.name) {
+                lit.trim_matches('"').trim_matches('\'')
+            } else {
+                continue;
+            };
+
+            if name != "resolution-mode" {
+                continue;
+            }
+
+            let value_text = self.ctx.arena.get_literal_text(attr.value)?;
+            return match value_text.trim_matches('"').trim_matches('\'') {
+                "import" => Some(ResolutionModeOverride::Import),
+                "require" => Some(ResolutionModeOverride::Require),
+                _ => None,
+            };
+        }
+        None
+    }
 
     /// Returns the appropriate "module not found" diagnostic code and message.
     /// Uses TS2792 when the effective module resolution is "Classic", otherwise TS2307.
@@ -749,12 +795,25 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
+        // Extract resolution-mode override from import attributes so we resolve
+        // against the correct conditional-exports entry (e.g., "require" vs "import").
+        let resolution_mode = self.get_resolution_mode_override(import.attributes);
+
         if self.is_ambient_module_match(module_name)
             || self.any_ambient_module_declared(module_name)
         {
             return;
         }
-        if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+        let resolved_target = if resolution_mode.is_some() {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode,
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+        if let Some(target_idx) = resolved_target {
             let arena = self.ctx.get_arena_for_file(target_idx as u32);
             if let Some(source_file) = arena.source_files.first()
                 && !source_file.is_declaration_file
@@ -830,7 +889,8 @@ impl<'a> CheckerState<'a> {
         // TSC includes source-level quotes in module diagnostic messages:
         // Module '"./foo"' has no exported member 'X'
         let quoted_module = format!("\"{module_name}\"");
-        let exports_table = self.resolve_effective_module_exports(module_name);
+        let exports_table =
+            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
         // can only be referenced via default import. Applies to namespace imports
@@ -949,7 +1009,7 @@ impl<'a> CheckerState<'a> {
                 .resolved_modules
                 .as_ref()
                 .is_some_and(|resolved| resolved.contains(module_name))
-                && self.ctx.resolve_import_target(module_name).is_some()
+                && resolved_target.is_some()
             {
                 // Module resolved but no exports table found - still emit TS1192
                 self.emit_no_default_export_error(module_name, clause.name, is_source_file);
@@ -973,7 +1033,7 @@ impl<'a> CheckerState<'a> {
                     .resolved_modules
                     .as_ref()
                     .is_some_and(|resolved| resolved.contains(module_name))
-                    && self.ctx.resolve_import_target(module_name).is_none()
+                    && resolved_target.is_none()
                 {
                     return;
                 }
