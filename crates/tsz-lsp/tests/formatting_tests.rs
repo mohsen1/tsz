@@ -1423,3 +1423,19 @@ fn test_format_on_key_semicolon_basic() {
     let result = DocumentFormattingProvider::format_on_key(source, 0, 10, ";", &options);
     assert!(result.is_ok());
 }
+
+#[test]
+fn test_formatting_on_single_line_blocks() {
+    // Matches fourslash test: formattingOnSingleLineBlocks.ts
+    let source = "class C\n{}\nif (true)\n{}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("class C { }"),
+        "Expected 'class C {{ }}' but got: {formatted}"
+    );
+    assert!(
+        formatted.contains("if (true) { }"),
+        "Expected 'if (true) {{ }}' but got: {formatted}"
+    );
+}

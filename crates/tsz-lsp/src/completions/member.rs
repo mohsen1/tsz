@@ -710,9 +710,6 @@ impl<'a> Completions<'a> {
                     continue;
                 };
 
-                if name.starts_with('#') {
-                    continue;
-                }
                 if !seen_names.insert(name.to_string()) {
                     continue;
                 }
