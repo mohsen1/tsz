@@ -1936,7 +1936,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(export_name) = self.get_identifier_text(export_name_idx) else {
                     continue;
                 };
-                let rhs_idx = self.arena.skip_parenthesized_and_assertions_and_comma(rhs_idx);
+                let rhs_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(rhs_idx);
                 let local_name = self.get_identifier_text(rhs_idx);
                 let entry = alias_map
                     .entry(export_name.clone())
@@ -1988,7 +1990,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
-        let expr_idx = self.arena.skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
             return None;
@@ -1997,18 +2001,24 @@ impl<'a> DeclarationEmitter<'a> {
         if binary.operator_token != SyntaxKind::EqualsToken as u16 {
             return None;
         }
-        let lhs = self.arena.skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
         let lhs_node = self.arena.get(lhs)?;
         if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return None;
         }
         let access = self.arena.get_access_expr(lhs_node)?;
         let export_name = self.get_identifier_text(access.name_or_argument)?;
-        let receiver = self.arena.skip_parenthesized_and_assertions_and_comma(access.expression);
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
         if !self.is_module_exports_reference(receiver) {
             return None;
         }
-        let rhs = self.arena.skip_parenthesized_and_assertions_and_comma(binary.right);
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
         let local_name = self.get_identifier_text(rhs)?;
         Some((export_name, local_name, stmt_idx))
     }

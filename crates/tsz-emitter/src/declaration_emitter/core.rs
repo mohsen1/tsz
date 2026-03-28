@@ -780,8 +780,7 @@ impl<'a> DeclarationEmitter<'a> {
         ) = self.collect_js_commonjs_named_exports(source_file);
         self.js_named_export_names
             .extend(js_commonjs_named_export_names);
-        let (cjs_aliases, cjs_alias_stmts) =
-            self.collect_js_cjs_export_aliases(source_file);
+        let (cjs_aliases, cjs_alias_stmts) = self.collect_js_cjs_export_aliases(source_file);
         self.js_cjs_export_aliases = cjs_aliases;
         self.js_cjs_export_alias_statements = cjs_alias_stmts;
         // Mark CJS alias local names as used so they survive usage analysis pruning.
@@ -823,7 +822,8 @@ impl<'a> DeclarationEmitter<'a> {
         );
         // Remove CJS export alias statements from deferred maps.
         for &stmt_idx in &self.js_cjs_export_alias_statements {
-            self.js_deferred_function_export_statements.remove(&stmt_idx);
+            self.js_deferred_function_export_statements
+                .remove(&stmt_idx);
             self.js_deferred_value_export_statements.remove(&stmt_idx);
         }
         self.js_deferred_prototype_method_statements =
