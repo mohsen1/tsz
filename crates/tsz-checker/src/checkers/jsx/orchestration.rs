@@ -737,6 +737,7 @@ impl<'a> CheckerState<'a> {
                     evaluated_props,
                     jsx_opening.tag_name,
                     None,
+                    None,
                     false, // intrinsic elements never have raw type params
                     display_target,
                     None,
@@ -843,6 +844,7 @@ impl<'a> CheckerState<'a> {
                     props_type,
                     jsx_opening.tag_name,
                     None,
+                    None,
                     false,
                     display_target,
                     None,
@@ -920,6 +922,7 @@ impl<'a> CheckerState<'a> {
                     props_type,
                     jsx_opening.tag_name,
                     Some(component_metadata_type),
+                    Some(component_type),
                     raw_has_type_params,
                     display_target,
                     preferred_props_display.as_deref(),
