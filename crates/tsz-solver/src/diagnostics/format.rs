@@ -290,6 +290,7 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Tuple(_)
                 | TypeData::Callable(_)
                 | TypeData::Function(_)
+                | TypeData::Mapped(_)
         ) && let Some(def_store) = self.def_store
         {
             if let Some(def_id) = def_store.find_def_for_type(type_id)
