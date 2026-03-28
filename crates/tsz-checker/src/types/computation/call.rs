@@ -807,10 +807,15 @@ impl<'a> CheckerState<'a> {
                         callable_ctx,
                     );
 
-                    // Seed inference from non-sensitive object-literal properties.
-                    let mut extracted_round1_partials = vec![false; args.len()];
+                    // Pre-compute type parameter names and set once for reuse
+                    // across Round 1/Round 2 inference passes.
                     let type_param_names: Vec<tsz_common::Atom> =
                         shape.type_params.iter().map(|tp| tp.name).collect();
+                    let tracked_type_params: FxHashSet<tsz_common::Atom> =
+                        type_param_names.iter().copied().collect();
+
+                    // Seed inference from non-sensitive object-literal properties.
+                    let mut extracted_round1_partials = vec![false; args.len()];
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if !sensitive_args[i] {
                             continue;
@@ -1085,8 +1090,6 @@ impl<'a> CheckerState<'a> {
                     );
                     let mut round2_substitution = substitution.clone();
                     if let Some(ctx_type) = generic_inference_contextual_type {
-                        let tracked_type_params: FxHashSet<_> =
-                            shape.type_params.iter().map(|tp| tp.name).collect();
                         let return_context_substitution = self
                             .compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
                         trace!(
@@ -1312,7 +1315,7 @@ impl<'a> CheckerState<'a> {
                     });
 
                     if !has_spread_args {
-                        let mut progressive_arg_types = round1_arg_types.clone();
+                        let mut progressive_arg_types = round1_arg_types;
                         let mut round2_arg_types = Vec::with_capacity(arg_count);
 
                         for (i, &arg_idx) in args.iter().enumerate() {
@@ -1324,8 +1327,6 @@ impl<'a> CheckerState<'a> {
                                     query::get_function_shape(self.ctx.types, param_type)
                             {
                                 let first_branch_type = self.get_type_of_node(first_branch_idx);
-                                let tracked_type_params: FxHashSet<_> =
-                                    shape.type_params.iter().map(|tp| tp.name).collect();
                                 let mut first_branch_substitution =
                                     crate::query_boundaries::common::TypeSubstitution::new();
                                 let mut visited = FxHashSet::default();
@@ -1465,8 +1466,6 @@ impl<'a> CheckerState<'a> {
                                     last.rest.then_some(last.type_id)
                                 })
                             {
-                                let tracked_type_params: FxHashSet<_> =
-                                    shape.type_params.iter().map(|tp| tp.name).collect();
                                 let mut arg_substitution =
                                     crate::query_boundaries::common::TypeSubstitution::new();
                                 let mut visited = FxHashSet::default();
