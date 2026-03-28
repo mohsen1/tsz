@@ -1272,17 +1272,23 @@ impl<'a> Printer<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    if self.arena.get_enum(stmt_node).is_some_and(|enum_decl| {
-                        self.get_identifier_text_idx(enum_decl.name) == assigned_name
-                    }) && self.arena.get_enum(stmt_node).is_some_and(|enum_decl| {
-                        !self
+                    if let Some(enum_decl) = self.arena.get_enum(stmt_node)
+                        && self.get_identifier_text_idx(enum_decl.name) == assigned_name
+                    {
+                        let is_declare = self
                             .arena
-                            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                            && !self
-                                .arena
-                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
-                    }) {
-                        matched_runtime = true;
+                            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword);
+                        let is_const = self
+                            .arena
+                            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
+                        if !is_declare && !is_const {
+                            matched_runtime = true;
+                        } else if is_const && !self.ctx.options.preserve_const_enums {
+                            // `const enum` without `preserveConstEnums` is erased —
+                            // treat `export = E` as type-only so the assignment is
+                            // elided and the __esModule marker is emitted instead.
+                            matched_type = true;
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
