@@ -1082,6 +1082,7 @@ impl<'a> Printer<'a> {
                 && !export_decl.is_default_export
                 && let Some(clause_node) = self.arena.get(export_decl.export_clause)
                 && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+                && (is_es_module_output || !self.has_aliased_value_named_exports(clause_node))
             {
                 continue;
             }
@@ -1619,7 +1620,7 @@ impl<'a> Printer<'a> {
         if is_es_module_output {
             self.emit_top_level_using_pre_named_exports(statements, start_idx);
         }
-        self.emit_top_level_using_hoists(
+        let hoisted_function_indices = self.emit_top_level_using_hoists(
             statements,
             start_idx,
             is_es_module_output,
@@ -1651,6 +1652,9 @@ impl<'a> Printer<'a> {
         let prev_in_top_level_using_scope = self.in_top_level_using_scope;
         self.in_top_level_using_scope = true;
         for &stmt_idx in &statements.nodes[start_idx..] {
+            if hoisted_function_indices.contains(&stmt_idx) {
+                continue;
+            }
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
@@ -1782,6 +1786,20 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn has_aliased_value_named_exports(&self, clause_node: &Node) -> bool {
+        let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+            return false;
+        };
+        self.collect_value_specifiers(&named_exports.elements)
+            .iter()
+            .any(|&spec_idx| {
+                self.arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                    .is_some_and(|spec| spec.property_name.is_some())
+            })
+    }
+
     fn emit_top_level_using_pre_named_exports(&mut self, statements: &NodeList, end_idx: usize) {
         for &stmt_idx in &statements.nodes[..end_idx] {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1822,13 +1840,13 @@ impl<'a> Printer<'a> {
         start_idx: usize,
         is_es_module_output: bool,
         cjs_deferred_export_names: &FxHashSet<String>,
-    ) {
+    ) -> FxHashSet<NodeIndex> {
         let mut local_names = Vec::new();
         let mut seen_local = FxHashSet::default();
         let mut export_let_names = Vec::new();
         let mut seen_export_let = FxHashSet::default();
         let mut export_named_bindings = Vec::new();
-        let mut hoisted_function_indices = Vec::new();
+        let mut hoisted_function_indices = FxHashSet::default();
 
         for &stmt_idx in &statements.nodes[start_idx..] {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1851,7 +1869,7 @@ impl<'a> Printer<'a> {
                     || k == syntax_kind_ext::FUNCTION_DECLARATION =>
                 {
                     if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                        hoisted_function_indices.push(stmt_idx);
+                        hoisted_function_indices.insert(stmt_idx);
                     } else {
                         self.collect_top_level_using_named_decl_hoist(
                             stmt_node,
@@ -1889,6 +1907,9 @@ impl<'a> Printer<'a> {
                         k if k == syntax_kind_ext::CLASS_DECLARATION
                             || k == syntax_kind_ext::FUNCTION_DECLARATION =>
                         {
+                            if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                                hoisted_function_indices.insert(stmt_idx);
+                            }
                             self.collect_top_level_using_named_decl_hoist(
                                 clause_node,
                                 true,
@@ -1946,7 +1967,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
-        for stmt_idx in hoisted_function_indices {
+        for &stmt_idx in &hoisted_function_indices {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
@@ -1967,6 +1988,8 @@ impl<'a> Printer<'a> {
             self.write(";");
             self.write_line();
         }
+
+        hoisted_function_indices
     }
 
     fn collect_top_level_using_variable_hoists(
