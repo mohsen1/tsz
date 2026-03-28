@@ -1773,11 +1773,41 @@ impl ParserState {
                     break;
                 }
 
+                // If the unexpected token can start a new variable declaration
+                // (identifier/keyword, { or [) AND is not a reserved word, treat
+                // the missing comma as the only error and let the loop continue to
+                // parse the token as the next declarator.
+                // Example: `const a number = "missing colon";`
+                //   tsc treats this as `const a, number = "missing colon";`
+                //   and emits only one TS1005 at `number`.
+                {
+                    let can_continue = (self.is_identifier_or_keyword()
+                        && !self.is_reserved_word())
+                        || self.is_token(SyntaxKind::OpenBraceToken)
+                        || self.is_token(SyntaxKind::OpenBracketToken);
+                    if can_continue {
+                        // Emit ',' expected directly, bypassing the distance-based
+                        // suppression heuristic. tsc's parseDelimitedList always
+                        // emits TS1005 here (it only deduplicates at the exact same
+                        // position). Without force-emit, two adjacent short
+                        // identifiers (e.g. `var y: z is number;`) can fall within
+                        // the suppression window and lose the second error.
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        continue;
+                    }
+                }
+
                 // No ASI - emit ',' expected for the unexpected token and stop.
-                // We break instead of continuing to avoid cascading TS1134 errors
-                // when the recovery eats into what tsc treats as a separate statement.
-                // Example: `var b = new C0 32, '';` - tsc emits only TS1005 at `32`.
                 self.error_comma_expected();
+
+                // Otherwise stop the list. We break instead of continuing to avoid
+                // cascading TS1134 errors when the recovery eats into what tsc
+                // treats as a separate statement.
+                // Example: `var b = new C0 32, '';` - tsc emits only TS1005 at `32`.
                 // Only consume the unexpected token if it cannot start a new
                 // statement.  Tokens like `delete`, `typeof`, `void`, `~` etc.
                 // can begin an expression statement and must be preserved so the

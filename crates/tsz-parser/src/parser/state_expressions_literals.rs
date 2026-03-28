@@ -187,6 +187,25 @@ impl ParserState {
                 }
                 // Missing comma - emit error and continue parsing for recovery
                 self.parse_expected(SyntaxKind::CommaToken);
+
+                // Skip tokens that cannot start a binding element so the
+                // next loop iteration sees either a valid element start, `}`
+                // or EOF. Without this, tokens like `?` (from `{h?}`) get
+                // fed to parse_property_name producing cascading errors that
+                // tsc avoids.
+                while !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.is_identifier_or_keyword()
+                    && !self.is_token(SyntaxKind::OpenBraceToken)
+                    && !self.is_token(SyntaxKind::OpenBracketToken)
+                    && !self.is_token(SyntaxKind::DotDotDotToken)
+                    && !self.is_token(SyntaxKind::CommaToken)
+                    && !self.is_token(SyntaxKind::StringLiteral)
+                    && !self.is_token(SyntaxKind::NumericLiteral)
+                    && !self.is_token(SyntaxKind::BigIntLiteral)
+                {
+                    self.next_token();
+                }
             }
         }
 
@@ -1788,7 +1807,24 @@ impl ParserState {
                         );
                         self.next_token(); // skip `;`
                     } else if follows_eof {
-                        self.next_token(); // let missing `}` report at EOF
+                        // tsc emits ',' expected at the `;` position
+                        // (its delimited-list parser reports the expected comma
+                        // before it knows whether the list is also unclosed).
+                        let diag_count_before = self.parse_diagnostics.len();
+                        self.error_comma_expected();
+                        let comma_error_emitted =
+                            self.parse_diagnostics.len() > diag_count_before;
+                        self.next_token(); // skip `;`, now at EOF
+                        if comma_error_emitted {
+                            // The comma error was actually emitted at `;`.
+                            // In tsc, both the comma error and the subsequent
+                            // close-brace error land at the same position
+                            // (because tsc's abortParsingList doesn't consume
+                            // the token). Set last_error_pos to EOF so that
+                            // parse_expected(CloseBrace) sees the same position
+                            // and deduplicates.
+                            self.last_error_pos = self.token_pos();
+                        }
                         break;
                     } else {
                         // `;` followed by non-property → abort the list
