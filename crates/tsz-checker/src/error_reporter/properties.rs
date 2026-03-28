@@ -1201,7 +1201,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type should get TS2812 (suggest 'dom' lib) instead of TS2339.
     /// Returns true if ALL named components of the type match known DOM global names
     /// AND each component is structurally empty (no user-defined members).
-    fn should_suggest_dom_lib_for_type(&self, type_id: TypeId) -> bool {
+    fn should_suggest_dom_lib_for_type(&mut self, type_id: TypeId) -> bool {
         // Check intersection members individually
         if let Some(members) =
             crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
@@ -1209,10 +1209,30 @@ impl<'a> CheckerState<'a> {
             if members.is_empty() {
                 return false;
             }
-            return members.iter().all(|&m| self.is_empty_dom_named_type(m));
+            return members
+                .iter()
+                .all(|&m| self.should_suggest_dom_lib_for_empty_named_type(m));
         }
 
-        self.is_empty_dom_named_type(type_id)
+        self.should_suggest_dom_lib_for_empty_named_type(type_id)
+    }
+
+    fn should_suggest_dom_lib_for_empty_named_type(&mut self, type_id: TypeId) -> bool {
+        self.is_empty_dom_named_type(type_id) && !self.has_dom_lib_loaded()
+    }
+
+    fn has_dom_lib_loaded(&self) -> bool {
+        if self.ctx.typescript_dom_replacement_loaded {
+            return true;
+        }
+
+        self.ctx.lib_contexts.iter().any(|lib_ctx| {
+            lib_ctx.arena.source_files.iter().any(|sf| {
+                let file_name = sf.file_name.as_str();
+                file_name.ends_with("lib.dom.d.ts")
+                    || file_name.ends_with("lib.dom.iterable.d.ts")
+            })
+        })
     }
 
     /// Check if a single type has a known DOM type name and is structurally empty.

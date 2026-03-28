@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         attrs_type: TypeId,
         display_target: &str,
-        tag_name_idx: NodeIndex,
+        anchor_idx: NodeIndex,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
@@ -96,7 +96,7 @@ impl<'a> CheckerState<'a> {
             &[&source_str, display_target],
         );
         self.error_at_node(
-            tag_name_idx,
+            anchor_idx,
             &message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
@@ -109,6 +109,203 @@ impl<'a> CheckerState<'a> {
         let normalized = self.resolve_lazy_type(normalized);
         let normalized = self.evaluate_application_type(normalized);
         self.evaluate_type_with_env(normalized)
+    }
+
+    fn get_jsx_special_attribute_expected_type(
+        &mut self,
+        attr_name: &str,
+        props_type: TypeId,
+        special_attr_component_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let get_property_type = |access: PropertyAccessResult| match access {
+            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+            PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => None,
+        };
+
+        get_property_type(self.resolve_property_access_with_env(props_type, attr_name))
+            .or_else(|| {
+                if attr_name == "key" {
+                    self.get_intrinsic_attributes_type().and_then(|ia_type| {
+                        let ia_type = self.normalize_jsx_required_props_target(ia_type);
+                        get_property_type(self.resolve_property_access_with_env(ia_type, attr_name))
+                    })
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                if attr_name == "ref" {
+                    special_attr_component_type.and_then(|component_type| {
+                        self.get_intrinsic_class_attributes_type_for_component(component_type)
+                            .and_then(|ica_type| {
+                                let ica_type = self.normalize_jsx_required_props_target(ica_type);
+                                get_property_type(
+                                    self.resolve_property_access_with_env(ica_type, attr_name),
+                                )
+                            })
+                            .or_else(|| {
+                                self.get_jsx_intrinsic_class_attribute_from_heritage(
+                                    attr_name,
+                                    component_type,
+                                )
+                            })
+                            .or_else(|| self.get_jsx_class_ref_fallback_type(attr_name, component_type))
+                    })
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn get_jsx_class_ref_fallback_type(
+        &mut self,
+        attr_name: &str,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        if attr_name != "ref" {
+            return None;
+        }
+
+        let instance_type = self.get_class_instance_type_for_component(component_type)?;
+        let param_name = self.ctx.types.intern_string("instance");
+        let callback = self.ctx.types.factory().function(tsz_solver::FunctionShape::new(
+            vec![tsz_solver::ParamInfo::required(param_name, instance_type)],
+            TypeId::ANY,
+        ));
+        Some(self.ctx.types.factory().union(vec![TypeId::STRING, callback]))
+    }
+
+    fn get_jsx_intrinsic_class_attribute_from_heritage(
+        &mut self,
+        attr_name: &str,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        use tsz_scanner::SyntaxKind;
+
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let jsx_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let ica_sym_id = jsx_symbol.exports.as_ref()?.get("IntrinsicClassAttributes")?;
+        let ica_symbol = self.ctx.binder.get_symbol(ica_sym_id)?;
+        let instance_type = self.get_class_instance_type_for_component(component_type)?;
+
+        let mut declarations = Vec::new();
+        if ica_symbol.value_declaration.is_some() {
+            declarations.push(ica_symbol.value_declaration);
+        }
+        declarations.extend(ica_symbol.declarations.iter().copied());
+
+        for mut decl_idx in declarations {
+            let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                && parent.is_some()
+            {
+                decl_idx = parent;
+                let Some(parent_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                decl_node = parent_node;
+            }
+            let Some(iface) = self.ctx.arena.get_interface(decl_node) else {
+                continue;
+            };
+            let Some(heritage_clauses) = &iface.heritage_clauses else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+
+                    let (expr_idx, type_arguments) =
+                        if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                            (
+                                expr_type_args.expression,
+                                expr_type_args.type_arguments.as_ref(),
+                            )
+                        } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                            if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                                (type_ref.type_name, type_ref.type_arguments.as_ref())
+                            } else {
+                                (type_idx, None)
+                            }
+                        } else {
+                            (type_idx, None)
+                        };
+
+                    let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                        continue;
+                    };
+
+                    let mut base_type = self.get_type_of_symbol(base_sym_id);
+                    if matches!(base_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                        continue;
+                    }
+
+                    let base_type_params = self.get_type_params_for_symbol(base_sym_id);
+                    let mut type_args = Vec::new();
+                    if let Some(args) = type_arguments {
+                        if args.nodes.len() == 1 && base_type_params.len() == 1 {
+                            type_args.push(instance_type);
+                        } else {
+                            for &arg_idx in &args.nodes {
+                                type_args.push(self.get_type_from_type_node(arg_idx));
+                            }
+                        }
+                    }
+
+                    if !base_type_params.is_empty() {
+                        let substitution = tsz_solver::TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &base_type_params,
+                            &type_args,
+                        );
+                        base_type = tsz_solver::instantiate_type(
+                            self.ctx.types,
+                            base_type,
+                            &substitution,
+                        );
+                    }
+
+                    let base_type = self.normalize_jsx_required_props_target(base_type);
+                    match self.resolve_property_access_with_env(base_type, attr_name) {
+                        PropertyAccessResult::Success { type_id, .. } => return Some(type_id),
+                        PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: Some(type_id),
+                            ..
+                        } => return Some(type_id),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     fn preferred_jsx_missing_props_target(&mut self, props_type: TypeId) -> TypeId {
@@ -815,6 +1012,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         component_type: Option<TypeId>,
+        special_attr_component_type: Option<TypeId>,
         raw_props_has_type_params: bool,
         display_target: String,
         preferred_target_display: Option<&str>,
@@ -928,8 +1126,52 @@ impl<'a> CheckerState<'a> {
                 // Checking them against the props type produces false positives when the
                 // props type is an unevaluated application (e.g. DetailedHTMLProps<...>).
                 if attr_name == "key" || attr_name == "ref" {
+                    let expected_special_type = self
+                        .get_jsx_special_attribute_expected_type(
+                            &attr_name,
+                            props_type,
+                            special_attr_component_type,
+                        )
+                        .map(|type_id| self.normalize_jsx_function_context_type(type_id));
+                    let value_node_idx =
+                        if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
+                            if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                                self.ctx
+                                    .arena
+                                    .get_jsx_expression(init_node)
+                                    .map(|e| e.expression)
+                                    .unwrap_or(attr_data.initializer)
+                            } else {
+                                attr_data.initializer
+                            }
+                        } else {
+                            attr_data.initializer
+                        };
                     let attr_value_type = if attr_data.initializer.is_none() {
                         TypeId::BOOLEAN_TRUE
+                    } else if let Some(expected_type) = expected_special_type {
+                        let expected_context_type =
+                            self.normalize_jsx_required_props_target(expected_type);
+                        let contextual_expected_type = if self
+                            .ctx
+                            .arena
+                            .get(value_node_idx)
+                            .is_some_and(|node| {
+                                node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                            })
+                        {
+                            self.refine_jsx_callable_contextual_type(expected_context_type)
+                        } else {
+                            expected_context_type
+                        };
+                        self.compute_type_of_node_with_request(
+                            value_node_idx,
+                            &request
+                                .read()
+                                .normal_origin()
+                                .contextual(contextual_expected_type),
+                        )
                     } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                         let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
                             self.ctx
@@ -949,6 +1191,44 @@ impl<'a> CheckerState<'a> {
                     };
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = attr_value_type;
+                    }
+                    if let Some(expected_type) = expected_special_type {
+                        if attr_data.initializer.is_none() {
+                            if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                                use crate::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages, format_message,
+                                };
+                                let target_str = self.format_type(expected_type);
+                                let message = format_message(
+                                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                    &["boolean", &target_str],
+                                );
+                                self.error_at_node(
+                                    attr_data.name,
+                                    &message,
+                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                );
+                                has_prop_type_error = true;
+                            }
+                        } else if attr_value_type != TypeId::ANY
+                            && attr_value_type != TypeId::ERROR
+                            && !self.check_assignable_or_report_at(
+                                attr_value_type,
+                                expected_type,
+                                value_node_idx,
+                                attr_data.name,
+                            )
+                        {
+                            has_prop_type_error = true;
+                        }
+                    } else if attr_name == "ref" && !props_has_type_params {
+                        let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+                        self.report_jsx_synthesized_props_assignability_error(
+                            attrs_type,
+                            &display_target,
+                            attr_data.name,
+                        );
+                        has_prop_type_error = true;
                     }
                     continue;
                 }
@@ -1522,7 +1802,7 @@ impl<'a> CheckerState<'a> {
 
         if !has_excess_property_error
             && !spread_covers_all
-            && let Some(comp) = component_type
+            && let Some(comp) = special_attr_component_type
             && let Some(intrinsic_class_attrs_type) =
                 self.get_intrinsic_class_attributes_type_for_component(comp)
         {

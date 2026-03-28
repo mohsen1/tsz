@@ -1,6 +1,6 @@
 //! JSX unit tests.
 
-use crate::test_utils::check_source;
+use crate::test_utils::{check_source, check_source_diagnostics};
 
 fn check_jsx(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     use crate::context::CheckerOptions;
@@ -481,6 +481,109 @@ fn jsx_class_component_no_param_constructor_no_false_ts2786() {
     assert!(
         !diagnostics.contains(&2786),
         "Class with no-param constructor should not emit false TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_ref_attributes_use_intrinsic_class_attribute_context() {
+    let source = r#"
+        declare namespace React {
+            type Key = string | number;
+            type Ref<T> = string | ((instance: T) => any);
+
+            interface Attributes {
+                key?: Key;
+            }
+
+            interface ClassAttributes<T> extends Attributes {
+                ref?: Ref<T>;
+            }
+
+            class Component<P, S> {
+                props: P;
+                state: S;
+                render(): JSX.Element | null;
+            }
+        }
+
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicAttributes extends React.Attributes {}
+            interface IntrinsicClassAttributes<T> extends React.ClassAttributes<T> {}
+            interface IntrinsicElements {
+                div: React.ClassAttributes<HTMLDivElement> & {};
+            }
+        }
+
+        interface HTMLDivElement {
+            innerText: string;
+        }
+
+        function Greet(_props: { name?: string }) {
+            return <div />;
+        }
+
+        class BigGreeter extends React.Component<{ name?: string }, {}> {
+            greeting: string;
+            render(): JSX.Element { return <div />; }
+        }
+
+        <Greet ref="myRef" />;
+        <BigGreeter ref={x => x.greeting.subtr(10)} />;
+        <BigGreeter ref={x => x.notARealProperty} />;
+        <div ref={x => x.propertyNotOnHtmlDivElement} />;
+        "#;
+    let diagnostics = check_jsx(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let sfc_ref_start = source
+        .find("ref=\"myRef\"")
+        .expect("expected SFC ref attribute in source") as u32;
+    let sfc_ref_diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected JSX SFC ref TS2322 diagnostic");
+    assert_eq!(
+        sfc_ref_diag.start, sfc_ref_start,
+        "Expected SFC ref diagnostic to anchor at the ref attribute, got: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected ref on SFC to be rejected, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.message_text.contains("notARealProperty")
+                && d.message_text.contains("type 'BigGreeter'")
+        }),
+        "Expected class ref callback to be contextually typed as BigGreeter, got: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&2339),
+        "Expected contextually typed property errors for ref callbacks, got: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2812),
+        "Expected real DOM/property diagnostics, not missing-lib TS2812, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn non_dom_named_local_interface_missing_property_is_not_ts2812() {
+    let diagnostics = check_source_diagnostics(
+        r#"
+        interface HTMLElementFake {}
+        declare const el: HTMLElementFake;
+        el.propertyNotOnHtmlDivElement;
+        "#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2339),
+        "Expected ordinary missing-property TS2339, got: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2812),
+        "Expected user-defined DOM-like names not to trigger TS2812, got: {diagnostics:?}"
     );
 }
 

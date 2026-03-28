@@ -97,7 +97,10 @@ impl<'a> CheckerState<'a> {
         parts.join(" & ")
     }
 
-    fn get_class_instance_type_for_component(&mut self, component_type: TypeId) -> Option<TypeId> {
+    pub(crate) fn get_class_instance_type_for_component(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
         let sigs =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
         let sig = sigs.first()?;
