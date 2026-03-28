@@ -89,7 +89,22 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn get_type_of_write_target_base_expression(&mut self, idx: NodeIndex) -> TypeId {
+        // PERF: For non-binary expressions, the write context doesn't change the
+        // result type compared to the normal path. Check the node_types cache first
+        // to avoid redundant type resolution through the full property-access pipeline.
+        // This is especially impactful for deep optional chains like `a?.b?.c?.d`
+        // where each level recursively calls this method on its base expression.
         let logical_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let is_binary = self
+            .ctx
+            .arena
+            .get(logical_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION);
+        if !is_binary {
+            if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                return cached;
+            }
+        }
         if let Some(node) = self.ctx.arena.get(logical_idx)
             && node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(binary) = self.ctx.arena.get_binary_expr(node)
