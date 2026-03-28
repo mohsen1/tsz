@@ -1570,7 +1570,7 @@ impl<'a> CheckerState<'a> {
                     // causing false diagnostics in callback bodies (e.g., TS2339 for `this.b`
                     // when `this` has type `TContext` instead of the inferred `{b: string}`).
                     let mut did_instantiated_retry = false;
-                    let final_arg_types = if !sig.type_params.is_empty()
+                    let (final_arg_types, final_return_type) = if !sig.type_params.is_empty()
                         && !contextual_refresh_args.is_empty()
                         && let Some(instantiated_params) = instantiated_params.as_ref()
                     {
@@ -1588,11 +1588,66 @@ impl<'a> CheckerState<'a> {
                         refresh_all_args(self);
 
                         let sig_callable_ctx = CallableContext::new(func_type);
-                        let refreshed_contextual_types = self
-                            .contextual_param_types_from_instantiated_params(
+                        // When contextual_type is available, also compute return-context
+                        // substitution from the overload's return type. This handles
+                        // cases like Object.freeze<T>(o: T): Readonly<T> where the
+                        // contextual return type (e.g. readonly [string, number][])
+                        // provides better type parameter inference than the arguments
+                        // (which were typed without useful contextual types in the
+                        // union-contextual first pass).
+                        let mut used_return_context_sub = false;
+                        let refreshed_contextual_types = if contextual_type.is_some() {
+                            let sig_shape = FunctionShape {
+                                params: sig.params.clone(),
+                                return_type: sig.return_type,
+                                this_type: sig.this_type,
+                                type_params: sig.type_params.clone(),
+                                type_predicate: sig.type_predicate,
+                                is_constructor: false,
+                                is_method: sig.is_method,
+                            };
+                            let return_sub = self.compute_return_context_substitution_from_shape(
+                                &sig_shape,
+                                contextual_type,
+                            );
+                            if !return_sub.is_empty() {
+                                used_return_context_sub = true;
+                                (0..args.len())
+                                    .map(|i| {
+                                        let param = sig
+                                            .params
+                                            .get(i)
+                                            .map(|p| (p.type_id, p.rest))
+                                            .or_else(|| {
+                                                let last = sig.params.last()?;
+                                                last.rest.then_some((last.type_id, true))
+                                            })?;
+                                        let instantiated =
+                                            crate::query_boundaries::common::instantiate_type(
+                                                self.ctx.types,
+                                                param.0,
+                                                &return_sub,
+                                            );
+                                        let param_type = if param.1 {
+                                            self.rest_argument_element_type_with_env(instantiated)
+                                        } else {
+                                            instantiated
+                                        };
+                                        Some(self.normalize_contextual_call_param_type(param_type))
+                                    })
+                                    .collect()
+                            } else {
+                                self.contextual_param_types_from_instantiated_params(
+                                    instantiated_params,
+                                    args.len(),
+                                )
+                            }
+                        } else {
+                            self.contextual_param_types_from_instantiated_params(
                                 instantiated_params,
                                 args.len(),
-                            );
+                            )
+                        };
                         let refreshed_arg_types = self.collect_call_argument_types_with_context(
                             args,
                             |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
@@ -1600,10 +1655,31 @@ impl<'a> CheckerState<'a> {
                             None,
                             sig_callable_ctx,
                         );
+                        // When return-context substitution was used to provide better
+                        // contextual types, re-resolve the call with the correctly-typed
+                        // arguments to get the right return type. Without this, the return
+                        // type would still reflect T inferred from the badly-typed first
+                        // pass (e.g., Readonly<(string|number)[][]> instead of
+                        // Readonly<[string,number][]>).
+                        let final_return_type = if used_return_context_sub {
+                            let (re_result, _, _) = self.resolve_call_with_checker_adapter(
+                                resolved_func_type,
+                                &refreshed_arg_types,
+                                force_bivariant_callbacks,
+                                contextual_type,
+                                actual_this_type,
+                            );
+                            match re_result {
+                                CallResult::Success(rt) => rt,
+                                _ => return_type,
+                            }
+                        } else {
+                            return_type
+                        };
                         did_instantiated_retry = true;
-                        refreshed_arg_types
+                        (refreshed_arg_types, final_return_type)
                     } else {
-                        arg_types.clone()
+                        (arg_types.clone(), return_type)
                     };
 
                     // Merge the node types inferred during argument collection.
@@ -1630,7 +1706,7 @@ impl<'a> CheckerState<'a> {
 
                     return Some(OverloadResolution {
                         arg_types: final_arg_types,
-                        result: CallResult::Success(return_type),
+                        result: CallResult::Success(final_return_type),
                     });
                 }
                 CallResult::ArgumentTypeMismatch { index, .. } => {
