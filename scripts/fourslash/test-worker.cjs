@@ -416,9 +416,32 @@ function patchSessionClient(SessionClient, ts) {
             finalResult = getNative() || [];
         } else {
             // tsz returned something - use native if available (it matches tsc exactly),
-            // but fall back to tsz if native has no results
-            const nativeResult = getNative();
-            finalResult = (nativeResult && nativeResult.length > 0) ? nativeResult : tszResult;
+            // but fall back to tsz if native has no results.
+            // However, respect tsz's import fix exclusion decisions: if tsz produced
+            // results but no import fixes (e.g. due to autoImportFileExcludePatterns),
+            // filter out import fixes from native results to avoid re-introducing
+            // excluded imports.
+            //
+            // Trust tsz for fix types where it has full AST-based support, since
+            // the native LS may have stale content state through the adapter.
+            const tszTrustedFixNames = new Set(["addMissingNewOperator"]);
+            const tszHasTrustedFix = tszResult.some(f => tszTrustedFixNames.has(f.fixName));
+            if (tszHasTrustedFix) {
+                finalResult = tszResult;
+            } else {
+                const nativeResult = getNative();
+                if (nativeResult && nativeResult.length > 0) {
+                    const tszHasImportFix = tszResult.some(f => f.fixName === "import");
+                    if (!tszHasImportFix) {
+                        const filtered = nativeResult.filter(f => f.fixName !== "import");
+                        finalResult = filtered.length > 0 ? filtered : tszResult;
+                    } else {
+                        finalResult = nativeResult;
+                    }
+                } else {
+                    finalResult = tszResult;
+                }
+            }
         }
 
         if (preferences) this.configure(oldPreferences || {});

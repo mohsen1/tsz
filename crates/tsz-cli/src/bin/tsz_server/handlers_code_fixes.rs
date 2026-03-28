@@ -267,6 +267,28 @@ impl Server {
                 import_module_specifier_ending,
                 import_module_specifier_preference,
             );
+            if !auto_import_file_exclude_patterns.is_empty() {
+                use std::io::Write;
+                let mut dbg = format!(
+                    "file={file_path}\nexclude_patterns={auto_import_file_exclude_patterns:?}\nimport_candidates={}\ndiags={}\n",
+                    import_candidates.len(),
+                    filtered_diagnostics.len()
+                );
+                for c in &import_candidates {
+                    dbg.push_str(&format!(
+                        "  candidate: {} from {}\n",
+                        c.local_name, c.module_specifier
+                    ));
+                }
+                for d in &filtered_diagnostics {
+                    dbg.push_str(&format!(
+                        "  diag: code={} msg={}\n",
+                        d.code.unwrap_or(0),
+                        d.message
+                    ));
+                }
+                let _ = std::fs::write("/tmp/tsz-debug-codefix.log", &dbg);
+            }
             let context = CodeActionContext {
                 diagnostics: filtered_diagnostics,
                 only: Some(vec![CodeActionKind::QuickFix]),
@@ -586,29 +608,58 @@ impl Server {
             }
 
             // addMissingNewOperator: for error 2348 (value not callable, missing new)
+            // Try text-based fallback first, then AST-based fallback for complex
+            // patterns like x[0](), (cond ? A : B)(), (() => C)()(), foo()!().
             if response_actions.is_empty()
                 && error_codes.len() == 1
                 && error_codes[0] == NOT_CALLABLE_ERROR_CODE
-                && let Some((updated_content, description)) = add_missing_new_preview.as_ref()
-                && let Some((start_off, end_off, replacement)) =
-                    Self::compute_minimal_edit(&content, updated_content)
             {
-                let start_pos = line_map.offset_to_position(start_off, &content);
-                let end_pos = line_map.offset_to_position(end_off, &content);
-                response_actions.push(serde_json::json!({
-                    "fixName": ADD_MISSING_NEW_FIX_ID,
-                    "description": description,
-                    "changes": [{
-                        "fileName": file_path,
-                        "textChanges": [{
-                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
-                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
-                            "newText": replacement
-                        }]
-                    }],
-                    "fixId": ADD_MISSING_NEW_FIX_ID,
-                    "fixAllDescription": "Add missing 'new' operator to all calls",
-                }));
+                // Try AST-based approach first (handles complex patterns accurately),
+                // then fall back to text-based approach for simple ClassName() patterns.
+                let ast_edit = diagnostics
+                    .iter()
+                    .find(|d| d.code == NOT_CALLABLE_ERROR_CODE)
+                    .and_then(|diag| Self::apply_add_missing_new_ast(&arena, &content, diag.start));
+
+                if let Some((start_off, end_off, replacement, description)) = ast_edit {
+                    let start_pos = line_map.offset_to_position(start_off, &content);
+                    let end_pos = line_map.offset_to_position(end_off, &content);
+                    response_actions.push(serde_json::json!({
+                        "fixName": ADD_MISSING_NEW_FIX_ID,
+                        "description": description,
+                        "changes": [{
+                            "fileName": file_path,
+                            "textChanges": [{
+                                "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                                "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                                "newText": replacement
+                            }]
+                        }],
+                        "fixId": ADD_MISSING_NEW_FIX_ID,
+                        "fixAllDescription": "Add missing 'new' operator to all calls",
+                    }));
+                } else if let Some((updated_content, description)) =
+                    add_missing_new_preview.as_ref()
+                    && let Some((start_off, end_off, replacement)) =
+                        Self::compute_minimal_edit(&content, updated_content)
+                {
+                    let start_pos = line_map.offset_to_position(start_off, &content);
+                    let end_pos = line_map.offset_to_position(end_off, &content);
+                    response_actions.push(serde_json::json!({
+                        "fixName": ADD_MISSING_NEW_FIX_ID,
+                        "description": description,
+                        "changes": [{
+                            "fileName": file_path,
+                            "textChanges": [{
+                                "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                                "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                                "newText": replacement
+                            }]
+                        }],
+                        "fixId": ADD_MISSING_NEW_FIX_ID,
+                        "fixAllDescription": "Add missing 'new' operator to all calls",
+                    }));
+                }
             }
 
             let is_enum_missing_member_error = error_codes.is_empty()
@@ -788,6 +839,22 @@ impl Server {
             }
 
             if !response_actions.is_empty() {
+                if !auto_import_file_exclude_patterns.is_empty() {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("/tmp/tsz-debug-codefix.log")
+                    {
+                        let _ =
+                            writeln!(f, "EARLY RETURN with {} actions:", response_actions.len());
+                        let _ = writeln!(
+                            f,
+                            "FULL JSON: {}",
+                            serde_json::to_string_pretty(&response_actions).unwrap_or_default()
+                        );
+                    }
+                }
                 return TsServerResponse {
                     seq,
                     msg_type: "response".to_string(),
@@ -915,6 +982,56 @@ impl Server {
                     dedup_seen.insert((fix_id.to_string(), description.to_string()))
                 }
             });
+
+            if !auto_import_file_exclude_patterns.is_empty() {
+                let import_fixes: Vec<_> = response_actions
+                    .iter()
+                    .filter(|a| {
+                        a.get("fixName").and_then(serde_json::Value::as_str) == Some("import")
+                    })
+                    .collect();
+                if !import_fixes.is_empty() {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .append(true)
+                        .open("/tmp/tsz-debug-codefix.log")
+                    {
+                        let _ = writeln!(
+                            f,
+                            "RETURNING {} import fixes despite exclude:",
+                            import_fixes.len()
+                        );
+                        for fix in &import_fixes {
+                            let _ = writeln!(
+                                f,
+                                "  fix: {}",
+                                serde_json::to_string(fix).unwrap_or_default()
+                            );
+                        }
+                    }
+                }
+                {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .append(true)
+                        .open("/tmp/tsz-debug-codefix.log")
+                    {
+                        let _ = writeln!(f, "ALL response_actions ({}):", response_actions.len());
+                        for a in &response_actions {
+                            let _ = writeln!(
+                                f,
+                                "  action: fixName={} desc={}",
+                                a.get("fixName")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("?"),
+                                a.get("description")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("?")
+                            );
+                        }
+                    }
+                }
+            }
 
             return TsServerResponse {
                 seq,
