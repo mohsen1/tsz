@@ -831,8 +831,7 @@ impl<'a> LoweringPass<'a> {
             // __setFunctionName is needed when there are class-level decorators
             // AND we're in ES2015 mode (IIFE pattern with __setFunctionName call).
             // In ES2022+ mode, it's not used for class decorators.
-            let needs_class_set_fn_name = (self.ctx.target_es5
-                || self.ctx.needs_es2022_lowering)
+            let needs_class_set_fn_name = (self.ctx.target_es5 || self.ctx.needs_es2022_lowering)
                 && class.modifiers.as_ref().is_some_and(|mods| {
                     mods.nodes.iter().any(|&mod_idx| {
                         self.arena
@@ -857,24 +856,23 @@ impl<'a> LoweringPass<'a> {
             && needs_es5_transform
             && class.members.nodes.is_empty()
             && class.heritage_clauses.is_none();
-        let base_directive = if has_tc39_decorators
-            && (!needs_es5_transform || can_use_simple_es5_tc39)
-        {
-            // TC39 decorator transform (ES2015+ targets, below ESNext)
-            TransformDirective::TC39Decorators {
-                class_node: idx,
-                function_name: None,
-            }
-        } else if needs_es5_transform {
-            // ES5 class transform
-            TransformDirective::ES5Class {
-                class_node: idx,
-                heritage,
-            }
-        } else {
-            // No transform needed for ES6+ targets
-            TransformDirective::Identity
-        };
+        let base_directive =
+            if has_tc39_decorators && (!needs_es5_transform || can_use_simple_es5_tc39) {
+                // TC39 decorator transform (ES2015+ targets, below ESNext)
+                TransformDirective::TC39Decorators {
+                    class_node: idx,
+                    function_name: None,
+                }
+            } else if needs_es5_transform {
+                // ES5 class transform
+                TransformDirective::ES5Class {
+                    class_node: idx,
+                    heritage,
+                }
+            } else {
+                // No transform needed for ES6+ targets
+                TransformDirective::Identity
+            };
 
         // Wrap with CommonJS export if needed
         let final_directive = if is_exported {
