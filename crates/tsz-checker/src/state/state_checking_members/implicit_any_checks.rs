@@ -51,15 +51,26 @@ impl<'a> CheckerState<'a> {
         if param.type_annotation.is_some() {
             return;
         }
-        // Destructuring parameters need recursive implicit-any checking even when
-        // the top-level parameter has a default (e.g., `({ json = [] } = {})`).
+        // Destructuring parameters need recursive implicit-any checking, but only
+        // when the outer initializer doesn't provide type info for the bindings.
+        // E.g., `({ json = [] } = {})` — the `{}` default is empty, so `json` is
+        // implicitly `any[]`. But `({x} = { x: new Class() })` has a non-empty
+        // initializer that types `x` as `Class`, so no TS7031.
         if let Some(name_node) = self.ctx.arena.get(param.name) {
             use tsz_parser::parser::syntax_kind_ext;
             let kind = name_node.kind;
             if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             {
-                self.emit_implicit_any_parameter_for_pattern(param.name, param.dot_dot_dot_token);
+                let outer_init_provides_types = param.initializer.is_some()
+                    && !Self::is_empty_object_literal_init(self.ctx.arena, param.initializer)
+                    && !Self::is_empty_array_literal_init(self.ctx.arena, param.initializer);
+                if !outer_init_provides_types {
+                    self.emit_implicit_any_parameter_for_pattern(
+                        param.name,
+                        param.dot_dot_dot_token,
+                    );
+                }
                 return;
             }
         }
@@ -501,6 +512,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Returns true if `init` points to an empty object literal `{}`.
+    fn is_empty_object_literal_init(
+        arena: &tsz_parser::parser::NodeArena,
+        init: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        arena.get(init).is_some_and(|node| {
+            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && arena
+                    .get_literal_expr(node)
+                    .is_some_and(|obj| obj.elements.nodes.is_empty())
+        })
     }
 
     /// Returns true if `init` points to an empty array literal `[]`.
