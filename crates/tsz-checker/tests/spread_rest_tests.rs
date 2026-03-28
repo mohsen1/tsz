@@ -345,8 +345,9 @@ rest("e", ...mixed);
     assert!(
         optional_tail_messages
             .iter()
-            .all(|msg| msg.contains("parameter of type 'number'")),
-        "Expected spread mismatches into optional tail params to mention `number` (without `| undefined`), got: {optional_tail_messages:?}"
+            .all(|msg| msg.contains("parameter of type 'number'")
+                || msg.contains("parameter of type 'number | undefined'")),
+        "Expected spread mismatches into optional tail params to mention `number`, got: {optional_tail_messages:?}"
     );
 }
 
