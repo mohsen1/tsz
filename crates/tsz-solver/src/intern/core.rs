@@ -47,37 +47,63 @@ struct LookupCacheEntry {
     data: TypeData,
 }
 
-/// Thread-local direct-mapped cache for `TypeInterner::lookup()`.
-/// UnsafeCell because we only access it from thread-local context (no sharing).
-struct LookupCache {
-    entries: UnsafeCell<[LookupCacheEntry; LOOKUP_CACHE_SIZE]>,
+// LookupCacheEntry is used by TypeInternerCache below.
+
+// ---------------------------------------------------------------------------
+// Thread-local combined cache for both lookup and intern
+// ---------------------------------------------------------------------------
+// Combines both caches into a single struct to reduce thread_local! accesses.
+// On macOS, each thread_local! access goes through __tls_get_addr (~10-15ns).
+// By combining into one TLS access, we halve the overhead.
+
+const INTERN_CACHE_BITS: u32 = 9;
+const INTERN_CACHE_SIZE: usize = 1 << INTERN_CACHE_BITS; // 512
+const INTERN_CACHE_MASK: u64 = (INTERN_CACHE_SIZE as u64) - 1;
+
+#[derive(Clone, Copy)]
+struct InternCacheEntry {
+    /// FxHash of the TypeData, used as tag
+    hash: u64,
+    /// The TypeData that was interned
+    key: TypeData,
+    /// The resulting TypeId
+    result: TypeId,
 }
 
-// SAFETY: LookupCache is only accessed via thread_local!, so it is never
-// shared across threads. The UnsafeCell is needed because thread_local!
-// gives us a &LookupCache (not &mut), but we need interior mutability for
-// the cache entries. Since access is single-threaded by construction, this
-// is safe.
-unsafe impl Send for LookupCache {}
-unsafe impl Sync for LookupCache {}
+/// Combined thread-local cache for both `lookup()` and `intern()` directions.
+struct TypeInternerCache {
+    lookup: UnsafeCell<[LookupCacheEntry; LOOKUP_CACHE_SIZE]>,
+    intern: UnsafeCell<[InternCacheEntry; INTERN_CACHE_SIZE]>,
+}
 
-impl LookupCache {
+// SAFETY: Only accessed via thread_local!, so never shared across threads.
+unsafe impl Send for TypeInternerCache {}
+unsafe impl Sync for TypeInternerCache {}
+
+impl TypeInternerCache {
     fn new() -> Self {
         Self {
-            entries: UnsafeCell::new(
+            lookup: UnsafeCell::new(
                 [LookupCacheEntry {
                     tag: 0,
                     data: TypeData::Error,
                 }; LOOKUP_CACHE_SIZE],
             ),
+            intern: UnsafeCell::new(
+                [InternCacheEntry {
+                    hash: 0,
+                    key: TypeData::Error,
+                    result: TypeId::NONE,
+                }; INTERN_CACHE_SIZE],
+            ),
         }
     }
 
     #[inline(always)]
-    fn probe(&self, id: TypeId) -> Option<TypeData> {
+    fn lookup_probe(&self, id: TypeId) -> Option<TypeData> {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
         // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &(*self.entries.get())[idx] };
+        let entry = unsafe { &(*self.lookup.get())[idx] };
         if entry.tag == id.0 {
             Some(entry.data)
         } else {
@@ -86,17 +112,39 @@ impl LookupCache {
     }
 
     #[inline(always)]
-    fn insert(&self, id: TypeId, data: TypeData) {
+    fn lookup_insert(&self, id: TypeId, data: TypeData) {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
         // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &mut (*self.entries.get())[idx] };
+        let entry = unsafe { &mut (*self.lookup.get())[idx] };
         entry.tag = id.0;
         entry.data = data;
+    }
+
+    #[inline(always)]
+    fn intern_probe(&self, hash: u64, key: &TypeData) -> Option<TypeId> {
+        let idx = (hash & INTERN_CACHE_MASK) as usize;
+        // SAFETY: single-threaded access via thread_local!
+        let entry = unsafe { &(*self.intern.get())[idx] };
+        if entry.hash == hash && &entry.key == key {
+            Some(entry.result)
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    fn intern_insert(&self, hash: u64, key: TypeData, result: TypeId) {
+        let idx = (hash & INTERN_CACHE_MASK) as usize;
+        // SAFETY: single-threaded access via thread_local!
+        let entry = unsafe { &mut (*self.intern.get())[idx] };
+        entry.hash = hash;
+        entry.key = key;
+        entry.result = result;
     }
 }
 
 thread_local! {
-    static TL_LOOKUP_CACHE: LookupCache = LookupCache::new();
+    static TL_CACHE: TypeInternerCache = TypeInternerCache::new();
 }
 
 pub(super) const SHARD_BITS: u32 = 6;
@@ -851,19 +899,39 @@ impl TypeInterner {
             return id;
         }
 
+        // Compute hash once, reuse for cache probe and shard selection
+        let mut hasher = FxHasher::default();
+        key.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        // Fast path: thread-local intern cache probe + populate both caches on miss.
+        // Single TLS access per call.
+        TL_CACHE.with(|cache| {
+            if let Some(id) = cache.intern_probe(hash, &key) {
+                return id;
+            }
+
+            let id = self.intern_slow(key, hash);
+
+            // Populate both caches (intern implies future lookups of this type)
+            cache.intern_insert(hash, key, id);
+            cache.lookup_insert(id, key);
+
+            id
+        })
+    }
+
+    /// Slow path for `intern`: goes through DashMap and RwLock-protected storage.
+    #[inline(never)]
+    fn intern_slow(&self, key: TypeData, hash: u64) -> TypeId {
         // Circuit breaker 1: type count limit.
         if self.approximate_count() > MAX_INTERNED_TYPES {
             self.poisoned
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             return TypeId::ERROR;
         }
-        // Note: infinite-loop protection is handled by solver-level recursion
-        // depth limits and fuel budgets, not here. The type count limit above
-        // prevents unbounded memory growth from new type creation.
 
-        let mut hasher = FxHasher::default();
-        key.hash(&mut hasher);
-        let shard_idx = (hasher.finish() as usize) & (SHARD_COUNT - 1);
+        let shard_idx = (hash as usize) & (SHARD_COUNT - 1);
         let shard = &self.shards[shard_idx];
         let inner = shard.get_inner();
 
@@ -921,7 +989,8 @@ impl TypeInterner {
         }
 
         // Fast path: thread-local cache probe (~1-2 ns vs ~15-25 ns for RwLock)
-        let cached = TL_LOOKUP_CACHE.with(|cache| cache.probe(id));
+        // Single TLS access for the combined cache.
+        let cached = TL_CACHE.with(|cache| cache.lookup_probe(id));
         if let Some(data) = cached {
             return Some(data);
         }
@@ -930,7 +999,7 @@ impl TypeInterner {
         let data = self.lookup_slow(id)?;
 
         // Populate cache for next time
-        TL_LOOKUP_CACHE.with(|cache| cache.insert(id, data));
+        TL_CACHE.with(|cache| cache.lookup_insert(id, data));
 
         Some(data)
     }
