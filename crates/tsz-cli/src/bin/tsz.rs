@@ -1833,13 +1833,10 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                 format!("[{}]", inner.join(","))
             })
             .unwrap_or_else(|| {
-                let inner: Vec<String> = default_include_patterns(
-                    allow_js,
-                    resolved.as_ref().is_some_and(|r| r.resolve_json_module),
-                )
-                .into_iter()
-                .map(|s| format!("\"{s}\""))
-                .collect();
+                let inner: Vec<String> = tsz_cli::fs::default_include_display()
+                    .into_iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect();
                 format!("[{}]", inner.join(","))
             });
         let exclude_json = config
