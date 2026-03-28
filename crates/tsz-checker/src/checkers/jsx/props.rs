@@ -1234,7 +1234,15 @@ impl<'a> CheckerState<'a> {
                         );
                         has_prop_type_error = true;
                     }
-                    continue;
+                    // Only skip normal prop checking if we found a special type for
+                    // this attribute (from IntrinsicAttributes/IntrinsicClassAttributes
+                    // or the props type itself). When the attribute isn't declared
+                    // anywhere (e.g. minimal JSX types without IntrinsicAttributes
+                    // defining 'key'), fall through so it gets checked as an excess
+                    // property — matching tsc behavior.
+                    if expected_special_type.is_some() || attr_name == "ref" {
+                        continue;
+                    }
                 }
 
                 // Track for TS2783 spread-overwrite detection
