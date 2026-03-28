@@ -209,11 +209,11 @@ impl<'a> CheckerState<'a> {
                 // Widen literal types to base types and enum members to
                 // parent enums, matching tsc behavior for messages like
                 // "Operator '+=' cannot be applied to types 'boolean' and 'number'."
-                let left_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
+                let left_diag = self.widen_enum_member_type(crate::query_boundaries::common::widen_literal_type(
                     self.ctx.types,
                     left_read_type,
                 ));
-                let right_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
+                let right_diag = self.widen_enum_member_type(crate::query_boundaries::common::widen_literal_type(
                     self.ctx.types,
                     right_type,
                 ));

@@ -76,7 +76,7 @@ impl<'a> CheckerState<'a> {
 
         return_context == TypeId::ANY
             || (return_context != TypeId::UNKNOWN
-                && !tsz_solver::type_queries::is_type_parameter_like(
+                && !crate::query_boundaries::common::is_type_parameter_like(
                     self.ctx.types,
                     return_context,
                 )

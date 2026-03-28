@@ -70,7 +70,7 @@ impl<'a> CheckerState<'a> {
                 members.iter().any(|member| {
                     let evaluated_member = self.evaluate_type_for_assignability(*member);
                     tsz_solver::is_primitive_type(self.ctx.types, evaluated_member)
-                        || tsz_solver::type_queries::is_type_parameter_like(
+                        || crate::query_boundaries::common::is_type_parameter_like(
                             self.ctx.types,
                             evaluated_member,
                         )
@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
                     self.fresh_empty_object_member_for_missing_union(object_type, &prop_name)
                 })
                 .or_else(|| {
-                    tsz_solver::type_queries::get_type_parameter_constraint(
+                    crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
                         object_type,
                     )

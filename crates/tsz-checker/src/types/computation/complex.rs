@@ -552,13 +552,13 @@ impl<'a> CheckerState<'a> {
                     (0..arg_count)
                         .map(|i| {
                             let from_shape = if i < shape.params.len() {
-                                tsz_solver::type_queries::contains_type_parameters_db(
+                                crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     shape.params[i].type_id,
                                 )
                             } else if let Some(last) = shape.params.last() {
                                 last.rest
-                                    && tsz_solver::type_queries::contains_type_parameters_db(
+                                    && crate::query_boundaries::common::contains_type_parameters(
                                         self.ctx.types,
                                         last.type_id,
                                     )
@@ -568,7 +568,7 @@ impl<'a> CheckerState<'a> {
                             let from_ctx = ctx_helper
                                 .get_parameter_type_for_call(i, arg_count)
                                 .is_some_and(|param_type| {
-                                    tsz_solver::type_queries::contains_type_parameters_db(
+                                    crate::query_boundaries::common::contains_type_parameters(
                                         self.ctx.types,
                                         param_type,
                                     )
@@ -842,7 +842,7 @@ impl<'a> CheckerState<'a> {
                                     );
                                 let evaluated =
                                     self.evaluate_type_with_env(instantiated_constraint);
-                                if !tsz_solver::type_queries::contains_type_parameters_db(
+                                if !crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     evaluated,
                                 ) {

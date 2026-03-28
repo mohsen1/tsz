@@ -287,12 +287,12 @@ impl<'a> CheckerState<'a> {
         // Since U extends T, keyof T ⊆ keyof U, so a mapped key over keyof T can index U.
         if let Some(ref target_name) = keyof_target_name {
             // Check if the object type parameter has a constraint matching the keyof target
-            let object_constraint = tsz_solver::type_queries::get_type_parameter_constraint(
+            let object_constraint = crate::query_boundaries::common::type_parameter_constraint(
                 self.ctx.types,
                 object_type,
             )
             .or_else(|| {
-                tsz_solver::type_queries::get_type_parameter_constraint(
+                crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
                     object_type_for_check,
                 )
@@ -330,7 +330,7 @@ impl<'a> CheckerState<'a> {
         if let Some((base, _index)) =
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, ty)
         {
-            return tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, base);
+            return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base);
         }
         false
     }
@@ -625,19 +625,19 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut index_constraint =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type);
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_type);
         // Fallback: when the index type is a type parameter but its TypeId doesn't carry a
         // constraint (happens when T[K] appears inside type application arguments like
         // `Id<T[K]>`), resolve the constraint from the AST declaration.
         if index_constraint.is_none()
-            && tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type)
+            && crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
         {
             index_constraint =
                 self.resolve_index_constraint_from_declaration(data.index_type, data.object_type);
         }
         let error_anchor = node_idx;
         let concrete_error_anchor = data.index_type;
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
             && index_constraint.is_some_and(|constraint| {
                 constraint == object_type
                     || same_type_param_name(self.ctx.types, constraint, object_type)
@@ -661,7 +661,7 @@ impl<'a> CheckerState<'a> {
         // is a type literal, compute keyof from AST property names only (no
         // value-type evaluation needed). This avoids eagerly resolving complex
         // member types (e.g., generic type applications) just to check key validity.
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type)
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
             && let Some(obj_node) = self.ctx.arena.get(data.object_type)
             && obj_node.kind == syntax_kind_ext::TYPE_LITERAL
             && let Some(type_lit) = self.ctx.arena.get_type_literal(obj_node)
@@ -693,14 +693,14 @@ impl<'a> CheckerState<'a> {
         if object_type_for_check == TypeId::NEVER {
             return;
         }
-        object_type_for_check = tsz_solver::type_queries::get_type_parameter_constraint(
+        object_type_for_check = crate::query_boundaries::common::type_parameter_constraint(
             self.ctx.types,
             object_type_for_check,
         )
         .unwrap_or(object_type_for_check);
         if let Some((base_object_type, access_index_type)) =
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, object_type_for_check)
-            && let Some(base_constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
+            && let Some(base_constraint) = crate::query_boundaries::common::type_parameter_constraint(
                 self.ctx.types,
                 base_object_type,
             )
@@ -776,8 +776,8 @@ impl<'a> CheckerState<'a> {
         let is_self_derived_key_space = |candidate: TypeId| {
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, candidate).is_some_and(
                 |(derived_object, derived_index)| {
-                    tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type)
-                        && !tsz_solver::type_queries::is_type_parameter_like(
+                    crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
+                        && !crate::query_boundaries::common::is_type_parameter_like(
                             self.ctx.types,
                             derived_object,
                         )
@@ -848,7 +848,7 @@ impl<'a> CheckerState<'a> {
         // At each level, check assignability to keyof or recognize deferred types.
         let mut index_type_for_check = index_type_for_check;
         for _ in 0..5 {
-            let next = tsz_solver::type_queries::get_type_parameter_constraint(
+            let next = crate::query_boundaries::common::type_parameter_constraint(
                 self.ctx.types,
                 index_type_for_check,
             );
@@ -873,7 +873,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
             // Continue following if still a type parameter.
-            if !tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, next_evaluated) {
+            if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, next_evaluated) {
                 index_type_for_check = next_evaluated;
                 break;
             }
@@ -914,7 +914,7 @@ impl<'a> CheckerState<'a> {
             {
                 let mut constrained_base_type =
                     self.get_type_from_type_node(nested_indexed_access.object_type);
-                constrained_base_type = tsz_solver::type_queries::get_type_parameter_constraint(
+                constrained_base_type = crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
                     constrained_base_type,
                 )
@@ -1178,7 +1178,7 @@ impl<'a> CheckerState<'a> {
                         // Also check the constraint of the check_type (for generic
                         // patterns like TDef[number] where TDef: readonly FieldDefinition[])
                         let check_constraint =
-                            tsz_solver::type_queries::get_type_parameter_constraint(
+                            crate::query_boundaries::common::type_parameter_constraint(
                                 self.ctx.types,
                                 check_eval,
                             );
@@ -1218,7 +1218,7 @@ impl<'a> CheckerState<'a> {
             let obj_type_str = self.format_type(object_type);
             let evaluated_index_type = self.evaluate_type_for_assignability(index_type);
             let index_type_str = if evaluated_index_type != TypeId::ERROR
-                && !tsz_solver::type_queries::contains_type_parameters_db(
+                && !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     index_type,
                 ) {
@@ -1262,7 +1262,7 @@ impl<'a> CheckerState<'a> {
             if tsz_solver::is_generic_application(self.ctx.types, object_type) {
                 let evaluated = self.evaluate_type_with_env(object_type);
                 if evaluated != TypeId::ERROR
-                    && !tsz_solver::type_queries::contains_type_parameters_db(
+                    && !crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         evaluated,
                     )
@@ -1282,10 +1282,10 @@ impl<'a> CheckerState<'a> {
             || tsz_solver::type_queries::get_tuple_elements(self.ctx.types, concrete_object_type)
                 .is_some();
 
-        if tsz_solver::type_queries::contains_type_parameters_db(
+        if crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
             concrete_object_type,
-        ) || tsz_solver::type_queries::is_type_parameter_like(
+        ) || crate::query_boundaries::common::is_type_parameter_like(
             self.ctx.types,
             concrete_object_type,
         ) || tsz_solver::is_index_access_type(self.ctx.types, concrete_object_type)

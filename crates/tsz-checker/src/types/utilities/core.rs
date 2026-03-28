@@ -93,10 +93,10 @@ impl<'a> CheckerState<'a> {
 
     fn contextual_rest_parameter_source_type(&mut self, rest_param_type: TypeId) -> TypeId {
         let mut source_type = rest_param_type;
-        if (tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, source_type)
-            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, source_type))
+        if (crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, source_type)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source_type))
             && let Some(constraint) =
-                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, source_type)
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, source_type)
             && constraint != TypeId::UNKNOWN
             && constraint != TypeId::ERROR
         {
@@ -130,8 +130,8 @@ impl<'a> CheckerState<'a> {
         let rest_start = shape.params.len().saturating_sub(1);
         index >= rest_start
             && arg_count.is_some()
-            && (tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, rest_param_type)
-                || tsz_solver::type_queries::contains_type_parameters_db(
+            && (crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, rest_param_type)
+                || crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     rest_param_type,
                 ))
@@ -727,7 +727,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(constraint) =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, expected)
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, expected)
             && constraint != expected
             && constraint != TypeId::UNKNOWN
             && constraint != TypeId::ERROR
@@ -787,7 +787,7 @@ impl<'a> CheckerState<'a> {
                 let evaluated_with_env = self.evaluate_type_with_env(resolved);
                 let became_more_concrete = evaluated_with_env != param.type_id
                     && (is_tuple_like_rest_param(self.ctx.types, evaluated_with_env)
-                        || !tsz_solver::type_queries::contains_type_parameters_db(
+                        || !crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             evaluated_with_env,
                         ));
@@ -798,11 +798,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_tuple_like_rest_param(self.ctx.types, param.type_id)
-                    || tsz_solver::type_queries::is_type_parameter_like(
+                    || crate::query_boundaries::common::is_type_parameter_like(
                         self.ctx.types,
                         param.type_id,
                     )
-                    || tsz_solver::type_queries::contains_type_parameters_db(
+                    || crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         param.type_id,
                     )
@@ -885,7 +885,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(ctx_type) = contextual_type {
                 if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ctx_type)
-                    && tsz_solver::type_queries::get_type_parameter_constraint(
+                    && crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
                         ctx_type,
                     )
@@ -1575,7 +1575,7 @@ impl<'a> CheckerState<'a> {
                 Some((string_keys, number_keys))
             }
             query::LiteralKeyKind::Other => {
-                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type)
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_type)
                     .and_then(|constraint| {
                         (constraint != index_type)
                             .then(|| self.get_literal_key_union_from_type(constraint))
@@ -1959,7 +1959,7 @@ impl<'a> CheckerState<'a> {
         // Also skip when the constraint contains type parameters (e.g., Record<K, number>)
         // since indexability depends on the instantiation.
         let check_type = if let Some(constraint) =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, object_type)
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, object_type)
         {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, index_type)
                 || tsz_solver::visitor::contains_type_parameters(self.ctx.types, constraint)
@@ -2043,7 +2043,7 @@ impl<'a> CheckerState<'a> {
                 Some((wants_string, wants_number))
             }
             query::IndexKeyKind::Other => {
-                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type)
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_type)
                     .and_then(|constraint| {
                         (constraint != index_type).then(|| self.get_index_key_kind(constraint))
                     })

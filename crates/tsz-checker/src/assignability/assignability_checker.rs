@@ -1076,7 +1076,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if !tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type) {
+        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
             return false;
         }
 

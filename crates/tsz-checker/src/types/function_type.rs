@@ -630,7 +630,7 @@ impl<'a> CheckerState<'a> {
                                     extracted,
                                 );
                             let direct_is_constrained_type_param = extracted != from_expected
-                                && tsz_solver::type_queries::get_type_parameter_constraint(
+                                && crate::query_boundaries::common::type_parameter_constraint(
                                     self.ctx.types,
                                     extracted,
                                 )
@@ -1832,7 +1832,7 @@ impl<'a> CheckerState<'a> {
                                     });
                             let concrete_return_context = expected_return_type != TypeId::ANY
                                 && expected_return_type != TypeId::UNKNOWN
-                                && !tsz_solver::type_queries::contains_type_parameters_db(
+                                && !crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     expected_return_type,
                                 );

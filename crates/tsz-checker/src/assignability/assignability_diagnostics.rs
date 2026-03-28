@@ -928,7 +928,7 @@ impl<'a> CheckerState<'a> {
                             members.iter().any(|member| {
                                 let evaluated = self.evaluate_type_for_assignability(*member);
                                 tsz_solver::is_primitive_type(self.ctx.types, evaluated)
-                                    || tsz_solver::type_queries::is_type_parameter_like(
+                                    || crate::query_boundaries::common::is_type_parameter_like(
                                         self.ctx.types,
                                         evaluated,
                                     )

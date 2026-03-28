@@ -1733,7 +1733,7 @@ impl<'a> CheckerState<'a> {
             // Also check constraint-resolved types for `S extends symbol`.
             if matches!(op_str, "<" | ">" | "<=" | ">=") {
                 let resolve_tp = |t: TypeId| -> TypeId {
-                    tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, t)
+                    crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, t)
                         .filter(|&c| c != TypeId::UNKNOWN && c != t)
                         .unwrap_or(t)
                 };

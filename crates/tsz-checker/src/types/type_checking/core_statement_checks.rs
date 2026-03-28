@@ -638,7 +638,7 @@ impl<'a> CheckerState<'a> {
         if let Some(ref scoped_name) = scoped_name
             && scoped_name.as_str() != name.as_str()
             && let Some(&scoped_type) = self.ctx.type_parameter_scope.get(scoped_name.as_str())
-            && tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, scoped_type)
+            && crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, scoped_type)
         {
             constraint_type = scoped_type;
         }
@@ -709,7 +709,7 @@ impl<'a> CheckerState<'a> {
         let is_deferred_index_access =
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, evaluated)
                 .is_some_and(|(object_type, index_type)| {
-                    tsz_solver::type_queries::get_type_parameter_constraint(
+                    crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
                         index_type,
                     )

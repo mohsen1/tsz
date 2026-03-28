@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
         if return_context == TypeId::ANY
             || return_context == TypeId::UNKNOWN
             || self.type_has_unresolved_inference_holes(return_context)
-            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, return_context)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, return_context)
         {
             return None;
         }

@@ -196,7 +196,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Skip type parameters — we can't check attributes against unresolved generics
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
             return None;
         }
 
@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Skip type parameters — they may resolve to callable types
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
             return;
         }
         // Skip string-like tag values without going through full assignability.
@@ -335,7 +335,7 @@ impl<'a> CheckerState<'a> {
             // types once instantiated — treat them as potentially having signatures
             // to avoid false TS2604.  This mirrors the skip logic in
             // `get_jsx_props_type_for_component` for union members.
-            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, ty)
+            if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty)
                 || tsz_solver::contains_type_parameters(self.ctx.types, ty)
                 || self.is_generic_jsx_component(ty)
             {
@@ -413,7 +413,7 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
             return;
         }
         if self.ctx.has_parse_errors {
