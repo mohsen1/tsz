@@ -926,9 +926,13 @@ impl<'a> CheckerState<'a> {
                     request,
                     children_ctx,
                 );
-            } else if self.is_overloaded_sfc(resolved_component_type) {
-                // JSX overload resolution: try each non-generic call signature against
-                // the provided attributes. If no overload matches, emit TS2769.
+            } else if self.is_overloaded_sfc(resolved_component_type)
+                || self.has_multi_signature_overloads(resolved_component_type)
+            {
+                // JSX overload resolution: try each call signature (including generic
+                // ones) against the provided attributes. If no overload matches, emit
+                // TS2769. The `has_multi_signature_overloads` fallback covers cases
+                // where all overloads are generic and props extraction returned None.
                 self.check_jsx_overloaded_sfc(
                     resolved_component_type,
                     jsx_opening.attributes,

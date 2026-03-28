@@ -732,6 +732,19 @@ impl<'a> CheckerState<'a> {
         non_generic_count >= 2
     }
 
+    /// Check if a component type has multiple call signatures (including generic ones)
+    /// that should go through overload resolution. This is used as a fallback when
+    /// `recover_jsx_component_props_type` returns `None` -- the component has
+    /// overloaded generic signatures that couldn't be resolved to a single props type.
+    pub(super) fn has_multi_signature_overloads(&self, component_type: TypeId) -> bool {
+        let Some(sigs) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+        else {
+            return false;
+        };
+        sigs.len() >= 2
+    }
+
     /// Check if a component type has generic call or construct signatures.
     pub(super) fn is_generic_jsx_component(&self, component_type: TypeId) -> bool {
         if let Some(shape) =
