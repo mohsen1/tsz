@@ -1323,22 +1323,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Get the module specifier from the require(...) call
-        let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
-        let Some(module_spec) = require_module_specifier.as_deref() else {
-            return;
-        };
-
-        // Check if the target module exports a type-only entity
         let import_name = self
             .ctx
             .arena
             .get(import.import_clause)
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .map(|ident| ident.escaped_text.clone());
-        let target_is_type_only = self
-            .is_import_specifier_type_only(module_spec, import_name.as_deref().unwrap_or(""))
-            || self.is_module_export_equals_type_only(module_spec);
+        let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
+        let target_is_type_only = if let Some(module_spec) = require_module_specifier.as_deref() {
+            self.is_import_specifier_type_only(module_spec, import_name.as_deref().unwrap_or(""))
+                || self.is_module_export_equals_type_only(module_spec)
+        } else {
+            self.entity_name_text(import.module_specifier)
+                .is_some_and(|entity_name| self.is_local_symbol_type_only(&entity_name))
+        };
 
         if target_is_type_only {
             let msg = format_message(
@@ -1411,6 +1409,11 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                return true;
+            }
+            if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id)
+            {
                 return true;
             }
             // If this is an imported symbol, resolve through the import chain

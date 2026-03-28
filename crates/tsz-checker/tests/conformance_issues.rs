@@ -11554,6 +11554,42 @@ a2.x;
 }
 
 #[test]
+fn test_export_import_type_only_namespace_under_isolated_modules_emits_ts1269() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/jsx.ts",
+                r#"
+export namespace JSXInternal {
+    export type HTMLAttributes = string;
+    export type ComponentChildren = string;
+}
+"#,
+            ),
+            (
+                "/factory.ts",
+                r#"
+import { JSXInternal } from "./jsx";
+export import JSX = JSXInternal;
+"#,
+            ),
+        ],
+        "/factory.ts",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ES2015,
+            isolated_modules: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1269),
+        "Expected TS1269 for export import aliasing a type-only namespace under isolatedModules. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_imported_declaration_file_with_top_level_declare_global_still_emits_ts2306() {
     let mut parser_entry = ParserState::new(
         "/src/index.ts".to_string(),

@@ -5,6 +5,44 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_has_runtime_value_in_binder(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(sym) = binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let non_namespace_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        if (sym.flags & non_namespace_value_flags) != 0 {
+            return true;
+        }
+
+        if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) == 0 {
+            return false;
+        }
+
+        let member_has_runtime_value = |member_id: tsz_binder::SymbolId| {
+            binder.get_symbol(member_id).is_some_and(|member_sym| {
+                (member_sym.flags & symbol_flags::VALUE) != 0
+                    && !self.symbol_member_is_type_only(member_id, None)
+            })
+        };
+
+        sym.exports.as_ref().is_some_and(|exports| {
+            exports
+                .iter()
+                .any(|(_, &member_id)| member_has_runtime_value(member_id))
+        }) || sym.members.as_ref().is_some_and(|members| {
+            members
+                .iter()
+                .any(|(_, &member_id)| member_has_runtime_value(member_id))
+        })
+    }
+
     /// Check named import specifiers under `verbatimModuleSyntax`.
     pub(crate) fn check_verbatim_module_syntax_imports(
         &mut self,
@@ -186,7 +224,9 @@ impl<'a> CheckerState<'a> {
             && let Some(sym) = target_binder.get_symbol(sym_id)
         {
             let flags = sym.flags;
-            return (flags & PURE_TYPE) != 0 && (flags & VALUE) == 0;
+            return ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
+                || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                    && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id));
         }
 
         for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
@@ -195,7 +235,10 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
             {
                 let flags = sym.flags;
-                return (flags & PURE_TYPE) != 0 && (flags & VALUE) == 0;
+                return ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
+                    || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0
+                        && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id));
             }
         }
 
