@@ -457,6 +457,7 @@ impl BinderState {
 
     /// Enter a new persistent scope (in addition to legacy scope chain).
     /// This method is called when binding begins for a scope-creating node.
+    #[allow(dead_code)]
     pub(crate) fn enter_persistent_scope(&mut self, kind: ContainerKind, node: NodeIndex) {
         self.enter_persistent_scope_with_capacity(kind, node, 0);
     }
