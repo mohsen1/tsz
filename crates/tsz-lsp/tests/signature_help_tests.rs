@@ -430,8 +430,8 @@ fn test_signature_help_new_overload_selection() {
     );
     let first_active = &first.signatures[first.active_signature as usize];
     assert!(
-        first_active.label.starts_with("new ("),
-        "Constructor signatures should use new() label"
+        first_active.label.starts_with("Ctor("),
+        "Constructor signatures should use callee name as label"
     );
     assert!(
         !first_active.label.contains("b: string"),
