@@ -157,7 +157,7 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         other: TypeId,
     ) -> Option<TypeId> {
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, ty)?;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
         // Only strip when the union has null or undefined members
         let has_null = members.contains(&TypeId::NULL);
         let has_undefined = members.contains(&TypeId::UNDEFINED);
@@ -169,7 +169,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if let Some(other_members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, other)
+            crate::query_boundaries::common::union_members(self.ctx.types, other)
             && other_members
                 .iter()
                 .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
@@ -191,7 +191,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, ty)?;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
         if members.len() < 2 {
             return None;
         }

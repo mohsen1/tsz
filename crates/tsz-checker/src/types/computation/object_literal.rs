@@ -1985,7 +1985,7 @@ impl<'a> CheckerState<'a> {
                     if is_valid_spread
                         && obj.elements.nodes.len() == 1
                         && properties.is_empty()
-                        && (tsz_solver::type_param_info(self.ctx.types, spread_type).is_some()
+                        && (crate::query_boundaries::common::type_param_info(self.ctx.types, spread_type).is_some()
                             || tsz_solver::type_queries::contains_type_parameters_db(
                                 self.ctx.types,
                                 spread_type,
@@ -2000,7 +2000,7 @@ impl<'a> CheckerState<'a> {
 
                     // Check if the spread type is a union — if so, distribute
                     // the spread over each union member: { ...A|B } → { ...A } | { ...B }
-                    let union_members_opt = tsz_solver::type_queries::get_union_members(
+                    let union_members_opt = crate::query_boundaries::common::union_members(
                         self.ctx.types,
                         resolved_spread,
                     );
@@ -2167,7 +2167,7 @@ impl<'a> CheckerState<'a> {
                         // resolves to constraint properties, losing the generic
                         // information and causing false TS2741/TS2322 errors.
                         let is_generic_spread = is_valid_spread
-                            && (tsz_solver::type_param_info(self.ctx.types, spread_type).is_some()
+                            && (crate::query_boundaries::common::type_param_info(self.ctx.types, spread_type).is_some()
                                 || tsz_solver::type_queries::contains_type_parameters_db(
                                     self.ctx.types,
                                     spread_type,

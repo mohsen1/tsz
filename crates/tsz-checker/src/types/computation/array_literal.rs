@@ -47,7 +47,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
             return false;
         };
@@ -120,7 +120,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
             return false;
         };
@@ -143,7 +143,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn sole_array_applicable_union_context(&mut self, contextual: TypeId) -> Option<TypeId> {
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)?;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, contextual)?;
         let mut applicable_shape = None;
 
         for member in members {
@@ -788,7 +788,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         contextual: TypeId,
     ) -> Option<TypeId> {
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)?;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, contextual)?;
 
         let mut element_types = Vec::new();
         for &member in &members {

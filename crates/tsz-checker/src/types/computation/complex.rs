@@ -25,7 +25,7 @@ fn should_preserve_contextual_application_shape(
         return true;
     }
 
-    if let Some(members) = tsz_solver::type_queries::get_union_members(db, ty) {
+    if let Some(members) = crate::query_boundaries::common::union_members(db, ty) {
         return members
             .iter()
             .copied()
@@ -831,7 +831,7 @@ impl<'a> CheckerState<'a> {
                             // result is fully resolved (no outer-scope type params).
                             // (See matching logic in call.rs Round 2.)
                             let instantiated = if let Some(tp_info) =
-                                tsz_solver::type_param_info(self.ctx.types, instantiated)
+                                crate::query_boundaries::common::type_param_info(self.ctx.types, instantiated)
                                 && let Some(constraint) = tp_info.constraint
                             {
                                 let instantiated_constraint =

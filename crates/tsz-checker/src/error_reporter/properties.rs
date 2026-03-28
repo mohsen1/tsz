@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)?;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, object_type)?;
         let mut saw_present_member = false;
         let mut fresh_empty_member = None;
 
@@ -843,7 +843,7 @@ impl<'a> CheckerState<'a> {
         // for literal element access keys on simple types like `{}`, but uses
         // TS7053 for unions with partial index signature presence.
         let is_union_or_intersection =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, object_type).is_some()
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type).is_some()
                 || tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
                     .is_some();
         // Check if the object has any index signature. If so, the more specific
@@ -938,7 +938,7 @@ impl<'a> CheckerState<'a> {
         let resolver =
             tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
         let has_number_index = if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
         {
             members
                 .iter()
@@ -968,7 +968,7 @@ impl<'a> CheckerState<'a> {
         // with for-in string keys are a valid pattern in tsc).
         if is_for_in_index {
             let has_string_index = if let Some(members) =
-                tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)
+                crate::query_boundaries::common::union_members(self.ctx.types, object_type)
             {
                 // For union types: ALL members must have an explicit string index signature.
                 // `resolve_string_index` returns Some for arrays (treating them as string-indexable),

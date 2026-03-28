@@ -9,7 +9,7 @@ impl<'a> CheckerState<'a> {
     /// Get the apparent type for a type parameter (constraint or `unknown` for unconstrained).
     /// This matches tsc's `getReducedApparentType` behavior for type parameters.
     pub(super) fn get_type_param_apparent_type(&self, type_id: TypeId) -> TypeId {
-        tsz_solver::type_param_info(self.ctx.types, type_id)
+        crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
             .and_then(|info| info.constraint)
             .unwrap_or(TypeId::UNKNOWN)
     }
@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
         // For union constraints (e.g., U extends T | string), check if any member
         // of the union is assignable to the target. This handles cases like
         // `U extends T | string` being comparable to `T`.
-        if let Some(info) = tsz_solver::type_param_info(self.ctx.types, source)
+        if let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, source)
             && let Some(constraint) = info.constraint
         {
             if self.is_assignable_to(constraint, target) {
@@ -39,7 +39,7 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Check if target's constraint chain reaches source
-        if let Some(info) = tsz_solver::type_param_info(self.ctx.types, target)
+        if let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, target)
             && let Some(constraint) = info.constraint
         {
             if self.is_assignable_to(source, constraint) {

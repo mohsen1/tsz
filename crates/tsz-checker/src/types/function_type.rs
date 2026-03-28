@@ -1509,7 +1509,7 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(instance_type) = js_constructor_instance_type
                     && let Some(union_members) =
-                        tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
+                        crate::query_boundaries::common::union_members(self.ctx.types, return_type)
                     && union_members.len() == 2
                     && union_members.contains(&TypeId::UNDEFINED)
                     && union_members.iter().copied().any(|member| {

@@ -1725,7 +1725,7 @@ impl<'a> CheckerState<'a> {
     /// tsc widens `""` → `string` when the target is a simple type param,
     /// but preserves literals for complex generic targets like `Type[K]`.
     pub(super) fn target_is_bare_type_parameter(&self, target: TypeId) -> bool {
-        tsz_solver::is_type_parameter(self.ctx.types, target)
+        crate::query_boundaries::state::checking::is_type_parameter(self.ctx.types, target)
     }
 
     fn is_literal_sensitive_assignment_target_inner(&self, target: TypeId) -> bool {
@@ -1772,7 +1772,7 @@ impl<'a> CheckerState<'a> {
 
         let target = self.evaluate_type_for_assignability(target);
         tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_none()
-            && tsz_solver::type_queries::get_union_members(self.ctx.types, target).is_none()
+            && crate::query_boundaries::common::union_members(self.ctx.types, target).is_none()
             && crate::query_boundaries::common::intersection_members(self.ctx.types, target)
                 .is_none()
     }

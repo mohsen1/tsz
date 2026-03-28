@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
             return contextual;
         }
 
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
             return contextual;
         };

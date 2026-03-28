@@ -13,7 +13,7 @@ impl<'a> CheckerState<'a> {
     pub(super) fn refine_jsx_callable_contextual_type(&mut self, type_id: TypeId) -> TypeId {
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.evaluate_type_with_env(resolved);
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, resolved)
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, resolved)
         else {
             return resolved;
         };
@@ -154,7 +154,7 @@ impl<'a> CheckerState<'a> {
             return Some(self.ctx.types.resolve_atom(name).as_str().to_string());
         }
 
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)?;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
         let mut literal_name = None;
         for member in members {
             let name = tsz_solver::type_queries::get_string_literal_value(self.ctx.types, member)?;

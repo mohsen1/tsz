@@ -64,7 +64,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, rest_param_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, rest_param_type)
         {
             let mut element_types = Vec::new();
             for member in members {
@@ -718,7 +718,7 @@ impl<'a> CheckerState<'a> {
 
         fn is_tuple_like_rest_param(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
             tsz_solver::type_queries::get_tuple_elements(db, ty).is_some()
-                || tsz_solver::type_queries::get_union_members(db, ty).is_some_and(|members| {
+                || crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
                     !members.is_empty()
                         && members.iter().all(|member| {
                             tsz_solver::type_queries::get_tuple_elements(db, *member).is_some()

@@ -201,7 +201,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
         {
             let mut candidates = Vec::new();
             let mut seen = rustc_hash::FxHashSet::default();
@@ -323,7 +323,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if the type (or any union member) has call/construct signatures
         let (types_to_check, is_union) = if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
         {
             (members, true)
         } else {
@@ -381,7 +381,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             return members
                 .iter()
@@ -439,7 +439,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let types_to_check = if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
         {
             members
         } else {
