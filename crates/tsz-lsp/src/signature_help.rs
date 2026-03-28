@@ -820,12 +820,7 @@ impl<'a> SignatureHelpProvider<'a> {
         } else {
             checker.format_type(shape.return_type)
         };
-        let prefix = if is_constructor {
-            // TypeScript shows construct signatures as: new (params): ReturnType
-            format!("new {type_params_str}(")
-        } else {
-            format!("{callee_name}{type_params_str}(")
-        };
+        let prefix = format!("{callee_name}{type_params_str}(");
         let suffix = format!("): {return_type_str}");
 
         // Build full label: prefix + params joined by ", " + suffix
