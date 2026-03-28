@@ -743,14 +743,15 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // For Promise constructors, when type parameters have no useful
-                    // inference from Round 1 or contextual type, default to void.
-                    // TSC infers T=void for `new Promise((resolve) => { resolve(); })`
-                    // because calling resolve() with 0 args implies the value param
-                    // should be void-compatible (making it optional). Our architecture
-                    // doesn't propagate this inference from the callback body back to
-                    // the outer generic context, so we apply the default here.
-                    {
+                    // For Promise constructors with a contextual type that doesn't
+                    // provide useful T info (any/unknown), default T to void.
+                    // TSC infers T from the callback body (e.g., resolve() → void,
+                    // resolve("hello") → string). Our architecture can't propagate
+                    // that inference, so we apply void only when the contextual type
+                    // already indicates "don't care" (any/unknown). Without a
+                    // contextual type, T stays unknown to avoid false positives on
+                    // resolve(value) calls.
+                    if contextual_type.is_some() {
                         let return_type_for_promise_check =
                             self.evaluate_type_with_env(shape.return_type);
                         if self.is_promise_type(return_type_for_promise_check)
