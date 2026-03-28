@@ -206,7 +206,7 @@ impl<'a> CheckerState<'a> {
         {
             let mut t = prop.type_id;
             if prop.optional && self.ctx.strict_null_checks() {
-                t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
+                t = self.ctx.types.factory().union2(t, TypeId::UNDEFINED);
             }
             if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
                 t = crate::query_boundaries::flow::narrow_destructuring_default(
@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
             {
                 let mut t = prop.type_id;
                 if prop.optional && self.ctx.strict_null_checks() {
-                    t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
+                    t = self.ctx.types.factory().union2(t, TypeId::UNDEFINED);
                 }
                 if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
                     t = crate::query_boundaries::flow::narrow_destructuring_default(
@@ -312,7 +312,7 @@ impl<'a> CheckerState<'a> {
             {
                 let mut t = prop.type_id;
                 if prop.optional && self.ctx.strict_null_checks() {
-                    t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
+                    t = self.ctx.types.factory().union2(t, TypeId::UNDEFINED);
                 }
                 if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
                     t = crate::query_boundaries::flow::narrow_destructuring_default(
@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let mut t = prop.type_id;
                         if prop.optional && self.ctx.strict_null_checks() {
-                            t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
+                            t = self.ctx.types.factory().union2(t, TypeId::UNDEFINED);
                         }
                         prop_types.push(t);
                     }

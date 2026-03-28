@@ -604,7 +604,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .factory()
-                .union(vec![prop_type, TypeId::UNDEFINED]);
+                .union2(prop_type, TypeId::UNDEFINED);
         }
 
         Some(ClassMemberInfo {

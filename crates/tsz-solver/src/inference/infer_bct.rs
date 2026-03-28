@@ -298,7 +298,7 @@ impl<'a> InferenceContext<'a> {
             } else if !first_wins_for_incompatible {
                 // For non-fresh candidates, create a union as a safe fallback
                 // since our simplified is_subtype may miss valid relationships.
-                result = self.interner.union(vec![result, candidate]);
+                result = self.interner.union2(result, candidate);
             }
             // When first_wins_for_incompatible: keep result (first/leftmost wins)
         }

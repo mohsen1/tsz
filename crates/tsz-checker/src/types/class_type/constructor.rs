@@ -43,7 +43,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .types
                     .factory()
-                    .union(vec![existing.value_type, incoming.value_type]);
+                    .union2(existing.value_type, incoming.value_type);
             }
             existing.readonly &= incoming.readonly;
         } else {
@@ -782,7 +782,7 @@ impl<'a> CheckerState<'a> {
                         is_abstract: false,
                     });
                     let callable_or_undefined = if method.question_token {
-                        factory.union(vec![callable_type, TypeId::UNDEFINED])
+                        factory.union2(callable_type, TypeId::UNDEFINED)
                     } else {
                         callable_type
                     };
@@ -1625,8 +1625,7 @@ impl<'a> CheckerState<'a> {
         // tsc treats the constructor type as implicitly string-indexable to suppress TS7053.
         let effective_string_index = if let Some(mut static_index) = static_string_index {
             if has_static_late_bound_members {
-                static_index.value_type =
-                    factory.union(vec![static_index.value_type, instance_type]);
+                static_index.value_type = factory.union2(static_index.value_type, instance_type);
             }
             Some(static_index)
         } else {

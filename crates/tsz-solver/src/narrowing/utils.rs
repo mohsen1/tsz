@@ -456,12 +456,16 @@ pub fn split_nullish_type(
         None
     } else if non_nullish.len() == 1 {
         Some(non_nullish[0])
+    } else if non_nullish.len() == 2 {
+        Some(types.union2(non_nullish[0], non_nullish[1]))
     } else {
         Some(types.union(non_nullish.into_vec()))
     };
 
     let nullish_type = if nullish.len() == 1 {
         Some(nullish[0])
+    } else if nullish.len() == 2 {
+        Some(types.union2(nullish[0], nullish[1]))
     } else {
         Some(types.union(nullish.into_vec()))
     };

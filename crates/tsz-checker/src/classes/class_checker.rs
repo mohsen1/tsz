@@ -1844,7 +1844,7 @@ impl<'a> CheckerState<'a> {
                 // under strictNullChecks
                 if param.question_token && self.ctx.strict_null_checks() {
                     let factory = self.ctx.types.factory();
-                    prop_type = factory.union(vec![prop_type, TypeId::UNDEFINED]);
+                    prop_type = factory.union2(prop_type, TypeId::UNDEFINED);
                 }
 
                 // Skip if either type is ANY

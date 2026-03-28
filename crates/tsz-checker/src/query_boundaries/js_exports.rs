@@ -79,12 +79,12 @@ impl JsExportSurface {
             type_id: if existing.type_id == overlay.type_id {
                 existing.type_id
             } else {
-                factory.union(vec![existing.type_id, overlay.type_id])
+                factory.union2(existing.type_id, overlay.type_id)
             },
             write_type: if existing.write_type == overlay.write_type {
                 existing.write_type
             } else {
-                factory.union(vec![existing.write_type, overlay.write_type])
+                factory.union2(existing.write_type, overlay.write_type)
             },
             optional: existing.optional && overlay.optional,
             readonly: existing.readonly && overlay.readonly,

@@ -322,7 +322,7 @@ pub(crate) fn widen_callable_literal_return_types(
 
 /// Create `type_id | undefined`. Used for optional chain call results.
 pub(crate) fn union_with_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    db.union(vec![type_id, TypeId::UNDEFINED])
+    db.union2(type_id, TypeId::UNDEFINED)
 }
 
 // ── Union / classifier wrappers ──

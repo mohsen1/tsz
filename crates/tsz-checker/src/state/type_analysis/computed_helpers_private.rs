@@ -700,7 +700,7 @@ impl<'a> CheckerState<'a> {
                         if prop.name == prop_atom {
                             // Property found! Return its type
                             return if prop.optional {
-                                factory.union(vec![prop.type_id, TypeId::UNDEFINED])
+                                factory.union2(prop.type_id, TypeId::UNDEFINED)
                             } else {
                                 prop.type_id
                             };
@@ -727,7 +727,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(cause) = nullish_cause {
             if access.question_dot_token {
-                result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                result_type = factory.union2(result_type, TypeId::UNDEFINED);
             } else {
                 self.report_possibly_nullish_object(access.expression, cause);
             }

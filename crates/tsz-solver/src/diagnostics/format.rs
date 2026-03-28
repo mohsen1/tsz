@@ -2074,7 +2074,7 @@ mod tests {
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
-        let union = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let union = db.union2(TypeId::STRING, TypeId::NUMBER);
         let result = fmt.format(union);
         assert!(result.contains("string"));
         assert!(result.contains("number"));
@@ -2102,7 +2102,7 @@ mod tests {
 
         let s1 = db.literal_string("a");
         let s2 = db.literal_string("b");
-        let union = db.union(vec![s1, s2]);
+        let union = db.union2(s1, s2);
         let result = fmt.format(union);
         assert!(result.contains("\"a\""));
         assert!(result.contains("\"b\""));
@@ -3002,7 +3002,7 @@ mod tests {
         // Create nested unions: wrap in array at each level to increase depth
         let mut current = TypeId::STRING;
         for _ in 0..10 {
-            let inner_union = db.union(vec![current, TypeId::NUMBER]);
+            let inner_union = db.union2(current, TypeId::NUMBER);
             current = db.array(inner_union);
         }
         let result = fmt.format(current);

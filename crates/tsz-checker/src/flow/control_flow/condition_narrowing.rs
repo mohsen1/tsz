@@ -1351,7 +1351,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return narrowing.narrow_excluding_type(type_id, nullish);
             }
 
-            let nullish_union = self.interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+            let nullish_union = self.interner.union2(TypeId::NULL, TypeId::UNDEFINED);
             if effective_truth {
                 return nullish_union;
             }

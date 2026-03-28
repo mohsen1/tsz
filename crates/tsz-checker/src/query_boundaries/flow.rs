@@ -260,7 +260,7 @@ pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: T
     {
         return type_id;
     }
-    db.union(vec![type_id, TypeId::UNDEFINED])
+    db.union2(type_id, TypeId::UNDEFINED)
 }
 
 #[cfg(test)]
