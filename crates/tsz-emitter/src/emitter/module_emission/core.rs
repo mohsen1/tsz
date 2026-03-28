@@ -1,6 +1,6 @@
 use super::super::{ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
-use crate::transforms::ClassES5Emitter;
+use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use crate::transforms::emit_utils;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -310,6 +310,18 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_prefix(true);
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        if self.ctx.options.legacy_decorators
+            && let Some(class) = self.arena.get_class(node)
+        {
+            let class_decorators = self.collect_class_decorators(&class.modifiers);
+            if !class_decorators.is_empty() {
+                es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                    class_decorators,
+                    has_member_decorators: false,
+                    emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
+                });
+            }
+        }
         let es5_output = es5_emitter.emit_class_with_name(class_node, &temp_name);
         self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
         let mappings = es5_emitter.take_mappings();
