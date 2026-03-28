@@ -62,8 +62,67 @@ pub(crate) fn arrow_to_colon(type_string: &str) -> String {
 }
 
 pub(crate) fn format_hover_variable_type(type_string: &str) -> String {
-    let expanded = expand_inline_object_literals(type_string);
+    let stripped = strip_optional_undefined_props(type_string);
+    let expanded = expand_inline_object_literals(&stripped);
     normalize_union_array_precedence(&expanded)
+}
+
+/// Strip `name?: undefined;` properties from inline object literals.
+///
+/// The solver's BCT normalization adds optional-undefined properties for each
+/// property that exists in sibling union members but not in the current member.
+/// TypeScript does not display these synthetic properties, so we remove them
+/// before formatting.
+fn strip_optional_undefined_props(type_string: &str) -> String {
+    if !type_string.contains("?: undefined") {
+        return type_string.to_string();
+    }
+
+    let mut out = String::with_capacity(type_string.len());
+    let mut cursor = 0usize;
+
+    while let Some(rel_open) = type_string[cursor..].find('{') {
+        let open = cursor + rel_open;
+        out.push_str(&type_string[cursor..open]);
+        let Some(close) = find_matching_brace(type_string, open) else {
+            out.push_str(&type_string[open..]);
+            return out;
+        };
+        let inner = &type_string[open + 1..close];
+        // Only process flat object literals (no nested braces)
+        if !inner.contains('{') && inner.contains("?: undefined") {
+            out.push_str("{ ");
+            let props: Vec<&str> = inner
+                .split(';')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .collect();
+            let filtered: Vec<&str> = props
+                .into_iter()
+                .filter(|p| {
+                    // Remove properties like "name?: undefined"
+                    if let Some(colon_pos) = p.find(':') {
+                        let before_colon = p[..colon_pos].trim();
+                        let after_colon = p[colon_pos + 1..].trim();
+                        !(before_colon.ends_with('?') && after_colon == "undefined")
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+            out.push_str(&filtered.join("; "));
+            if !filtered.is_empty() {
+                out.push_str("; ");
+            }
+            out.push('}');
+        } else {
+            out.push_str(&type_string[open..=close]);
+        }
+        cursor = close + 1;
+    }
+
+    out.push_str(&type_string[cursor..]);
+    out
 }
 
 fn expand_inline_object_literals(type_string: &str) -> String {

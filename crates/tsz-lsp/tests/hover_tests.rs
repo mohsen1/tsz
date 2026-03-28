@@ -295,7 +295,7 @@ fn test_hover_union_array_precedence_preserved() {
     let info = get_hover_at(source, 3, 0).expect("Should find hover info for c2");
     assert_eq!(
         info.display_string,
-        "var c2: ({\n    name: string;\n    age: number;\n    address: string;\n    dob?: undefined;\n} | {\n    name: string;\n    age: number;\n    dob: number;\n    address?: undefined;\n})[]",
+        "var c2: ({\n    name: string;\n    age: number;\n    address: string;\n} | {\n    name: string;\n    age: number;\n    dob: number;\n})[]",
         "Quick-info display should preserve array-vs-union precedence with parenthesized union element type"
     );
 }
