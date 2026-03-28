@@ -1336,6 +1336,9 @@ impl<'a> Printer<'a> {
 
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                 self.emit_system_variable_initializers(stmt_node);
+            } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                // Non-exported class declarations: var is hoisted, emit as assignment
+                self.emit_system_class_as_expression(stmt_node, stmt_idx);
             } else {
                 // For MODULE_DECLARATION (direct or inside EXPORT_DECLARATION),
                 // mark the namespace name as declared so the IIFE emitter doesn't
@@ -2148,6 +2151,37 @@ impl<'a> Printer<'a> {
         let node = self.arena.get(specifier)?;
         let literal = self.arena.get_literal(node)?;
         Some(literal.text.clone())
+    }
+
+    /// Emit a non-exported class declaration as a class expression assignment
+    /// in the system execute body: Name = class Name { };
+    fn emit_system_class_as_expression(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        idx: NodeIndex,
+    ) {
+        let Some(class_decl) = self.arena.get_class(node) else {
+            self.emit(idx);
+            return;
+        };
+        let class_name = self.get_identifier_text_idx(class_decl.name);
+        if class_name.is_empty() {
+            self.emit(idx);
+            return;
+        }
+        self.write(&class_name);
+        self.write(" = ");
+        self.defer_class_static_blocks = true;
+        self.deferred_class_static_blocks.clear();
+        self.emit_class_es6(node, idx);
+        self.defer_class_static_blocks = false;
+        let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+        if !self.output_ends_with_semicolon() {
+            self.write(";");
+        }
+        if !deferred.is_empty() {
+            self.emit_static_block_iifes(deferred);
+        }
     }
 
     fn emit_system_variable_initializers(&mut self, node: &tsz_parser::parser::node::Node) {
