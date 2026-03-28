@@ -302,12 +302,26 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated)
             {
                 // Mark constraint-derived when the resolved type was a type parameter
-                // (get_array_applicable_type handles TypeParameter internally)
+                // (get_array_applicable_type handles TypeParameter internally).
+                // Also check union members: when the contextual type is a union of
+                // parameter types from multiple overloads (e.g., `T | Iterable<U>`),
+                // the applicable type may come from a TypeParameter member's constraint
+                // even though the whole union isn't a TypeParameter.
                 if crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
                     evaluated,
                 )
                 .is_some()
+                    || crate::query_boundaries::common::union_members(self.ctx.types, evaluated)
+                        .map_or(false, |members| {
+                            members.iter().any(|&m| {
+                                crate::query_boundaries::common::type_parameter_constraint(
+                                    self.ctx.types,
+                                    m,
+                                )
+                                .is_some()
+                            })
+                        })
                 {
                     tuple_context_from_constraint = true;
                 }
