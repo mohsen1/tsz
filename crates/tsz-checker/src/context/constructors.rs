@@ -112,6 +112,7 @@ impl<'a> CheckerContext<'a> {
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             class_constructor_type_cache: FxHashMap::default(),
+            class_chain_summary_cache: RefCell::new(FxHashMap::default()),
             env_eval_cache: RefCell::new(FxHashMap::default()),
             class_symbol_to_decl_cache: RefCell::new(FxHashMap::default()),
             heritage_symbol_cache: RefCell::new(FxHashMap::default()),
