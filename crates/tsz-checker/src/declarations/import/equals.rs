@@ -771,6 +771,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When the import is inside a namespace, TS1147 already fired — tsc does not
+        // also emit TS2307, so skip the module-not-found fallback.
+        if inside_namespace {
+            return;
+        }
+
         // Fallback: Emit module-not-found error if no specific error was found
         // Check if we've already emitted for this module (prevents duplicate emissions)
         let module_key = module_name.to_string();
