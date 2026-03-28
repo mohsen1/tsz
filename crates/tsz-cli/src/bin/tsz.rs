@@ -301,12 +301,15 @@ fn run_batch_mode() -> Result<()> {
             continue;
         }
 
-        // Clear the thread-local type interner cache between compilations.
-        // The cache holds TypeId→TypeData and TypeData→TypeId mappings from the
-        // previous compilation's TypeInterner. Without clearing, a new interner
-        // reusing the same TypeId values would get stale TypeData from the old
-        // interner, causing incorrect type resolution and panics.
+        // Clear all thread-local state between compilations.
+        // The type interner cache holds TypeId→TypeData mappings from the previous
+        // compilation's TypeInterner. Without clearing, a new interner reusing the
+        // same TypeId values would get stale TypeData from the old interner.
+        // The checker thread-locals hold NodeIndex-keyed caches that similarly get
+        // stale when a new AST arena reuses the same indices.
         tsz_solver::clear_thread_local_cache();
+        tsz_solver::reset_subtype_thread_local_state();
+        tsz::checker::clear_all_thread_local_state();
 
         let project_path = std::path::Path::new(project_dir);
 

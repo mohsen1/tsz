@@ -21,6 +21,7 @@ pub(crate) mod visitor;
 // Re-export core items at the same visibility they were originally declared with.
 // Items declared `pub` in core.rs are re-exported as `pub` so that lib.rs can
 // publicly re-export them (e.g., SubtypeChecker, is_subtype_of).
+pub use self::cache::reset_subtype_thread_local_state;
 pub use self::core::*;
 
 // Re-export SubtypeFailureReason so rules/ submodules can use `super::super::SubtypeFailureReason`

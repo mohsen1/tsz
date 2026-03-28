@@ -33,6 +33,13 @@ thread_local! {
 
 const MAX_EVAL_DEPTH: u32 = 100;
 
+/// Clear the enum evaluation memo cache and reset depth.
+/// Called between compilation sessions to prevent stale NodeIndex-keyed results.
+pub(crate) fn clear_enum_eval_memo() {
+    EVAL_MEMO.with(|m| m.borrow_mut().clear());
+    EVAL_DEPTH.with(|d| d.set(0));
+}
+
 // RAII guard that decrements `EVAL_DEPTH` on drop, and clears the memo cache
 // when depth returns to 0 (end of top-level evaluation).
 struct DepthGuard;

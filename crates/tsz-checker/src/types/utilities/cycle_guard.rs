@@ -44,6 +44,13 @@ thread_local! {
         = RefCell::new(FxHashSet::default());
 }
 
+/// Clear both cycle-detection visited sets.
+/// Called between compilation sessions to prevent stale NodeIndex values.
+pub(crate) fn clear_visited_sets() {
+    CONST_ENUM_VISITED.with(|v| v.borrow_mut().clear());
+    NON_CONST_ENUM_VISITED.with(|v| v.borrow_mut().clear());
+}
+
 impl Drop for CycleGuard {
     fn drop(&mut self) {
         let node = self.node;
