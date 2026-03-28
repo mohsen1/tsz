@@ -810,31 +810,29 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             sig.return_type
+        } else if first_sig.type_params.is_empty() {
+            first_sig.return_type
         } else {
-            if first_sig.type_params.is_empty() {
-                first_sig.return_type
-            } else {
-                let type_args: Vec<_> = first_sig
-                    .type_params
-                    .iter()
-                    .map(|param| {
-                        param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN)
-                    })
-                    .collect();
-                let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                    self.ctx.types,
-                    &first_sig.type_params,
-                    &type_args,
-                );
-                crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    first_sig.return_type,
-                    &substitution,
-                )
-            }
+            let type_args: Vec<_> = first_sig
+                .type_params
+                .iter()
+                .map(|param| {
+                    param
+                        .default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN)
+                })
+                .collect();
+            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &first_sig.type_params,
+                &type_args,
+            );
+            crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                first_sig.return_type,
+                &substitution,
+            )
         };
 
         let first_param_type = inferred_sig

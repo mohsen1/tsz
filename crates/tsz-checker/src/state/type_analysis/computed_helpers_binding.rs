@@ -56,17 +56,26 @@ impl<'a> CheckerState<'a> {
             trimmed.to_string()
         }
 
-        let resolved_name = self
-            .ctx
-            .resolve_import_target(module_name)
-            .and_then(|target_idx| {
-                self.ctx
-                    .get_arena_for_file(target_idx as u32)
-                    .source_files
-                    .first()
-                    .map(|source_file| source_file.file_name.clone())
-            })
-            .unwrap_or_else(|| module_name.to_string());
+        // For relative imports, use the module specifier directly as the display
+        // name rather than the resolved file path. This matches tsc, which shows
+        // `typeof import("aliasAssignments_moduleA")` not the full resolved path.
+        // Only resolve to the actual file path for non-relative/node_modules imports
+        // where the package structure matters.
+        let is_relative = module_name.starts_with("./") || module_name.starts_with("../");
+        let resolved_name = if is_relative {
+            module_name.to_string()
+        } else {
+            self.ctx
+                .resolve_import_target(module_name)
+                .and_then(|target_idx| {
+                    self.ctx
+                        .get_arena_for_file(target_idx as u32)
+                        .source_files
+                        .first()
+                        .map(|source_file| source_file.file_name.clone())
+                })
+                .unwrap_or_else(|| module_name.to_string())
+        };
         let trimmed = trim_namespace_display_path(&resolved_name);
         for ext in &[
             ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
