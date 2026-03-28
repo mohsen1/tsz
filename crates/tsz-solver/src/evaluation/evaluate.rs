@@ -1360,6 +1360,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Self::collect_property_names(db, sub, names);
                 }
             }
+            // Array and Tuple types have implicit properties (length, push, etc.)
+            // that aren't in the type data. Use a sentinel to mark them as having
+            // unique properties, preventing incorrect union simplification.
+            // Without this, `T | T[]` unions collapse to `T` when T has only
+            // optional properties (the array vacuously satisfies the optional check
+            // but loses its array semantics).
+            Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
+                names.insert(u32::MAX);
+            }
             _ => {}
         }
     }
