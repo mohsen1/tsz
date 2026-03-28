@@ -298,6 +298,14 @@ impl ModuleResolver {
             ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
                 return ImportingModuleKind::CommonJs;
             }
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+                if !matches!(
+                    self.resolution_kind,
+                    ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                ) =>
+            {
+                return ImportingModuleKind::Esm;
+            }
             ModuleKind::None
             | ModuleKind::ES2015
             | ModuleKind::ES2020
