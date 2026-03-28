@@ -928,21 +928,7 @@ impl Runner {
                     };
                     // Filter .lib/ diagnostics (see filter functions for explanation)
                     let mut compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (mut tsc_error_codes, mut tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
-
-                    // Filter deprecation diagnostics from both sides.
-                    // tsc's conformance harness uses ignoreDeprecations to suppress
-                    // TS5107/TS5101, so the tsc-cache doesn't include them. Our
-                    // compiler may still emit them. Filter from both sides to avoid
-                    // false mismatches on deprecated option warnings.
-                    tsc_error_codes.retain(|&c| c != 5107 && c != 5101);
-                    tsc_fps.retain(|fp| fp.code != 5107 && fp.code != 5101);
-                    compile_result
-                        .error_codes
-                        .retain(|&c| c != 5107 && c != 5101);
-                    compile_result
-                        .diagnostic_fingerprints
-                        .retain(|fp| fp.code != 5107 && fp.code != 5101);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
 
                     // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
                     // and suppresses downstream errors caused by missing lib types.
