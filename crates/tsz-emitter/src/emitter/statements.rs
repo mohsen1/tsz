@@ -1405,12 +1405,12 @@ impl<'a> Printer<'a> {
                         semis.push(start + i);
                     }
                 }
-                let s1 = semis.first().map(|&p| {
-                    crate::output::source_writer::source_position_from_offset(text, p as u32)
-                });
-                let s2 = semis.get(1).map(|&p| {
-                    crate::output::source_writer::source_position_from_offset(text, p as u32)
-                });
+                let s1 = semis
+                    .first()
+                    .and_then(|&p| self.fast_source_position(p as u32));
+                let s2 = semis
+                    .get(1)
+                    .and_then(|&p| self.fast_source_position(p as u32));
                 (s1, s2)
             } else {
                 (None, None)
