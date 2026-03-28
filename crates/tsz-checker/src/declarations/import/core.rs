@@ -2328,9 +2328,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else if has_interface && has_function {
-                    // Interface + function default exports: TS2323 for all declarations.
-                    // tsc treats this as a conflict where both the type (interface)
-                    // and value (function) declarations compete for the "default" slot.
+                    // Interface + multiple conflicting function default exports:
+                    // TS2323 for all declarations. Note: a single function + interface
+                    // is allowed (declaration merging), but that case is excluded by
+                    // is_conflict requiring value_count > 1.
                     for &export_idx in &export_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
