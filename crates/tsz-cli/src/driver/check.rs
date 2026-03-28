@@ -2249,6 +2249,94 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     }
 
     #[test]
+    fn test_collect_diagnostics_keeps_unimported_external_module_type_alias_unresolved() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        std::fs::write(
+            dir.path().join("Helpers.ts"),
+            r#"
+export type StringKeyOf<TObj> = Extract<string, keyof TObj>;
+"#,
+        )
+        .expect("write Helpers.ts");
+        std::fs::write(
+            dir.path().join("FromFactor.ts"),
+            r#"
+export type RowToColumns<TColumns> = {
+    [TName in StringKeyOf<TColumns>]: any;
+};
+"#,
+        )
+        .expect("write FromFactor.ts");
+
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        resolved.checker.module = ModuleKind::CommonJS;
+        resolved.printer.module = ModuleKind::CommonJS;
+        resolved.checker.emit_declarations = true;
+
+        let file_paths = vec![
+            dir.path().join("Helpers.ts"),
+            dir.path().join("FromFactor.ts"),
+        ];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == diagnostic_codes::CANNOT_FIND_NAME
+                    && diag.message_text.contains("StringKeyOf")
+            }),
+            "Expected TS2304 for unimported external-module type alias in collect_diagnostics, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn test_is_declaration_file() {
         assert!(is_declaration_file("types.d.ts"));
         assert!(is_declaration_file("index.d.mts"));
