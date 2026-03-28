@@ -61,10 +61,7 @@ impl<'a> CheckerContext<'a> {
             spelling_suggestions_emitted: 0,
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
-            symbol_types: FxHashMap::with_capacity_and_hasher(
-                binder.symbols.len() / 2,
-                Default::default(),
-            ),
+            symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
             symbol_instance_types: FxHashMap::default(),
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -86,7 +83,9 @@ impl<'a> CheckerContext<'a> {
                 128,
                 Default::default(),
             )),
-            narrowable_identifier_cache: RefCell::new(FxHashMap::default()),
+            narrowable_identifier_cache: RefCell::new(
+                crate::context::NarrowableIdentifierCache::with_capacity(arena.nodes.len()),
+            ),
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
             flow_worklist: RefCell::new(VecDeque::with_capacity(32)),

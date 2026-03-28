@@ -276,7 +276,7 @@ pub(crate) fn emit_outputs(
                     use tsz_emitter::type_cache_view::TypeCacheView;
                     let cache_view = TypeCacheView {
                         node_types: cache.node_types.to_hash_map(),
-                        symbol_types: cache.symbol_types.clone(),
+                        symbol_types: cache.symbol_types.to_hash_map(),
                         def_to_symbol: cache.def_to_symbol.clone(),
                     };
                     let mut emitter = DeclarationEmitter::with_type_info(
@@ -353,7 +353,7 @@ pub(crate) fn emit_outputs(
                     let import_name_map = FxHashMap::default();
                     let cache_view = TypeCacheView {
                         node_types: cache.node_types.to_hash_map(),
-                        symbol_types: cache.symbol_types.clone(),
+                        symbol_types: cache.symbol_types.to_hash_map(),
                         def_to_symbol: cache.def_to_symbol.clone(),
                     };
 

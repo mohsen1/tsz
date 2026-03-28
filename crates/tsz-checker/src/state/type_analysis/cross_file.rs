@@ -374,12 +374,7 @@ impl<'a> CheckerState<'a> {
             // out by only merging SymbolIds that the parent's binder doesn't own.
             let child_symbol_types: Vec<(SymbolId, TypeId)> = if needs_cross_file_delegation {
                 // Cross-file: safe to merge everything
-                checker
-                    .ctx
-                    .symbol_types
-                    .iter()
-                    .map(|(&k, &v)| (k, v))
-                    .collect()
+                checker.ctx.symbol_types.iter().collect()
             } else {
                 // Lib delegation: only merge entries for MERGED lib SymbolIds.
                 // During lib merge, symbols get new IDs tracked in
@@ -390,8 +385,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .symbol_types
                     .iter()
-                    .filter(|&(&k, _)| self.ctx.binder.lib_symbol_reverse_remap.contains_key(&k))
-                    .map(|(&k, &v)| (k, v))
+                    .filter(|(k, _)| self.ctx.binder.lib_symbol_reverse_remap.contains_key(k))
                     .collect()
             };
 
@@ -454,7 +448,7 @@ impl<'a> CheckerState<'a> {
 
             // Merge collected data into the parent.
             for (sym_id, type_id) in child_symbol_types {
-                self.ctx.symbol_types.entry(sym_id).or_insert(type_id);
+                self.ctx.symbol_types.entry_or_insert(sym_id, type_id);
             }
             {
                 let mut parent_d2s = self.ctx.def_to_symbol.borrow_mut();
