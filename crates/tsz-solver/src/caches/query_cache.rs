@@ -217,6 +217,11 @@ pub struct QueryCache<'a> {
     /// Task #49: Canonical cache for O(1) structural identity checks.
     /// Maps `TypeId` -> canonical `TypeId` for structurally identical types.
     canonical_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    /// Cache for intersection-to-merged-object results.
+    /// Avoids expensive `collect_properties` calls for the same intersection target
+    /// across multiple SubtypeChecker instances (common in constraint checking).
+    /// `Some(type_id)` = successfully merged, `None` = not eligible for merging.
+    intersection_merge_cache: RefCell<FxHashMap<TypeId, Option<TypeId>>>,
     subtype_cache_hits: Cell<u64>,
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
@@ -237,6 +242,7 @@ impl<'a> QueryCache<'a> {
             property_cache: RefCell::new(FxHashMap::default()),
             variance_cache: RefCell::new(FxHashMap::default()),
             canonical_cache: RefCell::new(FxHashMap::default()),
+            intersection_merge_cache: RefCell::new(FxHashMap::default()),
             subtype_cache_hits: Cell::new(0),
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
@@ -1223,6 +1229,19 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
         self.assignability_cache.borrow_mut().insert(key, result);
+    }
+
+    fn lookup_intersection_merge(&self, intersection_id: TypeId) -> Option<Option<TypeId>> {
+        self.intersection_merge_cache
+            .borrow()
+            .get(&intersection_id)
+            .copied()
+    }
+
+    fn insert_intersection_merge(&self, intersection_id: TypeId, result: Option<TypeId>) {
+        self.intersection_merge_cache
+            .borrow_mut()
+            .insert(intersection_id, result);
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {

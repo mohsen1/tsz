@@ -57,9 +57,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &self,
         target_intersection: TypeId,
     ) -> Option<TypeId> {
+        // Check the shared QueryCache first to avoid expensive property collection
+        // for large intersections checked across multiple SubtypeChecker instances.
+        if let Some(db) = self.query_db {
+            if let Some(cached) = db.lookup_intersection_merge(target_intersection) {
+                return cached;
+            }
+        }
+
         use crate::objects::{PropertyCollectionResult, collect_properties};
 
-        match collect_properties(target_intersection, self.interner, self.resolver) {
+        let result = match collect_properties(target_intersection, self.interner, self.resolver) {
             PropertyCollectionResult::Properties {
                 properties,
                 string_index,
@@ -81,7 +89,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             PropertyCollectionResult::Any => Some(TypeId::ANY),
             PropertyCollectionResult::NonObject => None,
+        };
+
+        // Cache the result for subsequent SubtypeChecker instances.
+        if let Some(db) = self.query_db {
+            db.insert_intersection_merge(target_intersection, result);
         }
+        result
     }
 
     /// Check if two object types have overlapping properties.

@@ -2251,6 +2251,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Results are cached in `eval_cache` to avoid re-evaluating the same type across
     /// multiple subtype checks. This turns O(n²) evaluate calls into O(n).
     pub(crate) fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        // Fast path: intrinsic types (number, string, boolean, void, null, etc.)
+        // never need evaluation. Skip cache lookup entirely.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         // Check local evaluation cache first.
         // Key includes no_unchecked_indexed_access since with that flag evaluation results can vary.
         let cache_key = (type_id, self.no_unchecked_indexed_access);
