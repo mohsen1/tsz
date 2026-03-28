@@ -286,6 +286,25 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
+    /// Emit CJS export aliases as `export { local as exported };` lines.
+    pub(crate) fn emit_js_cjs_export_aliases(&mut self) {
+        if self.js_cjs_export_aliases.is_empty() {
+            return;
+        }
+        let aliases = self.js_cjs_export_aliases.clone();
+        for (export_name, local_name) in &aliases {
+            self.write_indent();
+            self.write("export { ");
+            self.write(local_name);
+            self.write(" as ");
+            self.write(export_name);
+            self.write(" };");
+            self.write_line();
+            self.emitted_scope_marker = true;
+            self.emitted_module_indicator = true;
+        }
+    }
+
     pub(crate) fn emit_export_assignment(&mut self, assign_idx: NodeIndex) {
         let Some(assign_node) = self.arena.get(assign_idx) else {
             return;

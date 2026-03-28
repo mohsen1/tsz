@@ -1915,6 +1915,104 @@ impl<'a> DeclarationEmitter<'a> {
         aliases
     }
 
+    /// Collect CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
+    pub(crate) fn collect_js_cjs_export_aliases(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (Vec<(String, String)>, FxHashSet<NodeIndex>) {
+        let empty = (Vec::new(), FxHashSet::default());
+        if !self.source_file_is_js(source_file) {
+            return empty;
+        }
+        if !self.js_export_equals_names.is_empty() {
+            return empty;
+        }
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        let mut alias_map: FxHashMap<String, (String, Vec<NodeIndex>)> = FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some((export_name_idx, rhs_idx)) =
+                self.js_commonjs_named_export_for_statement(stmt_idx)
+            {
+                let Some(export_name) = self.get_identifier_text(export_name_idx) else {
+                    continue;
+                };
+                let rhs_idx = self.arena.skip_parenthesized_and_assertions_and_comma(rhs_idx);
+                let local_name = self.get_identifier_text(rhs_idx);
+                let entry = alias_map
+                    .entry(export_name.clone())
+                    .or_insert_with(|| (String::new(), Vec::new()));
+                entry.1.push(stmt_idx);
+                if let Some(ref ln) = local_name {
+                    if *ln != export_name && export_targets.contains_key(ln) {
+                        entry.0 = ln.clone();
+                    }
+                }
+                continue;
+            }
+            if let Some((export_name, local_name, stmt)) =
+                self.js_module_exports_property_alias(stmt_idx)
+            {
+                let entry = alias_map
+                    .entry(export_name.clone())
+                    .or_insert_with(|| (String::new(), Vec::new()));
+                entry.1.push(stmt);
+                if export_name != local_name && export_targets.contains_key(&local_name) {
+                    entry.0 = local_name;
+                }
+            }
+        }
+        let mut aliases = Vec::new();
+        let mut skipped = FxHashSet::default();
+        let mut seen = FxHashSet::default();
+        for (export_name, (local_name, stmts)) in &alias_map {
+            if local_name.is_empty() {
+                continue;
+            }
+            for &s in stmts {
+                skipped.insert(s);
+            }
+            if seen.insert((export_name.clone(), local_name.clone())) {
+                aliases.push((export_name.clone(), local_name.clone()));
+            }
+        }
+        (aliases, skipped)
+    }
+
+    /// Parse `module.exports.X = Y` and return `(export_name, local_name, stmt_idx)`.
+    fn js_module_exports_property_alias(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, String, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self.arena.skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let lhs = self.arena.skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(lhs_node)?;
+        let export_name = self.get_identifier_text(access.name_or_argument)?;
+        let receiver = self.arena.skip_parenthesized_and_assertions_and_comma(access.expression);
+        if !self.is_module_exports_reference(receiver) {
+            return None;
+        }
+        let rhs = self.arena.skip_parenthesized_and_assertions_and_comma(binary.right);
+        let local_name = self.get_identifier_text(rhs)?;
+        Some((export_name, local_name, stmt_idx))
+    }
+
     pub(crate) fn collect_js_commonjs_expando_declarations(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
