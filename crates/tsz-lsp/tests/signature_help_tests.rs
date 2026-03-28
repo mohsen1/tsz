@@ -1190,7 +1190,8 @@ fn test_signature_help_nested_call() {
 
 #[test]
 fn test_signature_help_generic_function() {
-    // Generic function with type parameter and constraint
+    // Generic function called WITHOUT explicit type arguments:
+    // TypeScript hides the type parameter list and substitutes type params with unknown.
     let source = "function identity<T>(value: T): T { return value; }\nidentity(42);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -1206,9 +1207,42 @@ fn test_signature_help_generic_function() {
         .get_signature_help(root, Position::new(1, 9), &mut cache)
         .expect("Should find signature help for generic function");
     let sig = &help.signatures[help.active_signature as usize];
+    // No explicit type args -> type params hidden, T replaced with unknown
+    assert!(
+        !sig.label.contains("<T>"),
+        "Label should NOT contain type parameter <T> when no explicit type args, got: {}",
+        sig.label
+    );
+    assert_eq!(
+        sig.label, "identity(value: unknown): unknown",
+        "Type params should be substituted with unknown"
+    );
+    assert_eq!(sig.parameters.len(), 1);
+    assert_eq!(sig.parameters[0].name, "value");
+}
+
+#[test]
+fn test_signature_help_generic_function_with_explicit_type_args() {
+    // Generic function called WITH explicit type arguments:
+    // TypeScript shows the type parameter list and the parameterized types.
+    let source = "function identity<T>(value: T): T { return value; }\nidentity<number>(42);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider
+        .get_signature_help(root, Position::new(1, 17), &mut cache)
+        .expect("Should find signature help for generic function with explicit type args");
+    let sig = &help.signatures[help.active_signature as usize];
     assert!(
         sig.label.contains("<T>"),
-        "Label should contain type parameter <T>, got: {}",
+        "Label should contain type parameter <T> with explicit type args, got: {}",
         sig.label
     );
     assert!(
@@ -1222,7 +1256,8 @@ fn test_signature_help_generic_function() {
 
 #[test]
 fn test_signature_help_generic_with_constraint() {
-    // Generic function with extends constraint
+    // Generic function with extends constraint, called WITHOUT explicit type args.
+    // TypeScript hides the type params and substitutes T with unknown.
     let source = "function first<T extends any[]>(arr: T): T { return arr; }\nfirst([1, 2]);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -1238,11 +1273,15 @@ fn test_signature_help_generic_with_constraint() {
         .get_signature_help(root, Position::new(1, 6), &mut cache)
         .expect("Should find signature help for generic function with constraint");
     let sig = &help.signatures[help.active_signature as usize];
-    // The label should include the constraint
+    // No explicit type args -> type params hidden, T replaced with unknown
     assert!(
-        sig.label.contains("extends"),
-        "Label should contain 'extends' constraint, got: {}",
+        !sig.label.contains("extends"),
+        "Label should NOT contain 'extends' constraint without explicit type args, got: {}",
         sig.label
+    );
+    assert_eq!(
+        sig.label, "first(arr: unknown): unknown",
+        "Type params should be substituted with unknown"
     );
 }
 
