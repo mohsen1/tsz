@@ -44,10 +44,10 @@ impl<'a> CheckerState<'a> {
         ];
 
         // CallableFunction/NewableFunction extend Function and provide better
-        // typing for .call/.apply/.bind. tsc only emits TS2318 for them when
-        // Function itself is also missing (i.e., true --noLib with no manual
-        // declarations). When the user defines Function manually, these are
-        // treated as optional.
+        // typing for .call/.apply/.bind. tsc emits TS2318 for them when
+        // Function itself is missing OR when --noLib is explicitly set (even
+        // if Function is manually defined). With --noLib, the user is
+        // responsible for all global types — omitting these is an error.
         const FUNCTION_AUX_TYPES: &[&str] = &["CallableFunction", "NewableFunction"];
 
         // Emit TS2318 errors when core global types are not available.
@@ -82,8 +82,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Only check CallableFunction/NewableFunction when Function is also missing
-        if !function_available {
+        // Check CallableFunction/NewableFunction when Function is missing OR when
+        // --noLib is explicitly set. With --noLib, the user defines Function manually
+        // but may omit these auxiliary types — tsc still requires them and emits TS2318.
+        if !function_available || self.ctx.capabilities.no_lib {
             for &type_name in FUNCTION_AUX_TYPES {
                 if !self.ctx.has_name_in_lib(type_name) {
                     self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
