@@ -950,6 +950,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if let Some(class_name) = self.get_identifier_text_opt(class.name)
+            && let Some(output) = self.render_simple_tc39_decorated_class_es5(
+                node,
+                idx,
+                &class_name,
+                &class_name,
+            )
+        {
+            self.write(&output);
+            while self.comment_emit_idx < self.all_comments.len()
+                && self.all_comments[self.comment_emit_idx].end <= node.end
+            {
+                self.comment_emit_idx += 1;
+            }
+            return;
+        }
+
         let legacy_class_decorators = if self.ctx.options.legacy_decorators
             && node.kind == syntax_kind_ext::CLASS_DECLARATION
         {
@@ -1340,6 +1357,167 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_class_es6_with_options(node, idx, false, None);
+    }
+
+    pub(in crate::emitter) fn can_render_simple_tc39_decorated_class_es5(
+        &self,
+        node: &Node,
+    ) -> bool {
+        if self.ctx.options.legacy_decorators || !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(class) = self.arena.get_class(node) else {
+            return false;
+        };
+
+        !self.collect_class_decorators(&class.modifiers).is_empty()
+            && class.members.nodes.is_empty()
+            && class.heritage_clauses.is_none()
+    }
+
+    pub(in crate::emitter) fn render_simple_tc39_decorated_class_es5(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+        binding_name: &str,
+        display_name: &str,
+    ) -> Option<String> {
+        if !self.can_render_simple_tc39_decorated_class_es5(node) {
+            return None;
+        }
+
+        let class = self.arena.get_class(node)?;
+        let decorator_exprs = self
+            .collect_class_decorators(&class.modifiers)
+            .into_iter()
+            .filter_map(|decorator_idx| {
+                let decorator_node = self.arena.get(decorator_idx)?;
+                let decorator = self.arena.get_decorator(decorator_node)?;
+                let before_len = self.writer.len();
+                self.emit_expression(decorator.expression);
+                let after_len = self.writer.len();
+                let full_output = self.writer.get_output().to_string();
+                let emitted = full_output[before_len..after_len].trim().to_string();
+                self.writer.truncate(before_len);
+                Some(emitted)
+            })
+            .collect::<Vec<_>>();
+        if decorator_exprs.is_empty() {
+            return None;
+        }
+
+        let inner_name = if class.name.is_some() && !binding_name.ends_with("_1") {
+            format!("{binding_name}_1")
+        } else {
+            binding_name.to_string()
+        };
+
+        let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter.set_indent_level(self.writer.indent_level() + 1);
+        es5_emitter.set_transforms(self.transforms.clone());
+        es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        if let Some(text) = self.source_text_for_map() {
+            es5_emitter.set_source_text(text);
+        }
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            es5_emitter.set_tslib_prefix(true);
+        }
+        es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        let mut inner_output = es5_emitter.emit_class_with_name(idx, &inner_name);
+        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+        inner_output = inner_output.trim_end_matches('\n').to_string();
+
+        let base_indent = "    ".repeat(self.writer.indent_level() as usize);
+        let body_indent = "    ".repeat((self.writer.indent_level() + 1) as usize);
+        let decorator_indent = "    ".repeat((self.writer.indent_level() + 2) as usize);
+
+        let inner_prefix = format!("var {inner_name} = ");
+        let indented_inner_prefix = format!("{body_indent}{inner_prefix}");
+        if inner_output.starts_with(&inner_prefix) {
+            inner_output = format!(
+                "{body_indent}var {binding_name} = _classThis = {}",
+                &inner_output[inner_prefix.len()..]
+            );
+        } else if inner_output.starts_with(&indented_inner_prefix) {
+            inner_output = format!(
+                "{body_indent}var {binding_name} = _classThis = {}",
+                &inner_output[indented_inner_prefix.len()..]
+            );
+        } else if !inner_output.starts_with(&body_indent) {
+            inner_output = format!("{body_indent}{inner_output}");
+        }
+
+        Some(format!(
+            "{base_indent}var {binding_name} = function () {{\n{body_indent}var _classDecorators = [{}];\n{body_indent}var _classDescriptor;\n{body_indent}var _classExtraInitializers = [];\n{body_indent}var _classThis;\n{inner_output}\n{body_indent}__setFunctionName(_classThis, \"{display_name}\");\n{body_indent}(function () {{\n{decorator_indent}var _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n{decorator_indent}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n{decorator_indent}{binding_name} = _classThis = _classDescriptor.value;\n{decorator_indent}if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n{decorator_indent}__runInitializers(_classThis, _classExtraInitializers);\n{body_indent}}})();\n{body_indent}return {binding_name} = _classThis;\n{base_indent}}}();",
+            decorator_exprs.join(", "),
+        ))
+    }
+
+    pub(in crate::emitter) fn emit_tc39_decorated_class_expression(
+        &mut self,
+        class_node: NodeIndex,
+        display_name: &str,
+    ) -> bool {
+        if self.ctx.options.legacy_decorators || self.ctx.options.target == ScriptTarget::ESNext {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(class_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+            return false;
+        }
+
+        if self.ctx.target_es5 {
+            return false;
+        }
+
+        use crate::transforms::es_decorators::TC39DecoratorEmitter;
+
+        let mut emitter = TC39DecoratorEmitter::new(self.arena);
+        emitter.set_indent_level(self.writer.indent_level() as usize);
+        emitter.set_use_static_blocks(!self.ctx.needs_es2022_lowering);
+        emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        emitter.set_expression_mode(true);
+        emitter.set_function_name(display_name.to_string());
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            emitter.set_tslib_prefix(true);
+        }
+        if let Some(text) = self.source_text_for_map() {
+            emitter.set_source_text(text);
+        }
+
+        let output = emitter.emit_class(class_node);
+        if output.is_empty() {
+            return false;
+        }
+
+        let mut output = output.trim_end_matches('\n').to_string();
+        if display_name == "default" {
+            output = output.replace(
+                "var class_1 = _classThis = class",
+                "var default_1 = _classThis = class",
+            );
+            output = output.replace(
+                "class_1 = _classThis = _classDescriptor.value",
+                "default_1 = _classThis = _classDescriptor.value",
+            );
+            output = output.replace(
+                "return class_1 = _classThis;",
+                "return default_1 = _classThis;",
+            );
+            output = output.replace(
+                "__setFunctionName(_classThis, \"class_1\")",
+                "__setFunctionName(_classThis, \"default\")",
+            );
+        }
+
+        self.write(&output);
+        self.skip_comments_for_erased_node(node);
+        true
     }
 
     /// Emit a class using ES6 native class syntax (no transforms).
