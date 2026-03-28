@@ -51,6 +51,18 @@ impl<'a> CheckerState<'a> {
         if param.type_annotation.is_some() {
             return;
         }
+        // Destructuring parameters need recursive implicit-any checking even when
+        // the top-level parameter has a default (e.g., `({ json = [] } = {})`).
+        if let Some(name_node) = self.ctx.arena.get(param.name) {
+            use tsz_parser::parser::syntax_kind_ext;
+            let kind = name_node.kind;
+            if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                self.emit_implicit_any_parameter_for_pattern(param.name, param.dot_dot_dot_token);
+                return;
+            }
+        }
         // Check if parameter has an initializer — any initializer (including null/undefined)
         // provides a type for the parameter. tsc infers `null` or `undefined` as the type,
         // so these do NOT trigger TS7006.
@@ -80,23 +92,6 @@ impl<'a> CheckerState<'a> {
             crate::state_checking::is_strict_mode_reserved_name(name)
                 || crate::state_checking::is_eval_or_arguments(name)
         });
-
-        // Enhanced destructuring parameter detection
-        // Check if the parameter name is a destructuring pattern (object/array binding)
-        if let Some(name_node) = self.ctx.arena.get(param.name) {
-            use tsz_parser::parser::syntax_kind_ext;
-
-            let kind = name_node.kind;
-
-            // Direct destructuring patterns
-            if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-            {
-                // For destructuring parameters, recursively check nested binding elements
-                self.emit_implicit_any_parameter_for_pattern(param.name, param.dot_dot_dot_token);
-                return;
-            }
-        }
 
         // Skip TS7006 for parameters on nodes with parse errors.
         // This prevents cascading "implicitly has any type" errors on malformed AST nodes.
@@ -422,14 +417,20 @@ impl<'a> CheckerState<'a> {
                                     is_rest_parameter,
                                 );
                             } else {
-                                // Leaf binding - report error if no initializer
-                                let has_initializer = binding_elem.initializer.is_some();
-                                if !has_initializer {
+                                // Leaf binding — report when no initializer or empty array default
+                                let implicit_type = if binding_elem.initializer.is_none() {
+                                    Some(if is_rest_parameter { "any[]" } else { "any" })
+                                } else if Self::is_empty_array_literal_init(
+                                    self.ctx.arena,
+                                    binding_elem.initializer,
+                                ) {
+                                    Some("any[]")
+                                } else {
+                                    None
+                                };
+                                if let Some(implicit_type) = implicit_type {
                                     let binding_name =
                                         self.parameter_name_for_error(binding_elem.name);
-
-                                    let implicit_type =
-                                        if is_rest_parameter { "any[]" } else { "any" };
                                     self.error_at_node_msg(
                                         binding_elem.name,
                                         diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
@@ -476,11 +477,19 @@ impl<'a> CheckerState<'a> {
                                 is_rest_parameter,
                             );
                         } else {
-                            let has_initializer = binding_elem.initializer.is_some();
-                            if !has_initializer {
+                            // Leaf binding — report when no initializer or empty array default
+                            let implicit_type = if binding_elem.initializer.is_none() {
+                                Some(if is_rest_parameter { "any[]" } else { "any" })
+                            } else if Self::is_empty_array_literal_init(
+                                self.ctx.arena,
+                                binding_elem.initializer,
+                            ) {
+                                Some("any[]")
+                            } else {
+                                None
+                            };
+                            if let Some(implicit_type) = implicit_type {
                                 let binding_name = self.parameter_name_for_error(binding_elem.name);
-
-                                let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
                                 self.error_at_node_msg(
                                     binding_elem.name,
                                     diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
