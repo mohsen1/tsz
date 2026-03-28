@@ -1,7 +1,7 @@
 use super::super::{ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
-use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use crate::transforms::emit_utils;
+use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -277,12 +277,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if let Some(output) = self.render_simple_tc39_decorated_class_es5(
-            node,
-            class_node,
-            "default_1",
-            "default",
-        ) {
+        if let Some(output) =
+            self.render_simple_tc39_decorated_class_es5(node, class_node, "default_1", "default")
+        {
             self.write(&output);
             self.write_line();
             self.write_export_binding_start("default");
@@ -465,6 +462,46 @@ impl<'a> Printer<'a> {
                 } else {
                     String::new()
                 };
+                if class_has_legacy_class_decorators
+                    && self.ctx.target_es5
+                    && class_name == "default_1"
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                    && let Some(class) = self.arena.get_class(clause_node)
+                {
+                    let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                    es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+                    es5_emitter.set_indent_level(self.writer.indent_level());
+                    es5_emitter.set_transforms(self.transforms.clone());
+                    es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+                    if let Some(text) = self.source_text_for_map() {
+                        if self.writer.has_source_map() {
+                            es5_emitter
+                                .set_source_map_context(text, self.writer.current_source_index());
+                        } else {
+                            es5_emitter.set_source_text(text);
+                        }
+                    }
+                    es5_emitter.set_use_define_for_class_fields(
+                        self.ctx.options.use_define_for_class_fields,
+                    );
+                    let class_decorators = self.collect_class_decorators(&class.modifiers);
+                    es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                        class_decorators,
+                        has_member_decorators: false,
+                        emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
+                    });
+                    let output =
+                        es5_emitter.emit_class_with_name(export.export_clause, &class_name);
+                    self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+                    self.write(&output);
+                    if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
+                    self.write("export default ");
+                    self.write(&class_name);
+                    self.write(";");
+                    return;
+                }
                 // For anonymous classes, set the override name so the class emitter
                 // uses "default_1" as the binding name.
                 let prev_name = self.anonymous_default_export_name.take();
