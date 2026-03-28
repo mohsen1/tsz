@@ -19,7 +19,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::sync::{
-    Arc, OnceLock,
+    Arc, OnceLock, RwLock,
     atomic::{AtomicBool, AtomicU32, Ordering},
 };
 use tsz_common::interner::{Atom, ShardedInterner};
@@ -76,8 +76,11 @@ struct CachedUnionMember {
 struct TypeShardInner {
     /// Map from `TypeData` to local index within this shard
     key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
-    /// Map from local index to `TypeData` (stored inline since TypeData is Copy)
-    index_to_key: DashMap<u32, TypeData, FxBuildHasher>,
+    /// Flat array from local index to `TypeData`.
+    /// Sequential indices make a Vec far faster than DashMap for reverse lookup.
+    /// Protected by RwLock: reads are uncontended in single-threaded use (~1 cycle),
+    /// writes only happen during intern (append-only).
+    index_to_key: RwLock<Vec<TypeData>>,
 }
 
 /// A single shard of the type interned storage.
@@ -105,7 +108,7 @@ impl TypeShard {
     fn get_inner(&self) -> &TypeShardInner {
         self.inner.get_or_init(|| TypeShardInner {
             key_to_index: DashMap::with_hasher(FxBuildHasher),
-            index_to_key: DashMap::with_hasher(FxBuildHasher),
+            index_to_key: RwLock::new(Vec::with_capacity(256)),
         })
     }
 
@@ -118,12 +121,13 @@ impl TypeShard {
 
 /// Inner data for `ConcurrentSliceInterner`, lazily initialized.
 struct SliceInternerInner<T> {
-    items: DashMap<u32, Arc<[T]>, FxBuildHasher>,
+    /// Flat array from ID to slice value. Sequential IDs make Vec optimal for reverse lookup.
+    items: RwLock<Vec<Arc<[T]>>>,
     map: DashMap<Arc<[T]>, u32, FxBuildHasher>,
 }
 
-/// Lock-free slice interner using `DashMap` for concurrent access.
-/// Uses lazy initialization to defer `DashMap` allocation until first use.
+/// Slice interner using flat Vec for reverse lookup.
+/// Uses lazy initialization to defer allocation until first use.
 struct ConcurrentSliceInterner<T> {
     inner: OnceLock<SliceInternerInner<T>>,
     next_id: AtomicU32,
@@ -143,12 +147,15 @@ where
     #[inline]
     fn get_inner(&self) -> &SliceInternerInner<T> {
         self.inner.get_or_init(|| {
-            let items = DashMap::with_hasher(FxBuildHasher);
-            let map = DashMap::with_hasher(FxBuildHasher);
             let empty: Arc<[T]> = Arc::from(Vec::new());
-            items.insert(0, std::sync::Arc::clone(&empty));
+            let mut items_vec = Vec::with_capacity(256);
+            items_vec.push(Arc::clone(&empty)); // id 0 = empty
+            let map = DashMap::with_hasher(FxBuildHasher);
             map.insert(empty, 0);
-            SliceInternerInner { items, map }
+            SliceInternerInner {
+                items: RwLock::new(items_vec),
+                map,
+            }
         })
     }
 
@@ -166,7 +173,7 @@ where
             return *ref_entry.value();
         }
 
-        // Cache miss — allocate for insertion
+        // Cache miss -- allocate for insertion
         let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
 
         // Allocate new ID
@@ -176,7 +183,13 @@ where
         match inner.map.entry(std::sync::Arc::clone(&temp_arc)) {
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(id);
-                inner.items.insert(id, temp_arc);
+                {
+                    let mut vec = inner.items.write().unwrap();
+                    while vec.len() < id as usize {
+                        vec.push(Arc::clone(&temp_arc));
+                    }
+                    vec.push(temp_arc);
+                }
                 id
             }
             dashmap::mapref::entry::Entry::Occupied(e) => *e.get(),
@@ -188,45 +201,33 @@ where
         // For id 0, return from the initialized inner (which has the pre-allocated
         // empty Arc) instead of creating a new Arc::from(Vec::new()) on every call.
         let inner = if id == 0 {
-            // If inner isn't initialized yet, the only valid id is 0 (empty).
-            // Initialize lazily so we reuse the pre-allocated empty Arc.
             self.get_inner()
         } else {
             self.inner.get()?
         };
-        inner
-            .items
-            .get(&id)
-            .map(|e| std::sync::Arc::clone(e.value()))
+        let vec = inner.items.read().ok()?;
+        vec.get(id as usize).cloned()
     }
 
     #[inline]
     fn empty(&self) -> Arc<[T]> {
-        // Reuse the pre-allocated empty Arc from the inner cache (id 0)
-        // instead of creating Arc::from(Vec::new()) on every call.
-        if let Some(inner) = self.inner.get()
-            && let Some(e) = inner.items.get(&0)
-        {
-            return Arc::clone(e.value());
-        }
-        // Fallback: initialize inner (which creates the empty entry at id 0)
         let inner = self.get_inner();
-        inner
-            .items
-            .get(&0)
-            .map(|e| Arc::clone(e.value()))
+        let vec = inner.items.read().unwrap();
+        vec.first()
+            .cloned()
             .unwrap_or_else(|| Arc::from(Vec::new()))
     }
 }
 
 /// Inner data for `ConcurrentValueInterner`, lazily initialized.
 struct ValueInternerInner<T> {
-    items: DashMap<u32, Arc<T>, FxBuildHasher>,
+    /// Flat array from ID to value. Sequential IDs make Vec optimal for reverse lookup.
+    items: RwLock<Vec<Arc<T>>>,
     map: DashMap<Arc<T>, u32, FxBuildHasher>,
 }
 
-/// Lock-free value interner using `DashMap` for concurrent access.
-/// Uses lazy initialization to defer `DashMap` allocation until first use.
+/// Value interner using flat Vec for reverse lookup.
+/// Uses lazy initialization to defer allocation until first use.
 struct ConcurrentValueInterner<T> {
     inner: OnceLock<ValueInternerInner<T>>,
     next_id: AtomicU32,
@@ -246,7 +247,7 @@ where
     #[inline]
     fn get_inner(&self) -> &ValueInternerInner<T> {
         self.inner.get_or_init(|| ValueInternerInner {
-            items: DashMap::with_hasher(FxBuildHasher),
+            items: RwLock::new(Vec::with_capacity(128)),
             map: DashMap::with_hasher(FxBuildHasher),
         })
     }
@@ -262,7 +263,7 @@ where
             return *ref_entry.value();
         }
 
-        // Cache miss — allocate Arc for insertion
+        // Cache miss -- allocate Arc for insertion
         let value_arc = Arc::new(value);
 
         // Allocate new ID
@@ -272,7 +273,13 @@ where
         match inner.map.entry(std::sync::Arc::clone(&value_arc)) {
             Entry::Vacant(e) => {
                 e.insert(id);
-                inner.items.insert(id, value_arc);
+                {
+                    let mut vec = inner.items.write().unwrap();
+                    while vec.len() < id as usize {
+                        vec.push(Arc::clone(&value_arc));
+                    }
+                    vec.push(value_arc);
+                }
                 id
             }
             Entry::Occupied(e) => *e.get(),
@@ -281,11 +288,8 @@ where
 
     #[inline]
     fn get(&self, id: u32) -> Option<Arc<T>> {
-        self.inner
-            .get()?
-            .items
-            .get(&id)
-            .map(|e| std::sync::Arc::clone(e.value()))
+        let vec = self.inner.get()?.items.read().ok()?;
+        vec.get(id as usize).cloned()
     }
 
     /// Get value by copy for Copy types, avoiding Arc clone overhead.
@@ -294,7 +298,8 @@ where
     where
         T: Copy,
     {
-        self.inner.get()?.items.get(&id).map(|e| **e.value())
+        let vec = self.inner.get()?.items.read().ok()?;
+        vec.get(id as usize).map(|arc| **arc)
     }
 }
 
@@ -804,7 +809,13 @@ impl TypeInterner {
         match inner.key_to_index.entry(key) {
             Entry::Vacant(e) => {
                 e.insert(local_index);
-                inner.index_to_key.insert(local_index, key);
+                {
+                    let mut vec = inner.index_to_key.write().unwrap();
+                    if vec.len() <= local_index as usize {
+                        vec.resize(local_index as usize + 1, TypeData::Error);
+                    }
+                    vec[local_index as usize] = key;
+                }
                 let id = self.make_id(local_index, shard_idx as u32);
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
@@ -840,11 +851,8 @@ impl TypeInterner {
         if shard.is_empty() {
             return None;
         }
-        shard
-            .get_inner()
-            .index_to_key
-            .get(&{ local_index })
-            .map(|r| *r.value())
+        let vec = shard.get_inner().index_to_key.read().ok()?;
+        vec.get(local_index as usize).copied()
     }
 
     pub(super) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
@@ -2328,12 +2336,13 @@ impl TypeInterner {
         let mut size = std::mem::size_of::<Self>();
 
         // --- Sharded type storage ---
-        // Each interned type lives in two DashMaps: key_to_index and index_to_key.
+        // Each interned type lives in a DashMap (key_to_index) and a flat Vec (index_to_key).
         // DashMap overhead per entry is roughly 64 bytes (bucket + hash + padding).
-        // TypeData is Copy and small (~32 bytes), stored inline in both maps.
+        // TypeData is Copy and small (~32 bytes), stored inline.
         const DASHMAP_ENTRY_OVERHEAD: usize = 64;
         let type_data_size = std::mem::size_of::<TypeData>();
-        let per_type_cost = 2 * (DASHMAP_ENTRY_OVERHEAD + type_data_size + 4/* u32 key/value */);
+        // key_to_index: DashMap<TypeData, u32> + index_to_key: Vec<TypeData>
+        let per_type_cost = (DASHMAP_ENTRY_OVERHEAD + type_data_size + 4) + type_data_size;
 
         let type_count = self.len();
         size += type_count * per_type_cost;
