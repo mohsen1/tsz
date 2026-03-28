@@ -90,6 +90,45 @@ impl<'a> Printer<'a> {
             .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
     }
 
+    /// Filter named import specifiers to only those with value-level usage
+    /// in the rest of the file. Used in --noCheck mode.
+    fn filter_value_specs_by_usage(
+        &self,
+        import_node: &Node,
+        specs: &[NodeIndex],
+    ) -> Vec<NodeIndex> {
+        let Some(source_text) = self.source_text else {
+            return specs.to_vec();
+        };
+        let Some(import_data) = self.arena.get_import_decl(import_node) else {
+            return specs.to_vec();
+        };
+        let haystack =
+            Self::source_after_import(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+
+        specs
+            .iter()
+            .copied()
+            .filter(|&spec_idx| {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    return true;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    return true;
+                };
+                let local_name = self.get_identifier_text_idx(spec.name);
+                if local_name.is_empty() {
+                    return true;
+                }
+                crate::import_usage::contains_identifier_occurrence(
+                    &value_haystack,
+                    &local_name,
+                )
+            })
+            .collect()
+    }
+
     /// Check if an import-equals declaration's identifier is used after the import.
     pub(in crate::emitter) fn import_equals_has_value_usage_after_node(
         &self,
@@ -231,6 +270,15 @@ impl<'a> Printer<'a> {
                     namespace_name = Some(named_imports.name);
                 } else {
                     value_specs = self.collect_value_specifiers(&named_imports.elements);
+                    // In --noCheck mode (type_only_nodes empty), apply text-based
+                    // heuristic to elide individual named specifiers unused as values.
+                    if self.ctx.options.type_only_nodes.is_empty()
+                        && !self.source_is_js_file
+                        && !self.ctx.options.verbatim_module_syntax
+                    {
+                        value_specs =
+                            self.filter_value_specs_by_usage(node, &value_specs);
+                    }
                     trailing_comma = self
                         .has_trailing_comma_in_source(bindings_node, &named_imports.elements.nodes);
                 }
