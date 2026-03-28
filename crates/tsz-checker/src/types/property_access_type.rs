@@ -657,11 +657,13 @@ impl<'a> CheckerState<'a> {
         // probing the property on the non-flow object type is often enough. If the
         // property is found without flow narrowing, keep that cheaper object type and
         // avoid an additional flow walk on the object expression.
+        // `should_skip_property_result_flow_narrowing_for_result` internally calls
+        // `should_skip_property_result_flow_narrowing` and returns true whenever that
+        // base check succeeds. So skip_result_flow_for_result is always a superset of
+        // the base check, eliminating the need for a separate call.
         let skip_result_flow_for_result =
             !skip_flow_narrowing && self.should_skip_property_result_flow_narrowing_for_result(idx);
-        let skip_result_flow = !skip_flow_narrowing
-            && (skip_result_flow_for_result
-                || self.should_skip_property_result_flow_narrowing(idx));
+        let skip_result_flow = skip_result_flow_for_result;
         let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
 
         let (original_object_type, write_presence_only) = if skip_flow_narrowing {
