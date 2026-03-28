@@ -1676,18 +1676,26 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Elide non-exported import equals declarations that are not used by the public API
         if !is_exported && !already_exported {
-            if self.inside_non_ambient_namespace && !self.is_ns_member_used_by_exports(import_idx) {
-                return;
-            }
+            if self.inside_non_ambient_namespace {
+                // Inside a non-ambient namespace: if usage analysis is available, check
+                // if the alias is referenced by an exported/emitted member.
+                // If usage analysis is not available, fall through to the type-entity
+                // check below (which will elide value-only targets).
+                if self.used_symbols.is_some() && !self.is_ns_member_used_by_exports(import_idx) {
+                    return;
+                }
+            } else {
+                // Outside a namespace: apply standard elision heuristics.
 
-            // When no usage tracking is available, non-exported `import = require(...)`
-            // declarations are almost always value-level and not needed in .d.ts output.
-            if self.used_symbols.is_none() {
-                return;
-            }
+                // When no usage tracking is available, non-exported `import = require(...)`
+                // declarations are almost always value-level and not needed in .d.ts output.
+                if self.used_symbols.is_none() {
+                    return;
+                }
 
-            if !self.should_emit_public_api_dependency(import_eq.import_clause) {
-                return;
+                if !self.should_emit_public_api_dependency(import_eq.import_clause) {
+                    return;
+                }
             }
 
             // For namespace-path imports (import x = a.b, not import x = require("...")),
