@@ -20261,6 +20261,33 @@ function f(value) {
 }
 
 #[test]
+fn test_value_import_from_types_package_emits_ts6137() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.ts",
+        r#"
+import foo from "@types/foo-bar";
+foo;
+"#,
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 6137),
+        "Expected TS6137 for value import from @types package. Actual diagnostics: {diagnostics:#?}"
+    );
+    let message =
+        diagnostic_message(&diagnostics, 6137).expect("TS6137 should include a diagnostic message");
+    assert!(
+        message.contains("foo-bar") && message.contains("@types/foo-bar"),
+        "Expected TS6137 message to suggest importing foo-bar instead. Actual message: {message}"
+    );
+}
+
+#[test]
 fn test_define_property_prototype_descriptor_setter_is_contextualized() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "mod1.js",
