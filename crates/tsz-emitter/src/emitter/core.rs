@@ -492,6 +492,8 @@ pub struct Printer<'a> {
     /// `new (x() as T)` → `new (x())` (not `new x()`).
     pub(crate) paren_in_new_callee: bool,
 
+    pub(crate) paren_is_direct_call_callee: bool,
+
     /// Depth counter for accessor members emitted from object literal syntax.
     object_literal_accessor_depth: u32,
 
@@ -504,6 +506,9 @@ pub struct Printer<'a> {
     /// we pick the right entry (the tightest scope that contains the access).
     /// File-level const enums use `(0, u32::MAX)`.
     pub(crate) const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
+
+    /// Import-equals alias mappings for const enum resolution.
+    pub(crate) const_enum_import_aliases: FxHashMap<String, String>,
 
     /// Accumulated enum member values across all processed enum declarations.
     /// Used by `EnumES5Transformer` to resolve cross-enum references like
@@ -726,9 +731,11 @@ impl<'a> Printer<'a> {
             paren_in_access_position: false,
             in_system_execute_body: false,
             paren_in_new_callee: false,
+            paren_is_direct_call_callee: false,
             object_literal_accessor_depth: 0,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
+            const_enum_import_aliases: FxHashMap::default(),
             prior_enum_member_values: FxHashMap::default(),
             prior_enum_string_members: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),

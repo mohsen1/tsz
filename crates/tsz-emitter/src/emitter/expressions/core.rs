@@ -876,7 +876,7 @@ impl<'a> Printer<'a> {
                     || ((k == syntax_kind_ext::FUNCTION_EXPRESSION
                         || k == syntax_kind_ext::CLASS_EXPRESSION)
                         && !self.ctx.flags.paren_leftmost_function_or_object
-                        && !self.paren_in_access_position)
+                        && (!self.paren_in_access_position || self.paren_is_direct_call_callee))
             );
 
             if can_strip {
@@ -1172,6 +1172,24 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                     if let Some(tt) = self.arena.get_tagged_template(node) {
                         idx = tt.tag;
+                    } else {
+                        return Some(node.kind);
+                    }
+                }
+                // ParenthesizedExpression wrapping a type assertion: parens stripped.
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(paren) = self.arena.get_parenthesized(node) {
+                        if let Some(inner) = self.arena.get(paren.expression)
+                            && (inner.kind == syntax_kind_ext::TYPE_ASSERTION
+                                || inner.kind == syntax_kind_ext::AS_EXPRESSION
+                                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                                || inner.kind
+                                    == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
+                        {
+                            idx = paren.expression;
+                        } else {
+                            return Some(node.kind);
+                        }
                     } else {
                         return Some(node.kind);
                     }
