@@ -321,6 +321,9 @@ main() {
         fi
     else
         log_info "Skipping all build steps"
+        # Always apply harness patches even when skipping builds, since the
+        # compiled harness files may have been rebuilt without the patches.
+        "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
     fi
 
     # Resolve tsz-server path
