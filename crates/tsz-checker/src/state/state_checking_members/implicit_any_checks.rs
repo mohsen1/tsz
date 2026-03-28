@@ -51,6 +51,24 @@ impl<'a> CheckerState<'a> {
         if param.type_annotation.is_some() {
             return;
         }
+        // Skip parameters in contexts where types are inferred from usage:
+        // - IIFE parameters get types from the call arguments
+        // - JSX attribute callback parameters get types from the JSX context
+        // - Promise executor parameters get types from Promise<T>
+        // These must be checked BEFORE the destructuring pattern check below,
+        // which would otherwise report TS7031 for binding elements.
+        if self.is_this_parameter_name(param.name) {
+            return;
+        }
+        if self.is_parameter_in_promise_executor(param.name) {
+            return;
+        }
+        if self.is_parameter_in_iife(param.name) {
+            return;
+        }
+        if self.is_parameter_in_jsx_attribute_callback(param.name) {
+            return;
+        }
         // Destructuring parameters need recursive implicit-any checking, but only
         // when the outer initializer doesn't provide type info for the bindings.
         // E.g., `({ json = [] } = {})` — the `{}` default is empty, so `json` is
@@ -78,18 +96,6 @@ impl<'a> CheckerState<'a> {
         // provides a type for the parameter. tsc infers `null` or `undefined` as the type,
         // so these do NOT trigger TS7006.
         if param.initializer.is_some() && implicit_type_hint.is_none() {
-            return;
-        }
-        if self.is_this_parameter_name(param.name) {
-            return;
-        }
-        if self.is_parameter_in_promise_executor(param.name) {
-            return;
-        }
-        if self.is_parameter_in_iife(param.name) {
-            return;
-        }
-        if self.is_parameter_in_jsx_attribute_callback(param.name) {
             return;
         }
 
@@ -383,6 +389,7 @@ impl<'a> CheckerState<'a> {
     /// TypeScript reports implicit 'any' for individual bindings in patterns like:
     ///   function foo({ x, y }: any) {}  // no error on x, y with type annotation
     ///   function bar({ x, y }) {}        // errors on x and y
+    ///
     pub(crate) fn emit_implicit_any_parameter_for_pattern(
         &mut self,
         pattern_idx: NodeIndex,
