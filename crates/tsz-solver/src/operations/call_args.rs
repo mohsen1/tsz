@@ -193,16 +193,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.function_signature_is_contextually_sensitive(&shape.params)
                     || self.type_uses_inference_placeholders(shape.return_type)
             }
-            Some(TypeData::Callable(shape_id)) => {
-                let shape = self.interner.callable_shape(shape_id);
-                shape
-                    .call_signatures
-                    .iter()
-                    .chain(shape.construct_signatures.iter())
-                    .any(|sig| {
-                        self.function_signature_is_contextually_sensitive(&sig.params)
-                            || self.type_uses_inference_placeholders(sig.return_type)
-                    })
+            Some(TypeData::Callable(_)) => {
+                // Callable types represent class constructor values (with static
+                // properties, call/construct signatures). These are pre-existing
+                // values (class references), never inline expressions that need
+                // contextual typing. In tsc, isContextSensitive is an AST check:
+                // only inline arrows/functions/object literals are sensitive.
+                // A class reference like `Promise` is never sensitive, even though
+                // its construct signatures have type parameters.
+                false
             }
             Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => self
                 .interner
@@ -1230,16 +1229,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 !shape.type_params.is_empty()
                     || self.function_signature_is_contextually_sensitive(&shape.params)
             }
-            TypeData::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                shape
-                    .call_signatures
-                    .iter()
-                    .chain(shape.construct_signatures.iter())
-                    .any(|sig| {
-                        !sig.type_params.is_empty()
-                            || self.function_signature_is_contextually_sensitive(&sig.params)
-                    })
+            TypeData::Callable(_) => {
+                // Callable types are class constructor values, not inline
+                // expressions. They are never contextually sensitive (see
+                // is_contextually_sensitive_inner above for rationale).
+                false
             }
 
             // Union/Intersection: contextually sensitive if any member is

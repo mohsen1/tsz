@@ -2870,6 +2870,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_ty: TypeId,
         target_ty: TypeId,
     ) -> TypeId {
+        // Callable types represent class constructor values (e.g., `Promise`).
+        // They must not be decomposed into a Function type, because that loses
+        // static members and the construct-signature wrapper. This function is
+        // designed for inline arrows/lambdas whose generic type params should be
+        // instantiated against the target; class values are already concrete.
+        if matches!(self.interner.lookup(source_ty), Some(TypeData::Callable(_))) {
+            return source_ty;
+        }
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
         let function_info = Self::get_source_signature_for_target(
