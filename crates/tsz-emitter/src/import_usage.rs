@@ -20,7 +20,7 @@ pub fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
             haystack[..pos]
                 .chars()
                 .next_back()
-                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                .is_none_or(|ch| !is_ident_or_member_access_char(ch))
         };
         let after_idx = pos + ident.len();
         let after_ok = if after_idx >= haystack.len() {
@@ -37,6 +37,12 @@ pub fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
         search_from = pos + ident.len();
     }
     false
+}
+
+/// Returns true if `ch` preceding an identifier means it is NOT a standalone
+/// variable reference. Includes identifier chars and `.` (property access).
+fn is_ident_or_member_access_char(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric()
 }
 
 /// Strip type-only content from source text so that identifiers in type
