@@ -816,15 +816,6 @@ impl<'a> TypeFormatter<'a> {
         false
     }
 
-    /// Check if a type already encompasses `undefined` (any, unknown, void).
-    /// These types should not get `| undefined` appended since it's redundant.
-    fn type_encompasses_undefined(&self, type_id: TypeId) -> bool {
-        type_id == TypeId::ANY
-            || type_id == TypeId::UNKNOWN
-            || type_id == TypeId::VOID
-            || type_id == TypeId::UNDEFINED
-    }
-
     /// Format a type while stripping `undefined` from it.
     /// Used for optional tuple elements where the `?` already implies optionality.
     fn format_stripping_undefined(&mut self, type_id: TypeId) -> String {
@@ -891,24 +882,7 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            let type_str: String = if p.optional && !p.rest {
-                // tsc displays optional params WITH `| undefined`:
-                // `(x?: string | undefined) => void`
-                // But NOT for types that already encompass undefined
-                // (any, unknown, void) or never (which becomes just `undefined`).
-                let formatted = self.format(p.type_id).into_owned();
-                if p.type_id == TypeId::NEVER {
-                    "undefined".to_string()
-                } else if self.type_encompasses_undefined(p.type_id) {
-                    formatted
-                } else if !self.type_contains_undefined(p.type_id) {
-                    format!("{formatted} | undefined")
-                } else {
-                    formatted
-                }
-            } else {
-                self.format(p.type_id).into_owned()
-            };
+            let type_str: String = self.format(p.type_id).into_owned();
             rendered.push(format!("{rest}{name}{optional}: {type_str}"));
         }
 
@@ -3544,8 +3518,10 @@ mod tests {
 
     #[test]
     fn optional_param_shows_undefined() {
-        // tsc displays optional params WITH `| undefined` in diagnostic error messages:
-        // `(a?: string | undefined) => any`
+        // The formatter displays whatever type is stored in ParamInfo.type_id.
+        // The checker is responsible for adding `| undefined` to `?`-optional
+        // params before storing them.  When the stored type is plain `string`,
+        // the formatter shows `(a?: string)`.
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -3565,8 +3541,8 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string | undefined) => any",
-            "Optional param shows '| undefined' — matches tsc display"
+            result, "(a?: string) => any",
+            "Formatter displays stored type as-is; checker adds | undefined for ?-optional"
         );
     }
 

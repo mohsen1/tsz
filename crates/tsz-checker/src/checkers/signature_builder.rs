@@ -387,9 +387,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // For `?`-optional params, tsc includes `| undefined` in the
+            // signature type unconditionally (for display). Default-value
+            // params keep the base type.
+            let sig_type_id = if param.question_token
+                && type_id != TypeId::ANY
+                && type_id != TypeId::UNKNOWN
+                && type_id != TypeId::ERROR
+                && !tsz_solver::type_contains_undefined(self.ctx.types, type_id)
+            {
+                self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
+            } else {
+                type_id
+            };
+
             params.push(ParamInfo {
                 name,
-                type_id,
+                type_id: sig_type_id,
                 optional,
                 rest,
             });

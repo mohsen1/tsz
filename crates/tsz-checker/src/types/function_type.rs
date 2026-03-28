@@ -1125,26 +1125,27 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                params.push(ParamInfo {
-                    name,
-                    type_id,
-                    optional,
-                    rest,
-                });
-                // For body-scope type caching: optional parameters with `?` token
-                // need `| undefined` under strictNullChecks.  The signature keeps
-                // the base type with `optional: true`, but inside the body the
-                // parameter's declared type is `T | undefined`.  Parameters with
-                // only a default value (no `?`) do NOT get `| undefined` because
-                // the default guarantees a value at runtime.
-                let cached_type = if param.question_token
-                    && self.ctx.strict_null_checks()
+                // For `?`-optional params (not default-value), tsc includes
+                // `| undefined` in the signature type unconditionally (for display).
+                // The body-scope type only includes it under strictNullChecks.
+                let needs_undefined = param.question_token
                     && type_id != TypeId::ANY
                     && type_id != TypeId::UNKNOWN
                     && type_id != TypeId::ERROR
-                    && !tsz_solver::type_contains_undefined(self.ctx.types, type_id)
-                {
+                    && !tsz_solver::type_contains_undefined(self.ctx.types, type_id);
+                let sig_type_id = if needs_undefined {
                     self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
+                } else {
+                    type_id
+                };
+                params.push(ParamInfo {
+                    name,
+                    type_id: sig_type_id,
+                    optional,
+                    rest,
+                });
+                let cached_type = if needs_undefined && self.ctx.strict_null_checks() {
+                    sig_type_id
                 } else {
                     type_id
                 };
