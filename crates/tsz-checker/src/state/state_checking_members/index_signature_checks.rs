@@ -330,6 +330,21 @@ impl<'a> CheckerState<'a> {
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
 
+        // Fast path: if no index signatures exist and no members have index signature syntax,
+        // skip all the expensive scanning and checking below.
+        let has_any_inherited_index =
+            index_info.string_index.is_some() || index_info.number_index.is_some();
+        let has_any_own_index = has_any_inherited_index
+            || members.iter().any(|&m| {
+                self.ctx
+                    .arena
+                    .get(m)
+                    .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE)
+            });
+        if !has_any_own_index {
+            return;
+        }
+
         // Track whether this container extends a base type.
         // Used to determine if a number index is inherited from a base type
         // vs from another merged body of the same interface.
