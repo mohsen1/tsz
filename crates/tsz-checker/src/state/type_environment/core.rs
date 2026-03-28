@@ -605,8 +605,8 @@ impl<'a> CheckerState<'a> {
                 construct_signatures: new_construct_sigs
                     .unwrap_or_else(|| shape.construct_signatures.clone()),
                 properties: shape.properties.clone(),
-                string_index: shape.string_index.clone(),
-                number_index: shape.number_index.clone(),
+                string_index: shape.string_index,
+                number_index: shape.number_index,
                 symbol: shape.symbol,
                 is_abstract: shape.is_abstract,
             };
@@ -668,7 +668,7 @@ impl<'a> CheckerState<'a> {
                             .this_type
                             .map(|t| instantiate_type(self.ctx.types, t, &subst)),
                         return_type: new_return,
-                        type_predicate: sig.type_predicate.clone(),
+                        type_predicate: sig.type_predicate,
                         is_method: sig.is_method,
                     }
                 } else {

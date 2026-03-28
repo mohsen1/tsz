@@ -533,7 +533,7 @@ impl<'a> CheckerState<'a> {
                     params: shape.params.clone(),
                     this_type: shape.this_type,
                     return_type: shape.return_type,
-                    type_predicate: shape.type_predicate.clone(),
+                    type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
                 };
                 self.call_signature_accepts_arg_count(&sig, arg_count)

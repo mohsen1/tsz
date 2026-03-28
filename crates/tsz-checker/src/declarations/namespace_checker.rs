@@ -439,8 +439,8 @@ impl<'a> CheckerState<'a> {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: shape.construct_signatures.clone(),
             properties,
-            string_index: shape.string_index.clone(),
-            number_index: shape.number_index.clone(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
             symbol: None,
             is_abstract: false,
         })
@@ -491,8 +491,8 @@ impl<'a> CheckerState<'a> {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: shape.construct_signatures.clone(),
             properties,
-            string_index: shape.string_index.clone(),
-            number_index: shape.number_index.clone(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
             symbol: None,
             is_abstract: false,
         });

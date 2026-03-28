@@ -393,7 +393,7 @@ impl<'a> FlowAnalyzer<'a> {
         node_types: &FxHashMap<u32, TypeId>,
     ) -> TypePredicate {
         let Some(pred_type) = predicate.type_id else {
-            return predicate.clone();
+            return *predicate;
         };
 
         // Extract type params from the predicate signature via solver query
@@ -401,12 +401,12 @@ impl<'a> FlowAnalyzer<'a> {
             .map(|sig| sig.type_params)
             .unwrap_or_default();
         if type_params.is_empty() {
-            return predicate.clone();
+            return *predicate;
         }
 
         let args = match call.arguments.as_ref() {
             Some(args) => args.nodes.as_slice(),
-            None => return predicate.clone(),
+            None => return *predicate,
         };
 
         // Case 1: Direct match — predicate type IS a type parameter (e.g., `x is T`)
@@ -417,7 +417,7 @@ impl<'a> FlowAnalyzer<'a> {
             {
                 return TypePredicate {
                     type_id: Some(arg_type),
-                    ..predicate.clone()
+                    ..*predicate
                 };
             }
         }
@@ -471,7 +471,7 @@ impl<'a> FlowAnalyzer<'a> {
                     };
                     return TypePredicate {
                         type_id: Some(inferred_t),
-                        ..predicate.clone()
+                        ..*predicate
                     };
                 }
             }
@@ -507,7 +507,7 @@ impl<'a> FlowAnalyzer<'a> {
                 let evaluated = flow_query::evaluate_type_structure(self.interner, instantiated);
                 return TypePredicate {
                     type_id: Some(evaluated),
-                    ..predicate.clone()
+                    ..*predicate
                 };
             }
         }
@@ -536,14 +536,14 @@ impl<'a> FlowAnalyzer<'a> {
                     {
                         return TypePredicate {
                             type_id: Some(inferred),
-                            ..predicate.clone()
+                            ..*predicate
                         };
                     }
                 }
             }
         }
 
-        predicate.clone()
+        *predicate
     }
 
     /// Attempt to infer a type parameter from a union-typed parameter.

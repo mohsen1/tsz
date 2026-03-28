@@ -278,7 +278,7 @@ impl<'a> CheckerState<'a> {
             });
             tsz_solver::TypePredicate {
                 asserts: predicate.asserts,
-                target: predicate.target.clone(),
+                target: predicate.target,
                 type_id,
                 parameter_index: predicate.parameter_index,
             }
@@ -314,7 +314,7 @@ impl<'a> CheckerState<'a> {
                             params: sig.params.clone(),
                             this_type: sig.this_type,
                             return_type: sig.return_type,
-                            type_predicate: sig.type_predicate.clone(),
+                            type_predicate: sig.type_predicate,
                             is_constructor: false,
                             is_method: false,
                         },
@@ -345,7 +345,7 @@ impl<'a> CheckerState<'a> {
                             params: sig.params.clone(),
                             this_type: sig.this_type,
                             return_type: sig.return_type,
-                            type_predicate: sig.type_predicate.clone(),
+                            type_predicate: sig.type_predicate,
                             is_constructor: true,
                             is_method: false,
                         },
@@ -375,8 +375,8 @@ impl<'a> CheckerState<'a> {
                         call_signatures,
                         construct_signatures,
                         properties: shape.properties.clone(),
-                        string_index: shape.string_index.clone(),
-                        number_index: shape.number_index.clone(),
+                        string_index: shape.string_index,
+                        number_index: shape.number_index,
                         symbol: shape.symbol,
                         is_abstract: shape.is_abstract,
                     })

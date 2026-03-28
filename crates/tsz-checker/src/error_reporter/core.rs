@@ -123,10 +123,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         tsz_solver::widen_literal_type(self.ctx.types, normalized)
                     };
-                    tsz_solver::ParamInfo {
-                        type_id,
-                        ..param.clone()
-                    }
+                    tsz_solver::ParamInfo { type_id, ..*param }
                 })
                 .collect();
 
@@ -141,7 +138,7 @@ impl<'a> CheckerState<'a> {
                         params,
                         this_type: shape.this_type,
                         return_type: shape.return_type,
-                        type_predicate: shape.type_predicate.clone(),
+                        type_predicate: shape.type_predicate,
                         is_constructor: shape.is_constructor,
                         is_method: shape.is_method,
                     })
@@ -232,7 +229,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|param| tsz_solver::ParamInfo {
                     type_id: self.normalize_excess_display_type(param.type_id),
-                    ..param.clone()
+                    ..*param
                 })
                 .collect();
             let return_type = self.normalize_excess_display_type(shape.return_type);
@@ -249,7 +246,7 @@ impl<'a> CheckerState<'a> {
                         params,
                         this_type: shape.this_type,
                         return_type,
-                        type_predicate: shape.type_predicate.clone(),
+                        type_predicate: shape.type_predicate,
                         is_constructor: shape.is_constructor,
                         is_method: shape.is_method,
                     })
@@ -361,7 +358,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|param| tsz_solver::ParamInfo {
                     type_id: self.normalize_assignability_display_type(param.type_id),
-                    ..param.clone()
+                    ..*param
                 })
                 .collect();
             // tsc widens literal return types in error messages:
@@ -387,7 +384,7 @@ impl<'a> CheckerState<'a> {
                         params,
                         this_type: shape.this_type,
                         return_type,
-                        type_predicate: shape.type_predicate.clone(),
+                        type_predicate: shape.type_predicate,
                         is_constructor: shape.is_constructor,
                         is_method: shape.is_method,
                     })
@@ -1398,7 +1395,7 @@ impl<'a> CheckerState<'a> {
                         .zip(target_shape.params.iter())
                         .map(|(value_param, target_param)| tsz_solver::ParamInfo {
                             type_id: target_param.type_id,
-                            ..value_param.clone()
+                            ..*value_param
                         })
                         .collect();
                     let merged = self
@@ -1410,7 +1407,7 @@ impl<'a> CheckerState<'a> {
                             params: merged_params,
                             this_type: value_shape.this_type,
                             return_type: value_shape.return_type,
-                            type_predicate: value_shape.type_predicate.clone(),
+                            type_predicate: value_shape.type_predicate,
                             is_constructor: value_shape.is_constructor,
                             is_method: value_shape.is_method,
                         });

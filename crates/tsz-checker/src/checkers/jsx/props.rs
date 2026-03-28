@@ -120,8 +120,8 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
 
         let get_property_type = |access: PropertyAccessResult| match access {
-            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
-            PropertyAccessResult::PossiblyNullOrUndefined {
+            PropertyAccessResult::Success { type_id, .. }
+            | PropertyAccessResult::PossiblyNullOrUndefined {
                 property_type: Some(type_id),
                 ..
             } => Some(type_id),
@@ -306,8 +306,8 @@ impl<'a> CheckerState<'a> {
 
                     let base_type = self.normalize_jsx_required_props_target(base_type);
                     match self.resolve_property_access_with_env(base_type, attr_name) {
-                        PropertyAccessResult::Success { type_id, .. } => return Some(type_id),
-                        PropertyAccessResult::PossiblyNullOrUndefined {
+                        PropertyAccessResult::Success { type_id, .. }
+                        | PropertyAccessResult::PossiblyNullOrUndefined {
                             property_type: Some(type_id),
                             ..
                         } => return Some(type_id),
@@ -525,7 +525,7 @@ impl<'a> CheckerState<'a> {
                     params: shape.params.clone(),
                     this_type: None,
                     return_type: shape.return_type,
-                    type_predicate: shape.type_predicate.clone(),
+                    type_predicate: shape.type_predicate,
                     is_constructor: shape.is_constructor,
                     is_method: false,
                 });

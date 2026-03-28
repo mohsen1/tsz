@@ -903,8 +903,8 @@ impl<'a> CheckerState<'a> {
                     self.merge_properties(&augmentation_members, &base_shape.properties);
                 factory.object_with_index(ObjectShape {
                     properties: merged_properties,
-                    string_index: base_shape.string_index.clone(),
-                    number_index: base_shape.number_index.clone(),
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
                     ..ObjectShape::default()
                 })
             }
@@ -930,8 +930,8 @@ impl<'a> CheckerState<'a> {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),
                     properties: merged_properties,
-                    string_index: base_shape.string_index.clone(),
-                    number_index: base_shape.number_index.clone(),
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
                     symbol: None,
                     is_abstract: false,
                 })

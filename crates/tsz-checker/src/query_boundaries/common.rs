@@ -561,7 +561,7 @@ pub(crate) fn instantiate_function_shape(
         type_params: vec![],
         type_predicate: func.type_predicate.as_ref().map(|predicate| TypePredicate {
             asserts: predicate.asserts,
-            target: predicate.target.clone(),
+            target: predicate.target,
             type_id: predicate
                 .type_id
                 .map(|tid| instantiate_type(db, tid, substitution)),

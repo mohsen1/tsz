@@ -437,7 +437,7 @@ impl<'a> CheckerState<'a> {
             type_predicate: func.type_predicate.as_ref().map(|predicate| {
                 tsz_solver::TypePredicate {
                     asserts: predicate.asserts,
-                    target: predicate.target.clone(),
+                    target: predicate.target,
                     type_id: predicate.type_id.map(|tid| {
                         crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,

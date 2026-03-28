@@ -471,8 +471,8 @@ impl<'a> CheckerState<'a> {
             call_signatures,
             construct_signatures: shape.construct_signatures.clone(),
             properties: shape.properties.clone(),
-            string_index: shape.string_index.clone(),
-            number_index: shape.number_index.clone(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
             symbol: None,
             is_abstract: false,
         })

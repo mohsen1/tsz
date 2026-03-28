@@ -130,8 +130,8 @@ impl<'a> CheckerState<'a> {
                     call_signatures: shape.call_signatures.clone(),
                     construct_signatures: vec![],
                     properties: shape.properties.clone(),
-                    string_index: shape.string_index.clone(),
-                    number_index: shape.number_index.clone(),
+                    string_index: shape.string_index,
+                    number_index: shape.number_index,
                     symbol: None,
                     is_abstract: false,
                 };
@@ -186,8 +186,8 @@ impl<'a> CheckerState<'a> {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: instantiated_constructs,
             properties: shape.properties.clone(),
-            string_index: shape.string_index.clone(),
-            number_index: shape.number_index.clone(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
             symbol: None,
             is_abstract: false,
         };
@@ -301,8 +301,8 @@ impl<'a> CheckerState<'a> {
                     call_signatures: instantiated_calls,
                     construct_signatures: shape.construct_signatures.clone(),
                     properties: shape.properties.clone(),
-                    string_index: shape.string_index.clone(),
-                    number_index: shape.number_index.clone(),
+                    string_index: shape.string_index,
+                    number_index: shape.number_index,
                     symbol: None,
                     is_abstract: false,
                 };
@@ -713,10 +713,10 @@ impl<'a> CheckerState<'a> {
                         .or_insert_with(|| base_prop.clone());
                 }
                 if let Some(ref idx) = base_shape.string_index {
-                    Self::merge_index_signature(string_index, idx.clone());
+                    Self::merge_index_signature(string_index, *idx);
                 }
                 if let Some(ref idx) = base_shape.number_index {
-                    Self::merge_index_signature(number_index, idx.clone());
+                    Self::merge_index_signature(number_index, *idx);
                 }
             }
             query::BaseInstanceMergeKind::Intersection(members) => {

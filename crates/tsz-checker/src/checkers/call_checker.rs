@@ -1424,7 +1424,7 @@ impl<'a> CheckerState<'a> {
                     this_type: sig.this_type,
                     return_type: sig.return_type,
                     type_params: sig.type_params.clone(),
-                    type_predicate: sig.type_predicate.clone(),
+                    type_predicate: sig.type_predicate,
                     is_constructor: false,
                     is_method: sig.is_method,
                 };

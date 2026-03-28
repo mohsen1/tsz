@@ -490,8 +490,8 @@ impl<'a> CheckerState<'a> {
                         } else {
                             let own_partial = factory.object_with_index(ObjectShape {
                                 properties: partial_props,
-                                string_index: string_index.clone(),
-                                number_index: number_index.clone(),
+                                string_index,
+                                number_index,
                                 symbol: current_sym,
                                 ..ObjectShape::default()
                             });
@@ -913,8 +913,8 @@ impl<'a> CheckerState<'a> {
             }
             let partial_type = factory.object_with_index(ObjectShape {
                 properties: partial_props,
-                string_index: string_index.clone(),
-                number_index: number_index.clone(),
+                string_index,
+                number_index,
                 symbol: current_sym,
                 ..ObjectShape::default()
             });
@@ -1038,8 +1038,8 @@ impl<'a> CheckerState<'a> {
             }
             let partial_type = factory.object_with_index(ObjectShape {
                 properties: partial_props,
-                string_index: string_index.clone(),
-                number_index: number_index.clone(),
+                string_index,
+                number_index,
                 symbol: current_sym,
                 ..ObjectShape::default()
             });
@@ -1494,10 +1494,10 @@ impl<'a> CheckerState<'a> {
                                 .or_insert_with(|| base_prop.clone());
                         }
                         if let Some(ref idx) = base_shape.string_index {
-                            Self::merge_index_signature(&mut string_index, idx.clone());
+                            Self::merge_index_signature(&mut string_index, *idx);
                         }
                         if let Some(ref idx) = base_shape.number_index {
-                            Self::merge_index_signature(&mut number_index, idx.clone());
+                            Self::merge_index_signature(&mut number_index, *idx);
                         }
                     }
                     break;
@@ -1511,10 +1511,10 @@ impl<'a> CheckerState<'a> {
                             .or_insert_with(|| base_prop.clone());
                     }
                     if let Some(ref idx) = base_shape.string_index {
-                        Self::merge_index_signature(&mut string_index, idx.clone());
+                        Self::merge_index_signature(&mut string_index, *idx);
                     }
                     if let Some(ref idx) = base_shape.number_index {
-                        Self::merge_index_signature(&mut number_index, idx.clone());
+                        Self::merge_index_signature(&mut number_index, *idx);
                     }
                 }
 
@@ -1562,10 +1562,10 @@ impl<'a> CheckerState<'a> {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
                     }
                     if let Some(ref idx) = shape.string_index {
-                        Self::merge_index_signature(&mut string_index, idx.clone());
+                        Self::merge_index_signature(&mut string_index, *idx);
                     }
                     if let Some(ref idx) = shape.number_index {
-                        Self::merge_index_signature(&mut number_index, idx.clone());
+                        Self::merge_index_signature(&mut number_index, *idx);
                     }
                 } else if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type)
                 {
@@ -1630,10 +1630,10 @@ impl<'a> CheckerState<'a> {
                             properties.entry(prop.name).or_insert_with(|| prop.clone());
                         }
                         if let Some(ref idx) = shape.string_index {
-                            Self::merge_index_signature(&mut string_index, idx.clone());
+                            Self::merge_index_signature(&mut string_index, *idx);
                         }
                         if let Some(ref idx) = shape.number_index {
-                            Self::merge_index_signature(&mut number_index, idx.clone());
+                            Self::merge_index_signature(&mut number_index, *idx);
                         }
                     } else if let Some(shape) =
                         callable_shape_for_type(self.ctx.types, interface_type)

@@ -1663,7 +1663,7 @@ impl<'a> CheckerState<'a> {
                 params: shape.params.clone(),
                 this_type: shape.this_type,
                 return_type: shape.return_type,
-                type_predicate: shape.type_predicate.clone(),
+                type_predicate: shape.type_predicate,
                 is_method: shape.is_method,
             }
         }
@@ -1714,7 +1714,7 @@ impl<'a> CheckerState<'a> {
                 params: remaining_params,
                 this_type: None,
                 return_type: sig.return_type,
-                type_predicate: sig.type_predicate.clone(),
+                type_predicate: sig.type_predicate,
                 is_constructor: false,
                 is_method: false,
             })
@@ -1912,7 +1912,7 @@ impl<'a> CheckerState<'a> {
                 params: method_signatures[0].params.clone(),
                 this_type: None,
                 return_type: method_signatures[0].return_type,
-                type_predicate: method_signatures[0].type_predicate.clone(),
+                type_predicate: method_signatures[0].type_predicate,
                 is_constructor: false,
                 is_method: false,
             })),
