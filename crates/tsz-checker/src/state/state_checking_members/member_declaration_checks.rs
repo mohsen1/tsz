@@ -1205,6 +1205,92 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Fast path: skip all decorator-related work when the member has no decorators.
+        // This avoids expensive AST extraction and modifier analysis for the common case.
+        {
+            let has_any_decorator = match node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_property_decl(node)
+                    .and_then(|d| d.modifiers.as_ref())
+                    .is_some_and(|m| {
+                        m.nodes.iter().any(|&idx| {
+                            self.ctx
+                                .arena
+                                .get(idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                    }),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(node)
+                    .and_then(|d| d.modifiers.as_ref())
+                    .is_some_and(|m| {
+                        m.nodes.iter().any(|&idx| {
+                            self.ctx
+                                .arena
+                                .get(idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                    }),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(node)
+                        .and_then(|d| d.modifiers.as_ref())
+                        .is_some_and(|m| {
+                            m.nodes.iter().any(|&idx| {
+                                self.ctx
+                                    .arena
+                                    .get(idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            })
+                        })
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => self
+                    .ctx
+                    .arena
+                    .get_constructor(node)
+                    .and_then(|d| d.modifiers.as_ref())
+                    .is_some_and(|m| {
+                        m.nodes.iter().any(|&idx| {
+                            self.ctx
+                                .arena
+                                .get(idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                    }),
+                _ => false,
+            };
+
+            // Also need to check constructor parameter decorators
+            let has_param_decorator = match node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(node)
+                    .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes)),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(node)
+                        .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes))
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => self
+                    .ctx
+                    .arena
+                    .get_constructor(node)
+                    .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes)),
+                _ => false,
+            };
+
+            if !has_any_decorator && !has_param_decorator {
+                return;
+            }
+        }
+
         let (modifiers, parameters, member_name_idx) = match node.kind {
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
                 .ctx
@@ -1381,6 +1467,31 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Quick scan to check if any parameter in a parameter list has a decorator modifier.
+    fn any_parameter_has_decorator(&self, params: &[NodeIndex]) -> bool {
+        for &param_idx in params {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if let Some(ref mods) = param.modifiers {
+                for &mod_idx in &mods.nodes {
+                    if self
+                        .ctx
+                        .arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// TS1329: Check if a method/accessor decorator accepts too few arguments.
