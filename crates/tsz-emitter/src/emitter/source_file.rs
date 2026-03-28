@@ -1063,6 +1063,11 @@ impl<'a> Printer<'a> {
         } else {
             rustc_hash::FxHashSet::default()
         };
+        let cjs_deferred_export_bindings = if is_top_level_cjs {
+            self.collect_cjs_deferred_export_bindings(&source.statements)
+        } else {
+            rustc_hash::FxHashMap::default()
+        };
 
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
@@ -1099,6 +1104,12 @@ impl<'a> Printer<'a> {
             {
                 if is_es_module_output
                     && self.has_pre_top_level_using_named_exports(&source.statements, stmt_i)
+                {
+                    has_runtime_module_syntax = true;
+                    has_non_empty_runtime_export = true;
+                }
+                if is_es_module_output
+                    && self.top_level_using_scope_has_runtime_export(&source.statements, stmt_i)
                 {
                     has_runtime_module_syntax = true;
                     has_non_empty_runtime_export = true;
@@ -1359,11 +1370,42 @@ impl<'a> Printer<'a> {
             let before_len = self.writer.len();
             self.emit(stmt_idx);
             let emitted_output = self.writer.len() > before_len;
+            let mut handled_legacy_decorated_deferred_export = false;
+
+            if emitted_output
+                && is_top_level_cjs
+                && self.ctx.options.legacy_decorators
+                && !self.ctx.target_es5
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_decl) = self.arena.get_class(stmt_node)
+                && !self.collect_class_decorators(&class_decl.modifiers).is_empty()
+                && let Some(local_name) = self.get_identifier_text_opt(class_decl.name)
+                && let Some(export_name) = cjs_deferred_export_bindings.get(&local_name)
+            {
+                let after_len = self.writer.len();
+                let full_output = self.writer.get_output().to_string();
+                let emitted = full_output[before_len..after_len].to_string();
+                let rewritten = self.rewrite_legacy_top_level_using_class_export(
+                    emitted,
+                    &local_name,
+                    export_name,
+                );
+                self.writer.truncate(before_len);
+                self.write(&rewritten);
+                self.ctx
+                    .module_state
+                    .inline_exported_names
+                    .insert(export_name.clone());
+                handled_legacy_decorated_deferred_export = true;
+            }
 
             // CJS: emit inline `exports.X = X;` right after var/class declarations
             // whose names appear in a later `export { X }` clause. This matches
             // tsc's interleaved ordering where exports follow their declarations.
-            if emitted_output && !cjs_deferred_export_names.is_empty() {
+            if emitted_output
+                && !handled_legacy_decorated_deferred_export
+                && !cjs_deferred_export_names.is_empty()
+            {
                 let names = self.get_declaration_export_names(stmt_node);
                 for name in names {
                     if cjs_deferred_export_names.contains(name.as_str())
@@ -1793,6 +1835,74 @@ impl<'a> Printer<'a> {
         })
     }
 
+            fn top_level_using_scope_has_runtime_export(
+                &self,
+                statements: &NodeList,
+                start_idx: usize,
+            ) -> bool {
+                statements.nodes[start_idx..].iter().any(|&stmt_idx| {
+                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                        return false;
+                    };
+                    match stmt_node.kind {
+                        k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => self
+                            .arena
+                            .get_export_assignment(stmt_node)
+                            .is_some_and(|export_assignment| !export_assignment.is_export_equals),
+                        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                            self.arena.get_export_decl(stmt_node).is_some_and(|export_decl| {
+                                if export_decl.is_type_only {
+                                    return false;
+                                }
+                                if export_decl.module_specifier.is_some() {
+                                    return true;
+                                }
+                                self.arena
+                                    .get(export_decl.export_clause)
+                                    .is_some_and(|clause_node| match clause_node.kind {
+                                        k if k == syntax_kind_ext::NAMED_EXPORTS => self
+                                            .arena
+                                            .get_named_imports(clause_node)
+                                            .is_some_and(|named_exports| {
+                                                named_exports.elements.nodes.iter().any(|&spec_idx| {
+                                                    self.arena
+                                                        .get(spec_idx)
+                                                        .and_then(|spec_node| {
+                                                            self.arena.get_specifier(spec_node)
+                                                        })
+                                                        .is_some_and(|spec| !spec.is_type_only)
+                                                })
+                                            }),
+                                        _ => true,
+                                    })
+                            })
+                        }
+                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                            .arena
+                            .get_variable(stmt_node)
+                            .is_some_and(|var_stmt| {
+                                self.arena
+                                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                            }),
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                            .arena
+                            .get_class(stmt_node)
+                            .is_some_and(|class_decl| {
+                                self.arena
+                                    .has_modifier(&class_decl.modifiers, SyntaxKind::ExportKeyword)
+                            }),
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                            .arena
+                            .get_function(stmt_node)
+                            .is_some_and(|func_decl| {
+                                self.arena
+                                    .has_modifier(&func_decl.modifiers, SyntaxKind::ExportKeyword)
+                            }),
+                        _ => false,
+                    }
+                })
+            }
+
     fn has_aliased_value_named_exports(&self, clause_node: &Node) -> bool {
         let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
             return false;
@@ -2186,7 +2296,7 @@ impl<'a> Printer<'a> {
                         .and_then(|class| self.get_identifier_text_opt(class.name))
                         .filter(|name| cjs_deferred_export_names.contains(name))
                 };
-                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name)
+                    self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 let export_name = if is_es_module_output {
@@ -2229,6 +2339,7 @@ impl<'a> Printer<'a> {
                                     .get_class(clause_node)
                                     .and_then(|class| self.get_identifier_text_opt(class.name))
                             },
+                            !export.is_default_export,
                         ),
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
                         .emit_top_level_using_function_assignment(
@@ -2523,6 +2634,78 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn top_level_using_export_binding_suffix(&self) -> &'static str {
+        if self.in_system_execute_body {
+            ");"
+        } else {
+            ";"
+        }
+    }
+
+    fn rewrite_direct_top_level_using_class_export(
+        &self,
+        mut emitted: String,
+        binding_name: &str,
+        export_name: &str,
+        is_legacy_decorator_class: bool,
+    ) -> String {
+        let current_indent = "    ".repeat(self.writer.indent_level() as usize);
+        if let Some(stripped) = emitted.strip_prefix(&current_indent) {
+            emitted = stripped.to_string();
+        }
+
+        let export_stmt = self.top_level_using_export_binding_stmt(export_name, binding_name);
+        emitted = emitted
+            .lines()
+            .filter(|line| line.trim() != export_stmt)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let export_prefix = self.top_level_using_export_binding_prefix(export_name);
+        let export_suffix = self.top_level_using_export_binding_suffix();
+
+        if is_legacy_decorator_class && self.ctx.target_es5 {
+            let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+            emitted = emitted.replace(
+                &exported_decorate,
+                &format!("{binding_name} = __decorate("),
+            );
+        }
+
+        if is_legacy_decorator_class && !self.ctx.target_es5 {
+            if let Some(first_stmt_end) = emitted.find(';') {
+                let first_stmt = emitted[..first_stmt_end].trim_start();
+                let mut remainder = emitted[first_stmt_end + 1..]
+                    .trim_start_matches(['\n', '\r'])
+                    .to_string();
+                let decorate_pattern = format!("{binding_name} = __decorate(");
+                let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+                if !remainder.contains(&exported_decorate) {
+                    remainder = remainder.replacen(&decorate_pattern, &exported_decorate, 1);
+                    if self.in_system_execute_body
+                        && let Some(relative_end) = remainder.rfind(");")
+                    {
+                        let end = relative_end;
+                        remainder.replace_range(end..end + 2, "));\n");
+                        if remainder.ends_with("\n\n") {
+                            remainder.pop();
+                        }
+                    }
+                }
+                let mut rewritten = format!("{export_prefix}{first_stmt}{export_suffix}");
+                if !remainder.trim().is_empty() {
+                    rewritten.push('\n');
+                    rewritten.push_str(&remainder);
+                }
+                return rewritten;
+            }
+        }
+
+        let trimmed = emitted.trim_end();
+        let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed);
+        format!("{export_prefix}{trimmed}{export_suffix}")
+    }
+
     fn rewrite_legacy_top_level_using_class_export(
         &self,
         mut emitted: String,
@@ -2556,7 +2739,13 @@ impl<'a> Printer<'a> {
             return emitted;
         }
 
-        if self.in_system_execute_body {
+        if let Some(first_stmt_end) = emitted.find(';')
+            && (!self.in_system_execute_body || !self.ctx.target_es5)
+        {
+            emitted.insert_str(first_stmt_end + 1, &format!("\n{export_stmt}"));
+        }
+
+        if self.in_system_execute_body && self.ctx.target_es5 {
             if !emitted.ends_with('\n') {
                 emitted.push('\n');
             }
@@ -2564,11 +2753,8 @@ impl<'a> Printer<'a> {
             return emitted;
         }
 
-        if let Some(first_stmt_end) = emitted.find(';') {
-            emitted.insert_str(first_stmt_end + 1, &format!("\n{export_stmt}"));
-        }
-
         let decorate_pattern = format!("{binding_name} = __decorate(");
+        let mut replaced_decorate_assignment = false;
         if let Some(decorate_start) = emitted.rfind(&decorate_pattern) {
             let replacement = format!(
                 "{}{binding_name} = __decorate(",
@@ -2587,6 +2773,17 @@ impl<'a> Printer<'a> {
                     emitted.pop();
                 }
             }
+            replaced_decorate_assignment = true;
+        }
+
+        if self.in_system_execute_body {
+            if !replaced_decorate_assignment {
+                if !emitted.ends_with('\n') {
+                    emitted.push('\n');
+                }
+                emitted.push_str(&export_stmt);
+            }
+            return emitted;
         }
 
         emitted
@@ -2597,6 +2794,7 @@ impl<'a> Printer<'a> {
         node: &Node,
         idx: NodeIndex,
         export_name: Option<String>,
+        rewrite_as_direct_export: bool,
     ) -> bool {
         let Some(class) = self.arena.get_class(node) else {
             return false;
@@ -2753,7 +2951,20 @@ impl<'a> Printer<'a> {
 
         self.writer.truncate(before_len);
         if let Some(export_name) = export_name.as_ref() {
-            if self.ctx.options.legacy_decorators && has_decorators {
+            if rewrite_as_direct_export
+                && export_name != "default"
+                && !(self.in_system_execute_body
+                    && self.ctx.options.target.supports_es2025()
+                    && self.ctx.options.legacy_decorators
+                    && has_decorators)
+            {
+                self.write(&self.rewrite_direct_top_level_using_class_export(
+                    rewritten,
+                    &binding_name,
+                    export_name,
+                    self.ctx.options.legacy_decorators && has_decorators,
+                ));
+            } else if self.ctx.options.legacy_decorators && has_decorators {
                 self.write(&self.rewrite_legacy_top_level_using_class_export(
                     rewritten,
                     &binding_name,
@@ -3294,6 +3505,7 @@ impl<'a> Printer<'a> {
 mod tests {
     use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
+    use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
 
     #[test]
@@ -3373,6 +3585,68 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             output.contains("class RegularClass") || output.contains("var RegularClass"),
             "Class output should still be emitted for accessor-containing class in ES5 path.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn commonjs_later_named_export_keeps_legacy_decorator_export_alias() {
+        let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                legacy_decorators: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("exports.D = C;"),
+            "Later named CommonJS export should preserve the pre-assignment before __decorate.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("exports.D = C = __decorate(["),
+            "Later named CommonJS export should fuse the decorator reassignment with the export.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn commonjs_top_level_using_direct_exported_legacy_class_stays_inline() {
+        let source = "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                legacy_decorators: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("exports.C = C = class C {"),
+            "CommonJS top-level using should keep direct legacy-decorated class exports inline.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("exports.C = C = __decorate(["),
+            "CommonJS top-level using should preserve the exported __decorate reassignment.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("};\nexports.C = C;\n    exports.C = C = __decorate(["),
+            "CommonJS top-level using should not insert a redundant trailing export between the class and __decorate.\nOutput:\n{output}"
         );
     }
 
@@ -3515,6 +3789,36 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             output.contains("export {};"),
             "Sole `export {{}}` should be preserved for ESM semantics.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn esm_top_level_using_real_export_suppresses_export_empty() {
+        let source = "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::ESNext,
+                legacy_decorators: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.matches("export {};").count(),
+            0,
+            "A real export inside a top-level using scope should suppress the deferred empty export marker.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("export { C };"),
+            "The hoisted ESM export for the class should still be emitted.\nOutput:\n{output}"
         );
     }
 }
