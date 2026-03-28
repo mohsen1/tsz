@@ -1237,6 +1237,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 self.checker
                                     .get_type_of_node_with_request(child, &children_request)
                             } else {
+                                // Still process the arrow/function expression to emit
+                                // diagnostics (e.g., TS7006 for unannotated parameters).
+                                // Without a callable contextual type, the result is ANY,
+                                // but we must evaluate the function to trigger TS7006.
+                                self.checker.get_type_of_node(child);
                                 TypeId::ANY
                             }
                         } else {
