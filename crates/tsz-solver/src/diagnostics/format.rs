@@ -79,6 +79,9 @@ pub struct TypeFormatter<'a> {
     /// Set of Application `TypeIds` currently being formatted via `display_alias`.
     /// Prevents infinite recursion when a `display_alias` chain forms a cycle.
     display_alias_visiting: FxHashSet<TypeId>,
+    /// When true, preserve `Array<T>` generic syntax instead of `T[]` shorthand.
+    /// tsc preserves the declared form in type-parameter constraints.
+    pub(crate) preserve_array_generic_form: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -98,6 +101,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_optional_property_surface_syntax: false,
             use_display_properties: false,
             display_alias_visiting: FxHashSet::default(),
+            preserve_array_generic_form: false,
         }
     }
 
@@ -121,6 +125,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_optional_property_surface_syntax: false,
             use_display_properties: false,
             display_alias_visiting: FxHashSet::default(),
+            preserve_array_generic_form: false,
         }
     }
 
@@ -407,6 +412,11 @@ impl<'a> TypeFormatter<'a> {
                 self.format_intersection(members.as_ref()).into()
             }
             TypeData::Array(elem) => {
+                // tsc preserves `Array<T>` in type-parameter constraints
+                if self.preserve_array_generic_form {
+                    let ef = self.format(*elem);
+                    return format!("Array<{ef}>").into();
+                }
                 let elem_formatted = self.format(*elem);
                 let needs_parens = matches!(
                     self.interner.lookup(*elem),
@@ -480,8 +490,9 @@ impl<'a> TypeFormatter<'a> {
                 };
 
                 // TSC shorthand: Array<T> -> T[], ReadonlyArray<T> -> readonly T[]
-                // and Readonly<T[]> -> readonly T[]
-                if app.args.len() == 1 {
+                // and Readonly<T[]> -> readonly T[].
+                // Skipped in constraint context (preserve_array_generic_form).
+                if app.args.len() == 1 && !self.preserve_array_generic_form {
                     let single_arg = app.args[0];
                     if base_str == "Array" {
                         // Array<T> -> T[]
@@ -869,7 +880,11 @@ impl<'a> TypeFormatter<'a> {
             part.push_str(self.atom(tp.name).as_ref());
             if let Some(constraint) = tp.constraint {
                 part.push_str(" extends ");
+                // tsc preserves declared generic form in constraints
+                let prev = self.preserve_array_generic_form;
+                self.preserve_array_generic_form = true;
                 part.push_str(&self.format(constraint));
+                self.preserve_array_generic_form = prev;
             }
             if let Some(default) = tp.default {
                 part.push_str(" = ");
