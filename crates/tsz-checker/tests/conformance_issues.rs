@@ -20379,6 +20379,65 @@ export const useCsvParser = () => {
 }
 
 #[test]
+fn test_typeof_import_namespace_skips_type_only_exports() {
+    let files = vec![
+            (
+                "foo2.ts",
+                r#"
+namespace Bar {
+    export interface I {
+        a: string;
+        b: number;
+    }
+}
+
+export namespace Baz {
+    export interface J {
+        a: number;
+        b: string;
+    }
+}
+
+class Bar {
+    item: Bar.I;
+    constructor(input: Baz.J) {}
+}
+export { Bar }
+"#,
+            ),
+            (
+                "usage.ts",
+                r#"
+export class Bar2 {
+    item: { a: string, b: number, c: object };
+    constructor(input?: any) {}
+}
+
+export let shim: typeof import("./foo2") = {
+    Bar: Bar2
+};
+"#,
+            ),
+        ];
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2739 || *code == 2741),
+        "Expected typeof import namespace to skip type-only exports. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_define_property_prototype_descriptor_setter_is_contextualized() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "mod1.js",

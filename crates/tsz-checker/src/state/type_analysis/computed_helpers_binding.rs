@@ -37,9 +37,16 @@ impl<'a> CheckerState<'a> {
             let components: Vec<_> = trimmed.split('/').filter(|segment| !segment.is_empty()).collect();
             if let Some(node_modules_idx) =
                 components.iter().position(|segment| *segment == "node_modules")
-                && node_modules_idx > 0
             {
-                return components[node_modules_idx - 1..].join("/");
+                if node_modules_idx > 0 {
+                    let previous = components[node_modules_idx - 1];
+                    let looks_like_virtual_root = previous.starts_with('p')
+                        && previous[1..].chars().all(|ch| ch.is_ascii_digit());
+                    if looks_like_virtual_root {
+                        return components[node_modules_idx - 1..].join("/");
+                    }
+                }
+                return components[node_modules_idx..].join("/");
             }
 
             trimmed.to_string()
