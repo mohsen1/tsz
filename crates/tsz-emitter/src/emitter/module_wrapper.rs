@@ -1639,7 +1639,7 @@ impl<'a> Printer<'a> {
                     .get_class(stmt_node)
                     .and_then(|class| self.get_identifier_text_opt(class.name))
                     .and_then(|name| deferred_named_exports.get(&name).cloned());
-                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name)
+                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 let export_name = self
@@ -1678,6 +1678,7 @@ impl<'a> Printer<'a> {
                                 clause_node,
                                 export.export_clause,
                                 Some(export_name),
+                                !export.is_default_export,
                             )
                         } else {
                             false
@@ -2202,6 +2203,7 @@ impl<'a> Printer<'a> {
 #[cfg(test)]
 mod tests {
     use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+    use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
 
     /// `/// <reference .../>` directives should be stripped from JS output.
@@ -2291,6 +2293,74 @@ export const y = x;
         assert!(
             output.contains("(function (factory)"),
             "Output should still contain the UMD wrapper.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn system_top_level_using_named_export_keeps_legacy_decorator_assignment_export() {
+        let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::System,
+                legacy_decorators: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("exports_1(\"D\", C);"),
+            "System named export should preserve the pre-export before __decorate.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("exports_1(\"D\", C = __decorate(["),
+            "System named export should wrap the legacy decorator reassignment directly.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("exports_1(\"D\", C);\n            C = __decorate(["),
+            "System named export should not split the export from the __decorate reassignment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn system_top_level_using_direct_exported_legacy_class_stays_inline() {
+        let source = "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::System,
+                legacy_decorators: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("exports_1(\"C\", C = class C {"),
+            "System top-level using should keep direct legacy-decorated class exports inline.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("exports_1(\"C\", C = __decorate(["),
+            "System top-level using should preserve the exported legacy decorator reassignment.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("});\n                exports_1(\"C\", C);"),
+            "System top-level using should not split direct legacy class exports into a trailing export statement.\nOutput:\n{output}"
         );
     }
 }
