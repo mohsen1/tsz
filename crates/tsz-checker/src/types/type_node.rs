@@ -830,7 +830,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // to avoid false positives from TypeId dedup issues with recursive types.
         // For unconstrained type parameters, use `unknown` as the implicit constraint.
         let resolved_predicate =
-            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, predicate_type) {
+            if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, predicate_type) {
                 match crate::query_boundaries::common::type_param_info(self.ctx.types, predicate_type)
                     .and_then(|info| info.constraint)
                 {
@@ -841,7 +841,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 predicate_type
             };
         let resolved_param =
-            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, param_type) {
+            if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, param_type) {
                 match crate::query_boundaries::common::type_param_info(self.ctx.types, param_type)
                     .and_then(|info| info.constraint)
                 {

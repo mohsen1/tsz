@@ -80,7 +80,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            if tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, member)
+            if crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, member)
                 .is_some()
             {
                 return true;
@@ -158,7 +158,7 @@ impl<'a> CheckerState<'a> {
             let Some(candidate) = candidate else {
                 if member == TypeId::ANY
                     || member == TypeId::UNKNOWN
-                    || tsz_solver::type_queries::get_type_parameter_constraint(
+                    || crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
                         member,
                     )
@@ -301,7 +301,7 @@ impl<'a> CheckerState<'a> {
             {
                 // Mark constraint-derived when the resolved type was a type parameter
                 // (get_array_applicable_type handles TypeParameter internally)
-                if tsz_solver::type_queries::get_type_parameter_constraint(
+                if crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
                     evaluated,
                 )
@@ -321,7 +321,7 @@ impl<'a> CheckerState<'a> {
             // We only use this for shape detection (tuple vs array), NOT for element contextual
             // typing — element types should be inferred independently to preserve literals.
             if let Some(constraint) =
-                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, evaluated)
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, evaluated)
             {
                 let constraint = self.resolve_lazy_type(constraint);
                 let constraint = self.evaluate_application_type(constraint);
@@ -433,7 +433,7 @@ impl<'a> CheckerState<'a> {
         };
         let fallback_unknown_array_element_context = effective_contextual.is_some_and(|ty| {
             ty == TypeId::UNKNOWN
-                || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+                || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
         });
 
         // Get types of all elements, applying contextual typing when available.

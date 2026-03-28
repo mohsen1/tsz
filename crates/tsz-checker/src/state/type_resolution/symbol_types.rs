@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
                     let structural_type = if structural_type != TypeId::ERROR
                         && structural_type != TypeId::UNKNOWN
                         && !preserve_deferred_keyof
-                        && !tsz_solver::type_queries::contains_type_parameters_db(
+                        && !crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             structural_type,
                         ) {

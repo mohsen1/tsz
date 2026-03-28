@@ -17,7 +17,7 @@ use tsz_solver::{CallSignature, CallableShape};
 impl<'a> CheckerState<'a> {
     fn widen_function_like_assertion_source(&self, type_id: TypeId) -> TypeId {
         if let Some(return_type) = get_function_return_type(self.ctx.types, type_id) {
-            let widened_return = tsz_solver::widen_literal_type(self.ctx.types, return_type);
+            let widened_return = crate::query_boundaries::common::widen_literal_type(self.ctx.types, return_type);
             if widened_return != return_type {
                 let replaced =
                     replace_function_return_type(self.ctx.types, type_id, widened_return);
@@ -36,7 +36,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|sig| {
                     let widened_return =
-                        tsz_solver::widen_literal_type(self.ctx.types, sig.return_type);
+                        crate::query_boundaries::common::widen_literal_type(self.ctx.types, sig.return_type);
                     if widened_return != sig.return_type {
                         changed = true;
                         let mut next = sig.clone();
@@ -53,7 +53,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|sig| {
                     let widened_return =
-                        tsz_solver::widen_literal_type(self.ctx.types, sig.return_type);
+                        crate::query_boundaries::common::widen_literal_type(self.ctx.types, sig.return_type);
                     if widened_return != sig.return_type {
                         changed = true;
                         let mut next = sig.clone();
@@ -374,7 +374,7 @@ impl<'a> CheckerState<'a> {
         // tsc widens literal types to their base types in TS2344 messages:
         // e.g., `42` → `number`, `"hello"` → `string`. This matches
         // tsc's getBaseTypeOfLiteralType applied before typeToString.
-        let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
+        let widened_arg = crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_arg);
         let type_str = self.format_type_diagnostic(widened_arg);
         let constraint_str = self.format_type_diagnostic(constraint);
         self.error_at_node_msg(

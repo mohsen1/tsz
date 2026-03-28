@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
         // Also check constraint-resolved types for type parameters like `S extends symbol`.
         // Without this, `S + ''` would emit TS2365 instead of TS2469.
         let resolve_tp_constraint = |type_id: TypeId| -> TypeId {
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
                 .filter(|&c| c != TypeId::UNKNOWN && c != type_id)
                 .unwrap_or(type_id)
         };
@@ -370,14 +370,14 @@ impl<'a> CheckerState<'a> {
                 let r = self
                     .literal_type_from_initializer(right_idx)
                     .expect("checked is_some above");
-                let l_num = tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::NUMBER
-                    || tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
-                let r_num = tsz_solver::widen_literal_type(self.ctx.types, r) == TypeId::NUMBER
-                    || tsz_solver::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
+                let l_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, l) == TypeId::NUMBER
+                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
+                let r_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, r) == TypeId::NUMBER
+                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
                 let l_is_bigint =
-                    tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
                 let r_is_bigint =
-                    tsz_solver::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
                 l_num && r_num && (l_is_bigint != r_is_bigint)
             };
 

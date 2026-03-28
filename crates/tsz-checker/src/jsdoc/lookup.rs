@@ -378,7 +378,7 @@ impl<'a> CheckerState<'a> {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             }
-            let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
+            let widened_arg = crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_arg);
             let message = format_message(
                 diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[

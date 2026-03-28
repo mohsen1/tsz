@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<Vec<tsz_common::interner::Atom>> {
         use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, source) {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, source) {
             return None;
         }
 

@@ -518,7 +518,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             ExcessPropertiesKind::NotObject => {
-                if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id) {
+                if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id) {
                     ContextualPropertyPresence::Unknown
                 } else {
                     ContextualPropertyPresence::Absent
@@ -799,7 +799,7 @@ impl<'a> CheckerState<'a> {
         let original_contextual_type = contextual_type;
         let mut best_property_type = None;
 
-        if let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
+        if let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
             self.ctx.types,
             original_contextual_type,
         ) && constraint != original_contextual_type
@@ -1022,7 +1022,7 @@ impl<'a> CheckerState<'a> {
         // If contextual extraction fails but the parent context is generic/deferred,
         // preserve an `unknown` contextual slot to prevent false implicit-any
         // diagnostics during higher-order inference rounds.
-        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type)
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, contextual_type)
             && effective_property_presence != ContextualPropertyPresence::Absent
         {
             tracing::trace!(

@@ -311,7 +311,7 @@ impl<'a> CheckerState<'a> {
             let has_param_args = if let Some(app) = query::application_info(self.ctx.types, type_id)
             {
                 app.1.iter().any(|&arg| {
-                    tsz_solver::type_queries::contains_type_parameters_db(
+                    crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types.as_type_database(),
                         arg,
                     )

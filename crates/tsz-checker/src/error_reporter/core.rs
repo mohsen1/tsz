@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
                     {
                         normalized
                     } else {
-                        tsz_solver::widen_literal_type(self.ctx.types, normalized)
+                        crate::query_boundaries::common::widen_literal_type(self.ctx.types, normalized)
                     };
                     tsz_solver::ParamInfo { type_id, ..*param }
                 })
@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         member,
                     )
-                    || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, member)
+                    || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
             });
             if generic_scaffolding_only {
                 if has_undefined {
@@ -334,7 +334,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let ty = if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
-            && tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+            && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
         {
             ty
         } else {
@@ -470,7 +470,7 @@ impl<'a> CheckerState<'a> {
                 .filter(|member| {
                     let evaluated = tsz_solver::evaluate_type(self.ctx.types, *member);
                     !tsz_solver::is_primitive_type(self.ctx.types, evaluated)
-                        && !tsz_solver::type_queries::contains_type_parameters_db(
+                        && !crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             evaluated,
                         )
@@ -712,8 +712,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
-            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, evaluated)
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
         {
             return false;
         }
@@ -1523,7 +1523,7 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.literal_expression_display(expr_idx)
                 && (self.is_literal_sensitive_assignment_target(target)
                     || (self.assignment_source_is_return_expression(anchor_idx)
-                        && tsz_solver::type_queries::contains_type_parameters_db(
+                        && crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             target,
                         )
@@ -1601,7 +1601,7 @@ impl<'a> CheckerState<'a> {
                 && !formatted.contains('|')
                 && !formatted.contains('&')
                 && !formatted.contains('<')
-                && !tsz_solver::type_queries::contains_type_parameters_db(
+                && !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     display_type,
                 )

@@ -764,7 +764,7 @@ impl<'a> CheckerState<'a> {
                     // the runtime value is guaranteed to be array-like.
                     if is_type_parameter_type(self.ctx.types, spread_type)
                         && let Some(constraint) =
-                            tsz_solver::type_queries::get_type_parameter_constraint(
+                            crate::query_boundaries::common::type_parameter_constraint(
                                 self.ctx.types,
                                 spread_type,
                             )
@@ -960,7 +960,7 @@ impl<'a> CheckerState<'a> {
             let apply_contextual = self.argument_needs_contextual_type(arg_idx)
                 && (!unresolved_refresh_context || can_apply_contextual_despite_unresolved);
             let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
-                tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+                crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
                     || crate::computation::call_inference::should_preserve_contextual_application_shape(
                         self.ctx.types,
                         ty,
@@ -972,7 +972,7 @@ impl<'a> CheckerState<'a> {
                         tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                     ctx.get_parameter_type_for_call(effective_index, expanded_count)
                         .is_some_and(|param_type| {
-                            tsz_solver::type_queries::contains_type_parameters_db(
+                            crate::query_boundaries::common::contains_type_parameters(
                                 self.ctx.types,
                                 param_type,
                             ) || crate::computation::call_inference::should_preserve_contextual_application_shape(
@@ -1299,7 +1299,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if is_type_parameter_type(self.ctx.types, spread_type)
-                && let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
+                && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
                     spread_type,
                 )

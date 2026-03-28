@@ -207,7 +207,7 @@ impl<'a> CheckerState<'a> {
         // For TypeParameter types (e.g., T extends number), resolve through constraint
         // so arithmetic validity checks can see the constraint type.
         if let Some(constraint) =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, result)
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, result)
             && constraint != TypeId::UNKNOWN
             && constraint != result
         {

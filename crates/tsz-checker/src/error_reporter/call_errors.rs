@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(return_type) = get_function_return_type(self.ctx.types, type_id) {
-            let widened_return = tsz_solver::widen_literal_type(self.ctx.types, return_type);
+            let widened_return = crate::query_boundaries::common::widen_literal_type(self.ctx.types, return_type);
             if widened_return != return_type {
                 let replaced =
                     replace_function_return_type(self.ctx.types, type_id, widened_return);
@@ -61,9 +61,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let current_has_type_params =
-            tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, current);
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, current);
         let candidate_has_type_params =
-            tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, candidate);
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, candidate);
 
         current_has_type_params && !candidate_has_type_params
     }
@@ -435,7 +435,7 @@ impl<'a> CheckerState<'a> {
             )
         } else {
             let return_display_type =
-                tsz_solver::widen_literal_type(self.ctx.types, shape.return_type);
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, shape.return_type);
             self.format_type_for_assignability_message(return_display_type)
         };
         let type_param_prefix = if shape.type_params.is_empty() {

@@ -145,7 +145,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn apparent_enum_instance_type(&self, type_id: TypeId) -> Option<TypeId> {
         let enum_type =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
                 .filter(|constraint| {
                     tsz_solver::type_queries::get_enum_def_id(self.ctx.types, *constraint).is_some()
                 })
@@ -1075,7 +1075,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&m| {
                         if is_type_parameter_like(self.ctx.types, m) {
-                            tsz_solver::type_queries::get_type_parameter_constraint(
+                            crate::query_boundaries::common::type_parameter_constraint(
                                 self.ctx.types,
                                 m,
                             )
@@ -1112,7 +1112,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&m| {
                         if is_type_parameter_like(self.ctx.types, m) {
-                            tsz_solver::type_queries::get_type_parameter_constraint(
+                            crate::query_boundaries::common::type_parameter_constraint(
                                 self.ctx.types,
                                 m,
                             )

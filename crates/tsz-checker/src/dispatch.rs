@@ -837,13 +837,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     // Structured targets like `T[]` or `(x: T) => T` still have
                                     // enough shape for overlap checking, and tsc reports TS2352
                                     // for assertions like `null as T[]`.
-                                    if tsz_solver::type_queries::is_type_parameter_like(
+                                    if crate::query_boundaries::common::is_type_parameter_like(
                                         self.checker.ctx.types,
                                         asserted_type,
                                     ) {
                                         // Try resolving the type parameter's constraint.
                                         if let Some(constraint) =
-                                            tsz_solver::type_queries::get_type_parameter_constraint(
+                                            crate::query_boundaries::common::type_parameter_constraint(
                                                 self.checker.ctx.types,
                                                 asserted_type,
                                             )
@@ -901,7 +901,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     generic_query::contains_type_parameters(
                                         self.checker.ctx.types,
                                         effective_asserted,
-                                    ) && !tsz_solver::type_queries::is_type_parameter_like(
+                                    ) && !crate::query_boundaries::common::is_type_parameter_like(
                                         self.checker.ctx.types,
                                         effective_asserted,
                                     );
