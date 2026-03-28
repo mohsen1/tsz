@@ -552,19 +552,40 @@ impl<'a> Printer<'a> {
     /// the tightest (most specific) scope containing `access_pos` is preferred.
     fn lookup_scoped_const_enum_values(
         &self,
-        enum_name: &str,
+        enum_path: &str,
         access_pos: u32,
     ) -> Option<&rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>> {
-        let entries = self.const_enum_values.get(enum_name)?;
-        // Find the best (tightest) scope that contains the access position
+        if let Some(r) = self.lookup_scoped_const_enum_values_direct(enum_path, access_pos) {
+            return Some(r);
+        }
+        if let Some(dot_pos) = enum_path.find('.') {
+            let first = &enum_path[..dot_pos];
+            let rest = &enum_path[dot_pos + 1..];
+            if let Some(target) = self.const_enum_import_aliases.get(first) {
+                let resolved = format!("{}.{}", target, rest);
+                if let Some(r) = self.lookup_scoped_const_enum_values_direct(&resolved, access_pos)
+                {
+                    return Some(r);
+                }
+            }
+        } else if let Some(target) = self.const_enum_import_aliases.get(enum_path) {
+            if let Some(r) = self.lookup_scoped_const_enum_values_direct(target, access_pos) {
+                return Some(r);
+            }
+        }
+        None
+    }
+    fn lookup_scoped_const_enum_values_direct(
+        &self,
+        enum_path: &str,
+        access_pos: u32,
+    ) -> Option<&rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>> {
+        let entries = self.const_enum_values.get(enum_path)?;
         let mut best: Option<&crate::emitter::core::ScopedConstEnum> = None;
         for entry in entries {
             if access_pos >= entry.scope_start && access_pos < entry.scope_end {
                 if let Some(prev) = best {
-                    // Prefer tighter scope (smaller range)
-                    let prev_range = prev.scope_end - prev.scope_start;
-                    let cur_range = entry.scope_end - entry.scope_start;
-                    if cur_range < prev_range {
+                    if (entry.scope_end - entry.scope_start) < (prev.scope_end - prev.scope_start) {
                         best = Some(entry);
                     }
                 } else {
@@ -574,80 +595,50 @@ impl<'a> Printer<'a> {
         }
         best.map(|e| &e.values)
     }
+    fn build_access_chain_path(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return Some(self.arena.get_identifier(node)?.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            let left = self.build_access_chain_path(access.expression)?;
+            let nm = self.arena.get(access.name_or_argument)?;
+            if nm.kind != SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            return Some(format!(
+                "{}.{}",
+                left,
+                &self.arena.get_identifier(nm)?.escaped_text
+            ));
+        }
+        None
+    }
 
     /// Try to inline a property access to a const enum member.
     /// Returns `Some("value /* EnumName.Member */")` if the access targets a const enum.
     fn try_inline_const_enum_property_access(&self, access: &AccessExprData) -> Option<String> {
         let expr_node = self.arena.get(access.expression)?;
-
-        // The name (member) must be a simple identifier
         let name_node = self.arena.get(access.name_or_argument)?;
         if name_node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
         let member_name = &self.arena.get_identifier(name_node)?.escaped_text;
-
-        // Case 1: Simple identifier expression (e.g., `EnumName.Member`)
-        if expr_node.kind == SyntaxKind::Identifier as u16 {
-            let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
-            let members =
-                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos)?;
-            let value = members.get(member_name.as_str())?;
-            return if self.ctx.options.remove_comments {
-                Some(value.to_js_literal())
-            } else {
-                Some(format!(
-                    "{} /* {}.{} */",
-                    value.to_js_literal(),
-                    enum_name,
-                    member_name
-                ))
-            };
+        let expr_path = self.build_access_chain_path(access.expression)?;
+        let members = self.lookup_scoped_const_enum_values(expr_path.as_str(), expr_node.pos)?;
+        let value = members.get(member_name.as_str())?;
+        let dq = expr_path.clone();
+        if self.ctx.options.remove_comments {
+            Some(value.to_js_literal())
+        } else {
+            Some(format!(
+                "{} /* {}.{} */",
+                value.to_js_literal(),
+                dq,
+                member_name
+            ))
         }
-
-        // Case 2: Property access expression (e.g., `Namespace.EnumName.Member`)
-        // The expression is `Namespace.EnumName` — extract the last identifier as enum name
-        if let Some(inner_access) = self.arena.get_access_expr(expr_node) {
-            let inner_name_node = self.arena.get(inner_access.name_or_argument)?;
-            if inner_name_node.kind != SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let enum_name = &self.arena.get_identifier(inner_name_node)?.escaped_text;
-            let members =
-                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos)?;
-            let value = members.get(member_name.as_str())?;
-
-            // Build the full qualifier text from source for the comment
-            let full_qualifier = if let Some(text) = self.source_text {
-                let start = self.arena.get(access.expression)?.pos as usize;
-                let end = self.arena.get(access.expression)?.end as usize;
-                if start < end && end <= text.len() {
-                    let raw = text[start..end].trim();
-                    if !raw.is_empty() {
-                        raw.to_string()
-                    } else {
-                        enum_name.clone()
-                    }
-                } else {
-                    enum_name.clone()
-                }
-            } else {
-                enum_name.clone()
-            };
-
-            return if self.ctx.options.remove_comments {
-                Some(value.to_js_literal())
-            } else {
-                Some(format!(
-                    "{} /* {}.{} */",
-                    value.to_js_literal(),
-                    full_qualifier,
-                    member_name
-                ))
-            };
-        }
-
-        None
     }
 
     /// Try to inline an element access to a const enum member.
@@ -731,20 +722,16 @@ impl<'a> Printer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
-        // Check property access: EnumName.Member
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
         {
-            let expr_node = self.arena.get(access.expression);
-            let name_node = self.arena.get(access.name_or_argument);
-            if let (Some(expr), Some(name)) = (expr_node, name_node)
-                && expr.kind == SyntaxKind::Identifier as u16
+            if let Some(ep) = self.build_access_chain_path(access.expression)
+                && let Some(expr) = self.arena.get(access.expression)
+                && let Some(name) = self.arena.get(access.name_or_argument)
                 && name.kind == SyntaxKind::Identifier as u16
-                && let Some(enum_ident) = self.arena.get_identifier(expr)
-                && let Some(member_ident) = self.arena.get_identifier(name)
-                && let Some(members) =
-                    self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
-                && let Some(value) = members.get(member_ident.escaped_text.as_str())
+                && let Some(mi) = self.arena.get_identifier(name)
+                && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
+                && let Some(value) = members.get(mi.escaped_text.as_str())
             {
                 return value.is_negative();
             }
@@ -777,20 +764,19 @@ impl<'a> Printer<'a> {
         if self.const_enum_values.is_empty() {
             return false;
         }
-        // Check property access: EnumName.Member
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
-            && let Some(expr) = self.arena.get(access.expression)
-            && let Some(name) = self.arena.get(access.name_or_argument)
-            && expr.kind == SyntaxKind::Identifier as u16
-            && name.kind == SyntaxKind::Identifier as u16
-            && let Some(enum_ident) = self.arena.get_identifier(expr)
-            && let Some(member_ident) = self.arena.get_identifier(name)
-            && let Some(members) =
-                self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
-            && let Some(value) = members.get(member_ident.escaped_text.as_str())
         {
-            return value.needs_double_dot();
+            if let Some(ep) = self.build_access_chain_path(access.expression)
+                && let Some(expr) = self.arena.get(access.expression)
+                && let Some(name) = self.arena.get(access.name_or_argument)
+                && name.kind == SyntaxKind::Identifier as u16
+                && let Some(mi) = self.arena.get_identifier(name)
+                && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
+                && let Some(value) = members.get(mi.escaped_text.as_str())
+            {
+                return value.needs_double_dot();
+            }
         }
         // Check element access: EnumName["Member"] or EnumName[`Member`]
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION

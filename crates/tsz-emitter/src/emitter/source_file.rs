@@ -3120,9 +3120,10 @@ impl<'a> Printer<'a> {
     /// referencing const enum members can be inlined during emit.
     fn collect_const_enum_values(&mut self, statements: &NodeList) {
         self.const_enum_values.clear();
+        self.const_enum_import_aliases.clear();
         let mut evaluator = EnumEvaluator::new(self.arena);
-        // File-level scope covers the entire range
-        self.collect_const_enums_recursive(&mut evaluator, statements, 0, u32::MAX);
+        self.collect_const_enums_recursive(&mut evaluator, statements, 0, u32::MAX, "");
+        self.collect_const_enum_import_aliases(statements);
     }
 
     /// Recursively scan a statement list for const enum declarations,
@@ -3135,6 +3136,7 @@ impl<'a> Printer<'a> {
         statements: &NodeList,
         scope_start: u32,
         scope_end: u32,
+        ns_prefix: &str,
     ) {
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -3143,7 +3145,13 @@ impl<'a> Printer<'a> {
 
             // Direct const enum declarations
             if stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                self.try_register_const_enum(evaluator, stmt_idx, scope_start, scope_end);
+                self.try_register_const_enum(
+                    evaluator,
+                    stmt_idx,
+                    scope_start,
+                    scope_end,
+                    ns_prefix,
+                );
                 continue;
             }
 
@@ -3156,15 +3164,23 @@ impl<'a> Printer<'a> {
                 let clause_idx = export_data.export_clause;
                 if let Some(clause_node) = self.arena.get(clause_idx) {
                     if clause_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                        self.try_register_const_enum(evaluator, clause_idx, scope_start, scope_end);
+                        self.try_register_const_enum(
+                            evaluator,
+                            clause_idx,
+                            scope_start,
+                            scope_end,
+                            ns_prefix,
+                        );
                     }
                     // Recurse into exported namespace/module bodies
                     if let Some(module_data) = self.arena.get_module(clause_node) {
+                        let child_prefix = self.build_ns_prefix(ns_prefix, module_data.name);
                         self.recurse_into_module_body(
                             evaluator,
                             module_data.body,
                             scope_start,
                             scope_end,
+                            &child_prefix,
                         );
                     }
                     // Recurse into exported function bodies
@@ -3180,6 +3196,7 @@ impl<'a> Printer<'a> {
                             &block.statements,
                             fn_start,
                             fn_end,
+                            ns_prefix,
                         );
                     }
                 }
@@ -3199,6 +3216,7 @@ impl<'a> Printer<'a> {
                         &block.statements,
                         fn_start,
                         fn_end,
+                        ns_prefix,
                     );
                 }
                 continue;
@@ -3211,13 +3229,21 @@ impl<'a> Printer<'a> {
                     &block.statements,
                     scope_start,
                     scope_end,
+                    ns_prefix,
                 );
                 continue;
             }
 
             // Recurse into namespace/module bodies
             if let Some(module_data) = self.arena.get_module(stmt_node) {
-                self.recurse_into_module_body(evaluator, module_data.body, scope_start, scope_end);
+                let child_prefix = self.build_ns_prefix(ns_prefix, module_data.name);
+                self.recurse_into_module_body(
+                    evaluator,
+                    module_data.body,
+                    scope_start,
+                    scope_end,
+                    &child_prefix,
+                );
                 continue;
             }
 
@@ -3231,6 +3257,7 @@ impl<'a> Printer<'a> {
                         &block.statements,
                         scope_start,
                         scope_end,
+                        ns_prefix,
                     );
                 }
                 if let Some(else_node) = self.arena.get(if_data.else_statement)
@@ -3241,6 +3268,7 @@ impl<'a> Printer<'a> {
                         &block.statements,
                         scope_start,
                         scope_end,
+                        ns_prefix,
                     );
                 }
             }
@@ -3254,6 +3282,7 @@ impl<'a> Printer<'a> {
         enum_idx: NodeIndex,
         scope_start: u32,
         scope_end: u32,
+        ns_prefix: &str,
     ) {
         let Some(enum_node) = self.arena.get(enum_idx) else {
             return;
@@ -3279,12 +3308,15 @@ impl<'a> Printer<'a> {
         }
 
         // Get enum name
-        let name = self.get_identifier_text_idx(enum_data.name);
-        if name.is_empty() {
+        let simple_name = self.get_identifier_text_idx(enum_data.name);
+        if simple_name.is_empty() {
             return;
         }
-
-        // Evaluate all member values
+        let qualified_key = if ns_prefix.is_empty() {
+            simple_name
+        } else {
+            format!("{}.{}", ns_prefix, simple_name)
+        };
         let values = evaluator.evaluate_enum(enum_idx);
         if !values.is_empty() {
             use crate::emitter::core::ScopedConstEnum;
@@ -3293,18 +3325,34 @@ impl<'a> Printer<'a> {
                 scope_end,
                 values,
             };
-            self.const_enum_values.entry(name).or_default().push(entry);
+            self.const_enum_values
+                .entry(qualified_key)
+                .or_default()
+                .push(entry);
         }
     }
 
     /// Helper: recurse into a module/namespace body for const enum collection.
     /// Handles both `Block` and `ModuleBlock` body nodes.
+    fn build_ns_prefix(&self, current_prefix: &str, name_idx: NodeIndex) -> String {
+        let name = self.get_identifier_text_idx(name_idx);
+        if name.is_empty() {
+            return current_prefix.to_string();
+        }
+        if current_prefix.is_empty() {
+            name
+        } else {
+            format!("{}.{}", current_prefix, name)
+        }
+    }
+
     fn recurse_into_module_body(
         &mut self,
         evaluator: &mut EnumEvaluator,
         body_idx: NodeIndex,
         scope_start: u32,
         scope_end: u32,
+        ns_prefix: &str,
     ) {
         let Some(body_node) = self.arena.get(body_idx) else {
             return;
@@ -3316,6 +3364,7 @@ impl<'a> Printer<'a> {
                 &block.statements,
                 scope_start,
                 scope_end,
+                ns_prefix,
             );
             return;
         }
@@ -3323,8 +3372,62 @@ impl<'a> Printer<'a> {
         if let Some(module_block) = self.arena.get_module_block(body_node)
             && let Some(statements) = &module_block.statements
         {
-            self.collect_const_enums_recursive(evaluator, statements, scope_start, scope_end);
+            self.collect_const_enums_recursive(
+                evaluator,
+                statements,
+                scope_start,
+                scope_end,
+                ns_prefix,
+            );
         }
+    }
+
+    fn collect_const_enum_import_aliases(&mut self, statements: &NodeList) {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                continue;
+            }
+            let Some(import_data) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if import_data.is_type_only {
+                continue;
+            }
+            let alias_name = self.get_identifier_text_idx(import_data.import_clause);
+            if alias_name.is_empty() {
+                continue;
+            }
+            let target = self.qualified_name_to_string(import_data.module_specifier);
+            if !target.is_empty() {
+                self.const_enum_import_aliases.insert(alias_name, target);
+            }
+        }
+    }
+
+    fn qualified_name_to_string(&self, idx: NodeIndex) -> String {
+        let Some(node) = self.arena.get(idx) else {
+            return String::new();
+        };
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.get_identifier_text_idx(idx);
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            if let Some(qn) = self.arena.get_qualified_name(node) {
+                let left = self.qualified_name_to_string(qn.left);
+                let right = self.get_identifier_text_idx(qn.right);
+                if left.is_empty() {
+                    return right;
+                }
+                if right.is_empty() {
+                    return left;
+                }
+                return format!("{}.{}", left, right);
+            }
+        }
+        String::new()
     }
 
     /// Pre-scan `export { x, y }` clauses (without module specifier) to collect
