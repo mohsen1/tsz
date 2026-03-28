@@ -471,6 +471,13 @@ impl<'a> CheckerState<'a> {
         // property readonly flags.
         readonly_check_type = self.resolve_deferred_mapped_type(readonly_check_type);
 
+        // When the object type is `any` or `error` (e.g., unresolved module import
+        // with TS2307), skip readonly checks entirely. TSC doesn't emit TS2540 for
+        // properties on `any`-typed values.
+        if readonly_check_type == TypeId::ANY || readonly_check_type == TypeId::ERROR {
+            return false;
+        }
+
         // Check if the property is a const export from a namespace/module (TS2540).
         // For `M.x = 1` where `export const x = 0` in namespace M.
         // Check before property existence, similar to enum members.
@@ -585,10 +592,8 @@ impl<'a> CheckerState<'a> {
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
     fn is_generic_indexed_write(&mut self, object_type: TypeId, index_type: TypeId) -> bool {
         // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
-        if !crate::query_boundaries::state::checking::is_type_parameter(
-            self.ctx.types,
-            object_type,
-        ) {
+        if !crate::query_boundaries::state::checking::is_type_parameter(self.ctx.types, object_type)
+        {
             return false;
         }
 
@@ -618,7 +623,9 @@ impl<'a> CheckerState<'a> {
     fn constraint_has_index_signature(&mut self, type_param: TypeId, index_type: TypeId) -> bool {
         use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
-        let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, type_param) else {
+        let Some(info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
+        else {
             return false;
         };
         let Some(constraint) = info.constraint else {
@@ -656,7 +663,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's a union where ALL members are broad index types
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             return !members.is_empty() && members.iter().all(|&m| self.is_broad_index_type(m));
         }
