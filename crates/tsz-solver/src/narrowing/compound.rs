@@ -343,8 +343,10 @@ impl<'a> NarrowingContext<'a> {
             if keep_nullish {
                 return self.db.union2(TypeId::NULL, TypeId::UNDEFINED);
             }
-            let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
-            return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            // For non-nullish narrowing, `unknown` stays as `unknown`.
+            // tsc's getNonNullableType(unknown) returns `{}` but flow
+            // narrowing via `!= null` keeps `unknown` unchanged.
+            return source_type;
         }
 
         let (non_nullish, null_part) = super::utils::split_nullish_type(self.db, source_type);
@@ -510,11 +512,11 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
-        // CRITICAL FIX: unknown in truthy branch narrows to exclude null/undefined
-        // TypeScript: if (x: unknown) { x } -> x is not null | undefined
+        // TypeScript does NOT narrow `unknown` through truthiness checks.
+        // In tsc's filterType, `unknown` passes all type-fact predicates
+        // (it could be anything) so it is returned unchanged.
         if source_type == TypeId::UNKNOWN {
-            let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
-            return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            return source_type;
         }
 
         let resolved = self.resolve_type(source_type);
