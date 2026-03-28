@@ -340,7 +340,7 @@ pub struct CompilerOptions {
     /// Preserve const enum declarations in emitted code.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub preserve_const_enums: Option<bool>,
-    /// Specify the maximum folder depth used for checking JavaScript files from 'node_modules'.
+    /// Specify the maximum folder depth used for checking JavaScript files from `node_modules`.
     /// Only applicable with 'allowJs'. Defaults to 0.
     #[serde(default)]
     pub max_node_module_js_depth: Option<u32>,
@@ -415,8 +415,8 @@ pub struct ResolvedCompilerOptions {
     pub skip_lib_check: bool,
     /// Disable emitting declarations that have '@internal' in their JSDoc comments
     pub strip_internal: bool,
-    /// Maximum folder depth for checking JS files from node_modules.
-    /// Only applicable with allowJs. Default: 0 (don't check JS in node_modules).
+    /// Maximum folder depth for checking JS files from `node_modules`.
+    /// Only applicable with `allowJs`. Default: 0 (don't check JS in `node_modules`).
     pub max_node_module_js_depth: u32,
 }
 

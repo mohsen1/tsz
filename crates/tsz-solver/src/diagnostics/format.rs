@@ -76,8 +76,8 @@ pub struct TypeFormatter<'a> {
     /// show literal types like `{ x: "hello" }` even when the type system uses
     /// widened types like `{ x: string }`.
     use_display_properties: bool,
-    /// Set of Application TypeIds currently being formatted via display_alias.
-    /// Prevents infinite recursion when a display_alias chain forms a cycle.
+    /// Set of Application `TypeIds` currently being formatted via `display_alias`.
+    /// Prevents infinite recursion when a `display_alias` chain forms a cycle.
     display_alias_visiting: FxHashSet<TypeId>,
 }
 
@@ -342,13 +342,13 @@ impl<'a> TypeFormatter<'a> {
         // If so, format the original Application type instead of the expanded form.
         // Guard against cycles: if we're already inside a display_alias Application's
         // args, skip further display_alias redirects to prevent `Wrap<Wrap<...>>`.
-        if let Some(alias_origin) = self.interner.get_display_alias(type_id) {
-            if self.display_alias_visiting.insert(alias_origin) {
-                let result = self.format(alias_origin);
-                self.display_alias_visiting.remove(&alias_origin);
-                return result;
-            }
-            // Cycle detected — fall through to format the expanded type directly
+        if let Some(alias_origin) = self.interner.get_display_alias(type_id)
+            && self.display_alias_visiting.insert(alias_origin)
+        {
+            let result = self.format(alias_origin);
+            self.display_alias_visiting.remove(&alias_origin);
+            return result;
+            // Otherwise: cycle detected — fall through to format the expanded type directly
         }
 
         // Check if this type is a module namespace object that should display

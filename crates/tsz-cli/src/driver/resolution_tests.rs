@@ -48,7 +48,7 @@ fn test_preserve_symlinks_keeps_symlink_path_identity() {
         &mut preserve_cache,
         &known_files,
     );
-    assert_eq!(preserved, Some(symlink_path.clone()));
+    assert_eq!(preserved, Some(symlink_path));
 
     let realpath_options = ResolvedCompilerOptions {
         module_resolution: Some(ModuleResolutionKind::Node16),
