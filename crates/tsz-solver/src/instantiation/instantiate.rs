@@ -28,6 +28,10 @@ pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
 pub struct TypeSubstitution {
     /// Maps type parameter names to their substituted types
     map: FxHashMap<Atom, TypeId>,
+    /// Cached flag: true when at least one value is NOT a bare TypeParameter
+    /// with a matching name (i.e., the substitution is definitely not identity).
+    /// This avoids expensive per-entry `interner.lookup()` calls in the common case.
+    known_non_identity: bool,
 }
 
 impl TypeSubstitution {
@@ -35,6 +39,7 @@ impl TypeSubstitution {
     pub fn new() -> Self {
         Self {
             map: FxHashMap::default(),
+            known_non_identity: false,
         }
     }
 
@@ -42,6 +47,7 @@ impl TypeSubstitution {
     #[inline]
     pub fn clear(&mut self) {
         self.map.clear();
+        self.known_non_identity = false;
     }
 
     /// Create a substitution from type parameters and arguments.
@@ -69,7 +75,10 @@ impl TypeSubstitution {
                     Some(default) => {
                         // Defaults may reference earlier type parameters, so instantiate them
                         let resolved = if i > 0 && !map.is_empty() {
-                            let subst = Self { map: map.clone() };
+                            let subst = Self {
+                                map: map.clone(),
+                                known_non_identity: true,
+                            };
                             instantiate_type(interner, default, &subst)
                         } else {
                             default
@@ -92,12 +101,22 @@ impl TypeSubstitution {
             };
             map.insert(param.name, type_id);
         }
-        Self { map }
+        // from_args always maps names to concrete type arguments, not back to
+        // the original type parameters, so the substitution is non-identity.
+        Self {
+            map,
+            known_non_identity: true,
+        }
     }
 
     /// Add a single substitution.
+    ///
+    /// Conservatively marks the substitution as non-identity since most callers
+    /// insert concrete types (literals, resolved types) rather than mapping a
+    /// type parameter back to itself.
     pub fn insert(&mut self, name: Atom, type_id: TypeId) {
         self.map.insert(name, type_id);
+        self.known_non_identity = true;
     }
 
     /// Look up a substitution.
@@ -122,6 +141,12 @@ impl TypeSubstitution {
     /// `T extends object`). Callers that have access to the original `TypeParamInfo`
     /// (like `instantiate_generic`) should use `is_identity_for` instead.
     pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
+        // Fast path: if we know the substitution contains non-identity entries
+        // (e.g., it was built from concrete type arguments or literal types),
+        // skip the expensive per-entry interner lookup.
+        if self.known_non_identity {
+            return false;
+        }
         self.map.iter().all(|(&name, &type_id)| {
             // Check that the substitution maps a name to the UNCONSTRAINED
             // TypeParameter with that name. If the target has a constraint or
@@ -775,11 +800,13 @@ impl<'a> TypeInstantiator<'a> {
                     if substituted == TypeId::BOOLEAN {
                         let cond_type = self.interner.conditional(cond);
                         let mut results = Vec::with_capacity(2);
+                        // PERF: Clone the substitution once and reuse it for each member
+                        // instead of cloning per-member.
+                        let mut member_subst = self.substitution.clone();
                         for &member in &[TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE] {
                             if self.depth_exceeded {
                                 return TypeId::ERROR;
                             }
-                            let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
                             let instantiated =
                                 instantiate_type(self.interner, cond_type, &member_subst);
@@ -810,12 +837,14 @@ impl<'a> TypeInstantiator<'a> {
                         }
                         let cond_type = self.interner.conditional(cond);
                         let mut results = Vec::with_capacity(members.len());
+                        // PERF: Clone the substitution once and reuse it for each member
+                        // instead of cloning per-member (avoids N-1 FxHashMap allocations).
+                        let mut member_subst = self.substitution.clone();
                         for &member in members.iter() {
                             // Check depth before each distribution step
                             if self.depth_exceeded {
                                 return TypeId::ERROR;
                             }
-                            let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
                             let instantiated =
                                 instantiate_type(self.interner, cond_type, &member_subst);
@@ -1354,6 +1383,132 @@ pub fn instantiate_type(
                 return type_id;
             }
             return interner.index_access(new_obj, new_idx);
+        }
+        // Fast path: Application(base, args) — common in recursive mapped types like
+        // DeepPartial<T[P]>. Recursively instantiate base and args without creating
+        // a full TypeInstantiator.
+        Some(TypeData::Application(app_id)) => {
+            let app = interner.type_application(app_id);
+            let new_base = instantiate_type(interner, app.base, substitution);
+            let mut changed = new_base != app.base;
+            let new_args: Vec<TypeId> = app
+                .args
+                .iter()
+                .map(|&arg| {
+                    let new_arg = instantiate_type(interner, arg, substitution);
+                    if new_arg != arg {
+                        changed = true;
+                    }
+                    new_arg
+                })
+                .collect();
+            if !changed {
+                return type_id;
+            }
+            return interner.application(new_base, new_args);
+        }
+        // Fast path: KeyOf(T) — common in homomorphic mapped type constraints.
+        Some(TypeData::KeyOf(operand)) => {
+            let new_operand = instantiate_type(interner, operand, substitution);
+            if new_operand == operand {
+                return type_id;
+            }
+            return interner.keyof(new_operand);
+        }
+        // NOTE: Array types are NOT fast-pathed because they can be arbitrarily
+        // deeply nested (e.g., Array<Array<Array<...T...>>>), and the fast path
+        // doesn't track depth, which would bypass MAX_INSTANTIATION_DEPTH checks.
+        // NOTE: Mapped types are NOT fast-pathed because their instantiation involves
+        // complex homomorphic array/tuple handling, shadowing scopes, and T=any passthrough
+        // logic that requires the full TypeInstantiator.
+        //
+        // Fast path: Conditional types — the DeepPartial/DeepReadonly pattern.
+        // For distributive conditionals where the check type substitutes to a
+        // simple (non-union, non-boolean) type, we can instantiate all four
+        // parts without creating a full TypeInstantiator. This avoids the
+        // FxHashMap allocation for `visiting` in the common case.
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = interner.get_conditional(cond_id);
+            // Check if this is a distributive conditional that can be fast-pathed
+            let can_fast_path = if cond.is_distributive {
+                // The check type must be a TypeParameter in the substitution
+                if let Some(TypeData::TypeParameter(info)) = interner.lookup(cond.check_type) {
+                    if let Some(substituted) = substitution.get(info.name) {
+                        // Can fast-path if substituted type is not union, boolean, or never
+                        // (those require special distribution handling)
+                        substituted != TypeId::NEVER
+                            && substituted != TypeId::BOOLEAN
+                            && !matches!(interner.lookup(substituted), Some(TypeData::Union(_)))
+                    } else {
+                        // Check type not in substitution — can still fast-path
+                        true
+                    }
+                } else {
+                    // Check type is not a type parameter — no distribution needed
+                    true
+                }
+            } else {
+                // Non-distributive — always safe to fast-path
+                true
+            };
+            if can_fast_path {
+                let new_check = instantiate_type(interner, cond.check_type, substitution);
+                let new_extends = instantiate_type(interner, cond.extends_type, substitution);
+                let new_true = instantiate_type(interner, cond.true_type, substitution);
+                let new_false = instantiate_type(interner, cond.false_type, substitution);
+                if new_check == cond.check_type
+                    && new_extends == cond.extends_type
+                    && new_true == cond.true_type
+                    && new_false == cond.false_type
+                {
+                    return type_id;
+                }
+                return interner.conditional(ConditionalType {
+                    check_type: new_check,
+                    extends_type: new_extends,
+                    true_type: new_true,
+                    false_type: new_false,
+                    is_distributive: cond.is_distributive,
+                });
+            }
+        }
+        // Fast path: Union(members) — avoids TypeInstantiator for shallow unions.
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            let mut changed = false;
+            let instantiated: Vec<TypeId> = members
+                .iter()
+                .map(|&m| {
+                    let inst = instantiate_type(interner, m, substitution);
+                    if inst != m {
+                        changed = true;
+                    }
+                    inst
+                })
+                .collect();
+            if !changed {
+                return type_id;
+            }
+            return interner.union(instantiated);
+        }
+        // Fast path: Intersection(members) — avoids TypeInstantiator for shallow intersections.
+        Some(TypeData::Intersection(list_id)) => {
+            let members = interner.type_list(list_id);
+            let mut changed = false;
+            let instantiated: Vec<TypeId> = members
+                .iter()
+                .map(|&m| {
+                    let inst = instantiate_type(interner, m, substitution);
+                    if inst != m {
+                        changed = true;
+                    }
+                    inst
+                })
+                .collect();
+            if !changed {
+                return type_id;
+            }
+            return interner.intersection(instantiated);
         }
         _ => {}
     }
