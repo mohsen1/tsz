@@ -1877,11 +1877,18 @@ impl<'a> CheckerState<'a> {
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {
-                                // For namespace imports of `export =` values under
-                                // esModuleInterop/allowSyntheticDefaultImports, tsc
-                                // exposes the namespace object shape (with synthetic
-                                // `default`) instead of the callable export target.
-                                if self.ctx.allow_synthetic_default_imports() {
+                                // For namespace imports of `export =` non-module values:
+                                // - Callable/constructable types (functions, classes): wrap
+                                //   with `{ default: value }` under allowSyntheticDefaultImports
+                                //   so that `ns.default()` works (tsc behavior).
+                                // - Non-callable primitives (`number | undefined`, etc.):
+                                //   return the export= type directly so narrowing works
+                                //   (e.g., `if (b0) x = b0` narrows `number | undefined`).
+                                let is_object_like = tsz_solver::type_queries::is_object_like_type(
+                                    self.ctx.types,
+                                    export_equals_type,
+                                );
+                                if is_object_like && self.ctx.allow_synthetic_default_imports() {
                                     return (namespace_type, Vec::new());
                                 }
                                 return (export_equals_type, Vec::new());
