@@ -582,6 +582,7 @@ impl BinderState {
     }
 
     /// Check if modifiers list contains the 'static' keyword.
+    #[allow(dead_code)]
     pub(crate) fn has_static_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         arena.has_modifier_ref(modifiers, SyntaxKind::StaticKeyword)
     }
