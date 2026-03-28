@@ -1100,8 +1100,9 @@ pub(crate) fn resolve_module_specifier(
         return None;
     }
     let specifier = specifier.replace('\\', "/");
+    let resolution = options.effective_module_resolution();
     if specifier.starts_with('#') {
-        if is_invalid_package_import_specifier(&specifier) {
+        if is_invalid_package_import_specifier(&specifier, resolution) {
             return None;
         }
         if options.resolve_package_json_imports {
@@ -1109,7 +1110,6 @@ pub(crate) fn resolve_module_specifier(
         }
         return None;
     }
-    let resolution = options.effective_module_resolution();
     let mut candidates = Vec::new();
 
     let from_dir = from_file.parent().unwrap_or(base_dir);
@@ -1523,7 +1523,7 @@ fn find_node_modules_package_root(path: &Path) -> Option<PathBuf> {
 }
 
 /// Build a redirect map for duplicate packages (same name+version at different
-/// node_modules paths). The shallowest copy becomes canonical.
+/// `node_modules` paths). The shallowest copy becomes canonical.
 pub(crate) fn build_duplicate_package_redirects(
     file_names: &[String],
     options: &ResolvedCompilerOptions,
@@ -1605,23 +1605,22 @@ pub(crate) fn build_duplicate_package_redirects(
     let mut file_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
     for file_name in file_names {
         let file_path = Path::new(file_name);
-        if let Some(pkg_root) = find_node_modules_package_root(file_path) {
-            if let Some(canonical_root) = root_redirects.get(&pkg_root) {
-                if let Ok(relative) = file_path.strip_prefix(&pkg_root) {
-                    let canonical_file = canonical_root.join(relative);
-                    let from = normalize_resolved_path(file_path, options);
-                    let to = normalize_resolved_path(&canonical_file, options);
-                    if debug {
-                        eprintln!(
-                            "[dup-pkg] file redirect: {} -> {}",
-                            from.display(),
-                            to.display()
-                        );
-                    }
-                    if from != to {
-                        file_redirects.insert(from, to);
-                    }
-                }
+        if let Some(pkg_root) = find_node_modules_package_root(file_path)
+            && let Some(canonical_root) = root_redirects.get(&pkg_root)
+            && let Ok(relative) = file_path.strip_prefix(&pkg_root)
+        {
+            let canonical_file = canonical_root.join(relative);
+            let from = normalize_resolved_path(file_path, options);
+            let to = normalize_resolved_path(&canonical_file, options);
+            if debug {
+                eprintln!(
+                    "[dup-pkg] file redirect: {} -> {}",
+                    from.display(),
+                    to.display()
+                );
+            }
+            if from != to {
+                file_redirects.insert(from, to);
             }
         }
     }
@@ -1947,8 +1946,16 @@ fn resolve_package_imports_specifier(
     None
 }
 
-fn is_invalid_package_import_specifier(specifier: &str) -> bool {
-    specifier == "#" || specifier.starts_with("#/")
+fn is_invalid_package_import_specifier(specifier: &str, resolution: ModuleResolutionKind) -> bool {
+    if specifier == "#" {
+        return true;
+    }
+    // In node16 module resolution, #/ prefixed specifiers are invalid.
+    // In nodenext (and bundler), they can match wildcard patterns like "#/*".
+    if specifier.starts_with("#/") && resolution == ModuleResolutionKind::Node16 {
+        return true;
+    }
+    false
 }
 
 fn resolve_package_specifier(
