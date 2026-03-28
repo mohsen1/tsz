@@ -4440,20 +4440,26 @@ impl<'a> DeclarationEmitter<'a> {
     /// tsc emits `typeof <alias>` for variables initialized with an import-equals
     /// alias target rather than expanding the resolved type. This preserves the
     /// declarative reference in the .d.ts output.
-    fn initializer_import_alias_typeof_text(&self, initializer: NodeIndex) -> Option<String> {
+    pub(super) fn initializer_import_alias_typeof_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
         let binder = self.binder?;
         let init_node = self.arena.get(initializer)?;
 
         // Only handle simple identifier references.
-        // Qualified names (a.b.c) are not expanded this way by tsc.
         if init_node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
 
         let ident = self.arena.get_identifier(init_node)?;
+        let name = &ident.escaped_text;
 
-        // Look up the symbol for this identifier in the binder
-        let &sym_id = binder.node_symbols.get(&initializer.0)?;
+        // Resolve the identifier by walking the scope chain from the enclosing scope.
+        // The binder's node_symbols map only contains declaration-site mappings, not
+        // usage-site references. We need to walk scopes to find the symbol for `b`.
+        let scope_id = binder.find_enclosing_scope(self.arena, initializer)?;
+        let sym_id = self.resolve_name_in_scope_chain(binder, scope_id, name)?;
         let sym = binder.symbols.get(sym_id)?;
 
         // Check if this symbol is an alias (import-equals creates ALIAS symbols)
@@ -4472,7 +4478,30 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        Some(ident.escaped_text.clone())
+        Some(name.clone())
+    }
+
+    /// Walk the scope chain from `scope_id` upward, looking for a symbol with the given name.
+    fn resolve_name_in_scope_chain(
+        &self,
+        binder: &BinderState,
+        start_scope: tsz_binder::scopes::ScopeId,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let mut scope_id = start_scope;
+        let mut iterations = 0;
+        while scope_id.is_some() {
+            iterations += 1;
+            if iterations > 100 {
+                break;
+            }
+            let scope = binder.scopes.get(scope_id.0 as usize)?;
+            if let Some(sym_id) = scope.table.get(name) {
+                return Some(sym_id);
+            }
+            scope_id = scope.parent;
+        }
+        None
     }
 
     // Export/import emission → exports.rs

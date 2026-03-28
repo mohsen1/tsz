@@ -1319,14 +1319,26 @@ impl<'a> DeclarationEmitter<'a> {
                         }
 
                         self.emit_node(decl.name);
-                        self.emit_variable_decl_type_or_initializer(
-                            keyword,
-                            stmt_node.pos,
-                            *decl_idx,
-                            decl.name,
-                            decl.type_annotation,
-                            decl.initializer,
-                        );
+                        // When a variable's initializer is a simple reference to an
+                        // import-equals alias (e.g. `var bVal2 = b` where `import b = a.foo`),
+                        // tsc emits `typeof b` instead of expanding the type.
+                        if !decl.type_annotation.is_some()
+                            && decl.initializer.is_some()
+                            && let Some(alias_text) =
+                                self.initializer_import_alias_typeof_text(decl.initializer)
+                        {
+                            self.write(": typeof ");
+                            self.write(&alias_text);
+                        } else {
+                            self.emit_variable_decl_type_or_initializer(
+                                keyword,
+                                stmt_node.pos,
+                                *decl_idx,
+                                decl.name,
+                                decl.type_annotation,
+                                decl.initializer,
+                            );
+                        }
                     }
 
                     self.write(";");
