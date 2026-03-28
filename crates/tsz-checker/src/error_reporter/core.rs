@@ -802,6 +802,23 @@ impl<'a> CheckerState<'a> {
         Some(format!("{{ {}; }}", parts.join("; ")))
     }
 
+    /// Check if a type contains string literal types (directly or as union members).
+    /// Used to determine whether an object literal property should display its
+    /// literal value (for discriminated union contexts) or the widened type.
+    fn type_contains_string_literal(&self, type_id: TypeId) -> bool {
+        use tsz_solver::types::TypeData;
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeData::Literal(tsz_solver::types::LiteralValue::String(_))) => true,
+            Some(TypeData::Union(members)) => {
+                let members = self.ctx.types.type_list(members);
+                members
+                    .iter()
+                    .any(|m| self.type_contains_string_literal(*m))
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn literal_expression_display(&self, expr_idx: NodeIndex) -> Option<String> {
         // Skip only parentheses, NOT type assertions. A type assertion like
         // `'bar' as any` changes the type to `any`, so the literal display
@@ -1366,12 +1383,27 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            // tsc displays the FRESH (literal) type for object literal properties
-            // in assignability errors — e.g. `{ tag: "D" }` not `{ tag: string }`.
-            // Try to format the value directly from the AST literal first.
-            if let Some(literal_display) = self.literal_expression_display(prop.initializer) {
-                parts.push(format!("{display_name}: {literal_display}"));
-                continue;
+            // tsc preserves literal types in fresh object literal error messages
+            // when the target property type accepts literals (e.g., discriminated
+            // unions: `tag: "A" | "B" | "C"`). Otherwise it widens (e.g., `string`).
+            // Check the target property type to decide.
+            let target_accepts_literal = property_name
+                .and_then(|name| {
+                    let shape = target_shape.as_ref()?;
+                    shape
+                        .properties
+                        .iter()
+                        .find(|p| p.name == name)
+                        .map(|p| p.type_id)
+                })
+                .is_some_and(|target_prop_type| {
+                    self.type_contains_string_literal(target_prop_type)
+                });
+            if target_accepts_literal {
+                if let Some(literal_display) = self.literal_expression_display(prop.initializer) {
+                    parts.push(format!("{display_name}: {literal_display}"));
+                    continue;
+                }
             }
 
             // For nested object literals, recurse
