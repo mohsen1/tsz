@@ -591,6 +591,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let deferred_export_bindings = self.deferred_local_export_bindings.clone();
+
         let has_using_declaration = var_stmt.declarations.nodes.iter().any(|decl_list_idx| {
             self.arena
                 .get(*decl_list_idx)
@@ -669,6 +671,75 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.in_system_execute_body
+            && let Some(bindings) = deferred_export_bindings.as_ref()
+            && !bindings.is_empty()
+            && !self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+        {
+            let mut lowered_system_exports = Vec::new();
+            let mut can_lower_as_assignments = true;
+
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    can_lower_as_assignments = false;
+                    break;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    can_lower_as_assignments = false;
+                    break;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        can_lower_as_assignments = false;
+                        break;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        can_lower_as_assignments = false;
+                        break;
+                    };
+                    let Some(name_node) = self.arena.get(decl.name) else {
+                        can_lower_as_assignments = false;
+                        break;
+                    };
+                    if name_node.kind != SyntaxKind::Identifier as u16 || decl.initializer.is_none()
+                    {
+                        can_lower_as_assignments = false;
+                        break;
+                    }
+                    let local_name = self.get_identifier_text_idx(decl.name);
+                    let Some(export_name) = bindings.get(&local_name).cloned() else {
+                        can_lower_as_assignments = false;
+                        break;
+                    };
+                    lowered_system_exports.push((local_name, export_name, decl.initializer));
+                }
+                if !can_lower_as_assignments {
+                    break;
+                }
+            }
+
+            if can_lower_as_assignments && !lowered_system_exports.is_empty() {
+                let mut first = true;
+                for (local_name, export_name, init_idx) in lowered_system_exports {
+                    if !first {
+                        self.write_line();
+                    }
+                    self.write(&local_name);
+                    self.write(" = ");
+                    self.emit(init_idx);
+                    self.write(";");
+                    self.write_line();
+                    self.write_export_binding_start(&export_name);
+                    self.write(&local_name);
+                    self.write_export_binding_end();
+                    first = false;
+                }
+                return;
+            }
+        }
+
         // VariableStatement.declarations contains a VARIABLE_DECLARATION_LIST
         // Emit the declaration list (which handles the let/const/var keyword)
         for &decl_list_idx in &var_stmt.declarations.nodes {
@@ -704,6 +775,49 @@ impl<'a> Printer<'a> {
                     self.write(";");
                     self.write_line();
                 }
+            }
+        }
+
+        if !is_exported
+            && let Some(bindings) = deferred_export_bindings.as_ref()
+            && !bindings.is_empty()
+        {
+            let mut deferred_names = Vec::new();
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    if decl.initializer.is_none() {
+                        continue;
+                    }
+                    let Some(name_node) = self.arena.get(decl.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    deferred_names.push(ident.escaped_text.clone());
+                }
+            }
+
+            for local_name in deferred_names {
+                let Some(export_name) = bindings.get(&local_name) else {
+                    continue;
+                };
+                self.write_line();
+                self.write_export_binding_start(export_name);
+                self.write(&local_name);
+                self.write_export_binding_end();
             }
         }
     }
