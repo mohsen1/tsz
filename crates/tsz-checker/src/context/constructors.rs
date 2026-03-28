@@ -62,7 +62,9 @@ impl<'a> CheckerContext<'a> {
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
             symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
-            symbol_instance_types: FxHashMap::default(),
+            symbol_instance_types: crate::context::SymbolTypeCache::with_capacity(
+                binder.symbols.len(),
+            ),
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
