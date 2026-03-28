@@ -305,6 +305,12 @@ pub(crate) fn collect_type_packages_from_root(root: &Path) -> Vec<PathBuf> {
             if let Ok(scope_entries) = std::fs::read_dir(&path) {
                 for scope_entry in scope_entries.flatten() {
                     let scope_path = scope_entry.path();
+                    let scope_name = scope_entry.file_name();
+                    // Skip dot-prefixed entries (e.g., .DS_Store, .git)
+                    // matching tsc behavior for type root discovery
+                    if scope_name.to_str().is_some_and(|n| n.starts_with('.')) {
+                        continue;
+                    }
                     if scope_path.is_dir() {
                         packages.push(scope_path);
                     }
