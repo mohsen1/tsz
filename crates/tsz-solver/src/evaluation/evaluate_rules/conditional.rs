@@ -1189,6 +1189,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     })
                     .or_else(|| optional.then_some(TypeId::UNDEFINED))
             }
+            Some(TypeData::Callable(callable_id)) => {
+                // Callable types (class constructors) have static properties
+                // that should participate in conditional infer resolution.
+                // E.g., `typeof MyClass extends { defaultProps: infer D }` should
+                // find `defaultProps` in the class constructor's static properties.
+                let shape = self.interner().callable_shape(callable_id);
+                shape
+                    .properties
+                    .iter()
+                    .find(|prop| prop.name == prop_name)
+                    .map(|prop| {
+                        if optional {
+                            self.optional_property_type(prop)
+                        } else {
+                            prop.type_id
+                        }
+                    })
+                    .or_else(|| optional.then_some(TypeId::UNDEFINED))
+            }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut inferred_members: SmallVec<[TypeId; 8]> = SmallVec::new();
