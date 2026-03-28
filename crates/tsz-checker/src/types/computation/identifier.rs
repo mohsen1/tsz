@@ -429,7 +429,7 @@ impl<'a> CheckerState<'a> {
             // - Skip if any cross-file binder provides a non-UMD VALUE binding for the
             //   same name (e.g. `declare global { const React }` in another file).
             if is_umd_export
-                && self.ctx.binder.is_external_module()
+                && self.current_file_is_module_for_umd_global_access()
                 && !self.ctx.compiler_options.allow_umd_global_access
                 && (flags & symbol_flags::VALUE) == 0
                 && !self.is_namespace_export_declaration_name(idx)
@@ -1699,6 +1699,76 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        false
+    }
+
+    pub(crate) fn current_file_is_module_for_umd_global_access(&self) -> bool {
+        if self.ctx.binder.is_external_module() {
+            return true;
+        }
+
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return false;
+        }
+
+        let Some(source_file) = self.ctx.arena.source_files.get(self.ctx.current_file_idx) else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match stmt.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
+                syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let Some(var_stmt) = self.ctx.arena.get_variable(stmt) else {
+                        continue;
+                    };
+                    for &list_idx in &var_stmt.declarations.nodes {
+                        let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                            continue;
+                        };
+                        let Some(var_list) = self.ctx.arena.get_variable(list_node) else {
+                            continue;
+                        };
+                        for &decl_idx in &var_list.declarations.nodes {
+                            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                                continue;
+                            };
+                            let Some(decl) =
+                                self.ctx.arena.get_variable_declaration(decl_node)
+                            else {
+                                continue;
+                            };
+                            if decl.initializer.is_some()
+                                && self.get_require_module_specifier(decl.initializer).is_some()
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                syntax_kind_ext::EXPRESSION_STATEMENT => {
+                    let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt) else {
+                        continue;
+                    };
+                    if self
+                        .get_require_module_specifier(expr_stmt.expression)
+                        .is_some()
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         false
     }
 
