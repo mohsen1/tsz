@@ -243,6 +243,16 @@ impl SymbolTable {
         }
     }
 
+    /// Create a symbol table with pre-allocated capacity.
+    /// Avoids repeated resizing when the approximate number of entries is known
+    /// (e.g., class members, module exports).
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            symbols: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+        }
+    }
+
     /// Get a symbol by name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<SymbolId> {
@@ -453,6 +463,14 @@ impl SymbolArena {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.symbols.is_empty()
+    }
+
+    /// Reserve additional capacity for the symbol arena and its name index.
+    /// This avoids repeated reallocations when the approximate number of
+    /// upcoming symbol allocations is known.
+    pub fn reserve(&mut self, additional: usize) {
+        self.symbols.reserve(additional);
+        self.name_index.reserve(additional);
     }
 
     /// Clear all symbols while keeping the allocated capacity.

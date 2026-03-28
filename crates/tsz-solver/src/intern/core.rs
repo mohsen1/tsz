@@ -895,9 +895,22 @@ impl TypeInterner {
     pub fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
         // Only store if the evaluated type differs from the application
         // (i.e., evaluation actually produced a different type).
-        if evaluated != application {
-            self.display_alias.insert(evaluated, application);
+        if evaluated == application {
+            return;
         }
+        // Guard against self-referential cycles: if the Application's args
+        // contain the evaluated type itself, storing this alias would create
+        // a formatting cycle (e.g., `Wrap<T> = T | T[]` where evaluating
+        // `Wrap<{x?: "ok"}>` produces a union, and a later re-application
+        // creates `Wrap<union>` whose arg IS the union). Skip storage in
+        // that case to prevent infinite `Wrap<Wrap<Wrap<...>>>` in diagnostics.
+        if let Some(TypeData::Application(app_id)) = self.lookup(application) {
+            let app = self.type_application(app_id);
+            if app.args.contains(&evaluated) {
+                return;
+            }
+        }
+        self.display_alias.insert(evaluated, application);
     }
 
     /// Look up the original Application TypeId for a type that was produced
