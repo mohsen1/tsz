@@ -26,17 +26,19 @@ use tsz_solver::TypeId;
 // result when the cycle re-enters at shallow depth.
 //
 // Reset between files in batch mode via `reset_stack_overflow_flag()`.
+// Packed thread-local: bit 15 = tripped flag, bits 0..7 = probe counter.
+// Single TLV access instead of two separate thread_locals.
 thread_local! {
-    static STACK_OVERFLOW_TRIPPED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Counter for amortizing the `stacker::remaining_stack()` syscall.
-    /// We only probe the real stack depth every Nth call.
-    static STACK_CHECK_COUNTER: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    static STACK_STATE: std::cell::Cell<u16> = const { std::cell::Cell::new(0) };
 }
+
+const STACK_TRIPPED_BIT: u16 = 0x8000;
+const STACK_COUNTER_MASK: u16 = 0x3F; // 64-element cycle
 
 /// Returns `true` if the stack overflow breaker has been tripped.
 #[inline]
 pub fn stack_overflow_tripped() -> bool {
-    STACK_OVERFLOW_TRIPPED.get()
+    STACK_STATE.get() & STACK_TRIPPED_BIT != 0
 }
 
 /// Returns `true` if the stack should be probed on this call.
@@ -44,22 +46,23 @@ pub fn stack_overflow_tripped() -> bool {
 /// `true` every 64th invocation.
 #[inline]
 pub fn should_probe_stack() -> bool {
-    let c = STACK_CHECK_COUNTER.get().wrapping_add(1);
-    STACK_CHECK_COUNTER.set(c);
-    c & 63 == 0
+    let s = STACK_STATE.get();
+    let c = (s & 0xFF).wrapping_add(1) & 0xFF;
+    STACK_STATE.set((s & STACK_TRIPPED_BIT) | c);
+    c & STACK_COUNTER_MASK == 0
 }
 
 /// Trip the stack overflow breaker.  Called from guards in `dispatch.rs` and
 /// `state/type_analysis/core.rs` when `stacker::remaining_stack()` reports
 /// < 256 KB remaining.
 pub fn trip_stack_overflow() {
-    STACK_OVERFLOW_TRIPPED.set(true);
+    STACK_STATE.set(STACK_STATE.get() | STACK_TRIPPED_BIT);
 }
 
 /// Reset the breaker.  Called between files in batch mode so that one
 /// pathological file doesn't poison all subsequent files.
 pub fn reset_stack_overflow_flag() {
-    STACK_OVERFLOW_TRIPPED.set(false);
+    STACK_STATE.set(STACK_STATE.get() & !STACK_TRIPPED_BIT);
 }
 
 /// Explicit context for synthesized JSX children, threaded from dispatch
