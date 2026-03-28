@@ -827,11 +827,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let member_list = self.interner.type_list(members);
 
             // Keep diagnostic precision when collecting mismatch reasons via tracer.
-            if self.tracer.is_none()
-                && self.can_use_object_intersection_fast_path(&member_list)
-                && let Some(merged_target) = self.build_object_intersection_target(target)
-            {
-                return self.check_subtype(source, merged_target);
+            if self.tracer.is_none() {
+                // Fast path: check the shared intersection merge cache first to
+                // skip the O(N) eligibility scan for repeated constraint checks.
+                let cached = self
+                    .query_db
+                    .and_then(|db| db.lookup_intersection_merge(target));
+                let merged_target = if let Some(cached_result) = cached {
+                    cached_result
+                } else if self.can_use_object_intersection_fast_path(&member_list) {
+                    self.build_object_intersection_target(target)
+                } else {
+                    // Not eligible; cache the negative result to avoid re-scanning.
+                    if let Some(db) = self.query_db {
+                        db.insert_intersection_merge(target, None);
+                    }
+                    None
+                };
+                if let Some(merged) = merged_target {
+                    return self.check_subtype(source, merged);
+                }
             }
 
             for &member in member_list.iter() {

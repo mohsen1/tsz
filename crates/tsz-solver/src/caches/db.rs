@@ -832,6 +832,20 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Default implementation is a no-op.
     fn insert_subtype_cache(&self, _key: RelationCacheKey, _result: bool) {}
 
+    /// Look up a cached intersection-to-merged-object result.
+    /// Used by `build_object_intersection_target` to avoid expensive property
+    /// collection for large intersections that are checked multiple times
+    /// (e.g., `T extends A & B & C & ...` in constraint checking).
+    /// Returns `None` if not cached.
+    fn lookup_intersection_merge(&self, _intersection_id: TypeId) -> Option<Option<TypeId>> {
+        None
+    }
+
+    /// Cache an intersection-to-merged-object result.
+    /// `result` is `Some(merged_type_id)` on success, `None` if the intersection
+    /// is not eligible for merging (contains callables, non-objects, etc.).
+    fn insert_intersection_merge(&self, _intersection_id: TypeId, _result: Option<TypeId>) {}
+
     /// Look up a cached assignability result for the given key.
     /// Returns `None` if the result is not cached.
     /// Default implementation returns `None` (no caching).

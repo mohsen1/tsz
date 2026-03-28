@@ -233,6 +233,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =========================================================================
+        // Cross-checker memoization (QueryCache lookup) — BEFORE fuel tracking.
+        // =========================================================================
+        // Check the shared cache for a previously computed result BEFORE
+        // incrementing the global fuel/depth counters. This avoids 4 TLS accesses
+        // (2 enter + 2 leave) for every cache-hit check, which is significant
+        // when the cache hit rate is high (e.g., repeated assignability checks
+        // in generic function bodies).
+        //
+        // Skip when identity_cycle_check is active: the cache key doesn't encode
+        // the identity-mode flag, so a cached `true` from a normal subtype check
+        // would incorrectly short-circuit the identity check (which needs stricter
+        // Application type-argument comparison at cycle points for TS2403).
+        if !self.identity_cycle_check
+            && let Some(db) = self.query_db
+        {
+            let key = self.make_cache_key(source, target);
+            if let Some(cached) = db.lookup_subtype_cache(key) {
+                return if cached {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                };
+            }
+        }
+
+        // =========================================================================
         // Global fuel guard (cross-instance work limiter)
         // =========================================================================
         // Track nesting depth and consume fuel for every non-trivial check.
@@ -261,31 +287,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if fuel >= MAX_GLOBAL_SUBTYPE_FUEL {
             leave_global!();
             return self.depth_result();
-        }
-
-        // =========================================================================
-        // Cross-checker memoization (QueryCache lookup)
-        // =========================================================================
-        // Check the shared cache for a previously computed result.
-        // This avoids re-doing expensive structural checks for type pairs
-        // already resolved by a prior SubtypeChecker instance.
-        //
-        // Skip when identity_cycle_check is active: the cache key doesn't encode
-        // the identity-mode flag, so a cached `true` from a normal subtype check
-        // would incorrectly short-circuit the identity check (which needs stricter
-        // Application type-argument comparison at cycle points for TS2403).
-        if !self.identity_cycle_check
-            && let Some(db) = self.query_db
-        {
-            let key = self.make_cache_key(source, target);
-            if let Some(cached) = db.lookup_subtype_cache(key) {
-                leave_global!();
-                return if cached {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                };
-            }
         }
 
         // =========================================================================
