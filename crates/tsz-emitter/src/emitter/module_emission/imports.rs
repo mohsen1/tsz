@@ -103,8 +103,7 @@ impl<'a> Printer<'a> {
         let Some(import_data) = self.arena.get_import_decl(import_node) else {
             return specs.to_vec();
         };
-        let haystack =
-            Self::source_after_import(source_text, import_node, import_data, self.arena);
+        let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
         let value_haystack = crate::import_usage::strip_type_only_content(haystack);
 
         specs
@@ -121,10 +120,7 @@ impl<'a> Printer<'a> {
                 if local_name.is_empty() {
                     return true;
                 }
-                crate::import_usage::contains_identifier_occurrence(
-                    &value_haystack,
-                    &local_name,
-                )
+                crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
             })
             .collect()
     }
@@ -276,8 +272,7 @@ impl<'a> Printer<'a> {
                         && !self.source_is_js_file
                         && !self.ctx.options.verbatim_module_syntax
                     {
-                        value_specs =
-                            self.filter_value_specs_by_usage(node, &value_specs);
+                        value_specs = self.filter_value_specs_by_usage(node, &value_specs);
                     }
                     trailing_comma = self
                         .has_trailing_comma_in_source(bindings_node, &named_imports.elements.nodes);
