@@ -494,6 +494,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns true if `init` points to an empty array literal `[]`.
+    fn is_empty_array_literal_init(arena: &tsz_parser::parser::NodeArena, init: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        arena.get(init).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && arena
+                    .get_literal_expr(node)
+                    .is_some_and(|arr| arr.elements.nodes.is_empty())
+        })
+    }
+
     /// Emit TS7031 errors for binding elements in destructuring variable declarations
     /// without type annotations or initializers (`var [a], {b};` under noImplicitAny).
     pub(crate) fn emit_implicit_any_for_var_destructuring(&mut self, pattern_idx: NodeIndex) {
