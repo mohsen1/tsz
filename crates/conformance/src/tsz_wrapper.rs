@@ -280,13 +280,10 @@ pub fn prepare_test_dir(
     } else {
         None
     };
-    // Match tsc's implicit include defaults.
-    // Unimported `.mts`/`.cts`/`.mjs`/`.cjs` roots are not discovered via the
-    // default include globs; they only participate when explicitly referenced.
-    // tsc always includes all extensions in its default include patterns,
-    // regardless of allowJs. The allowJs flag only controls whether discovered
-    // JS files are type-checked, not whether they appear in the include globs.
-    // The CLI's file discovery has a secondary extension filter that respects allowJs.
+    // Match tsc 6.0's implicit include defaults.
+    // tsc always includes .js/.jsx in the include patterns regardless of allowJs;
+    // the actual file filtering respects allowJs separately. This matters for the
+    // TS18003 "no inputs found" message which displays these include patterns.
     let include = serde_json::json!([
         "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
     ]);
@@ -462,21 +459,10 @@ pub fn prepare_binary_test_dir(
         .is_some_and(|value| value == "false");
 
     if !has_tsconfig_file {
-        let allow_js = options
-            .get("allowJs")
-            .or_else(|| options.get("allowjs"))
-            .is_some_and(|value| value == "true")
-            || options
-                .get("checkJs")
-                .or_else(|| options.get("checkjs"))
-                .is_some_and(|value| value == "true");
-        let include = if allow_js {
-            serde_json::json!([
-                "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
-            ])
-        } else {
-            serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
-        };
+        // Match tsc 6.0's include defaults — always list .js/.jsx extensions.
+        let include = serde_json::json!([
+            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+        ]);
 
         let compiler_options = convert_options_to_tsconfig(options, &[]);
 
