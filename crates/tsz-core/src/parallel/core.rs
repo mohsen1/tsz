@@ -2914,18 +2914,37 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                 // User symbol - use remapped ID
                 remapped_file_locals.set(name.clone(), new_sym_id);
-                // Also add to globals (all top-level declarations visible globally)
-                // EXCEPT ALIAS symbols (import declarations) which are file-local by design.
-                // Leaking import aliases to globals causes cross-file contamination where
-                // other files try to resolve the import and get incorrect types.
-                // Exception: UMD namespace exports (`export as namespace Foo`) are ALIAS
-                // symbols that SHOULD be globally visible — they register a name on the
-                // global object.
+                // Script-file top-levels are globally visible by default. For ordinary
+                // external modules, keep pure type-only top-level declarations file-scoped so
+                // unimported type aliases/interfaces do not leak across files. Value-bearing
+                // exports still stay visible because CommonJS/export-assignment and declaration
+                // emit paths rely on them being reachable cross-file.
                 let sym_info = global_symbols.get(new_sym_id);
                 let is_alias =
                     sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
                 let is_umd = sym_info.is_some_and(|s| s.is_umd_export);
-                if !is_alias || is_umd {
+                let is_declaration_file = result
+                    .arena
+                    .source_files
+                    .first()
+                    .is_some_and(|sf| sf.is_declaration_file);
+                let has_value = sym_info
+                    .is_some_and(|s| s.flags & crate::binder::symbol_flags::VALUE != 0);
+                let is_module_decl = sym_info.is_some_and(|s| {
+                    s.flags
+                        & (crate::binder::symbol_flags::VALUE_MODULE
+                            | crate::binder::symbol_flags::NAMESPACE_MODULE)
+                        != 0
+                });
+                let is_global_augmentation = result.global_augmentations.contains_key(name);
+                let is_truly_global = (!is_alias
+                    && (!result.is_external_module
+                        || is_declaration_file
+                        || has_value
+                        || is_module_decl))
+                    || is_umd
+                    || is_global_augmentation;
+                if is_truly_global {
                     globals.set(name.clone(), new_sym_id);
                 }
             } else {

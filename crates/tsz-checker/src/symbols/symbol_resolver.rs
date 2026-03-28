@@ -382,6 +382,40 @@ impl<'a> CheckerState<'a> {
         // These should not resolve as bare identifiers — they are only reachable via import.
         let result =
             result.filter(|&sym_id| !self.is_string_literal_module_symbol(sym_id, &lib_binders));
+        let identifier_is_type_position = self.is_identifier_in_type_position(idx);
+        let result = result.filter(|&sym_id| {
+            if !identifier_is_type_position {
+                return true;
+            }
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return true;
+            };
+            if !self.ctx.binder.is_external_module()
+                || self.is_in_declare_namespace_or_module(idx)
+                || self.ctx.symbol_is_from_lib(sym_id)
+                || symbol.is_umd_export
+                || symbol.decl_file_idx == u32::MAX
+                || symbol.decl_file_idx == self.ctx.current_file_idx as u32
+                || (symbol.flags & symbol_flags::VALUE) != 0
+            {
+                return true;
+            }
+            let Some(owner_binder) = self.ctx.get_binder_for_file(symbol.decl_file_idx as usize)
+            else {
+                return true;
+            };
+            let owner_is_declaration_file = self
+                .ctx
+                .get_arena_for_file(symbol.decl_file_idx)
+                .source_files
+                .first()
+                .is_some_and(|sf| sf.is_declaration_file);
+            owner_is_declaration_file
+                || !owner_binder.is_external_module()
+                || owner_binder
+                    .global_augmentations
+                    .contains_key(symbol.escaped_name.as_str())
+        });
 
         trace!(
             ident_name = ?ident_name,
@@ -458,6 +492,29 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) =
                 self.resolve_identifier_symbol_from_all_binders(name, |sym_id, symbol| {
                     if should_skip_lib_symbol(sym_id) {
+                        return false;
+                    }
+                    let is_private_external_module_type = identifier_is_type_position
+                        && self.ctx.binder.is_external_module()
+                        && !self.ctx.symbol_is_from_lib(sym_id)
+                        && !symbol.is_umd_export
+                        && symbol.decl_file_idx != u32::MAX
+                        && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+                        && (symbol.flags & symbol_flags::VALUE) == 0
+                        && self
+                            .ctx
+                            .get_binder_for_file(symbol.decl_file_idx as usize)
+                            .is_some_and(|binder| {
+                                binder.is_external_module()
+                                    && !binder.global_augmentations.contains_key(name)
+                            })
+                        && !self
+                            .ctx
+                            .get_arena_for_file(symbol.decl_file_idx)
+                            .source_files
+                            .first()
+                            .is_some_and(|sf| sf.is_declaration_file);
+                    if is_private_external_module_type {
                         return false;
                     }
                     // NOTE: We intentionally skip the decorator_owner check here.
@@ -825,6 +882,36 @@ impl<'a> CheckerState<'a> {
                 })
         };
 
+        let is_private_external_module_type_symbol = |sym_id: SymbolId| -> bool {
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return false;
+            };
+            if !self.ctx.binder.is_external_module()
+                || self.is_in_declare_namespace_or_module(idx)
+                || self.ctx.symbol_is_from_lib(sym_id)
+                || symbol.is_umd_export
+                || symbol.decl_file_idx == u32::MAX
+                || symbol.decl_file_idx == self.ctx.current_file_idx as u32
+                || (symbol.flags & symbol_flags::VALUE) != 0
+            {
+                return false;
+            }
+            let Some(owner_binder) = self.ctx.get_binder_for_file(symbol.decl_file_idx as usize)
+            else {
+                return false;
+            };
+            let owner_is_declaration_file = self
+                .ctx
+                .get_arena_for_file(symbol.decl_file_idx)
+                .source_files
+                .first()
+                .is_some_and(|sf| sf.is_declaration_file);
+            if owner_is_declaration_file {
+                return false;
+            }
+            owner_binder.is_external_module()
+                && !owner_binder.global_augmentations.contains_key(name)
+        };
         if let Some(local_sym_id) =
             self.ctx
                 .binder
@@ -840,6 +927,7 @@ impl<'a> CheckerState<'a> {
                     }
                     accept_type_symbol(sym_id)
                 })
+            && !is_private_external_module_type_symbol(local_sym_id)
         {
             if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
                 && symbol.flags & symbol_flags::ALIAS != 0
@@ -875,11 +963,10 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(sym_id);
         }
 
-        let resolved = self.ctx.binder.resolve_identifier_with_filter(
-            self.ctx.arena,
-            idx,
-            &lib_binders,
-            |sym_id| {
+        let resolved = self
+            .ctx
+            .binder
+            .resolve_identifier_with_filter(self.ctx.arena, idx, &lib_binders, |sym_id| {
                 if should_skip_lib_symbol(sym_id) {
                     return false;
                 }
@@ -890,20 +977,17 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 accept_type_symbol(sym_id)
-            },
-        );
-
-        // Only search all binders if the local/scope resolution didn't already
-        // find a value-only candidate. When a local import alias resolved to a
-        // value-only symbol, searching other binders could find an unrelated type
-        // with the same name from a different file (e.g., `export type A` from
-        // a module that collided with `export * from` in a barrel file).
+            })
+            .filter(|&sym_id| !is_private_external_module_type_symbol(sym_id));
         let has_value_only = value_only_candidate.get().is_some();
         if resolved.is_none()
             && !has_value_only
             && let Some(sym_id) =
                 self.resolve_identifier_symbol_from_all_binders(name, |sym_id, symbol| {
                     if should_skip_lib_symbol(sym_id) {
+                        return false;
+                    }
+                    if is_private_external_module_type_symbol(sym_id) {
                         return false;
                     }
 

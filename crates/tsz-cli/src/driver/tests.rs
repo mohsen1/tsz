@@ -268,6 +268,47 @@ fn test_compile_project_module_esnext_verbatim_const_enum_is_not_treated_as_comm
 }
 
 #[test]
+fn test_compile_project_keeps_unimported_external_module_type_alias_unresolved() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["Helpers.ts", "FromFactor.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("Helpers.ts"),
+        "export type StringKeyOf<TObj> = Extract<string, keyof TObj>;\n",
+    )
+    .expect("write Helpers.ts");
+    fs::write(
+        dir.path().join("FromFactor.ts"),
+        "export type RowToColumns<TColumns> = {\n    [TName in StringKeyOf<TColumns>]: any;\n};\n",
+    )
+    .expect("write FromFactor.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME
+                && diag.message_text.contains("StringKeyOf")
+        }),
+        "Expected TS2304 for unimported external-module type alias in compile(), got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_emits_ts18003_in_batch_style_project_mode() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
