@@ -40,7 +40,7 @@ FAIL TypeScript/tests/cases/compiler/correctOrderOfPromiseMethod.ts | expected:[
 FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2440,TS2451]
 FAIL TypeScript/tests/cases/compiler/ctsFileInEsnextHelpers.ts | expected:[TS18003] actual:[TS18003]
 FAIL TypeScript/tests/cases/compiler/declarationEmitBundlerConditions.ts | expected:[] actual:[TS2305]
-FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink.ts | expected:[TS2307] actual:[TS2694,TS2883]
+FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink.ts | expected:[TS2307] actual:[TS2694]
 FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink2.ts | expected:[TS2307] actual:[TS2694]
 FAIL TypeScript/tests/cases/compiler/declarationEmitJsReExportDefault.ts | expected:[TS18003] actual:[TS18003]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts | expected:[TS2304] actual:[]
@@ -394,7 +394,7 @@ FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts | expected:[TS7027] 
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts | expected:[TS1005,TS1011,TS1109,TS1128,TS1136,TS1138] actual:[TS1005]
 FAIL TypeScript/tests/cases/compiler/reactDefaultPropsInferenceSuccess.tsx | expected:[TS2769] actual:[TS2322,TS2741]
 FAIL TypeScript/tests/cases/compiler/reactNamespaceInvalidInput.tsx | expected:[TS5059] actual:[TS2874,TS7026]
-FAIL TypeScript/tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts | expected:[TS2883] actual:[TS2883]
+FAIL TypeScript/tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts | expected:[TS2883] actual:[]
 FAIL TypeScript/tests/cases/compiler/recursiveBaseCheck5.ts | expected:[TS2310,TS2339] actual:[TS2310,TS2339]
 FAIL TypeScript/tests/cases/compiler/recursiveBaseConstructorCreation3.ts | expected:[TS2314,TS2351] actual:[TS2314]
 FAIL TypeScript/tests/cases/compiler/recursiveComplicatedClasses.ts | expected:[TS2300,TS2322,TS2345,TS2454,TS2507,TS2564] actual:[TS2300,TS2322,TS2345,TS2454,TS2564]
@@ -590,9 +590,7 @@ FAIL TypeScript/tests/cases/conformance/controlFlow/definiteAssignmentAssertions
 FAIL TypeScript/tests/cases/conformance/controlFlow/neverReturningFunctions1.ts | expected:[TS7027] actual:[TS2339,TS7027]
 FAIL TypeScript/tests/cases/conformance/declarationEmit/libReferenceNoLib.ts | expected:[TS2318] actual:[]
 FAIL TypeScript/tests/cases/conformance/declarationEmit/libReferenceNoLibBundle.ts | expected:[TS2318,TS5101,TS5107] actual:[]
-FAIL TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFile.ts | expected:[] actual:[TS2883]
-FAIL TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts | expected:[TS2305] actual:[TS2883]
-FAIL TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToUnmapped.ts | expected:[] actual:[TS2883]
+FAIL TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts | expected:[TS2305] actual:[]
 FAIL TypeScript/tests/cases/conformance/decorators/class/method/parameter/decoratorOnClassMethodThisParameter.ts | expected:[TS1433] actual:[TS1433]
 FAIL TypeScript/tests/cases/conformance/decorators/decoratorCallGeneric.ts | expected:[TS1238] actual:[]
 FAIL TypeScript/tests/cases/conformance/decorators/decoratorMetadata-jsdoc.ts | expected:[TS5107] actual:[TS1003,TS1005,TS17019]
@@ -900,13 +898,9 @@ FAIL TypeScript/tests/cases/conformance/node/legacyNodeModulesExportsSpecifierGe
 FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts | expected:[TS1471,TS1479,TS2307,TS2834,TS2835] actual:[TS2835]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesConditionalPackageExports.ts | expected:[TS1479,TS2307,TS2835] actual:[TS1479]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesDeclarationEmitWithPackageExports.ts | expected:[TS1036,TS1479,TS2307,TS2835] actual:[TS1036,TS1479]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsBlocksSpecifierResolution.ts | expected:[TS2307] actual:[TS2307,TS2883]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsBlocksTypesVersions.ts | expected:[TS18003] actual:[TS18003]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsDoubleAsterisk.ts | expected:[TS18003] actual:[TS18003]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSourceTs.ts | expected:[TS2307,TS2835] actual:[TS2307,TS2883]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationConditions.ts | expected:[TS2307] actual:[TS2307,TS2883]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationDirectory.ts | expected:[TS2307] actual:[TS2307,TS2883]
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationPattern.ts | expected:[TS2307] actual:[TS2307,TS2883]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmit1.ts | expected:[TS2305,TS2823] actual:[TS2305,TS2459,TS2823]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmit2.ts | expected:[TS2305,TS2823] actual:[TS2305,TS2459,TS2823]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmitErrors.ts | expected:[TS1453,TS2305,TS2823] actual:[TS2459,TS2823]
@@ -7890,6 +7884,8 @@ PASS TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarati
 PASS TypeScript/tests/cases/conformance/declarationEmit/typeReferenceRelatedFiles.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typeofImportTypeOnlyExport.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.ambient.ts
+PASS TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFile.ts
+PASS TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToUnmapped.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor1.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor2.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor3.ts
@@ -10499,6 +10495,10 @@ PASS TypeScript/tests/cases/conformance/node/nodeModulesCjsFormatFileAlwaysHasDe
 PASS TypeScript/tests/cases/conformance/node/nodeModulesDeclarationEmitDynamicImportWithPackageExports.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesDynamicImport.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesExportAssignments.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesExportsBlocksSpecifierResolution.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationConditions.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationDirectory.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationPattern.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesForbidenSyntax.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesGeneratedNameCollisions.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesImportAssertions.ts
