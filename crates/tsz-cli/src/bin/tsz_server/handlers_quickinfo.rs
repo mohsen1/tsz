@@ -558,7 +558,9 @@ impl Server {
             }
         }
 
-        let instance_type = if !generic_params.is_empty() {
+        let instance_type = if !resolved_type_args.is_empty() {
+            format!("{base_name}<{}>", resolved_type_args.join(", "))
+        } else if !generic_params.is_empty() {
             let mut args = resolved_type_args.clone();
             while args.len() < generic_params.len() {
                 args.push("unknown".to_string());
