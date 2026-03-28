@@ -382,7 +382,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// Scans other files' ASTs directly because `all_binders` stores merged
     /// global augmentations (identical for every file), not per-file data.
-    #[allow(dead_code)]
     pub(super) fn global_scope_conflict_declarations_for_current_file(
         &self,
         name: &str,
@@ -425,7 +424,7 @@ impl<'a> CheckerState<'a> {
                             flags,
                             false,
                             true,
-                            DuplicateDeclarationOrigin::SymbolDeclaration,
+                            DuplicateDeclarationOrigin::GlobalScopeConflict,
                         ));
                     }
                     continue;
@@ -463,7 +462,6 @@ impl<'a> CheckerState<'a> {
     /// Scan a `declare global { ... }` block body for variable declarations
     /// with the given name. Uses `get_variable` for `VariableStatement` access
     /// and `get_variable_declaration` for individual declarations.
-    #[allow(dead_code)]
     fn scan_global_block_for_variable(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
@@ -525,7 +523,7 @@ impl<'a> CheckerState<'a> {
                             flags,
                             false,
                             false,
-                            DuplicateDeclarationOrigin::SymbolDeclaration,
+                            DuplicateDeclarationOrigin::GlobalScopeConflict,
                         ));
                     }
                 }

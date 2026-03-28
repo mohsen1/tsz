@@ -21,6 +21,8 @@ pub(super) type OuterDeclResult = Option<(tsz_binder::SymbolId, Vec<(NodeIndex, 
 pub(super) enum DuplicateDeclarationOrigin {
     SymbolDeclaration,
     TargetedModuleAugmentation,
+    /// Remote declaration from a cross-file UMD global / `declare global` conflict.
+    GlobalScopeConflict,
 }
 
 impl<'a> CheckerState<'a> {
@@ -97,6 +99,8 @@ impl<'a> CheckerState<'a> {
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
             let script_scope_declarations =
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations =
+                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -112,6 +116,7 @@ impl<'a> CheckerState<'a> {
                 if !has_cross_file
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
+                    && global_scope_declarations.is_empty()
                 {
                     continue;
                 }
@@ -155,7 +160,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !module_augmentation_declarations.is_empty() || !script_scope_declarations.is_empty()
+            if !module_augmentation_declarations.is_empty()
+                || !script_scope_declarations.is_empty()
+                || !global_scope_declarations.is_empty()
             {
                 has_remote = true;
             }
@@ -213,6 +220,8 @@ impl<'a> CheckerState<'a> {
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
             let script_scope_declarations =
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations =
+                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
 
             if emit_ts6200
                 && cross_file_conflicts
@@ -234,6 +243,7 @@ impl<'a> CheckerState<'a> {
                 if !has_cross_file
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
+                    && global_scope_declarations.is_empty()
                 {
                     continue;
                 }
@@ -324,6 +334,7 @@ impl<'a> CheckerState<'a> {
                 declarations.extend(script_scope_declarations);
             }
             declarations.extend(module_augmentation_declarations);
+            declarations.extend(global_scope_declarations);
 
             if declarations.len() <= 1 {
                 continue;
@@ -925,6 +936,51 @@ impl<'a> CheckerState<'a> {
                         has_umd_global_value_conflict = true;
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
+                        continue;
+                    }
+
+                    // Cross-file UMD global value conflict: one declaration is local
+                    // and the other is a remote `export as namespace X` or
+                    // `declare global { const X }` found by
+                    // `global_scope_conflict_declarations_for_current_file`.
+                    //
+                    // Only triggers when one side is a namespace export and the
+                    // other is a block-scoped global augmentation value. Two
+                    // namespace exports from different files do NOT conflict
+                    // (first one wins — see umdGlobalConflict.ts).
+                    let is_cross_file_umd = (decl_is_local != other_is_local)
+                        && (decl_origin == DuplicateDeclarationOrigin::GlobalScopeConflict
+                            || other_origin == DuplicateDeclarationOrigin::GlobalScopeConflict);
+                    if is_cross_file_umd {
+                        let (local_idx, local_flags, remote_flags) = if decl_is_local {
+                            (decl_idx, decl_flags, other_flags)
+                        } else {
+                            (other_idx, other_flags, decl_flags)
+                        };
+                        let local_is_ns_export =
+                            self.is_namespace_export_declaration_name_in_current_file(local_idx);
+                        let local_is_global_aug = self
+                            .is_block_scoped_global_augmentation_value_decl_in_current_file(
+                                local_idx,
+                                local_flags,
+                            );
+                        // Remote is a global augmentation value (BLOCK_SCOPED_VARIABLE)
+                        // or a namespace export (ALIAS). Conflict only when the two
+                        // sides are of different types.
+                        let remote_is_block_scoped =
+                            (remote_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+                        let remote_is_ns_alias = (remote_flags & symbol_flags::ALIAS) != 0;
+                        let is_actual_conflict = (local_is_ns_export && remote_is_block_scoped)
+                            || (local_is_global_aug && remote_is_ns_alias);
+                        if is_actual_conflict {
+                            has_umd_global_value_conflict = true;
+                            if decl_is_local {
+                                conflicts.insert(decl_idx);
+                            }
+                            if other_is_local {
+                                conflicts.insert(other_idx);
+                            }
+                        }
                         continue;
                     }
 
