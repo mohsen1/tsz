@@ -20825,3 +20825,33 @@ model.cache;
         "Expected module augmentation member on namespace import to resolve in type position, got: {diagnostics:#?}"
     );
 }
+
+/// TS2719: when two different types share the same display name (e.g. a type
+/// parameter `T` shadowing an interface `T`), the checker should emit "Two
+/// different types with this name exist, but they are unrelated" instead of
+/// the generic TS2322 "Type 'T' is not assignable to type 'T'."
+#[test]
+fn test_ts2719_incompatible_assignment_of_identically_named_types() {
+    let code = r#"
+interface T { }
+declare const a: T;
+class Foo<T> {
+    x: T;
+    fn() {
+        this.x = a;
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        code,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2719),
+        "Expected TS2719 for identically named but different types, got: {:?}",
+        diagnostics
+    );
+}

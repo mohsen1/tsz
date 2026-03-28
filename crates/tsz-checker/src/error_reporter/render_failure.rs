@@ -1611,6 +1611,23 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2719: when source and target display identically but are different
+        // types, emit the more specific "Two different types with this name
+        // exist, but they are unrelated" message instead of generic TS2322.
+        if source_str == target_str {
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+                &[&source_str, &target_str],
+            );
+            return Diagnostic::error(
+                file_name,
+                start,
+                length,
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+            );
+        }
+
         Diagnostic::error(
             file_name,
             start,

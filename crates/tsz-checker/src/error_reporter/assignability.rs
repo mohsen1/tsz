@@ -568,17 +568,29 @@ impl<'a> CheckerState<'a> {
             let src_str =
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
             let tgt_str = self.format_assignability_type_for_message(target, source);
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&src_str, &tgt_str],
-            );
+
+            // TS2719: when both types display identically but are different,
+            // emit "Two different types with this name exist" instead of TS2322.
+            let (message, code) = if src_str == tgt_str {
+                (
+                    format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+                        &[&src_str, &tgt_str],
+                    ),
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+                )
+            } else {
+                (
+                    format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    ),
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            };
             self.emit_render_request_at_anchor(
                 anchor,
-                DiagnosticRenderRequest::simple(
-                    DiagnosticAnchorKind::Exact,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    message,
-                ),
+                DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
             );
         }
     }
