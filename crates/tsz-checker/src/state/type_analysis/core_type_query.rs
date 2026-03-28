@@ -612,6 +612,18 @@ impl<'a> CheckerState<'a> {
         ) {
             let mut props = Vec::new();
             for (name, &export_sym_id) in exports_table.iter() {
+                if name == "export="
+                    || self.is_type_only_export_symbol(export_sym_id)
+                    || self.is_export_from_type_only_wildcard(module_name, name)
+                    || self.export_symbol_has_no_value(export_sym_id)
+                    || self.is_export_type_only_from_file(
+                        module_name,
+                        name,
+                        Some(self.ctx.current_file_idx),
+                    )
+                {
+                    continue;
+                }
                 if let Some(target_idx) = target_idx {
                     self.ctx.register_symbol_file_target(export_sym_id, target_idx);
                 }
