@@ -6149,6 +6149,53 @@ declare global {
 }
 
 #[test]
+fn test_umd_global_property_access_in_commonjs_module_emits_ts2686() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "a.js",
+                r#"
+const other = require("./other");
+/** @type {Puppeteer.Keyboard} */
+var ppk;
+Puppeteer.connect;
+"#,
+            ),
+            (
+                "puppet.d.ts",
+                r#"
+export as namespace Puppeteer;
+export interface Keyboard {
+    key: string;
+}
+export function connect(name: string): void;
+"#,
+            ),
+            (
+                "other.d.ts",
+                r#"
+declare function f(): string;
+export = f;
+"#,
+            ),
+        ],
+        "a.js",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2686),
+        "Expected TS2686 for module-side property access through a UMD global. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_uninstantiated_namespace_shadowing_symbol_uses_global_value_for_property_access() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(

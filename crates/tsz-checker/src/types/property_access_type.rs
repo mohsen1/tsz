@@ -1353,6 +1353,29 @@ impl<'a> CheckerState<'a> {
                 && let Some(member_type) =
                     self.resolve_umd_global_member_by_name(&obj_ident.escaped_text, property_name)
             {
+                if let Some(umd_sym_id) =
+                    self.resolve_umd_global_symbol_by_name(&obj_ident.escaped_text)
+                {
+                    let is_pure_umd_alias = self
+                        .get_cross_file_symbol(umd_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(umd_sym_id))
+                        .is_some_and(|symbol| {
+                            symbol.is_umd_export
+                                && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0
+                        });
+                    if is_pure_umd_alias
+                        && self.current_file_is_module_for_umd_global_access()
+                        && !self.ctx.compiler_options.allow_umd_global_access
+                        && !self.has_non_umd_global_value(&obj_ident.escaped_text)
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            access.expression,
+                            diagnostic_codes::REFERS_TO_A_UMD_GLOBAL_BUT_THE_CURRENT_FILE_IS_A_MODULE_CONSIDER_ADDING_AN_IMPOR,
+                            &[&obj_ident.escaped_text],
+                        );
+                    }
+                }
                 return self.finalize_property_access_result(
                     idx,
                     member_type,

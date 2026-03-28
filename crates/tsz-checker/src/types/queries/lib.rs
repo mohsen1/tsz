@@ -1679,17 +1679,91 @@ impl<'a> CheckerState<'a> {
         exports
     }
 
-    pub(crate) fn resolve_umd_global_member_by_name(
+    pub(crate) fn resolve_umd_global_symbol_by_name(
         &mut self,
         namespace_name: &str,
-        property_name: &str,
-    ) -> Option<TypeId> {
+    ) -> Option<tsz_binder::SymbolId> {
         if let Some(sym_id) = self.ctx.binder.file_locals.get(namespace_name) {
-            let is_umd_export = self
+            let local_symbol = self
                 .get_cross_file_symbol(sym_id)
-                .is_some_and(|symbol| symbol.is_umd_export);
-            if is_umd_export {
-                return self.resolve_namespace_value_member_from_symbol(sym_id, property_name);
+                .or_else(|| self.ctx.binder.get_symbol(sym_id));
+            if local_symbol.is_some_and(|symbol| symbol.is_umd_export) {
+                return Some(sym_id);
+            }
+            let current_file_binding_shadows_umd = local_symbol.is_some_and(|symbol| {
+                let shadowing_flags = symbol_flags::ALIAS
+                    | symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | symbol_flags::BLOCK_SCOPED_VARIABLE
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::ENUM;
+
+                if (symbol.flags & shadowing_flags) == 0 {
+                    return false;
+                }
+
+                symbol.declarations.iter().any(|&decl_idx| {
+                    let mut saw_namespace_declaration = false;
+                    let mut saw_instantiated_namespace = false;
+                    let mut current = Some(decl_idx);
+                    while let Some(node_idx) = current {
+                        let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
+                            break;
+                        };
+                        if ext.parent.is_none() {
+                            break;
+                        }
+                        let parent_idx = ext.parent;
+                        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                            break;
+                        };
+                        if parent_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                        {
+                            saw_namespace_declaration = true;
+                            if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                                let is_global_augmentation =
+                                    (u32::from(parent_node.flags)
+                                        & tsz_parser::parser::node_flags::GLOBAL_AUGMENTATION)
+                                        != 0
+                                        || self
+                                            .ctx
+                                            .arena
+                                            .get(module.name)
+                                            .and_then(|name_node| {
+                                                if let Some(ident) =
+                                                    self.ctx.arena.get_identifier(name_node)
+                                                {
+                                                    return Some(
+                                                        ident.escaped_text.as_str() == "global",
+                                                    );
+                                                }
+                                                if name_node.kind
+                                                    == tsz_scanner::SyntaxKind::GlobalKeyword
+                                                        as u16
+                                                {
+                                                    return Some(true);
+                                                }
+                                                None
+                                            })
+                                            .unwrap_or(false);
+                                if is_global_augmentation {
+                                    return false;
+                                }
+                            }
+                            saw_instantiated_namespace |=
+                                self.is_namespace_declaration_instantiated(parent_idx);
+                        }
+                        current = Some(parent_idx);
+                    }
+                    if saw_namespace_declaration {
+                        saw_instantiated_namespace
+                    } else {
+                        true
+                    }
+                })
+            });
+            if current_file_binding_shadows_umd {
+                return None;
             }
         }
 
@@ -1701,8 +1775,7 @@ impl<'a> CheckerState<'a> {
                         .get_cross_file_symbol(sym_id)
                         .is_some_and(|symbol| symbol.is_umd_export);
                     if is_umd_export {
-                        return self
-                            .resolve_namespace_value_member_from_symbol(sym_id, property_name);
+                        return Some(sym_id);
                     }
                 }
             }
@@ -1711,7 +1784,16 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn resolve_namespace_value_member_from_symbol(
+    pub(crate) fn resolve_umd_global_member_by_name(
+        &mut self,
+        namespace_name: &str,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let sym_id = self.resolve_umd_global_symbol_by_name(namespace_name)?;
+        self.resolve_namespace_value_member_from_symbol(sym_id, property_name)
+    }
+
+    pub(crate) fn resolve_namespace_value_member_from_symbol(
         &mut self,
         sym_id: SymbolId,
         property_name: &str,
