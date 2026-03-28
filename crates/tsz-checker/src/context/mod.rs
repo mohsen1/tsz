@@ -676,6 +676,11 @@ pub struct CheckerContext<'a> {
     /// Preserve this across cache clears so later context-free rechecks do not
     /// emit false TS7006/TS7031 diagnostics.
     pub implicit_any_contextual_closures: FxHashSet<NodeIndex>,
+    /// Closures that were processed during type env building without contextual types.
+    /// These closures deferred TS7006 checking (because `is_checking_statements` was false).
+    /// After `is_checking_statements` is set to true, these closures need a re-check
+    /// because their cached types prevent `get_type_of_function` from re-running.
+    pub deferred_implicit_any_closures: Vec<NodeIndex>,
 
     /// Set of class declaration nodes currently being checked.
     /// Used to prevent infinite recursion in `check_class_declaration` when

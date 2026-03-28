@@ -1172,6 +1172,19 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.implicit_any_checked_closures.insert(idx);
         }
+        // Track closures that deferred TS7006 during type env building.
+        // These closures were processed before is_checking_statements was set, without
+        // a contextual type, so skip_implicit_any was true. Their cached types may
+        // prevent re-processing during statement checking, so we record them for an
+        // explicit re-check after is_checking_statements is set.
+        if is_closure
+            && !closure_already_checked
+            && !self.ctx.is_checking_statements
+            && ctx_helper.is_none()
+            && self.ctx.no_implicit_any()
+        {
+            self.ctx.deferred_implicit_any_closures.push(idx);
+        }
 
         // Check for parameter properties (error 2369)
         // Parameter properties are only allowed in constructors, not in regular functions

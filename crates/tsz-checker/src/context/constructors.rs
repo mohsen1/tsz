@@ -162,6 +162,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             implicit_any_checked_closures: FxHashSet::default(),
             implicit_any_contextual_closures: FxHashSet::default(),
+            deferred_implicit_any_closures: Vec::new(),
             checking_classes: FxHashSet::default(),
             checked_classes: FxHashSet::default(),
             checking_computed_property_name: None,

@@ -168,6 +168,13 @@ impl<'a> CheckerState<'a> {
             self.ctx.is_unreachable = prev_unreachable;
             self.ctx.has_reported_unreachable = prev_reported;
 
+            // Re-check closures that deferred TS7006 during type env building.
+            // These closures had skip_implicit_any=true because is_checking_statements
+            // was false. Now that all statements have been checked (giving closures a
+            // chance to be re-processed with contextual types), any remaining unchecked
+            // closures truly have no contextual type and need TS7006 emitted.
+            self.recheck_deferred_implicit_any_closures();
+
             self.check_isolated_declarations(&sf.statements.nodes);
             self.check_isolated_decl_class_expressions(&sf.statements.nodes);
             self.check_isolated_decl_augmentations(&sf.statements.nodes);
