@@ -732,7 +732,31 @@ impl<'a> CheckerState<'a> {
                     type_id,
                 ) {
                     let sym_id = tsz_binder::SymbolId(symbol_ref.0);
-                    self.get_type_of_symbol(sym_id)
+                    // For merged TYPE_ALIAS + VARIABLE symbols (e.g.,
+                    // `type Input = Static<typeof Input>` + `const Input = ...`),
+                    // get_type_of_symbol may return the type alias's circular
+                    // Lazy(DefId) instead of the value's concrete type. Since
+                    // TypeQuery always refers to the value side, resolve directly
+                    // from the value declaration to avoid TS2344 false positives.
+                    let flags = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if (flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                        && (flags & tsz_binder::symbol_flags::VARIABLE) != 0
+                    {
+                        let value_decl = self
+                            .ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .map(|s| s.value_declaration)
+                            .unwrap_or(tsz_parser::NodeIndex::NONE);
+                        self.type_of_value_declaration_for_symbol(sym_id, value_decl)
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    }
                 } else {
                     self.evaluate_type_with_env(type_id)
                 }

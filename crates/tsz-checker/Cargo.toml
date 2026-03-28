@@ -203,5 +203,9 @@ path = "tests/ts2403_js_cross_file_tests.rs"
 name = "js_container_merge_ts2339_tests"
 path = "tests/js_container_merge_ts2339_tests.rs"
 
+[[test]]
+name = "ts2344_typeof_merged_tests"
+path = "tests/ts2344_typeof_merged_tests.rs"
+
 [lints]
 workspace = true
