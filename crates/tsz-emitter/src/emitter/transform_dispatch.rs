@@ -916,6 +916,33 @@ impl<'a> Printer<'a> {
         class_node: NodeIndex,
         function_name: Option<&str>,
     ) {
+        if self.ctx.target_es5
+            && let Some(class) = self.arena.get_class(node)
+        {
+            let binding_name = self.get_identifier_text_opt(class.name).or_else(|| {
+                function_name
+                    .map(ToOwned::to_owned)
+                    .or_else(|| self.anonymous_default_export_name.clone())
+            });
+            if let Some(binding_name) = binding_name {
+                let display_name = if class.name.is_none() && binding_name == "default_1" {
+                    "default".to_string()
+                } else {
+                    binding_name.clone()
+                };
+                if let Some(output) = self.render_simple_tc39_decorated_class_es5(
+                    node,
+                    class_node,
+                    &binding_name,
+                    &display_name,
+                ) {
+                    self.write(&output);
+                    self.skip_comments_for_erased_node(node);
+                    return;
+                }
+            }
+        }
+
         use crate::transforms::es_decorators::TC39DecoratorEmitter;
 
         let mut emitter = TC39DecoratorEmitter::new(self.arena);
