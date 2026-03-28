@@ -1461,17 +1461,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let optional = param_data.question_token || param_data.initializer.is_some();
                 let rest = param_data.dot_dot_dot_token;
 
-                // Store the declared base type in the signature, NOT `type | undefined`.
-                // The `optional: true` flag conveys optionality.  Adding `| undefined`
-                // to the stored type is redundant and prevents union subtype reduction
-                // (e.g., `(x: string | undefined) => void | (x?: string) => void`
-                // should reduce, but both params end up with the same TypeId when we
-                // eagerly widen here, blocking the shallow subtype guard).
-                // This matches tsc's behavior where the signature stores the declared
-                // type and `| undefined` is added at the use site.
+                // For `?`-optional params, tsc includes `| undefined` in the
+                // signature type unconditionally (for display). Default-value
+                // params keep the base type.
+                let sig_type_id = if param_data.question_token
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::UNKNOWN
+                    && type_id != TypeId::ERROR
+                    && !tsz_solver::type_contains_undefined(self.ctx.types, type_id)
+                {
+                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
+                } else {
+                    type_id
+                };
                 params.push(ParamInfo {
                     name: Some(self.ctx.types.intern_string(&name)),
-                    type_id,
+                    type_id: sig_type_id,
                     optional,
                     rest,
                 });
