@@ -1675,7 +1675,11 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         // TS2362/TS2363: Left/right hand side must be number/bigint/enum
-                        // Emit separate errors for left and right operands
+                        // Emit separate errors for left and right operands.
+                        // tsc checks both operands independently — when one is boxed
+                        // and the other is also invalid (e.g., boolean ** Number), both
+                        // errors must be emitted.
+                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
                         if left_is_boxed && let Some(node) = self.ctx.arena.get(left_idx) {
                             let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                             self.ctx.error(
@@ -1684,6 +1688,18 @@ impl<'a> CheckerState<'a> {
                                 message,
                                 2362, // TS2362
                             );
+                        } else if !evaluator.is_arithmetic_operand(left_type)
+                            && !self.is_enum_type(left_type)
+                        {
+                            if let Some(node) = self.ctx.arena.get(left_idx) {
+                                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2362, // TS2362
+                                );
+                            }
                         }
                         if right_is_boxed && let Some(node) = self.ctx.arena.get(right_idx) {
                             let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -1693,6 +1709,18 @@ impl<'a> CheckerState<'a> {
                                 message,
                                 2363, // TS2363
                             );
+                        } else if !evaluator.is_arithmetic_operand(right_type)
+                            && !self.is_enum_type(right_type)
+                        {
+                            if let Some(node) = self.ctx.arena.get(right_idx) {
+                                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2363, // TS2363
+                                );
+                            }
                         }
                     }
                     type_stack.push(TypeId::UNKNOWN);
