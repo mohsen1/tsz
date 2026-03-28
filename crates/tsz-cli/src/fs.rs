@@ -173,6 +173,13 @@ pub fn default_include_patterns(allow_js: bool, resolve_json_module: bool) -> Ve
     patterns
 }
 
+/// The display string for default include patterns, matching tsc's output.
+/// tsc shows `["**/*"]` as the default include in TS18003 messages, even though
+/// internally it filters by file extension.
+pub fn default_include_display() -> Vec<String> {
+    vec!["**/*".to_string()]
+}
+
 /// Expand include patterns to match files in directories.
 ///
 /// TypeScript's include patterns work as follows:

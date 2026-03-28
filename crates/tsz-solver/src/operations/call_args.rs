@@ -193,9 +193,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.function_signature_is_contextually_sensitive(&shape.params)
                     || self.type_uses_inference_placeholders(shape.return_type)
             }
-            // NB: Callable types (class constructor values) fall through to the
-            // wildcard arm — they are pre-existing values, never inline
-            // expressions that need contextual typing.
+            // Callable types represent class constructor values (pre-existing,
+            // never contextually sensitive). Merged with default arm below.
             Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => self
                 .interner
                 .type_list(members)
@@ -1222,9 +1221,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 !shape.type_params.is_empty()
                     || self.function_signature_is_contextually_sensitive(&shape.params)
             }
-            // NB: Callable types fall through to the non-sensitive arm below —
-            // class constructor values are never contextually sensitive.
-
             // Union/Intersection: contextually sensitive if any member is
             TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
@@ -1319,8 +1315,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
             }
 
-            // Non-contextually sensitive types (includes Callable — class
-            // constructor values are never contextually sensitive)
+            // Non-contextually sensitive types (Callable = class constructor values)
             TypeData::Callable(_)
             | TypeData::Intrinsic(_)
             | TypeData::Literal(_)
