@@ -258,30 +258,17 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1147: Import declarations in a namespace cannot reference a module.
-            // tsc behaviour depends on the module kind:
-            // - CommonJS/AMD/System/UMD: tsc emits both TS1147 and TS2307 because
-            //   require() is valid but module references inside namespaces are not.
-            //   Force TS2307 so it is emitted even when the module resolves.
-            // - ESM/None: tsc only emits TS1147 (require() is invalid in ESM,
-            //   and TS1202 is the primary error). Suppress TS2307.
+            // tsc emits both TS1147 and TS2307 when the imported module cannot
+            // be resolved, regardless of the module kind. Force TS2307 so it is
+            // emitted even when the module happens to resolve on disk.
             if inside_namespace {
                 self.error_at_node(
                     import.module_specifier,
                     diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                 );
-                if self.ctx.compiler_options.module.is_commonjs()
-                    || self.ctx.compiler_options.module == ModuleKind::AMD
-                    || self.ctx.compiler_options.module == ModuleKind::System
-                {
-                    force_module_not_found = true;
-                    force_module_not_found_as_2307 = true;
-                } else if let Some(module_name) = require_module_specifier.as_deref() {
-                    // Suppress TS2307 for ESM/None by marking the module as already reported
-                    self.ctx
-                        .modules_with_ts2307_emitted
-                        .insert(module_name.to_string());
-                }
+                force_module_not_found = true;
+                force_module_not_found_as_2307 = true;
             }
 
             // TS2439: Ambient modules cannot use relative imports
