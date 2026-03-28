@@ -501,9 +501,9 @@ pub struct TypeCache {
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).
     pub symbol_types: SymbolTypeCache,
 
-    /// Cached instance types for class symbols (for TYPE position).
+    /// Cached instance types for class symbols (dense flat-vec, O(1) lookup by symbol index).
     /// Distinguishes from `symbol_types` which holds constructor types for VALUE position.
-    pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
+    pub symbol_instance_types: SymbolTypeCache,
 
     /// Cached types for nodes (dense flat-vec, O(1) lookup by node index).
     pub node_types: NodeTypeCache,
@@ -627,9 +627,9 @@ pub struct CheckerContext<'a> {
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).
     pub symbol_types: SymbolTypeCache,
 
-    /// Cached instance types for class symbols (for TYPE position).
+    /// Cached instance types for class symbols (dense flat-vec, O(1) lookup by symbol index).
     /// Distinguishes from `symbol_types` which holds constructor types for VALUE position.
-    pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
+    pub symbol_instance_types: SymbolTypeCache,
 
     /// Cached namespace object types for enums (for `typeof Enum` / `keyof typeof Enum`).
     /// Maps enum `SymbolId` → namespace object `TypeId` with member names as properties.
