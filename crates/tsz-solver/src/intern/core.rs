@@ -1200,6 +1200,25 @@ impl TypeInterner {
         if right == TypeId::NEVER {
             return left;
         }
+        // Fast path: `T | undefined`, `T | null`, `T | void` where T is a union
+        // already containing the nullable member.  This avoids the full
+        // collect → sort → dedup → absorb → reduce pipeline for the extremely
+        // common optional-chain pattern `result_type | undefined`.
+        if right.is_nullable() {
+            if let Some(TypeData::Union(list_id)) = self.lookup(left) {
+                let members = self.type_list(list_id);
+                if members.contains(&right) {
+                    return left;
+                }
+            }
+        } else if left.is_nullable() {
+            if let Some(TypeData::Union(list_id)) = self.lookup(right) {
+                let members = self.type_list(list_id);
+                if members.contains(&left) {
+                    return right;
+                }
+            }
+        }
         self.union_from_iter([left, right])
     }
 
