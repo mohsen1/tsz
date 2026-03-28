@@ -93,12 +93,11 @@ impl<'a> RenameProvider<'a> {
 
         // If direct resolution failed, try resolving as a property access member
         // (e.g., `e.thirdMember` where thirdMember is an enum member).
-        if symbol_id.map_or(true, |id| id.is_none()) {
-            if let Some(member_sym_id) =
+        if symbol_id.is_none_or(|id| id.is_none())
+            && let Some(member_sym_id) =
                 self.resolve_property_access_member(&mut walker, root, node_idx, &display_name)
-            {
-                symbol_id = Some(member_sym_id);
-            }
+        {
+            symbol_id = Some(member_sym_id);
         }
 
         let (kind, kind_modifiers, full_display_name) = self.symbol_info(node_idx, symbol_id);
@@ -458,7 +457,7 @@ impl<'a> RenameProvider<'a> {
     // Property access member resolution
     // -----------------------------------------------------------------------
 
-    /// When the cursor is on the `name` part of a PropertyAccessExpression
+    /// When the cursor is on the `name` part of a `PropertyAccessExpression`
     /// (e.g., `thirdMember` in `e.thirdMember`), try to resolve the expression
     /// part to a symbol, then look up the member name in that symbol's exports
     /// or members table.
@@ -486,16 +485,16 @@ impl<'a> RenameProvider<'a> {
         }
         let expr_sym = self.binder.symbols.get(expr_sym_id)?;
         // Look in exports first (enum members are stored as exports)
-        if let Some(exports) = &expr_sym.exports {
-            if let Some(member_id) = exports.get(member_name) {
-                return Some(member_id);
-            }
+        if let Some(exports) = &expr_sym.exports
+            && let Some(member_id) = exports.get(member_name)
+        {
+            return Some(member_id);
         }
         // Then try members (for class/interface members)
-        if let Some(members) = &expr_sym.members {
-            if let Some(member_id) = members.get(member_name) {
-                return Some(member_id);
-            }
+        if let Some(members) = &expr_sym.members
+            && let Some(member_id) = members.get(member_name)
+        {
+            return Some(member_id);
         }
         None
     }
