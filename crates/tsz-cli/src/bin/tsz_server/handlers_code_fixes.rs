@@ -491,15 +491,19 @@ impl Server {
                 }));
             }
 
-            // addMissingAsync: for error 1308 (await in sync function), append normally
+            // addMissingAsync: for error 1308 (await in sync function) or assignability
+            // errors when the content actually contains 'await' usage.
             if let Some(updated_content) = missing_async_content.as_ref()
                 && !response_actions.iter().any(|a| {
                     a.get("fixId").and_then(serde_json::Value::as_str)
                         == Some(ADD_MISSING_ASYNC_FIX_ID)
                 })
             {
-                let has_1308 = error_codes.contains(&AWAIT_IN_SYNC_FUNCTION_ERROR_CODE);
-                let has_assignability = error_codes.iter().any(|c| *c == 2322 || *c == 2345);
+                let content_has_await = content.contains("await ");
+                let has_1308 =
+                    error_codes.contains(&AWAIT_IN_SYNC_FUNCTION_ERROR_CODE) && content_has_await;
+                let has_assignability =
+                    error_codes.iter().any(|c| *c == 2322 || *c == 2345) && content_has_await;
                 let async_fix = serde_json::json!({
                     "fixName": ADD_MISSING_ASYNC_FIX_ID,
                     "description": "Add async modifier to containing function",
