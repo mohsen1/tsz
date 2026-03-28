@@ -9536,7 +9536,7 @@ function f() {
 }
 
 #[test]
-fn test_import_equals_in_namespace_emits_ts1147_and_ts2307() {
+fn test_import_equals_in_namespace_emits_ts1147_only() {
     let opts = CheckerOptions {
         no_implicit_any: true,
         module: ModuleKind::CommonJS,
@@ -9576,8 +9576,8 @@ namespace myModule {
         "Expected TS1147 for import = require inside namespace. Actual: {diagnostics:#?}"
     );
     assert!(
-        has_error(&diagnostics, 2307),
-        "Expected TS2307 for unresolvable module inside namespace (tsc emits both TS1147 and TS2307). Actual: {diagnostics:#?}"
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 when TS1147 is emitted for namespace import (tsc only emits TS1147). Actual: {diagnostics:#?}"
     );
 }
 

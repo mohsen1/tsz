@@ -258,17 +258,14 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1147: Import declarations in a namespace cannot reference a module.
-            // tsc emits both TS1147 and TS2307 when the imported module cannot
-            // be resolved, regardless of the module kind. Force TS2307 so it is
-            // emitted even when the module happens to resolve on disk.
+            // tsc emits only TS1147 in this case (no TS2307), even when the
+            // imported module cannot be resolved. Skip module resolution entirely.
             if inside_namespace {
                 self.error_at_node(
                     import.module_specifier,
                     diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                 );
-                force_module_not_found = true;
-                force_module_not_found_as_2307 = true;
             }
 
             // TS2439: Ambient modules cannot use relative imports
@@ -705,6 +702,12 @@ impl<'a> CheckerState<'a> {
         // When the import-equals is inside a function body (not just a block),
         // skip module resolution errors. tsc doesn't resolve require() inside functions.
         if in_wrong_context && self.is_inside_function_body(stmt_idx) {
+            return;
+        }
+
+        // When the import is inside a namespace, TS1147 was already emitted above.
+        // tsc does not also emit TS2307, so skip module resolution entirely.
+        if inside_namespace {
             return;
         }
 
