@@ -10,6 +10,7 @@ use crate::types::{
     ConditionalType, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tracing::trace;
 use tsz_common::interner::Atom;
 
@@ -715,7 +716,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ERROR;
         }
 
-        let mut results: Vec<TypeId> = Vec::with_capacity(members.len());
+        let mut results: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(members.len());
 
         for &member in members {
             // Check if depth was exceeded during previous iterations
@@ -757,7 +758,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Combine results into a union
-        self.interner().union(results)
+        self.interner().union_from_slice(&results)
     }
 
     /// Handle array extends pattern: T extends (infer U)[] ? ...
@@ -780,7 +781,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::Array(elem)) => Some(elem),
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner().tuple_list(elements);
-                let mut parts = Vec::new();
+                let mut parts: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for element in elements.iter() {
                     if element.rest {
                         let rest_type = self.rest_element_type(element.type_id);
@@ -797,12 +798,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if parts.is_empty() {
                     None
                 } else {
-                    Some(self.interner().union(parts))
+                    Some(self.interner().union_from_slice(&parts))
                 }
             }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
-                let mut parts = Vec::new();
+                let mut parts: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for &member in members.iter() {
                     match self.interner().lookup(member) {
                         Some(TypeData::Array(elem)) => parts.push(elem),
@@ -820,7 +821,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else if parts.len() == 1 {
                     Some(parts[0])
                 } else {
-                    Some(self.interner().union(parts))
+                    Some(self.interner().union_from_slice(&parts))
                 }
             }
             _ => None,
@@ -891,7 +892,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
-                let mut inferred_members = Vec::new();
+                let mut inferred_members: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for &member in members.iter() {
                     let member_type = match self.interner().lookup(member) {
                         Some(TypeData::ReadonlyType(inner)) => inner,
@@ -927,7 +928,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else if inferred_members.len() == 1 {
                     Some(inferred_members[0])
                 } else {
-                    Some(self.interner().union(inferred_members))
+                    Some(self.interner().union_from_slice(&inferred_members))
                 }
             }
             _ => None,
@@ -966,7 +967,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         extends_shape_id: ObjectShapeId,
     ) -> Option<TypeId> {
         let extends_shape = self.interner().object_shape(extends_shape_id);
-        let mut infer_props = Vec::new();
+        let mut infer_props: SmallVec<[(Atom, TypeParamInfo, bool); 4]> = SmallVec::new();
         let mut infer_nested = None;
 
         for prop in &extends_shape.properties {
@@ -1190,7 +1191,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
-                let mut inferred_members = Vec::new();
+                let mut inferred_members: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for &member in members.iter() {
                     let member_unwrapped = match self.interner().lookup(member) {
                         Some(TypeData::ReadonlyType(inner)) => inner,
@@ -1208,7 +1209,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else if inferred_members.len() == 1 {
                     Some(inferred_members[0])
                 } else {
-                    Some(self.interner().union(inferred_members))
+                    Some(self.interner().union_from_slice(&inferred_members))
                 }
             }
             _ => None,
@@ -1262,7 +1263,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
-                let mut inferred_members = Vec::new();
+                let mut inferred_members: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for &member in members.iter() {
                     let member_unwrapped = match self.interner().lookup(member) {
                         Some(TypeData::ReadonlyType(inner)) => inner,
@@ -1304,7 +1305,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else if inferred_members.len() == 1 {
                     Some(inferred_members[0])
                 } else {
-                    Some(self.interner().union(inferred_members))
+                    Some(self.interner().union_from_slice(&inferred_members))
                 }
             }
             _ => None,
