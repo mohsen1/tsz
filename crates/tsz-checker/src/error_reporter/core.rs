@@ -1366,8 +1366,24 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            // tsc displays the widened type for object literal properties in
-            // assignability errors — e.g. `{ 0: string }` not `{ 0: "1" }`.
+            // tsc displays the FRESH (literal) type for object literal properties
+            // in assignability errors — e.g. `{ tag: "D" }` not `{ tag: string }`.
+            // Try to format the value directly from the AST literal first.
+            if let Some(literal_display) = self.literal_expression_display(prop.initializer) {
+                parts.push(format!("{display_name}: {literal_display}"));
+                continue;
+            }
+
+            // For nested object literals, recurse
+            if let Some(nested_display) =
+                self.object_literal_source_type_display(prop.initializer, None)
+            {
+                parts.push(format!("{display_name}: {nested_display}"));
+                continue;
+            }
+
+            // Fall back to type system for non-literal expressions.
+            // For function properties, merge parameter types from target shape.
             let value_display_type = property_name
                 .and_then(|name| {
                     let shape = target_shape.as_ref()?;
@@ -1420,8 +1436,8 @@ impl<'a> CheckerState<'a> {
                     Some(merged)
                 })
                 .unwrap_or(value_type);
-            let widened_value_display_type = self
-                .widen_function_like_display_type(self.widen_type_for_display(value_display_type));
+            let widened_value_display_type =
+                self.widen_function_like_display_type(value_display_type);
             let value_display =
                 self.format_type_for_assignability_message(widened_value_display_type);
             parts.push(format!("{display_name}: {value_display}"));
