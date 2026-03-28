@@ -488,7 +488,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        tsz_solver::type_queries::get_union_members(self.ctx.types, component_type).is_some_and(
+        crate::query_boundaries::common::union_members(self.ctx.types, component_type).is_some_and(
             |members| {
                 members.iter().any(|&member| {
                     tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
@@ -894,7 +894,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         props_type: TypeId,
     ) -> TypeId {
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, props_type)
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, props_type)
         else {
             return props_type;
         };
@@ -1976,7 +1976,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get union members — bail if not a union
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, props_type)
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, props_type)
         else {
             return;
         };

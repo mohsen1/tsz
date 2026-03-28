@@ -14,7 +14,7 @@ fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
         return true;
     }
 
-    tsz_solver::type_queries::get_union_members(db, ty).is_some_and(|members| {
+    crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
         !members.is_empty()
             && members
                 .iter()
@@ -54,7 +54,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keyof_object: TypeId,
     ) -> bool {
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, index_type)
         else {
             return false;
         };
@@ -374,7 +374,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         object_type_for_check: TypeId,
     ) -> bool {
-        tsz_solver::type_queries::get_keyof_type(self.ctx.types, ty).is_some_and(|operand| {
+        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, ty).is_some_and(|operand| {
             let evaluated_operand = self.evaluate_type_with_env(operand);
             same_object_key_space(self.ctx.types, operand, object_type)
                 || same_object_key_space(self.ctx.types, operand, object_type_for_check)
@@ -752,17 +752,17 @@ impl<'a> CheckerState<'a> {
             // (same T), the index is always valid. Check both the raw constraint and
             // the evaluated result for structural equivalence via same_object_key_space.
             if let Some(index_operand) =
-                tsz_solver::type_queries::get_keyof_type(self.ctx.types, index_type)
+                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, index_type)
             {
                 if let Some(constraint_operand) =
-                    tsz_solver::type_queries::get_keyof_type(self.ctx.types, mapped_constraint)
+                    crate::query_boundaries::state::checking::keyof_target(self.ctx.types, mapped_constraint)
                     && same_object_key_space(self.ctx.types, index_operand, constraint_operand)
                 {
                     return;
                 }
                 // Also check against the evaluated keyof result
                 if let Some(keyof_operand) =
-                    tsz_solver::type_queries::get_keyof_type(self.ctx.types, keyof)
+                    crate::query_boundaries::state::checking::keyof_target(self.ctx.types, keyof)
                     && same_object_key_space(self.ctx.types, index_operand, keyof_operand)
                 {
                     return;
@@ -1300,7 +1300,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
         {
             if members.len() == 2
                 && members.contains(&TypeId::STRING)

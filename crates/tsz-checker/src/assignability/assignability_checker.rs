@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
                 type_id
             }
         } else if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             let mut changed = false;
             let normalized_members: Vec<_> = members

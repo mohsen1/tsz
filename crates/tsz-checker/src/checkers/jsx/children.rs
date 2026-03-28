@@ -37,7 +37,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, spread_type)
+            crate::query_boundaries::common::union_members(self.ctx.types, spread_type)
         {
             let mut element_types = Vec::with_capacity(members.len());
             for &member in &members {
@@ -241,7 +241,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_specific_jsx_union_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
-        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, props_type)?;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, props_type)?;
         let mut callable_candidates = Vec::new();
         let mut other_candidates = Vec::new();
         let mut callable_seen = rustc_hash::FxHashSet::default();
@@ -685,7 +685,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             return members
                 .iter()
@@ -719,7 +719,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Union: multiple JSX children are allowed if any branch accepts them.
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             let members_vec: Vec<TypeId> = members.to_vec();
             if members_vec
@@ -765,7 +765,7 @@ impl<'a> CheckerState<'a> {
 
         // Union: a single JSX child is only invalid when every branch requires
         // the body-children form (for example `A[] | [A, B]`).
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
             let members_vec: Vec<TypeId> = members.to_vec();
             return members_vec

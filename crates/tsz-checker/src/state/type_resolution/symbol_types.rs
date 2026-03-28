@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
                         structural_type = delegate_type;
                     }
                     let preserve_deferred_keyof =
-                        tsz_solver::type_queries::get_keyof_type(self.ctx.types, structural_type)
+                        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, structural_type)
                             .is_some();
                     let structural_type = if structural_type != TypeId::ERROR
                         && structural_type != TypeId::UNKNOWN

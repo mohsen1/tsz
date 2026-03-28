@@ -227,7 +227,7 @@ impl<'a> CheckerState<'a> {
         for candidate in [target_type, resolved, evaluated] {
             // Check union members individually
             if let Some(members) =
-                tsz_solver::type_queries::get_union_members(self.ctx.types, candidate)
+                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
             {
                 for member in members {
                     if let Some(shape) =
@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::widen_type(self.ctx.types, arg_type)
         };
 
-        if tsz_solver::type_queries::is_mapped_type(self.ctx.types, display_type) {
+        if crate::query_boundaries::common::is_mapped_type(self.ctx.types, display_type) {
             let evaluated_display = self.evaluate_type_for_assignability(display_type);
             if tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated_display)
                 .is_some()
@@ -1080,7 +1080,7 @@ impl<'a> CheckerState<'a> {
         let Some(raw_param) = self.raw_param_for_argument_index(sig, arg_pos) else {
             return;
         };
-        let Some(type_param) = tsz_solver::type_param_info(self.ctx.types, raw_param.type_id)
+        let Some(type_param) = crate::query_boundaries::common::type_param_info(self.ctx.types, raw_param.type_id)
         else {
             return;
         };
