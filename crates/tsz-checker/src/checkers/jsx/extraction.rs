@@ -122,13 +122,18 @@ impl<'a> CheckerState<'a> {
                 &substitution,
             )
         };
-        let has_managed_props_metadata = matches!(
-            self.resolve_property_access_with_env(component_type, "defaultProps"),
-            crate::query_boundaries::common::PropertyAccessResult::Success { .. }
-        ) || matches!(
-            self.resolve_property_access_with_env(component_type, "propTypes"),
-            crate::query_boundaries::common::PropertyAccessResult::Success { .. }
-        );
+        let default_props_type =
+            match self.resolve_property_access_with_env(component_type, "defaultProps") {
+                crate::query_boundaries::common::PropertyAccessResult::Success {
+                    type_id, ..
+                } => Some(type_id),
+                _ => None,
+            };
+        let has_managed_props_metadata = default_props_type.is_some()
+            || matches!(
+                self.resolve_property_access_with_env(component_type, "propTypes"),
+                crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+            );
         if !has_managed_props_metadata
             && (tsz_solver::contains_type_parameters(self.ctx.types, props_type)
                 || crate::computation::call_inference::should_preserve_contextual_application_shape(
@@ -151,7 +156,15 @@ impl<'a> CheckerState<'a> {
         {
             instantiated
         } else {
-            self.evaluate_type_with_env(instantiated)
+            let evaluated = self.evaluate_type_with_env(instantiated);
+            if evaluated == TypeId::ANY
+                && let Some(default_props_type) = default_props_type
+                && let Some(fallback) =
+                    self.try_apply_jsx_default_props_fallback(props_type, default_props_type)
+            {
+                return fallback;
+            }
+            evaluated
         }
     }
 
@@ -792,7 +805,7 @@ impl<'a> CheckerState<'a> {
             }
         });
 
-        let instance_type = if let Some(sig) = inferred_sig.as_ref() {
+        let raw_instance_type = if let Some(sig) = inferred_sig.as_ref() {
             if !sig.type_params.is_empty() {
                 return None;
             }
@@ -855,7 +868,7 @@ impl<'a> CheckerState<'a> {
                     })
                 }
             });
-        if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
+        if raw_instance_type == TypeId::ANY || raw_instance_type == TypeId::ERROR {
             return None;
         }
 
@@ -865,9 +878,9 @@ impl<'a> CheckerState<'a> {
         // with unresolved type parameters (outer generic context).
         let instance_type = if tsz_solver::type_queries::needs_evaluation_for_merge(
             self.ctx.types,
-            instance_type,
+            raw_instance_type,
         ) {
-            let evaluated = self.evaluate_type_with_env(instance_type);
+            let evaluated = self.evaluate_type_with_env(raw_instance_type);
             // After evaluation, if the type still contains type parameters,
             // we can't resolve it further — bail out.
             if tsz_solver::contains_type_parameters(self.ctx.types, evaluated) {
@@ -875,7 +888,7 @@ impl<'a> CheckerState<'a> {
             }
             evaluated
         } else {
-            instance_type
+            raw_instance_type
         };
 
         // Look up ElementAttributesProperty to know which instance property is props
@@ -890,7 +903,12 @@ impl<'a> CheckerState<'a> {
                 // surface before giving up on attribute checking.
                 let evaluated_instance = self.evaluate_type_with_env(instance_type);
                 use crate::query_boundaries::common::PropertyAccessResult;
-                match self.resolve_property_access_with_env(evaluated_instance, "props") {
+                let props_result =
+                    match self.resolve_property_access_with_env(raw_instance_type, "props") {
+                        success @ PropertyAccessResult::Success { .. } => success,
+                        _ => self.resolve_property_access_with_env(evaluated_instance, "props"),
+                    };
+                match props_result {
                     PropertyAccessResult::Success { type_id, .. } => {
                         Some(self.strip_implicit_jsx_children_from_props_fallback(type_id))
                     }
@@ -928,7 +946,12 @@ impl<'a> CheckerState<'a> {
                 // ElementAttributesProperty has a member -> access that property on instance
                 let evaluated_instance = self.evaluate_type_with_env(instance_type);
                 use crate::query_boundaries::common::PropertyAccessResult;
-                match self.resolve_property_access_with_env(evaluated_instance, name) {
+                let props_result =
+                    match self.resolve_property_access_with_env(raw_instance_type, name) {
+                        success @ PropertyAccessResult::Success { .. } => success,
+                        _ => self.resolve_property_access_with_env(evaluated_instance, name),
+                    };
+                match props_result {
                     PropertyAccessResult::Success { type_id, .. } => Some(type_id),
                     // Instance type doesn't have the ElementAttributesProperty member.
                     // This can happen when class inheritance doesn't include inherited
@@ -1035,6 +1058,50 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::Success { .. }
             )
         })
+    }
+
+    fn try_apply_jsx_default_props_fallback(
+        &mut self,
+        props_type: TypeId,
+        default_props_type: TypeId,
+    ) -> Option<TypeId> {
+        let props_type = self.normalize_jsx_required_props_target(props_type);
+        let props_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)?;
+        if props_shape.string_index.is_some() || props_shape.number_index.is_some() {
+            return None;
+        }
+
+        let default_props_type = self.evaluate_type_with_env(default_props_type);
+        let default_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, default_props_type)?;
+        if default_shape.properties.is_empty() {
+            return Some(props_type);
+        }
+
+        let defaulted_names: rustc_hash::FxHashSet<_> = default_shape
+            .properties
+            .iter()
+            .map(|prop| prop.name)
+            .collect();
+        let mut changed = false;
+        let properties: Vec<_> = props_shape
+            .properties
+            .iter()
+            .cloned()
+            .map(|mut prop| {
+                if defaulted_names.contains(&prop.name) && !prop.optional {
+                    prop.optional = true;
+                    changed = true;
+                }
+                prop
+            })
+            .collect();
+
+        if !changed {
+            return Some(props_type);
+        }
+
+        Some(self.ctx.types.factory().object(properties))
     }
 
     /// Get the property name from `JSX.ElementAttributesProperty`.
