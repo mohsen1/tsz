@@ -1657,11 +1657,16 @@ impl<'a> CheckerState<'a> {
     /// `name`. This handles cases like `declare global { const React }` where a separate
     /// declaration provides a legitimate global value binding alongside the UMD export.
     pub(crate) fn has_non_umd_global_value(&self, name: &str) -> bool {
+        // VALUE_MODULE alone means "I'm a namespace declaration" — not a real
+        // runtime value.  Exclude it so uninstantiated namespaces (which only
+        // carry VALUE_MODULE) do not suppress TS2708 / TS2686 diagnostics.
+        let real_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+
         // Check lib_contexts (lib files + some user files)
         for lib_ctx in &self.ctx.lib_contexts {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(sym) = lib_ctx.binder.get_symbol(sym_id)
-                && (sym.flags & symbol_flags::VALUE) != 0
+                && (sym.flags & real_value_flags) != 0
                 && !sym.is_umd_export
             {
                 return true;
@@ -1682,7 +1687,7 @@ impl<'a> CheckerState<'a> {
                     .map(|binder| binder.as_ref())
                     .unwrap_or(self.ctx.binder);
                 if let Some(sym) = binder.get_symbol(sym_id)
-                    && (sym.flags & symbol_flags::VALUE) != 0
+                    && (sym.flags & real_value_flags) != 0
                     && !sym.is_umd_export
                 {
                     return true;
@@ -1692,7 +1697,7 @@ impl<'a> CheckerState<'a> {
             for binder in all_binders.iter() {
                 if let Some(sym_id) = binder.file_locals.get(name)
                     && let Some(sym) = binder.get_symbol(sym_id)
-                    && (sym.flags & symbol_flags::VALUE) != 0
+                    && (sym.flags & real_value_flags) != 0
                     && !sym.is_umd_export
                 {
                     return true;
