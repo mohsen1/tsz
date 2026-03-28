@@ -4436,7 +4436,7 @@ fn test_direct_binary_op_evaluator_construction_ceiling() {
 /// These bypass the query boundary layer. Wrappers should be created in
 /// `query_boundaries/` over time. This ceiling must only decrease.
 ///
-/// Current ceiling: 3 occurrences.
+/// Current ceiling: 0 occurrences (all migrated to query_boundaries).
 #[test]
 fn test_direct_property_access_evaluator_construction_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -4474,12 +4474,11 @@ fn test_direct_property_access_evaluator_construction_ceiling() {
         }
     }
 
-    const CEILING: usize = 3;
     assert!(
-        count <= CEILING,
-        "PropertyAccessEvaluator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
-         Create query_boundaries wrappers instead of adding new direct usages.\n\
-         Locations:\n{}",
+        count == 0,
+        "PropertyAccessEvaluator::new() must not be used outside query_boundaries/. \
+         Use query_boundaries::property_access::resolve_property_access instead. \
+         Found {count} violations:\n{}",
         locations.join("\n")
     );
 }

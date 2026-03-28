@@ -193,16 +193,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.function_signature_is_contextually_sensitive(&shape.params)
                     || self.type_uses_inference_placeholders(shape.return_type)
             }
-            Some(TypeData::Callable(_)) => {
-                // Callable types represent class constructor values (with static
-                // properties, call/construct signatures). These are pre-existing
-                // values (class references), never inline expressions that need
-                // contextual typing. In tsc, isContextSensitive is an AST check:
-                // only inline arrows/functions/object literals are sensitive.
-                // A class reference like `Promise` is never sensitive, even though
-                // its construct signatures have type parameters.
-                false
-            }
+            // NB: Callable types (class constructor values) fall through to the
+            // wildcard arm — they are pre-existing values, never inline
+            // expressions that need contextual typing.
             Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => self
                 .interner
                 .type_list(members)
@@ -1229,12 +1222,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 !shape.type_params.is_empty()
                     || self.function_signature_is_contextually_sensitive(&shape.params)
             }
-            TypeData::Callable(_) => {
-                // Callable types are class constructor values, not inline
-                // expressions. They are never contextually sensitive (see
-                // is_contextually_sensitive_inner above for rationale).
-                false
-            }
+            // NB: Callable types fall through to the non-sensitive arm below —
+            // class constructor values are never contextually sensitive.
 
             // Union/Intersection: contextually sensitive if any member is
             TypeData::Union(members) | TypeData::Intersection(members) => {
@@ -1330,8 +1319,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
             }
 
-            // Non-contextually sensitive types
-            TypeData::Intrinsic(_)
+            // Non-contextually sensitive types (includes Callable — class
+            // constructor values are never contextually sensitive)
+            TypeData::Callable(_)
+            | TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Lazy(_)
             | TypeData::Recursive(_)

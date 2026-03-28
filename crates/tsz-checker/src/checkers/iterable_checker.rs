@@ -516,12 +516,9 @@ impl<'a> CheckerState<'a> {
     /// This extracts `T` by reading the first parameter type of the first
     /// call signature's first parameter.
     fn get_awaited_type_of_promise_like(&mut self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::operations::property::PropertyAccessEvaluator;
+        use crate::query_boundaries::property_access::resolve_property_access;
 
-        let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
-        let then_type = evaluator
-            .resolve_property_access(type_id, "then")
-            .success_type()?;
+        let then_type = resolve_property_access(self.ctx.types, type_id, "then").success_type()?;
 
         // Get call signatures of `then`
         let sigs = call_signatures_for_type(self.ctx.types, then_type)?;
