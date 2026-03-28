@@ -242,7 +242,7 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::PercentEqualsToken as u16
                 || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
         );
-        if is_arithmetic_compound && !is_function_assignment && !emitted_nullish_error {
+        if is_arithmetic_compound && !is_function_assignment {
             // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
             if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 let had_per_operand_error =
