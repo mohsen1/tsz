@@ -157,7 +157,7 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) arena: &'a NodeArena,
     pub(crate) binder: &'a BinderState,
     pub(crate) interner: &'a dyn QueryDatabase,
-    pub(crate) node_types: Option<&'a FxHashMap<u32, TypeId>>,
+    pub(crate) node_types: Option<&'a crate::context::NodeTypeCache>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
     /// Optional cache for flow analysis results to avoid redundant graph traversals
     pub(crate) flow_cache: Option<&'a RefCell<FlowCache>>,
@@ -275,7 +275,7 @@ impl<'a> FlowAnalyzer<'a> {
         arena: &'a NodeArena,
         binder: &'a BinderState,
         interner: &'a dyn QueryDatabase,
-        node_types: &'a FxHashMap<u32, TypeId>,
+        node_types: &'a crate::context::NodeTypeCache,
     ) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
         Self {

@@ -1429,7 +1429,7 @@ impl<'a> CheckerState<'a> {
         // re-checking, the result ends up only in request_node_types. Flow analysis
         // needs node_types to compute assignment-based narrowing (e.g., `d ?? (d = x ?? "x")`).
         if right_raw != TypeId::ERROR && right_raw != TypeId::DELEGATE {
-            self.ctx.node_types.entry(right_idx.0).or_insert(right_raw);
+            self.ctx.node_types.or_insert(right_idx.0, right_raw);
         }
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
