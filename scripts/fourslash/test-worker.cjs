@@ -363,6 +363,20 @@ function patchSessionClient(SessionClient, ts) {
 
     // Prefer native TypeScript LS for code fixes when tsz-server returns
     // incorrect or empty results.
+    // Trust tsz for fix types where it has full AST-based support, since
+    // the native LS may have stale content state through the adapter.
+    const tszTrustedFixNames = new Set(["addMissingNewOperator", "addConvertToUnknownForNonOverlappingTypes"]);
+
+    // Pre-scanned files: on first getCodeFixesAtPosition call per file,
+    // probe TS2339 diagnostics to detect enum member fixes. When tsz has
+    // an enum member fix, it often also emits spurious TS2304/TS7043 that
+    // tsc wouldn't emit. We suppress fixes for those spurious codes.
+    const _enumFixFiles = new Map(); // key: fileName -> true
+    const _prescannedFiles = new Set();
+    // Track positions where a trusted fix was returned, to suppress
+    // spurious fixes from subsequent calls at the same span.
+    const _trustedFixPositions = new Set(); // "fileName:start:end"
+
     const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
     proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
         const oldPreferences = this.preferences;
@@ -370,6 +384,31 @@ function patchSessionClient(SessionClient, ts) {
 
         // Ensure formatOptions is never undefined - native LS crashes without it
         const safeFormatOptions = formatOptions || ts.getDefaultFormatCodeSettings?.() || {};
+
+        // Pre-scan: on first call for a file, check if any TS2339
+        // diagnostic produces an "Add missing enum member" fix from tsz.
+        if (!_prescannedFiles.has(fileName)) {
+            _prescannedFiles.add(fileName);
+            try {
+                const semDiags = _origGetSemanticDiag.call(this, fileName) || [];
+                for (const d of semDiags) {
+                    if (d.code !== 2339 || d.start === undefined || d.length === undefined) continue;
+                    try {
+                        const probe = _origGetCodeFixesAtPosition.call(
+                            this, fileName, d.start, d.start + d.length, [d.code], formatOptions, preferences,
+                        );
+                        if (probe && probe.some(f =>
+                            f.fixName === "addMissingMember" &&
+                            typeof f.description === "string" &&
+                            f.description.startsWith("Add missing enum member")
+                        )) {
+                            _enumFixFiles.set(fileName, true);
+                            break;
+                        }
+                    } catch { /* ignore */ }
+                }
+            } catch { /* ignore */ }
+        }
 
         // Try tsz-server first
         let tszResult;
@@ -410,6 +449,39 @@ function patchSessionClient(SessionClient, ts) {
             }
         };
 
+        // When an enum member fix exists for this file, use tsz exclusively:
+        // return the enum fix for TS2339, suppress everything else to avoid
+        // spurious fixes from extra diagnostics tsz emits (TS2304, TS7043).
+        if (_enumFixFiles.has(fileName)) {
+            const isEnumFix = tszResult && tszResult.some(f =>
+                f.fixName === "addMissingMember" &&
+                typeof f.description === "string" &&
+                f.description.startsWith("Add missing enum member")
+            );
+            if (isEnumFix) {
+                if (preferences) this.configure(oldPreferences || {});
+                return tszResult;
+            }
+            // Suppress fixes for non-TS2339 codes in enum-fix files
+            // (these are spurious diagnostics tsz emits that tsc wouldn't)
+            if (!errorCodes.includes(2339)) {
+                if (preferences) this.configure(oldPreferences || {});
+                return [];
+            }
+        }
+
+        // If a trusted fix was already returned for this exact span,
+        // suppress non-trusted results from other error codes at the
+        // same span (caused by tsz emitting extra diagnostic codes).
+        const posKey = `${fileName}:${start}:${end}`;
+        if (_trustedFixPositions.has(posKey)) {
+            const tszHasTrustedFixHere = tszResult && tszResult.some(f => tszTrustedFixNames.has(f.fixName));
+            if (!tszHasTrustedFixHere) {
+                if (preferences) this.configure(oldPreferences || {});
+                return [];
+            }
+        }
+
         let finalResult;
         if (!tszResult || tszResult.length === 0) {
             // tsz returned nothing - use native
@@ -421,13 +493,12 @@ function patchSessionClient(SessionClient, ts) {
             // results but no import fixes (e.g. due to autoImportFileExcludePatterns),
             // filter out import fixes from native results to avoid re-introducing
             // excluded imports.
-            //
-            // Trust tsz for fix types where it has full AST-based support, since
-            // the native LS may have stale content state through the adapter.
-            const tszTrustedFixNames = new Set(["addMissingNewOperator"]);
             const tszHasTrustedFix = tszResult.some(f => tszTrustedFixNames.has(f.fixName));
             if (tszHasTrustedFix) {
                 finalResult = tszResult;
+                // Record this position so subsequent calls for the same
+                // span with different error codes get suppressed.
+                _trustedFixPositions.add(posKey);
             } else {
                 const nativeResult = getNative();
                 if (nativeResult && nativeResult.length > 0) {
