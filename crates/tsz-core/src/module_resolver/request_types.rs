@@ -122,6 +122,31 @@ impl ModuleLookupResult {
         }
     }
 
+    /// Resolved to a JS file in node_modules (external) with TS7016 error.
+    /// Unlike `untyped_js`, this preserves the resolved path so the import still works.
+    pub fn resolved_untyped_js(
+        resolved_path: PathBuf,
+        no_implicit_any: bool,
+        specifier: &str,
+    ) -> Self {
+        Self {
+            error: if no_implicit_any {
+                Some(ModuleLookupError {
+                    code: COULD_NOT_FIND_DECLARATION_FILE,
+                    message: format!(
+                        "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
+                        specifier,
+                        resolved_path.display()
+                    ),
+                })
+            } else {
+                None
+            },
+            resolved_path: Some(resolved_path),
+            treat_as_resolved: false,
+        }
+    }
+
     /// Classify this lookup result into a driver-facing outcome.
     ///
     /// Centralizes the post-processing that every driver (CLI, LSP, WASM) must
