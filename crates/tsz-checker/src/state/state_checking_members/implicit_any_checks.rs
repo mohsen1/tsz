@@ -573,6 +573,69 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+    /// Re-check closures that deferred TS7006 during type env building.
+    /// Called after `is_checking_statements` is set to true. These closures were
+    /// processed before statement-checking mode, so their `skip_implicit_any` was
+    /// true. Their cached types prevent `get_type_of_function` from re-running,
+    /// so we explicitly walk their parameters and emit TS7006 here.
+    pub(crate) fn recheck_deferred_implicit_any_closures(&mut self) {
+        let deferred = std::mem::take(&mut self.ctx.deferred_implicit_any_closures);
+        for func_idx in deferred {
+            // Skip if already checked (e.g., re-processed with contextual type
+            // during statement checking, or checked via contextual call inference)
+            if self.ctx.implicit_any_checked_closures.contains(&func_idx)
+                || self
+                    .ctx
+                    .implicit_any_contextual_closures
+                    .contains(&func_idx)
+            {
+                continue;
+            }
+            // Skip closures with JSDoc annotations — JSDoc @param, @type, @template
+            // etc. can provide type information that suppresses TS7006. The normal
+            // get_type_of_function path handles this; we conservatively skip here.
+            if self.find_jsdoc_for_function(func_idx).is_some() {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(func_idx) else {
+                continue;
+            };
+            let parameters = if let Some(func) = self.ctx.arena.get_function(node) {
+                &func.parameters
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                &method.parameters
+            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                &accessor.parameters
+            } else {
+                continue;
+            };
+            let param_nodes: Vec<_> = parameters.nodes.clone();
+            let mut param_index = 0;
+            for &param_idx in &param_nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                // Skip `this` parameter
+                if let Some(name_node) = self.ctx.arena.get(param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text.as_str() == "this"
+                {
+                    continue;
+                }
+                // Skip parameters with type annotations
+                if param.type_annotation.is_some() {
+                    param_index += 1;
+                    continue;
+                }
+                self.maybe_report_implicit_any_parameter(param, false, param_index);
+                param_index += 1;
+            }
+            self.ctx.implicit_any_checked_closures.insert(func_idx);
+        }
+    }
 }
 
 #[cfg(test)]
