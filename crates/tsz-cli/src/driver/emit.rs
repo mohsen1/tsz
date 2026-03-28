@@ -68,6 +68,18 @@ pub(crate) fn emit_outputs(
         })
         .collect();
 
+    // Collect file paths that contain module augmentations.
+    // The declaration emitter uses this to preserve side-effect imports for
+    // files whose named bindings were all elided but whose augmentations must
+    // still take effect.
+    let files_with_augmentations: rustc_hash::FxHashSet<String> = context
+        .program
+        .files
+        .iter()
+        .filter(|file| !file.module_augmentations.is_empty())
+        .map(|file| file.file_name.clone())
+        .collect();
+
     for (file_idx, file) in context.program.files.iter().enumerate() {
         let input_path = PathBuf::from(&file.file_name);
         if let Some(dirty_paths) = context.dirty_paths
@@ -283,6 +295,7 @@ pub(crate) fn emit_outputs(
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
+                    emitter.set_files_with_augmentations(files_with_augmentations.clone());
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
@@ -292,6 +305,7 @@ pub(crate) fn emit_outputs(
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
+                    emitter.set_files_with_augmentations(files_with_augmentations.clone());
                     emitter
                 };
 

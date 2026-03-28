@@ -1410,7 +1410,19 @@ impl<'a> DeclarationEmitter<'a> {
         // Check if we should elide this import based on usage
         let (default_used, named_used) = self.count_used_imports(import);
         if default_used == 0 && named_used == 0 {
-            // No used symbols in this import - elide it
+            // All bindings are unused -- but if the imported module contains
+            // module augmentations we must preserve the import as a bare
+            // side-effect import so the augmentations take effect at runtime.
+            // This matches tsc's `isImportRequiredByAugmentation` behaviour.
+            if self.is_import_required_by_augmentation(import.module_specifier) {
+                self.write_indent();
+                self.write("import ");
+                self.emit_node(import.module_specifier);
+                self.write(";");
+                self.write_line();
+                return;
+            }
+            // No used symbols and no augmentation dependency - elide it
             return;
         }
 
@@ -1494,6 +1506,53 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_specifier(spec_idx, allow_type_prefix);
         }
         self.write(" }");
+    }
+
+    /// Check whether an import must be preserved as a side-effect import because
+    /// the target module contains module augmentations.
+    fn is_import_required_by_augmentation(&self, module_specifier_idx: NodeIndex) -> bool {
+        if self.files_with_augmentations.is_empty() {
+            return false;
+        }
+        let spec_text = self
+            .arena
+            .get(module_specifier_idx)
+            .and_then(|n| self.arena.get_literal(n))
+            .map(|lit| lit.text.as_str());
+        let Some(spec) = spec_text else {
+            return false;
+        };
+        if !spec.starts_with('.') {
+            return false;
+        }
+        let Some(ref current_path) = self.current_file_path else {
+            return false;
+        };
+        let current_dir = std::path::Path::new(current_path.as_str())
+            .parent()
+            .unwrap_or(std::path::Path::new(""));
+        // Normalize path to remove `.` and `..` segments without requiring
+        // the path to exist on disk (unlike std::fs::canonicalize).
+        let joined = current_dir.join(spec);
+        let mut parts = Vec::new();
+        for component in joined.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    parts.pop();
+                }
+                other => parts.push(other),
+            }
+        }
+        let candidate_base: std::path::PathBuf = parts.iter().collect();
+        for ext in &[".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx"] {
+            let candidate = format!("{}{}", candidate_base.display(), ext);
+            if self.files_with_augmentations.contains(&candidate) {
+                return true;
+            }
+        }
+        let as_is = candidate_base.display().to_string();
+        self.files_with_augmentations.contains(&as_is)
     }
 
     pub(crate) fn emit_module_declaration(&mut self, module_idx: NodeIndex) {

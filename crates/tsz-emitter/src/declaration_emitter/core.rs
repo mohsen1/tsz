@@ -93,6 +93,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) remove_comments: bool,
     /// When true, strip declarations annotated with `@internal` (--stripInternal)
     pub(super) strip_internal: bool,
+    /// Set of absolute file paths whose source contains module augmentations.
+    pub(super) files_with_augmentations: FxHashSet<String>,
     /// Tracks whether any non-exported declaration was actually emitted
     /// (used for deciding whether `export {};` scope fix marker is needed)
     pub(super) emitted_non_exported_declaration: bool,
@@ -236,6 +238,7 @@ impl<'a> DeclarationEmitter<'a> {
             comment_emit_idx: 0,
             remove_comments: false,
             strip_internal: false,
+            files_with_augmentations: FxHashSet::default(),
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
@@ -312,6 +315,7 @@ impl<'a> DeclarationEmitter<'a> {
             comment_emit_idx: 0,
             remove_comments: false,
             strip_internal: false,
+            files_with_augmentations: FxHashSet::default(),
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
@@ -410,6 +414,11 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub const fn set_strip_internal(&mut self, strip: bool) {
         self.strip_internal = strip;
+    }
+
+    /// Set the collection of file paths that contain module augmentations.
+    pub fn set_files_with_augmentations(&mut self, files: FxHashSet<String>) {
+        self.files_with_augmentations = files;
     }
 
     /// Skip TS2883 non-portable type reference checks.
