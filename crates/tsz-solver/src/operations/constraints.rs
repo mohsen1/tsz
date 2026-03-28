@@ -949,32 +949,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // used: source "FAILURE" should match fixed target "FAILURE", not
                     // be inferred as T. This mirrors the filtering done in the
                     // Union-Union handler above.
-                    let source_matches_fixed = t_members.iter().any(|&t_member| {
-                        if t_member == member {
-                            return false; // Skip the placeholder member itself
-                        }
-                        if t_member == source {
-                            return true;
-                        }
-                        // Also check evaluated forms for type alias transparency
-                        let evaluated = self.checker.evaluate_type(t_member);
-                        if evaluated != t_member {
-                            if evaluated == source {
-                                return true;
-                            }
-                            // Check if the evaluated form is a union containing the source
-                            if let Some(TypeData::Union(inner_members)) =
-                                self.interner.lookup(evaluated)
-                            {
-                                let inner = self.interner.type_list(inner_members);
-                                if inner.contains(&source) {
-                                    return true;
-                                }
+                    // Collect fixed (non-placeholder) target members
+                    let fixed_targets: Vec<TypeId> =
+                        t_members.iter().copied().filter(|&t| t != member).collect();
+
+                    // When source is a union, perform union subtraction: filter out
+                    // source members matching fixed targets, constrain only the rest.
+                    // This mirrors TSC's `inferFromMatchingTypes`.
+                    let source_members: Option<Vec<TypeId>> =
+                        if let Some(TypeData::Union(s_members)) = self.interner.lookup(source) {
+                            Some(self.interner.type_list(s_members).to_vec())
+                        } else {
+                            None
+                        };
+
+                    if let Some(s_members) = source_members {
+                        for s_member in s_members {
+                            if !self.source_matches_any_fixed(s_member, &fixed_targets) {
+                                self.constrain_types(ctx, var_map, s_member, member, priority);
                             }
                         }
-                        false
-                    });
-                    if !source_matches_fixed {
+                    } else if !self.source_matches_any_fixed(source, &fixed_targets) {
                         self.constrain_types(ctx, var_map, source, member, priority);
                     }
                 } else if placeholder_count > 1 {
@@ -3603,5 +3598,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => false,
         }
+    }
+
+    /// Check if a source type matches any of the given fixed target members.
+    /// Used for union subtraction during inference: source members matching
+    /// fixed (non-placeholder) target members are filtered out.
+    fn source_matches_any_fixed(&mut self, src: TypeId, fixed_targets: &[TypeId]) -> bool {
+        for &fixed in fixed_targets {
+            if fixed == src {
+                return true;
+            }
+            let evaluated = self.checker.evaluate_type(fixed);
+            if evaluated != fixed {
+                if evaluated == src {
+                    return true;
+                }
+                if let Some(TypeData::Union(inner_members)) = self.interner.lookup(evaluated) {
+                    let inner = self.interner.type_list(inner_members);
+                    if inner.contains(&src) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 }
