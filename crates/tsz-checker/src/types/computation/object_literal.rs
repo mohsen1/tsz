@@ -227,12 +227,18 @@ impl<'a> CheckerState<'a> {
         // Push this type onto stack if found (methods will pick it up)
         if let Some(mut this_type) = marker_this_type {
             // The ThisType<T> marker may contain unresolved type parameters
-            // (e.g., `Data & Readonly<Props> & Instance` before inference completes).
-            // Evaluate through the type environment to resolve them to their
-            // inferred concrete types. Without this, property access on `this`
-            // inside method bodies would fail to find properties of the inferred
-            // type, producing false TS2322 errors.
+            // (e.g., `Data & Readonly<Props> & Instance` before inference completes)
+            // or unresolved Lazy references to generic interfaces that need their
+            // default type arguments applied (e.g., `ThisType<T & Comp>` where
+            // `Comp<U = any>` appears as bare `Lazy(DefId)` without an Application
+            // wrapper). Evaluate through the type environment to resolve both
+            // cases, ensuring property access on `this` inside method bodies
+            // works correctly.
             if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, this_type)
+                || crate::query_boundaries::common::contains_lazy_or_recursive(
+                    self.ctx.types,
+                    this_type,
+                )
             {
                 this_type = self.evaluate_type_with_env(this_type);
             }
