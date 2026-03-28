@@ -504,22 +504,10 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     let related = relation_result.is_related();
     let depth_exceeded = relation_result.depth_exceeded;
 
-    if related && !depth_exceeded {
+    if related {
         return RelationOutcome {
             related: true,
-            depth_exceeded: false,
-            failure: None,
-            weak_union_violation: false,
-            property_classification: None,
-        };
-    }
-
-    // If depth was exceeded but the relation appears to hold, we still
-    // signal depth_exceeded so the caller can emit TS2859.
-    if related && depth_exceeded {
-        return RelationOutcome {
-            related: true,
-            depth_exceeded: true,
+            depth_exceeded,
             failure: None,
             weak_union_violation: false,
             property_classification: None,

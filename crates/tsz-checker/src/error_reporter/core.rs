@@ -322,10 +322,7 @@ impl<'a> CheckerState<'a> {
         // preserving the Application form, the formatter can display `Dictionary<string>`
         // using the Application path which resolves the base DefId name + args.
         if let Some(app) = query::type_application(self.ctx.types, ty) {
-            if matches!(
-                self.ctx.types.lookup(app.base),
-                Some(tsz_solver::TypeData::Lazy(_)) | Some(tsz_solver::TypeData::TypeQuery(_))
-            ) {
+            if query::preserves_named_application_base(self.ctx.types, app.base) {
                 let args: Vec<_> = app
                     .args
                     .iter()
