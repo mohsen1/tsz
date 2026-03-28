@@ -924,26 +924,12 @@ impl TypeInterner {
             return id;
         }
 
-        // Compute hash once, reuse for cache probe and shard selection
+        // Thread-local caches are disabled (see lookup() comment for rationale).
         let mut hasher = FxHasher::default();
         key.hash(&mut hasher);
         let hash = hasher.finish();
 
-        // Fast path: thread-local intern cache probe + populate both caches on miss.
-        // Single TLS access per call.
-        TL_CACHE.with(|cache| {
-            if let Some(id) = cache.intern_probe(hash, &key) {
-                return id;
-            }
-
-            let id = self.intern_slow(key, hash);
-
-            // Populate both caches (intern implies future lookups of this type)
-            cache.intern_insert(hash, key, id);
-            cache.lookup_insert(id, key);
-
-            id
-        })
+        self.intern_slow(key, hash)
     }
 
     /// Slow path for `intern`: goes through DashMap and RwLock-protected storage.
@@ -1013,20 +999,12 @@ impl TypeInterner {
             return self.get_intrinsic_key(id);
         }
 
-        // Fast path: thread-local cache probe (~1-2 ns vs ~15-25 ns for RwLock)
-        // Single TLS access for the combined cache.
-        let cached = TL_CACHE.with(|cache| cache.lookup_probe(id));
-        if let Some(data) = cached {
-            return Some(data);
-        }
-
-        // Slow path: shard lookup through RwLock
-        let data = self.lookup_slow(id)?;
-
-        // Populate cache for next time
-        TL_CACHE.with(|cache| cache.lookup_insert(id, data));
-
-        Some(data)
+        // Thread-local caches are disabled because the cache is per-thread, not
+        // per-TypeInterner. When multiple TypeInterner instances are created on the
+        // same thread (e.g., conformance runner processing multiple files), the
+        // cache returns stale data from a previous interner instance, causing
+        // incorrect type lookups and widespread false diagnostics.
+        self.lookup_slow(id)
     }
 
     /// Slow path for `lookup`: goes through RwLock-protected shard storage.
