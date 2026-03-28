@@ -97,9 +97,11 @@ struct SignatureCandidate {
     total_params: usize,
     has_rest: bool,
     param_names: Vec<Option<String>>,
-    /// Type parameter names from the function signature, used for substitution
-    /// when no explicit type arguments are provided at the call site.
-    type_param_names: Vec<String>,
+    /// Type parameter (name, substitution) pairs from the function signature,
+    /// used for substitution when no explicit type arguments are provided at
+    /// the call site. The substitution is the default type, constraint type,
+    /// or "unknown" (in that priority order).
+    type_param_substitutions: Vec<(String, String)>,
 }
 
 struct SignatureDocCandidate {
@@ -305,8 +307,8 @@ impl<'a> SignatureHelpProvider<'a> {
         // with raw source text containing type parameter names.
         if !has_explicit_type_args {
             for sig in &mut signatures {
-                if !sig.type_param_names.is_empty() {
-                    apply_type_param_substitution(&mut sig.info, &sig.type_param_names);
+                if !sig.type_param_substitutions.is_empty() {
+                    apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
                 }
             }
         }
@@ -1052,11 +1054,21 @@ impl<'a> SignatureHelpProvider<'a> {
             .iter()
             .map(|param| param.name.map(|atom| checker.ctx.types.resolve_atom(atom)))
             .collect();
-        let type_param_names = if !has_explicit_type_args && !shape.type_params.is_empty() {
+        let type_param_substitutions = if !has_explicit_type_args && !shape.type_params.is_empty() {
             shape
                 .type_params
                 .iter()
-                .map(|tp| checker.ctx.types.resolve_atom(tp.name))
+                .map(|tp| {
+                    let name = checker.ctx.types.resolve_atom(tp.name);
+                    let substitution = if let Some(default) = tp.default {
+                        checker.format_type(default)
+                    } else if let Some(constraint) = tp.constraint {
+                        checker.format_type(constraint)
+                    } else {
+                        "unknown".to_string()
+                    };
+                    (name, substitution)
+                })
                 .collect()
         } else {
             Vec::new()
@@ -1073,7 +1085,7 @@ impl<'a> SignatureHelpProvider<'a> {
             total_params,
             has_rest,
             param_names,
-            type_param_names,
+            type_param_substitutions,
         }
     }
 
@@ -1885,30 +1897,35 @@ impl<'a> SignatureHelpProvider<'a> {
     }
 }
 
-/// Apply type parameter substitution to a `SignatureInformation`, replacing all
-/// type parameter names with `unknown` in parameter labels, prefix, suffix, and
-/// the full label.
-fn apply_type_param_substitution(info: &mut SignatureInformation, type_param_names: &[String]) {
+/// Apply type parameter substitution to a `SignatureInformation`, replacing each
+/// type parameter name with its resolved substitution (default type, constraint
+/// type, or `unknown`) in parameter labels, prefix, suffix, and the full label.
+fn apply_type_param_substitution(
+    info: &mut SignatureInformation,
+    type_param_substitutions: &[(String, String)],
+) {
     // Substitute in each parameter label
     for param in &mut info.parameters {
-        param.label = substitute_type_params(&param.label, type_param_names);
+        param.label = substitute_type_params(&param.label, type_param_substitutions);
     }
     // Substitute in suffix (contains return type)
-    info.suffix = substitute_type_params(&info.suffix, type_param_names);
+    info.suffix = substitute_type_params(&info.suffix, type_param_substitutions);
     // Rebuild full label from prefix + substituted param labels + substituted suffix
     let param_labels: Vec<&str> = info.parameters.iter().map(|p| p.label.as_str()).collect();
     info.label = format!("{}{}{}", info.prefix, param_labels.join(", "), info.suffix);
 }
 
-/// Substitute occurrences of type parameter names with `unknown` in a formatted
-/// type string. Uses word-boundary-aware replacement so that e.g. type param `T`
-/// does not replace the `T` inside `Tuple`.
-fn substitute_type_params(s: &str, type_param_names: &[String]) -> String {
+/// Substitute occurrences of type parameter names with their resolved
+/// substitution text in a formatted type string. Uses word-boundary-aware
+/// replacement so that e.g. type param `T` does not replace the `T` inside
+/// `Tuple`.
+fn substitute_type_params(s: &str, type_param_substitutions: &[(String, String)]) -> String {
     let mut result = s.to_string();
-    for name in type_param_names {
-        // Replace whole-word occurrences of the type parameter name with "unknown".
-        // A "word boundary" here means the character before/after is not alphanumeric
-        // or underscore (matching TypeScript identifier characters).
+    for (name, substitution) in type_param_substitutions {
+        // Replace whole-word occurrences of the type parameter name with its
+        // substitution. A "word boundary" here means the character before/after
+        // is not alphanumeric or underscore (matching TypeScript identifier
+        // characters).
         let mut out = String::with_capacity(result.len());
         let name_len = name.len();
         let bytes = result.as_bytes();
@@ -1919,7 +1936,7 @@ fn substitute_type_params(s: &str, type_param_names: &[String]) -> String {
                 let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
                 let after_ok = i + name_len == len || !is_ident_char(bytes[i + name_len]);
                 if before_ok && after_ok {
-                    out.push_str("unknown");
+                    out.push_str(substitution);
                     i += name_len;
                     continue;
                 }
