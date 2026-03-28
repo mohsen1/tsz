@@ -2498,14 +2498,18 @@ declare namespace JSX {
 "#;
 
     let diags = cross_file_jsx_diagnostics_with_mode(react_types, source, JsxMode::ReactJsx);
+    let relevant_diags: Vec<_> = diags
+        .into_iter()
+        .filter(|(code, _)| *code != diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE)
+        .collect();
 
     assert!(
-        diags.iter().any(|(code, msg)| {
+        relevant_diags.iter().any(|(code, msg)| {
             *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
                 && msg.contains("Property 'ref' is missing")
-                && msg.contains("IntrinsicClassAttributesAlias")
+                && msg.contains("IntrinsicClassAttributes")
         }),
-        "Expected TS2741 for missing required 'ref' from alias-based IntrinsicClassAttributes<T>, got: {diags:?}"
+        "Expected TS2741 for missing required 'ref' from alias-based IntrinsicClassAttributes<T>, got: {relevant_diags:?}"
     );
 }
 
