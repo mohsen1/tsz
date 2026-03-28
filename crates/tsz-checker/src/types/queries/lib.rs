@@ -1717,35 +1717,34 @@ impl<'a> CheckerState<'a> {
                         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                             break;
                         };
-                        if parent_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                        if parent_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
                         {
                             saw_namespace_declaration = true;
                             if let Some(module) = self.ctx.arena.get_module(parent_node) {
-                                let is_global_augmentation =
-                                    (u32::from(parent_node.flags)
-                                        & tsz_parser::parser::node_flags::GLOBAL_AUGMENTATION)
-                                        != 0
-                                        || self
-                                            .ctx
-                                            .arena
-                                            .get(module.name)
-                                            .and_then(|name_node| {
-                                                if let Some(ident) =
-                                                    self.ctx.arena.get_identifier(name_node)
-                                                {
-                                                    return Some(
-                                                        ident.escaped_text.as_str() == "global",
-                                                    );
-                                                }
-                                                if name_node.kind
-                                                    == tsz_scanner::SyntaxKind::GlobalKeyword
-                                                        as u16
-                                                {
-                                                    return Some(true);
-                                                }
-                                                None
-                                            })
-                                            .unwrap_or(false);
+                                let is_global_augmentation = (u32::from(parent_node.flags)
+                                    & tsz_parser::parser::node_flags::GLOBAL_AUGMENTATION)
+                                    != 0
+                                    || self
+                                        .ctx
+                                        .arena
+                                        .get(module.name)
+                                        .and_then(|name_node| {
+                                            if let Some(ident) =
+                                                self.ctx.arena.get_identifier(name_node)
+                                            {
+                                                return Some(
+                                                    ident.escaped_text.as_str() == "global",
+                                                );
+                                            }
+                                            if name_node.kind
+                                                == tsz_scanner::SyntaxKind::GlobalKeyword as u16
+                                            {
+                                                return Some(true);
+                                            }
+                                            None
+                                        })
+                                        .unwrap_or(false);
                                 if is_global_augmentation {
                                     return false;
                                 }
