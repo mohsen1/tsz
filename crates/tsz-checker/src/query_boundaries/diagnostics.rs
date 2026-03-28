@@ -51,3 +51,14 @@ pub(crate) fn type_application(
 ) -> Option<std::sync::Arc<tsz_solver::TypeApplication>> {
     tsz_solver::type_queries::get_type_application(db, type_id)
 }
+
+pub(crate) fn preserves_named_application_base(
+    db: &dyn tsz_solver::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::get_lazy_def_id(db, type_id).is_some()
+        || !matches!(
+            tsz_solver::type_queries::classify_type_query(db, type_id),
+            tsz_solver::type_queries::TypeQueryKind::Other
+        )
+}
