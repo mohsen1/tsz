@@ -37,7 +37,7 @@ use super::resolution::{
     is_declaration_file, normalize_path, normalize_resolved_path, resolve_module_specifier,
     resolve_type_package_entry, resolve_type_package_from_roots,
 };
-use crate::fs::{FileDiscoveryOptions, default_include_patterns, discover_ts_files, is_js_file};
+use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
 #[cfg(test)]

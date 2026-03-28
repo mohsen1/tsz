@@ -283,13 +283,13 @@ pub fn prepare_test_dir(
     // Match tsc's implicit include defaults.
     // Unimported `.mts`/`.cts`/`.mjs`/`.cjs` roots are not discovered via the
     // default include globs; they only participate when explicitly referenced.
-    let include = if allow_js || check_js {
-        serde_json::json!([
-            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
-        ])
-    } else {
-        serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
-    };
+    // tsc always includes all extensions in its default include patterns,
+    // regardless of allowJs. The allowJs flag only controls whether discovered
+    // JS files are type-checked, not whether they appear in the include globs.
+    // The CLI's file discovery has a secondary extension filter that respects allowJs.
+    let include = serde_json::json!([
+        "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+    ]);
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
