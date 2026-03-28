@@ -37,20 +37,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         mapped: &MappedType,
         key_type: TypeId,
     ) -> Result<Option<TypeId>, ()> {
-        self.remap_key_type_for_mapped_with_subst(mapped, key_type, None)
-    }
-
-    /// Remap a key type for a mapped type, optionally reusing a substitution.
-    ///
-    /// When `reuse_subst` is provided, it is cleared and reused instead of
-    /// allocating a new `TypeSubstitution` per call. This is important in the
-    /// mapped type evaluation loop where this is called once per key.
-    fn remap_key_type_for_mapped_with_subst(
-        &mut self,
-        mapped: &MappedType,
-        key_type: TypeId,
-        reuse_subst: Option<&mut TypeSubstitution>,
-    ) -> Result<Option<TypeId>, ()> {
         let Some(name_type) = mapped.name_type else {
             return Ok(Some(key_type));
         };
@@ -61,15 +47,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             "remap_key_type_for_mapped: before substitution"
         );
 
-        let remapped = if let Some(subst) = reuse_subst {
-            subst.clear();
-            subst.insert(mapped.type_param.name, key_type);
-            instantiate_type(self.interner(), name_type, subst)
-        } else {
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, key_type);
-            instantiate_type(self.interner(), name_type, &subst)
-        };
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, key_type);
+        let remapped = instantiate_type(self.interner(), name_type, &subst);
 
         tracing::trace!(
             remapped_before_eval = remapped.0,
@@ -356,9 +336,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // PERF: Reuse a single TypeSubstitution across all keys to avoid
         // re-allocating the inner FxHashMap on every iteration.
         let mut subst = TypeSubstitution::new();
-        // PERF: Separate reusable substitution for key remapping to avoid
-        // interference with the template substitution.
-        let mut remap_subst = TypeSubstitution::new();
 
         for key_name in key_set.string_literals {
             // Check if depth was exceeded during previous iterations
@@ -369,11 +346,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Create substitution: type_param.name -> literal key type
             // Use canonical constructor for O(1) equality
             let key_literal = self.interner().literal_string_atom(key_name);
-            let remapped = match self.remap_key_type_for_mapped_with_subst(
-                mapped,
-                key_literal,
-                Some(&mut remap_subst),
-            ) {
+            let remapped = match self.remap_key_type_for_mapped(mapped, key_literal) {
                 Ok(Some(remapped)) => remapped,
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(*mapped),
