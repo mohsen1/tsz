@@ -6684,32 +6684,14 @@ impl<'a> DeclarationEmitter<'a> {
             plan.required.push(PlannedImportModule { module, symbols });
         }
 
-        if let Some(binder) = self.binder {
-            let module_map = self.group_foreign_symbols_by_module();
-            let mut auto_modules: Vec<_> = module_map.into_iter().collect();
-            auto_modules.sort_by(|a, b| a.0.cmp(&b.0));
-
-            for (module, symbol_ids) in auto_modules {
-                let mut symbol_names: Vec<String> = symbol_ids
-                    .into_iter()
-                    .filter(|sym_id| self.import_symbol_map.contains_key(sym_id))
-                    .filter_map(|sym_id| binder.symbols.get(sym_id).map(|s| s.escaped_name.clone()))
-                    .collect();
-                symbol_names.sort();
-                symbol_names.dedup();
-
-                if symbol_names.is_empty() {
-                    continue;
-                }
-
-                let symbols = symbol_names
-                    .into_iter()
-                    .map(|name| PlannedImportSymbol { name, alias: None })
-                    .collect();
-                plan.auto_generated
-                    .push(PlannedImportModule { module, symbols });
-            }
-        }
+        // NOTE: Auto-generated imports for foreign symbols are intentionally
+        // disabled. Source import declarations are now emitted faithfully
+        // (preserving `type` modifiers, `with` attributes, aliases, etc.)
+        // through `emit_import_declaration`, making auto-imports redundant
+        // for symbols that have source imports. Symbols referenced only via
+        // inline `import("pkg").Foo` type syntax don't need import
+        // declarations at all. This avoids duplicate import lines that were
+        // previously generated for resolution-mode imports.
 
         self.import_plan = plan;
     }
