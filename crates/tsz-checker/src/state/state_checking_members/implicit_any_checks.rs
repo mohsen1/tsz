@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
         if self.is_parameter_in_iife(param.name) {
             return;
         }
-        if self.is_parameter_in_jsx_callback_context(param.name) {
+        if self.is_parameter_in_jsx_attribute_callback(param.name) {
             return;
         }
 
@@ -304,7 +304,7 @@ impl<'a> CheckerState<'a> {
         param.name
     }
 
-    fn is_parameter_in_jsx_callback_context(&self, name_idx: NodeIndex) -> bool {
+    fn is_parameter_in_jsx_attribute_callback(&self, name_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let mut current = Some(name_idx);
@@ -353,13 +353,24 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        matches!(
-            jsx_parent_node.kind,
-            syntax_kind_ext::JSX_ATTRIBUTE
-                | syntax_kind_ext::JSX_ELEMENT
-                | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
-                | syntax_kind_ext::JSX_FRAGMENT
-        )
+        if jsx_parent_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
+            return false;
+        }
+
+        // Do not suppress for data-* and aria-* attributes -- these are untyped
+        // HTML custom data attributes that don't provide contextual types.
+        if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(jsx_parent_node) {
+            if let Some(name_node) = self.ctx.arena.get(attr_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.as_str();
+                if name.starts_with("data-") || name.starts_with("aria-") {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     /// Emit TS7006 errors for nested binding elements in destructuring parameters.
