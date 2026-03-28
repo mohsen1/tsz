@@ -587,6 +587,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Handle Application types like Readonly<T>, Promise<T>, etc.
+        // When source is Application(Base, [args...]) and target is NOT
+        // a matching Application, decompose the source Application's type
+        // arguments and recursively match each against the target. This
+        // handles cases like Readonly<T> where T needs to be inferred from
+        // the contextual type (e.g., readonly [string, number][]).
+        if let Some((_source_base, source_args)) = common::application_info(self.ctx.types, source)
+        {
+            // Only try if target is not already matched as Application(same_base)
+            // (that case is handled later at the Application-Application matching).
+            let target_same_base = common::application_info(self.ctx.types, target)
+                .is_some_and(|(tb, ta)| tb == _source_base && ta.len() == source_args.len());
+            if !target_same_base {
+                for &source_arg in &source_args {
+                    self.collect_return_context_substitution(
+                        source_arg,
+                        target,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
+            }
+        }
+
         let source_eval = self.evaluate_type_with_env(source);
         let target_eval = self.evaluate_type_with_env(target);
         let function_info = match (
