@@ -1607,11 +1607,26 @@ impl<'a> DeclarationEmitter<'a> {
                 ) {
                     self.write(": ");
                     self.write(&typeof_text);
+                    if prop.question_token
+                        && self.strict_null_checks
+                        && !typeof_text.ends_with("| undefined")
+                    {
+                        self.write(" | undefined");
+                    }
                 } else {
                     let type_text =
                         self.rewrite_recursive_static_class_expression_type(prop_idx, type_id);
                     self.write(": ");
                     self.write(&type_text);
+                    // For optional class properties without an explicit type annotation,
+                    // tsc appends `| undefined` when the inferred type doesn't already
+                    // include it (e.g., `c? = 2` → `c?: number | undefined`).
+                    if prop.question_token
+                        && self.strict_null_checks
+                        && !type_text.ends_with("| undefined")
+                    {
+                        self.write(" | undefined");
+                    }
                 }
             } else if is_readonly
                 && !is_abstract
@@ -1629,6 +1644,14 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+                // Same `| undefined` rule for fallback-inferred types on optional
+                // class properties.
+                if prop.question_token
+                    && self.strict_null_checks
+                    && !type_text.ends_with("| undefined")
+                {
+                    self.write(" | undefined");
+                }
             }
         }
 
