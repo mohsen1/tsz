@@ -353,7 +353,7 @@ impl<'a> CheckerState<'a> {
     /// Results are cached per-NodeIndex to avoid 4-5 binder/arena lookups on
     /// repeated visits (e.g., 34 references to `options` in the same function).
     fn is_narrowable_identifier(&self, idx: NodeIndex) -> bool {
-        if let Some(&cached) = self.ctx.narrowable_identifier_cache.borrow().get(&idx.0) {
+        if let Some(cached) = self.ctx.narrowable_identifier_cache.borrow().get(idx.0) {
             return cached;
         }
         let result = self.is_narrowable_identifier_uncached(idx);

@@ -1151,7 +1151,7 @@ impl<'a> CheckerState<'a> {
         // the type represents that class's constructor. This handles inferred return types
         // like `getClass() { return C; }` where the return type is a fresh TypeId that
         // differs from the cached constructor type.
-        for (&sym_id, &sym_type) in self.ctx.symbol_types.iter() {
+        for (sym_id, sym_type) in self.ctx.symbol_types.iter() {
             if sym_type == type_id
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 && symbol.flags & tsz_binder::symbol_flags::CLASS != 0

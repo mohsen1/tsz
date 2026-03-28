@@ -717,6 +717,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let mut results: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(members.len());
+        // PERF: Track whether all results are identical. If every branch
+        // produces the same TypeId (common for `T extends X ? never : T`
+        // patterns where all members pass/fail uniformly), we can skip the
+        // union construction entirely.
+        let mut all_same = true;
+        let mut first_result = TypeId::NONE;
 
         for &member in members {
             // Check if depth was exceeded during previous iterations
@@ -754,7 +760,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if result == TypeId::ERROR && self.is_depth_exceeded() {
                 return TypeId::ERROR;
             }
+            if all_same {
+                if first_result == TypeId::NONE {
+                    first_result = result;
+                } else if result != first_result {
+                    all_same = false;
+                }
+            }
             results.push(result);
+        }
+
+        // PERF: If all branches produced the same type, return it directly
+        // without constructing a union.
+        if all_same && first_result != TypeId::NONE {
+            return first_result;
         }
 
         // Combine results into a union

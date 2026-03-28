@@ -1302,7 +1302,7 @@ mod tests {
 
     fn empty_cache() -> TypeCache {
         TypeCache {
-            symbol_types: FxHashMap::default(),
+            symbol_types: crate::context::SymbolTypeCache::new(),
             symbol_instance_types: FxHashMap::default(),
             node_types: crate::context::NodeTypeCache::new(),
             symbol_dependencies: FxHashMap::default(),
