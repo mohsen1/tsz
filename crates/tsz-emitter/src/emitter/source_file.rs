@@ -1083,7 +1083,13 @@ impl<'a> Printer<'a> {
                 && !export_decl.is_default_export
                 && let Some(clause_node) = self.arena.get(export_decl.export_clause)
                 && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
-                && (is_es_module_output || !self.has_aliased_value_named_exports(clause_node))
+                && (is_es_module_output
+                    || (!self.has_aliased_value_named_exports(clause_node)
+                        && !self.named_exports_have_prior_runtime_declaration(
+                            &source.statements,
+                            stmt_i,
+                            clause_node,
+                        )))
             {
                 continue;
             }
@@ -1801,6 +1807,85 @@ impl<'a> Printer<'a> {
             })
     }
 
+    fn named_exports_have_prior_runtime_declaration(
+        &self,
+        statements: &NodeList,
+        end_idx: usize,
+        clause_node: &Node,
+    ) -> bool {
+        let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+            return false;
+        };
+        self.collect_value_specifiers(&named_exports.elements)
+            .iter()
+            .filter_map(|&spec_idx| {
+                let spec_node = self.arena.get(spec_idx)?;
+                let spec = self.arena.get_specifier(spec_node)?;
+                let local_name = if spec.property_name.is_some() {
+                    self.get_specifier_name_text(spec.property_name)
+                } else {
+                    self.get_specifier_name_text(spec.name)
+                }?;
+                Some(local_name)
+            })
+            .any(|local_name| {
+                statements.nodes[..end_idx].iter().any(|&stmt_idx| {
+                    self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                        self.statement_declares_runtime_name(stmt_node, &local_name)
+                    })
+                })
+            })
+    }
+
+    fn statement_declares_runtime_name(&self, stmt_node: &Node, name: &str) -> bool {
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.arena.get_variable(stmt_node).is_some_and(|var_stmt| {
+                    var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+                        self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
+                            self.arena
+                                .get_variable(decl_list_node)
+                                .is_some_and(|decl_list| {
+                                    decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                                        self.arena.get(decl_idx).is_some_and(|decl_node| {
+                                            self.arena
+                                                .get_variable_declaration(decl_node)
+                                                .is_some_and(|decl| {
+                                                    self.get_identifier_text_idx(decl.name) == name
+                                                })
+                                        })
+                                    })
+                                })
+                        })
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(stmt_node)
+                .and_then(|class| self.get_identifier_text_opt(class.name))
+                .is_some_and(|class_name| class_name == name),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(stmt_node)
+                .and_then(|func| self.get_identifier_text_opt(func.name))
+                .is_some_and(|func_name| func_name == name),
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                self.arena.get_export_decl(stmt_node).is_some_and(|export| {
+                    if export.is_type_only || export.module_specifier.is_some() {
+                        return false;
+                    }
+                    self.arena
+                        .get(export.export_clause)
+                        .is_some_and(|clause_node| {
+                            self.statement_declares_runtime_name(clause_node, name)
+                        })
+                })
+            }
+            _ => false,
+        }
+    }
+
     fn emit_top_level_using_pre_named_exports(&mut self, statements: &NodeList, end_idx: usize) {
         for &stmt_idx in &statements.nodes[..end_idx] {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -2464,6 +2549,14 @@ impl<'a> Printer<'a> {
         };
 
         if export_name == "default" {
+            if !emitted.ends_with('\n') {
+                emitted.push('\n');
+            }
+            emitted.push_str(&export_stmt);
+            return emitted;
+        }
+
+        if self.in_system_execute_body {
             if !emitted.ends_with('\n') {
                 emitted.push('\n');
             }
