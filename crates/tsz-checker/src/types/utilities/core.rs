@@ -42,6 +42,17 @@ impl<'a> CheckerState<'a> {
         if let Some(tuple_elements) =
             tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rest_param_type)
         {
+            // Variadic tuples (rest element followed by tail elements, e.g.
+            // `[...((n: number) => void)[], (x: any) => void]`) require
+            // arg_count-aware mapping to distinguish rest vs tail positions.
+            // Return None so the solver's `extract_param_type_at_for_call`
+            // handles them with proper variadic expansion.
+            let rest_pos = tuple_elements.iter().position(|e| e.rest);
+            let has_tail_after_rest = rest_pos.is_some_and(|pos| pos + 1 < tuple_elements.len());
+            if has_tail_after_rest {
+                return None;
+            }
+
             if let Some(element) = tuple_elements.get(index) {
                 return Some(element.type_id);
             }
