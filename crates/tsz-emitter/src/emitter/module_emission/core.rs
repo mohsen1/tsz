@@ -787,6 +787,18 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // When `export =` appears inside a function body or namespace IIFE
+        // (syntactically invalid position), tsc emits it verbatim — no
+        // module-system transformation.
+        if export_assign.is_export_equals
+            && (self.function_scope_depth > 0 || self.in_namespace_iife)
+        {
+            self.write("export = ");
+            self.emit_expression(export_assign.expression);
+            self.write_semicolon();
+            return;
+        }
+
         // Check if we're inside an AMD/UMD wrapper (original module was AMD/UMD)
         let is_amd_or_umd = matches!(
             self.ctx.original_module_kind,

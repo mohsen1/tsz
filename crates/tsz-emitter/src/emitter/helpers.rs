@@ -1063,8 +1063,13 @@ impl<'a> Printer<'a> {
                 false
             }
             syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                // In ES module emit, legacy `export =` is erased.
+                // In ES module emit, legacy `export =` is erased — but only at the
+                // top level (source-file statements).  When `export =` appears inside
+                // a function body or namespace IIFE (syntactically invalid positions),
+                // tsc emits it verbatim, so we must not erase it.
                 is_es_module_output
+                    && self.function_scope_depth == 0
+                    && !self.in_namespace_iife
                     && self
                         .arena
                         .get_export_assignment(node)
