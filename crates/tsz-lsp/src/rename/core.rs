@@ -89,7 +89,17 @@ impl<'a> RenameProvider<'a> {
 
         // Resolve symbol to get kind / modifiers / qualified name
         let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let symbol_id = walker.resolve_node(root, node_idx);
+        let mut symbol_id = walker.resolve_node(root, node_idx);
+
+        // If direct resolution failed, try resolving as a property access member
+        // (e.g., `e.thirdMember` where thirdMember is an enum member).
+        if symbol_id.map_or(true, |id| id.is_none()) {
+            if let Some(member_sym_id) =
+                self.resolve_property_access_member(&mut walker, root, node_idx, &display_name)
+            {
+                symbol_id = Some(member_sym_id);
+            }
+        }
 
         let (kind, kind_modifiers, full_display_name) = self.symbol_info(node_idx, symbol_id);
 
@@ -441,6 +451,52 @@ impl<'a> RenameProvider<'a> {
             }
         }
 
+        None
+    }
+
+    // -----------------------------------------------------------------------
+    // Property access member resolution
+    // -----------------------------------------------------------------------
+
+    /// When the cursor is on the `name` part of a PropertyAccessExpression
+    /// (e.g., `thirdMember` in `e.thirdMember`), try to resolve the expression
+    /// part to a symbol, then look up the member name in that symbol's exports
+    /// or members table.
+    fn resolve_property_access_member(
+        &self,
+        walker: &mut ScopeWalker<'_>,
+        root: NodeIndex,
+        name_node: NodeIndex,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        let ext = self.arena.get_extended(name_node)?;
+        let parent_node = self.arena.get(ext.parent)?;
+        if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access_data = self.arena.get_access_expr(parent_node)?;
+        // Only proceed if this node is the name part, not the expression part
+        if access_data.name_or_argument != name_node {
+            return None;
+        }
+        // Resolve the expression (e.g., `e`) to a symbol
+        let expr_sym_id = walker.resolve_node(root, access_data.expression)?;
+        if expr_sym_id.is_none() {
+            return None;
+        }
+        let expr_sym = self.binder.symbols.get(expr_sym_id)?;
+        // Look in exports first (enum members are stored as exports)
+        if let Some(exports) = &expr_sym.exports {
+            if let Some(member_id) = exports.get(member_name) {
+                return Some(member_id);
+            }
+        }
+        // Then try members (for class/interface members)
+        if let Some(members) = &expr_sym.members {
+            if let Some(member_id) = members.get(member_name) {
+                return Some(member_id);
+            }
+        }
         None
     }
 
