@@ -591,8 +591,12 @@ function patchSessionClient(SessionClient, ts) {
         };
 
         let finalResult;
-        if (!tszResult || tszResult.length === 0) {
+        if (tszResult === undefined || tszResult === null) {
+            // tsz didn't handle this request — fall back to native
             finalResult = getNative() || [];
+        } else if (tszResult.length === 0) {
+            // tsz explicitly returned no fixes — trust it (e.g. autoImportFileExcludePatterns)
+            finalResult = [];
         } else {
             const nativeResult = getNative();
             finalResult = (nativeResult && nativeResult.length > 0) ? nativeResult : tszResult;
