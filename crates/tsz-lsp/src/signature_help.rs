@@ -176,15 +176,25 @@ impl<'a> SignatureHelpProvider<'a> {
 
         let callee_expr = call_site.expression();
 
-        // 4. Resolve the symbol being called using ScopeWalker
+        // 4. Check if this is a super() call — need special handling
+        let is_super_call = self
+            .arena
+            .get(callee_expr)
+            .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16);
+
+        // 5. Resolve the symbol being called using ScopeWalker
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
-        let symbol_id = if let Some(scope_cache) = scope_cache {
+        let symbol_id = if is_super_call {
+            // For super(), resolve the base class expression instead
+            self.find_base_class_expression(callee_expr)
+                .and_then(|base_expr| walker.resolve_node(root, base_expr))
+        } else if let Some(scope_cache) = scope_cache {
             walker.resolve_node_cached(root, callee_expr, scope_cache, scope_stats)
         } else {
             walker.resolve_node(root, callee_expr)
         };
 
-        // 5. Create checker with persistent cache if available
+        // 6. Create checker with persistent cache if available
         let compiler_options = tsz_checker::context::CheckerOptions {
             strict: self.strict,
             no_implicit_any: self.strict,
@@ -235,11 +245,28 @@ impl<'a> SignatureHelpProvider<'a> {
         let callee_type = checker.resolve_lazy_type(callee_type);
 
         // 6. Resolve the callee name for display
-        let callee_name = self.resolve_callee_name(callee_expr, call_kind);
+        let callee_name = if is_super_call {
+            // For super(), use the base class name from the extends clause
+            self.find_base_class_expression(callee_expr)
+                .and_then(|base_expr| {
+                    self.arena
+                        .get_identifier_text(base_expr)
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| "super".to_string())
+        } else {
+            self.resolve_callee_name(callee_expr, call_kind)
+        };
 
         // 7. Extract signatures from the type
+        // For super() calls, extract construct signatures (since super invokes the base constructor)
+        let effective_call_kind = if is_super_call {
+            CallKind::New
+        } else {
+            call_kind
+        };
         let mut signatures =
-            self.get_signatures_from_type(callee_type, &checker, call_kind, &callee_name);
+            self.get_signatures_from_type(callee_type, &checker, effective_call_kind, &callee_name);
 
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
@@ -450,6 +477,45 @@ impl<'a> SignatureHelpProvider<'a> {
             depth += 1;
         }
 
+        None
+    }
+
+    /// For a `super` keyword node, walk up to find the enclosing class, then
+    /// return the expression from its `extends` clause (the base class reference).
+    /// This lets us resolve the base class symbol for signature help on `super()`.
+    fn find_base_class_expression(&self, super_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = super_idx;
+        let mut depth = 0;
+        while current.is_some() && depth < 100 {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class_data = self.arena.get_class(node)?;
+                let heritage_clauses = class_data.heritage_clauses.as_ref()?;
+                for &clause_idx in &heritage_clauses.nodes {
+                    let heritage = self.arena.get_heritage_clause_at(clause_idx)?;
+                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+                    let &type_idx = heritage.types.nodes.first()?;
+                    // The type in the heritage clause is an ExpressionWithTypeArguments node.
+                    // We need the expression inside it (the base class identifier).
+                    if let Some(expr_type_args) = self.arena.get_expr_type_args_at(type_idx) {
+                        return Some(expr_type_args.expression);
+                    }
+                    // If not wrapped in ExpressionWithTypeArguments, use directly
+                    return Some(type_idx);
+                }
+                return None;
+            }
+            if let Some(extended) = self.arena.get_extended(current) {
+                current = extended.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
         None
     }
 
