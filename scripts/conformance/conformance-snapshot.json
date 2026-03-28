@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-28T01:10:51Z",
-  "git_sha": "e3f65a8c8e12c5f16bdf20b9dd487ae96201b644",
+  "timestamp": "2026-03-28T01:20:53Z",
+  "git_sha": "82da55071712749234e9e1fd4838780124687150",
   "summary": {
     "total_tests": 12581,
-    "passed": 11345,
-    "failed": 1236,
+    "passed": 11350,
+    "failed": 1231,
     "pass_rate": 90.2
   },
   "areas_by_pass_rate": [
@@ -226,20 +226,6 @@
       "pass_rate": 83.87
     },
     {
-      "area": "expressions/typeGuards",
-      "total": 63,
-      "passed": 53,
-      "failed": 10,
-      "pass_rate": 84.13
-    },
-    {
-      "area": "es6/destructuring",
-      "total": 147,
-      "passed": 124,
-      "failed": 23,
-      "pass_rate": 84.35
-    },
-    {
       "area": "types/typeParameters",
       "total": 46,
       "passed": 39,
@@ -254,6 +240,20 @@
       "pass_rate": 84.85
     },
     {
+      "area": "es6/destructuring",
+      "total": 147,
+      "passed": 125,
+      "failed": 22,
+      "pass_rate": 85.03
+    },
+    {
+      "area": "expressions/typeGuards",
+      "total": 63,
+      "passed": 54,
+      "failed": 9,
+      "pass_rate": 85.71
+    },
+    {
       "area": "controlFlow",
       "total": 57,
       "passed": 49,
@@ -266,13 +266,6 @@
       "passed": 227,
       "failed": 37,
       "pass_rate": 85.98
-    },
-    {
-      "area": "transpile",
-      "total": 22,
-      "passed": 19,
-      "failed": 3,
-      "pass_rate": 86.36
     },
     {
       "area": "references",
@@ -361,9 +354,9 @@
     {
       "area": "compiler",
       "total": 6518,
-      "passed": 5951,
-      "failed": 567,
-      "pass_rate": 91.3
+      "passed": 5952,
+      "failed": 566,
+      "pass_rate": 91.32
     },
     {
       "area": "expressions/unaryOperators",
@@ -448,6 +441,13 @@
       "passed": 20,
       "failed": 1,
       "pass_rate": 95.24
+    },
+    {
+      "area": "transpile",
+      "total": 22,
+      "passed": 21,
+      "failed": 1,
+      "pass_rate": 95.45
     },
     {
       "area": "classes/classDeclarations",
@@ -1176,15 +1176,15 @@
       "count": 1
     },
     {
+      "code": "TS17008",
+      "count": 1
+    },
+    {
       "code": "TS17014",
       "count": 1
     },
     {
       "code": "TS1005",
-      "count": 1
-    },
-    {
-      "code": "TS17008",
       "count": 1
     },
     {
@@ -1255,7 +1255,7 @@
     },
     {
       "code": "TS2339",
-      "count": 6
+      "count": 7
     },
     {
       "code": "TS2883",
@@ -1345,7 +1345,7 @@
     },
     {
       "code": "TS2339",
-      "count": 4
+      "count": 5
     },
     {
       "code": "TS2307",
@@ -1368,11 +1368,11 @@
       "count": 2
     },
     {
-      "code": "TS2693",
+      "code": "TS2702",
       "count": 1
     },
     {
-      "code": "TS2702",
+      "code": "TS2693",
       "count": 1
     },
     {
@@ -1380,11 +1380,11 @@
       "count": 1
     },
     {
-      "code": "TS2879",
+      "code": "TS2874",
       "count": 1
     },
     {
-      "code": "TS2874",
+      "code": "TS2879",
       "count": 1
     },
     {
@@ -1392,19 +1392,19 @@
       "count": 1
     },
     {
-      "code": "TS1435",
-      "count": 1
-    },
-    {
       "code": "TS1003",
       "count": 1
     },
     {
-      "code": "TS2749",
+      "code": "TS1435",
       "count": 1
     },
     {
       "code": "TS2451",
+      "count": 1
+    },
+    {
+      "code": "TS2749",
       "count": 1
     },
     {
@@ -1424,15 +1424,19 @@
       "count": 1
     },
     {
-      "code": "TS1155",
-      "count": 1
-    },
-    {
       "code": "TS2391",
       "count": 1
     },
     {
+      "code": "TS1155",
+      "count": 1
+    },
+    {
       "code": "TS2304",
+      "count": 1
+    },
+    {
+      "code": "TS2351",
       "count": 1
     },
     {
@@ -1441,10 +1445,6 @@
     },
     {
       "code": "TS2300",
-      "count": 1
-    },
-    {
-      "code": "TS2351",
       "count": 1
     },
     {
@@ -1625,7 +1625,7 @@
     },
     {
       "code": "TS2339",
-      "count": 26
+      "count": 27
     },
     {
       "code": "TS2345",
@@ -1781,10 +1781,10 @@
     }
   ],
   "categories": {
-    "false_positive": 53,
+    "false_positive": 54,
     "all_missing": 120,
     "wrong_code": 368,
-    "fingerprint_only": 686,
+    "fingerprint_only": 680,
     "close_to_passing": 251
   }
 }
