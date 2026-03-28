@@ -1817,8 +1817,19 @@ impl<'a> CheckerState<'a> {
         // tsc calls checkNonNullType() first (emitting TS18048/TS2532), then checks the
         // remaining type. So `number | undefined` → strip to `number` → valid arithmetic.
         // Pure null/undefined becomes NEVER after stripping, which is also valid.
-        let left_stripped = tsz_solver::remove_nullish(self.ctx.types, left_eval);
-        let right_stripped = tsz_solver::remove_nullish(self.ctx.types, right_eval);
+        // However, `void` as a standalone type should NOT be stripped — TSC checks `void`
+        // directly against `number | bigint` and emits TS2362/TS2363 when it fails.
+        // Stripping `void` to `never` would falsely pass the arithmetic check.
+        let left_stripped = if left_eval == TypeId::VOID {
+            left_eval
+        } else {
+            tsz_solver::remove_nullish(self.ctx.types, left_eval)
+        };
+        let right_stripped = if right_eval == TypeId::VOID {
+            right_eval
+        } else {
+            tsz_solver::remove_nullish(self.ctx.types, right_eval)
+        };
         let left_is_valid = self.is_arithmetic_operand(left_stripped);
         let right_is_valid = self.is_arithmetic_operand(right_stripped);
 

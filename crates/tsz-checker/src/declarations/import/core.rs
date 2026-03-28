@@ -2209,7 +2209,8 @@ impl<'a> CheckerState<'a> {
 
             // Emit TS2528 for any multiple default exports that are not
             // function overloads. tsc only allows multiple export default
-            let is_conflict = !all_same_function || value_count > 1 || (has_interface && has_function);
+            let is_conflict =
+                !all_same_function || value_count > 1 || (has_interface && has_function);
             if is_conflict {
                 if has_function && has_class {
                     // When function + class both export as default, tsc emits
