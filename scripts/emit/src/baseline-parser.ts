@@ -193,9 +193,16 @@ export function parseBaseline(content: string): BaselineContent {
         );
       });
       // Also check if a JS/JSX source file shares the same basename
-      // (e.g., foo.jsx as input → foo.js as output in @allowJs tests)
+      // (e.g., foo.jsx as input -> foo.js as output in @allowJs tests).
+      // Only consider valid JS-to-JS compilation pairs: .jsx -> .js.
+      // Do NOT treat .cjs as output of .js (they are separate files in
+      // multi-format packages like bundlerNodeModules1).
       const isJsSourceOutput = !isTsOutput && [...seenNames].some(seen => {
-        return isJsLikeOutput(seen) && toJsOutputBase(seen) === nameBase && seen !== name;
+        if (!isJsLikeOutput(seen) || toJsOutputBase(seen) !== nameBase || seen === name) return false;
+        // Only .jsx -> .js is a valid JS source output pair
+        const seenExt = seen.match(/\.(js|jsx|mjs|cjs)$/)?.[1];
+        const nameExt = name.match(/\.(js|jsx|mjs|cjs)$/)?.[1];
+        return seenExt === 'jsx' && nameExt === 'js';
       });
       if (isTsOutput || isJsSourceOutput) {
         if (lastAuxIndex >= i) {
