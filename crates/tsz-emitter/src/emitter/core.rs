@@ -1,7 +1,9 @@
 use crate::context::emit::EmitContext;
 use crate::context::transform::{TransformContext, TransformDirective};
 use crate::enums::evaluator::EnumValue;
-use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+use crate::output::source_writer::{
+    LineMap, SourcePosition, SourceWriter, source_position_from_offset,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -277,6 +279,10 @@ pub struct Printer<'a> {
 
     /// Source text for source map generation (kept separate from comment emission).
     pub(crate) source_map_text: Option<&'a str>,
+
+    /// Precomputed line map for O(log n) line/column lookups from byte offsets.
+    /// Built once when source text is set; avoids O(n^2) scanning during emission.
+    pub(crate) line_map: Option<LineMap>,
 
     /// Pending source position for mapping the next write.
     pub(crate) pending_source_pos: Option<SourcePosition>,
@@ -659,6 +665,7 @@ impl<'a> Printer<'a> {
             emit_missing_initializer_as_void_0: false,
             source_text: None,
             source_map_text: None,
+            line_map: None,
             pending_source_pos: None,
             emit_recursion_depth: 0,
             all_comments: Vec::new(),
@@ -813,6 +820,7 @@ impl<'a> Printer<'a> {
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+        self.line_map = Some(LineMap::new(text));
         let estimated = Self::estimate_output_capacity(text.len());
         self.writer.ensure_output_capacity(estimated);
     }
@@ -850,18 +858,26 @@ impl<'a> Printer<'a> {
         self.source_map_text.or(self.source_text)
     }
 
+    /// Compute a `SourcePosition` from a byte offset, using the precomputed
+    /// line map for O(log n) lookup when available, falling back to the O(n)
+    /// linear scan otherwise.
+    pub(crate) fn fast_source_position(&self, pos: u32) -> Option<SourcePosition> {
+        if let Some(ref lm) = self.line_map {
+            Some(lm.source_position(pos))
+        } else if let Some(text) = self.source_text_for_map() {
+            Some(source_position_from_offset(text, pos))
+        } else {
+            None
+        }
+    }
+
     fn queue_source_mapping(&mut self, node: &Node) {
         if !self.writer.has_source_map() {
             self.pending_source_pos = None;
             return;
         }
 
-        let Some(text) = self.source_text_for_map() else {
-            self.pending_source_pos = None;
-            return;
-        };
-
-        self.pending_source_pos = Some(source_position_from_offset(text, node.pos));
+        self.pending_source_pos = self.fast_source_position(node.pos);
     }
 
     /// Check if a node spans a single line in the source.
@@ -1681,12 +1697,12 @@ impl<'a> Printer<'a> {
                     // The expression's end points past the expression, so `]`
                     // is at the expression's end position (where the expression
                     // text ends and `]` begins).
-                    if let Some(text) = self.source_text_for_map() {
+                    if self.source_text_for_map().is_some() {
                         let expr_end = self
                             .arena
                             .get(computed.expression)
                             .map_or(node.pos + 1, |e| e.end);
-                        self.pending_source_pos = Some(source_position_from_offset(text, expr_end));
+                        self.pending_source_pos = self.fast_source_position(expr_end);
                     }
                     self.write("]");
                 }

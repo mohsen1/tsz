@@ -1,5 +1,5 @@
 use super::{JsxEmit, ModuleKind, Printer};
-use crate::output::source_writer::{SourcePosition, source_position_from_offset};
+use crate::output::source_writer::SourcePosition;
 use crate::safe_slice;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
@@ -196,8 +196,8 @@ impl<'a> Printer<'a> {
 
     /// Set `pending_source_pos` to an exact byte offset in the source text.
     pub(super) fn map_source_offset(&mut self, offset: u32) {
-        if let Some(text) = self.source_text_for_map() {
-            self.pending_source_pos = Some(source_position_from_offset(text, offset));
+        if self.source_text_for_map().is_some() {
+            self.pending_source_pos = self.fast_source_position(offset);
         }
     }
 
@@ -209,8 +209,7 @@ impl<'a> Printer<'a> {
             let start = node.pos as usize;
             let end = (node.end as usize).min(bytes.len());
             if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
-                self.pending_source_pos =
-                    Some(source_position_from_offset(text, (start + offset) as u32));
+                self.pending_source_pos = self.fast_source_position((start + offset) as u32);
             }
         }
     }
@@ -227,7 +226,7 @@ impl<'a> Printer<'a> {
             let end = (from_pos as usize).min(bytes.len());
             for i in (start..end).rev() {
                 if bytes[i] == token {
-                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    self.pending_source_pos = self.fast_source_position(i as u32);
                     return;
                 }
             }
@@ -243,8 +242,7 @@ impl<'a> Printer<'a> {
                 .get(start..end)
                 .and_then(|s| s.iter().position(|&b| b == token))
             {
-                self.pending_source_pos =
-                    Some(source_position_from_offset(text, (start + offset) as u32));
+                self.pending_source_pos = self.fast_source_position((start + offset) as u32);
             }
         }
     }
@@ -261,8 +259,7 @@ impl<'a> Printer<'a> {
                 .get(start..end)
                 .and_then(|s| s.iter().position(|&b| !b.is_ascii_whitespace()))
             {
-                self.pending_source_pos =
-                    Some(source_position_from_offset(text, (start + offset) as u32));
+                self.pending_source_pos = self.fast_source_position((start + offset) as u32);
             }
         }
     }
@@ -320,7 +317,7 @@ impl<'a> Printer<'a> {
                 i += 1;
             }
             if let Some(pos) = closing_pos {
-                self.pending_source_pos = Some(source_position_from_offset(text, pos as u32));
+                self.pending_source_pos = self.fast_source_position(pos as u32);
             }
         }
     }
@@ -337,7 +334,7 @@ impl<'a> Printer<'a> {
             while i > start {
                 i -= 1;
                 if bytes[i] == b')' {
-                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    self.pending_source_pos = self.fast_source_position(i as u32);
                     return;
                 }
             }
@@ -356,7 +353,7 @@ impl<'a> Printer<'a> {
             while i > start {
                 i -= 1;
                 if bytes[i] == b')' {
-                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    self.pending_source_pos = self.fast_source_position(i as u32);
                     return;
                 }
             }
@@ -414,7 +411,7 @@ impl<'a> Printer<'a> {
                 i += 1;
             }
             if let Some(pos) = last_semi {
-                self.pending_source_pos = Some(source_position_from_offset(text, pos as u32));
+                self.pending_source_pos = self.fast_source_position(pos as u32);
             }
         }
     }

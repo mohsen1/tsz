@@ -1083,58 +1083,22 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
     ) -> Option<(TypeId, TypeId, bool)> {
         let member_node = self.ctx.arena.get(member_idx)?;
-        let (name_idx, value_type, is_static) =
-            if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                let prop = self.ctx.arena.get_property_decl(member_node)?;
-                let is_static = self.has_static_modifier(&prop.modifiers);
-                let value_type = if let Some(declared_type) =
-                    self.effective_class_property_declared_type(member_idx, prop)
-                {
-                    declared_type
-                } else {
-                    self.get_type_of_node(member_idx)
-                };
-                (prop.name, value_type, is_static)
-            } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                let method = self.ctx.arena.get_method_decl(member_node)?;
-                (
-                    method.name,
-                    self.get_type_of_function(member_idx),
-                    self.has_static_modifier(&method.modifiers),
-                )
-            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
-                let accessor = self.ctx.arena.get_accessor(member_node)?;
-                let value_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                    if accessor.type_annotation.is_some() {
-                        self.get_type_from_type_node(accessor.type_annotation)
-                    } else {
-                        self.infer_getter_return_type(accessor.body)
-                    }
-                } else {
-                    let type_ann = accessor
-                        .parameters
-                        .nodes
-                        .first()
-                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                        .map(|param| param.type_annotation)
-                        .unwrap_or(NodeIndex::NONE);
-                    if type_ann.is_some() {
-                        self.get_type_from_type_node(type_ann)
-                    } else {
-                        self.get_type_of_node(member_idx)
-                    }
-                };
-                (
-                    accessor.name,
-                    value_type,
-                    self.has_static_modifier(&accessor.modifiers),
-                )
-            } else {
-                return None;
-            };
+
+        // PERF: Check if the member has a computed property name FIRST, before
+        // computing the (potentially expensive) value type. Most class members
+        // have simple identifier names, so this early exit avoids calling
+        // get_type_of_function on every method body just to discard the result.
+        let name_idx = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            self.ctx.arena.get_property_decl(member_node)?.name
+        } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            self.ctx.arena.get_method_decl(member_node)?.name
+        } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            self.ctx.arena.get_accessor(member_node)?.name
+        } else {
+            return None;
+        };
 
         let name_node = self.ctx.arena.get(name_idx)?;
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -1149,6 +1113,56 @@ impl<'a> CheckerState<'a> {
         if !matches!(key_type, TypeId::STRING | TypeId::NUMBER | TypeId::ANY) {
             return None;
         }
+
+        // Only compute value type after confirming this is a computed member
+        // with an entity expression key of the right type.
+        let (value_type, is_static) = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let prop = self.ctx.arena.get_property_decl(member_node)?;
+            let is_static = self.has_static_modifier(&prop.modifiers);
+            let value_type = if let Some(declared_type) =
+                self.effective_class_property_declared_type(member_idx, prop)
+            {
+                declared_type
+            } else {
+                self.get_type_of_node(member_idx)
+            };
+            (value_type, is_static)
+        } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            let method = self.ctx.arena.get_method_decl(member_node)?;
+            (
+                self.get_type_of_function(member_idx),
+                self.has_static_modifier(&method.modifiers),
+            )
+        } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            let accessor = self.ctx.arena.get_accessor(member_node)?;
+            let value_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                if accessor.type_annotation.is_some() {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                } else {
+                    self.infer_getter_return_type(accessor.body)
+                }
+            } else {
+                let type_ann = accessor
+                    .parameters
+                    .nodes
+                    .first()
+                    .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                    .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                    .map(|param| param.type_annotation)
+                    .unwrap_or(NodeIndex::NONE);
+                if type_ann.is_some() {
+                    self.get_type_from_type_node(type_ann)
+                } else {
+                    self.get_type_of_node(member_idx)
+                }
+            };
+            (value_type, self.has_static_modifier(&accessor.modifiers))
+        } else {
+            return None;
+        };
+
         if self.type_contains_error(value_type) {
             return None;
         }

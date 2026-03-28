@@ -587,6 +587,73 @@ impl Default for SourceWriter {
 // Helper Functions
 // =============================================================================
 
+/// Precomputed line map for O(log n) line/column lookups from byte offsets.
+///
+/// Without this, computing line/column from a byte offset requires scanning
+/// from the beginning of the file, which is O(pos) per call and leads to
+/// O(n^2) total cost when emitting large files.
+pub struct LineMap {
+    /// Byte offsets of the start of each line (line 0 starts at offset 0).
+    /// `line_starts[i]` is the byte offset of the first character on line `i`.
+    line_starts: Vec<u32>,
+    /// The full source text, needed for UTF-16 column computation.
+    text: String,
+}
+
+impl LineMap {
+    /// Build a line map from source text. O(n) in text length.
+    pub fn new(text: &str) -> Self {
+        let mut line_starts = Vec::with_capacity(text.len() / 40 + 1);
+        line_starts.push(0);
+        for (i, b) in text.as_bytes().iter().enumerate() {
+            if *b == b'\n' {
+                line_starts.push((i + 1) as u32);
+            }
+        }
+        Self {
+            line_starts,
+            text: text.to_string(),
+        }
+    }
+
+    /// Look up (line, column) from a byte offset. O(log n) via binary search.
+    /// Column counting uses UTF-16 code units for source map compatibility.
+    pub fn line_col(&self, pos: u32) -> (u32, u32) {
+        let pos_usize = pos as usize;
+        if pos_usize >= self.text.len() {
+            // End-of-file position
+            let line = (self.line_starts.len() - 1) as u32;
+            let line_start = *self.line_starts.last().unwrap_or(&0) as usize;
+            let col: u32 = self.text[line_start..]
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum();
+            return (line, col);
+        }
+
+        // Binary search for the line containing `pos`
+        let line = match self.line_starts.binary_search(&pos) {
+            Ok(exact) => exact,
+            Err(insert) => insert - 1,
+        };
+        let line_start = self.line_starts[line] as usize;
+
+        // Compute column in UTF-16 code units
+        let col: u32 = self.text[line_start..pos_usize]
+            .chars()
+            .map(|c| c.len_utf16() as u32)
+            .sum();
+
+        (line as u32, col)
+    }
+
+    /// Create a `SourcePosition` from a byte offset. O(log n).
+    pub fn source_position(&self, pos: u32) -> SourcePosition {
+        let (line, column) = self.line_col(pos);
+        SourcePosition { pos, line, column }
+    }
+}
+
 /// Compute line and column from byte offset in source text
 /// Note: Column counting uses UTF-16 code units for source map compatibility
 pub fn compute_line_col(text: &str, pos: u32) -> (u32, u32) {
