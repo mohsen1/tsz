@@ -100,6 +100,19 @@ pub(crate) fn is_node_builtin_module(name: &str) -> bool {
     )
 }
 
+fn imported_types_package_target(module_name: &str) -> Option<String> {
+    let package = module_name.strip_prefix("@types/")?;
+    if package.is_empty() {
+        return None;
+    }
+    if let Some((scope, name)) = package.split_once("__") {
+        if !scope.is_empty() && !name.is_empty() {
+            return Some(format!("@{scope}/{name}"));
+        }
+    }
+    Some(package.to_string())
+}
+
 impl<'a> CheckerState<'a> {
     fn source_file_has_syntactic_module_indicator(
         &self,
@@ -555,12 +568,13 @@ impl<'a> CheckerState<'a> {
             self.check_import_declaration_conflicts(stmt_idx, import.import_clause);
         }
 
-        // Skip module resolution checks when import has parse errors
-        if has_parse_errors || !self.ctx.report_unresolved_imports {
+        // Skip semantic import diagnostics when the import has parse errors.
+        if has_parse_errors {
             return;
         }
 
-        // Extract module specifier data eagerly to avoid borrow issues later
+        // Extract module specifier data eagerly so direct import diagnostics like
+        // TS6137 can run even when unresolved-import reporting is disabled.
         let module_specifier_idx = import.module_specifier;
         let import_clause_idx = import.import_clause;
 
@@ -585,6 +599,27 @@ impl<'a> CheckerState<'a> {
             .get(import_clause_idx)
             .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
             .is_some_and(|clause| clause.is_type_only);
+
+        if !is_type_only_import && let Some(suggested) = imported_types_package_target(module_name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::CANNOT_IMPORT_TYPE_DECLARATION_FILES_CONSIDER_IMPORTING_INSTEAD_OF,
+                &[&suggested, module_name],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::CANNOT_IMPORT_TYPE_DECLARATION_FILES_CONSIDER_IMPORTING_INSTEAD_OF,
+            );
+            return;
+        }
+
+        // Skip module resolution checks when unresolved-import reporting is disabled.
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
         // Track whether TS2846/TS5097 extension diagnostics were emitted.
         // When these fire, TS2307 from module resolution should be suppressed
         // (tsc prioritizes extension-specific diagnostics over "cannot find module").
