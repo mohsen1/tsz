@@ -1970,6 +1970,33 @@ impl<'a> CheckerState<'a> {
                 return;
             }
         }
+        // Run failure analysis to produce elaboration as related information,
+        // matching tsc's behavior of emitting TS2741/TS2739/TS2740 etc. as
+        // related diagnostics under the primary TS2345.
+        let analysis = self.analyze_assignability_failure(arg_type, param_type);
+
+        // When the failure reason is NoCommonProperties (weak types with no
+        // properties in common), tsc emits TS2559 directly instead of TS2345.
+        if matches!(
+            &analysis.failure_reason,
+            Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+        ) {
+            let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
+            let param_str =
+                self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
+            let message = format_message(
+                diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                &[&arg_str, &param_str],
+            );
+            let request = DiagnosticRenderRequest::simple(
+                DiagnosticAnchorKind::Exact,
+                diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                message,
+            );
+            self.emit_render_request(idx, request);
+            return;
+        }
+
         let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
         let param_str = self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
         let message = format_message(
@@ -1977,10 +2004,6 @@ impl<'a> CheckerState<'a> {
             &[&arg_str, &param_str],
         );
 
-        // Run failure analysis to produce elaboration as related information,
-        // matching tsc's behavior of emitting TS2741/TS2739/TS2740 etc. as
-        // related diagnostics under the primary TS2345.
-        let analysis = self.analyze_assignability_failure(arg_type, param_type);
         let request = if let Some(reason) = analysis.failure_reason {
             DiagnosticRenderRequest::with_failure_reason(
                 DiagnosticAnchorKind::Exact,
