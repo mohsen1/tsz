@@ -89,6 +89,8 @@ impl Server {
             const ADD_PARAMETER_NAMES_FIX_ID: &str = "addNameToNamelessParameter";
             const IMPLICIT_ANY_PARAMETER_ERROR_CODE: u32 = 7006;
             const FIX_MISSING_ATTRIBUTES_FIX_ID: &str = "fixMissingAttributes";
+            const ADD_MISSING_NEW_FIX_ID: &str = "addMissingNewOperator";
+            const NOT_CALLABLE_ERROR_CODE: u32 = 2348;
             let organize_imports_ignore_case = request
                 .arguments
                 .get("preferences")
@@ -116,6 +118,8 @@ impl Server {
             let add_parameter_names_content =
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
             let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
+            let add_missing_new_preview =
+                Self::apply_add_missing_new_fallback(&content, request_span);
             let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
             let mut add_missing_const_preview = if let Some((start, _)) = request_span {
                 Self::apply_add_missing_const_fallback_at_position(&content, &line_map, start)
@@ -166,6 +170,11 @@ impl Server {
             if diagnostics.iter().all(|d| d.code != 2739)
                 && let Some(diag) =
                     Self::synthetic_missing_attributes_suggestion_diagnostic(file_path, &content)
+            {
+                diagnostics.push(diag);
+            }
+            if diagnostics.iter().all(|d| d.code != 2348)
+                && let Some(diag) = Self::synthetic_add_missing_new_diagnostic(file_path, &content)
             {
                 diagnostics.push(diag);
             }
@@ -573,6 +582,32 @@ impl Server {
                     }],
                     "fixId": FIX_MISSING_ATTRIBUTES_FIX_ID,
                     "fixAllDescription": "Add all missing attributes",
+                }));
+            }
+
+            // addMissingNewOperator: for error 2348 (value not callable, missing new)
+            if response_actions.is_empty()
+                && error_codes.len() == 1
+                && error_codes[0] == NOT_CALLABLE_ERROR_CODE
+                && let Some((updated_content, description)) = add_missing_new_preview.as_ref()
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": ADD_MISSING_NEW_FIX_ID,
+                    "description": description,
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                    "fixId": ADD_MISSING_NEW_FIX_ID,
+                    "fixAllDescription": "Add missing 'new' operator to all calls",
                 }));
             }
 
@@ -2701,6 +2736,35 @@ impl Server {
         })
     }
 
+    pub(super) fn synthetic_add_missing_new_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let _ = Self::apply_add_missing_new_fallback(content, None)?;
+        let class_names = Self::collect_class_names(content);
+        let mut start = 0u32;
+        for name in &class_names {
+            let pattern = format!("{name}(");
+            if let Some(pos) = content.find(&pattern) {
+                let prefix = content[..pos].trim_end();
+                if !prefix.ends_with("new") {
+                    start = pos as u32;
+                    break;
+                }
+            }
+        }
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Error,
+            code: 2348,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text: "Value of type is not callable. Did you mean to include 'new'?"
+                .to_string(),
+            related_information: Vec::new(),
+        })
+    }
+
     pub(super) fn synthetic_add_missing_const_diagnostic(
         file_path: &str,
         content: &str,
@@ -3222,6 +3286,21 @@ impl Server {
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 all_changes.clear();
+                all_changes.push(serde_json::json!({
+                    "fileName": file_path,
+                    "textChanges": [{
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                        "newText": updated_content
+                    }]
+                }));
+            }
+
+            if all_changes.is_empty()
+                && fix_id == "addMissingNewOperator"
+                && let Some(updated_content) = Self::apply_add_missing_new_all_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 all_changes.push(serde_json::json!({
                     "fileName": file_path,
                     "textChanges": [{

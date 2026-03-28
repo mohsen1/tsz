@@ -1420,7 +1420,7 @@ impl Server {
 
     /// Find class names defined in the content.
     #[allow(dead_code)]
-    fn collect_class_names(content: &str) -> Vec<String> {
+    pub(super) fn collect_class_names(content: &str) -> Vec<String> {
         let mut names = Vec::new();
         let bytes = content.as_bytes();
         let mut i = 0;
@@ -1451,7 +1451,6 @@ impl Server {
     }
 
     /// Apply "add missing new" fix at a specific diagnostic position.
-    #[allow(dead_code)]
     pub(super) fn apply_add_missing_new_fallback(
         content: &str,
         request_span: Option<(tsz::lsp::position::Position, tsz::lsp::position::Position)>,
@@ -1498,7 +1497,6 @@ impl Server {
     }
 
     /// Apply "add missing new" to ALL class constructor calls.
-    #[allow(dead_code)]
     pub(super) fn apply_add_missing_new_all_fallback(content: &str) -> Option<String> {
         let class_names = Self::collect_class_names(content);
         if class_names.is_empty() {
