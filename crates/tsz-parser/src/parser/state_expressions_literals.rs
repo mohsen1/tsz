@@ -1812,8 +1812,7 @@ impl ParserState {
                         // before it knows whether the list is also unclosed).
                         let diag_count_before = self.parse_diagnostics.len();
                         self.error_comma_expected();
-                        let comma_error_emitted =
-                            self.parse_diagnostics.len() > diag_count_before;
+                        let comma_error_emitted = self.parse_diagnostics.len() > diag_count_before;
                         self.next_token(); // skip `;`, now at EOF
                         if comma_error_emitted {
                             // The comma error was actually emitted at `;`.
