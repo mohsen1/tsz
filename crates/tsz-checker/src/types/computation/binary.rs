@@ -272,14 +272,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Type parameters: behavior depends on strict mode.
-        // In strict mode, TSC wraps in NonNullable<T> which has apparent type `{}`
-        // → valid for `in` but triggers TS2638 (may represent primitive).
-        // In non-strict mode, unconstrained params fail → TS2322 (not assignable to object).
+        // For type parameters, check if their constraint is assignable to object.
+        // Unconstrained type params are NOT valid (could be primitive) → TS2322.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            if self.ctx.strict_null_checks() {
-                return true;
-            }
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
                 self.ctx.types,
                 ty,
@@ -855,13 +850,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS18046: 'x' is of type 'unknown'.
-                // In strict mode, TSC's checkNonNullExpression emits TS18046 for
-                // `unknown` and returns error type, skipping further `in` checks.
-                // In non-strict mode, `unknown` falls through to TS2638.
-                if right_type == TypeId::UNKNOWN && self.ctx.strict_null_checks() {
+                // TSC emits TS18046 for `unknown` in the `in` operator context.
+                // We also let the TS2638 check run since `unknown` may represent
+                // a primitive — this matches TSC's combined diagnostics.
+                if right_type == TypeId::UNKNOWN {
                     self.error_is_of_type_unknown(right_idx);
-                    type_stack.push(TypeId::BOOLEAN);
-                    continue;
                 }
 
                 // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
