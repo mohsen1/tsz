@@ -1495,6 +1495,139 @@ pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOpt
     }
 }
 
+/// Find the innermost `node_modules/<package>/` root for a file path.
+fn find_node_modules_package_root(path: &Path) -> Option<PathBuf> {
+    let components: Vec<_> = path.components().collect();
+    for i in (0..components.len()).rev() {
+        if components[i].as_os_str() == "node_modules" && i + 1 < components.len() {
+            let next = components[i + 1].as_os_str().to_string_lossy();
+            let pkg_end = if next.starts_with('@') {
+                if i + 2 < components.len() {
+                    i + 3
+                } else {
+                    continue;
+                }
+            } else {
+                i + 2
+            };
+            if pkg_end <= components.len() {
+                let mut root = PathBuf::new();
+                for c in &components[..pkg_end] {
+                    root.push(c);
+                }
+                return Some(root);
+            }
+        }
+    }
+    None
+}
+
+/// Build a redirect map for duplicate packages (same name+version at different
+/// node_modules paths). The shallowest copy becomes canonical.
+pub(crate) fn build_duplicate_package_redirects(
+    file_names: &[String],
+    options: &ResolvedCompilerOptions,
+) -> FxHashMap<PathBuf, PathBuf> {
+    use std::collections::hash_map::Entry;
+    let debug = std::env::var_os("TSZ_DEBUG_RESOLVE").is_some();
+
+    let mut canonical_packages: FxHashMap<(String, String), (PathBuf, usize)> =
+        FxHashMap::default();
+    let mut package_roots: FxHashSet<PathBuf> = FxHashSet::default();
+    for file_name in file_names {
+        if let Some(pkg_root) = find_node_modules_package_root(Path::new(file_name)) {
+            package_roots.insert(pkg_root);
+        }
+    }
+
+    if debug {
+        for root in &package_roots {
+            eprintln!("[dup-pkg] found package root: {}", root.display());
+        }
+    }
+
+    let mut root_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
+    for pkg_root in &package_roots {
+        let pkg_json_path = pkg_root.join("package.json");
+        let (name, version) = match std::fs::read_to_string(&pkg_json_path) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(val) => {
+                    let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                    if name.is_empty() || version.is_empty() {
+                        continue;
+                    }
+                    (name.to_string(), version.to_string())
+                }
+                Err(_) => continue,
+            },
+            Err(e) => {
+                if debug {
+                    eprintln!("[dup-pkg] cannot read {}: {}", pkg_json_path.display(), e);
+                }
+                continue;
+            }
+        };
+        if debug {
+            eprintln!("[dup-pkg] {}@{} at {}", name, version, pkg_root.display());
+        }
+        let depth = pkg_root
+            .components()
+            .filter(|c| c.as_os_str() == "node_modules")
+            .count();
+        match canonical_packages.entry((name, version)) {
+            Entry::Vacant(e) => {
+                e.insert((pkg_root.clone(), depth));
+            }
+            Entry::Occupied(mut e) => {
+                let (existing_root, existing_depth) = e.get().clone();
+                if depth < existing_depth {
+                    root_redirects.insert(existing_root, pkg_root.clone());
+                    e.insert((pkg_root.clone(), depth));
+                } else {
+                    root_redirects.insert(pkg_root.clone(), existing_root);
+                }
+            }
+        }
+    }
+    if root_redirects.is_empty() {
+        return FxHashMap::default();
+    }
+    if debug {
+        for (from, to) in &root_redirects {
+            eprintln!(
+                "[dup-pkg] root redirect: {} -> {}",
+                from.display(),
+                to.display()
+            );
+        }
+    }
+    let mut file_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
+    for file_name in file_names {
+        let file_path = Path::new(file_name);
+        if let Some(pkg_root) = find_node_modules_package_root(file_path) {
+            if let Some(canonical_root) = root_redirects.get(&pkg_root) {
+                if let Ok(relative) = file_path.strip_prefix(&pkg_root) {
+                    let canonical_file = canonical_root.join(relative);
+                    let from = normalize_resolved_path(file_path, options);
+                    let to = normalize_resolved_path(&canonical_file, options);
+                    if debug {
+                        eprintln!(
+                            "[dup-pkg] file redirect: {} -> {}",
+                            from.display(),
+                            to.display()
+                        );
+                    }
+                    if from != to {
+                        file_redirects.insert(from, to);
+                    }
+                }
+            }
+        }
+    }
+    file_redirects
+}
+
 const KNOWN_EXTENSIONS: [&str; 12] = [
     ".d.mts", ".d.cts", ".d.ts", ".mts", ".cts", ".tsx", ".ts", ".mjs", ".cjs", ".jsx", ".js",
     ".json",

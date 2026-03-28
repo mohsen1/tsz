@@ -544,9 +544,17 @@ impl<'a> CheckerState<'a> {
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
 
+        // Use the target file's binder when available so that node→symbol
+        // lookups (e.g. `get_node_symbol` for private member `parent_id`)
+        // resolve correctly instead of returning `None`.
+        let delegate_binder = self
+            .ctx
+            .get_binder_for_arena(symbol_arena)
+            .unwrap_or(self.ctx.binder);
+
         let mut checker = Box::new(CheckerState::with_parent_cache(
             symbol_arena,
-            self.ctx.binder,
+            delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
@@ -631,7 +639,12 @@ impl<'a> CheckerState<'a> {
                 .get_binder_for_file(file_idx)
                 .unwrap_or(self.ctx.binder)
         } else {
-            self.ctx.binder
+            // Use the target arena's binder so that node→symbol lookups
+            // (e.g. `get_node_symbol` for private member `parent_id`)
+            // resolve correctly instead of returning `None`.
+            self.ctx
+                .get_binder_for_arena(symbol_arena)
+                .unwrap_or(self.ctx.binder)
         };
 
         // Guard against deep cross-arena recursion

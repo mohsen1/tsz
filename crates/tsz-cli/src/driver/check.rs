@@ -637,6 +637,12 @@ pub(super) fn collect_diagnostics(
     let mut cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>> =
         Vec::with_capacity(program.files.len());
 
+    // Duplicate package redirect map
+    let package_redirects: FxHashMap<PathBuf, PathBuf> = {
+        let file_names: Vec<String> = program.files.iter().map(|f| f.file_name.clone()).collect();
+        build_duplicate_package_redirects(&file_names, options)
+    };
+
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -698,6 +704,11 @@ pub(super) fn collect_diagnostics(
                 if let Some(ref resolved_path) = outcome.resolved_path {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
                     let canonical = normalize_resolved_path(resolved_path, options);
+                    // Apply duplicate package redirect
+                    let canonical = package_redirects
+                        .get(&canonical)
+                        .cloned()
+                        .unwrap_or(canonical);
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                         resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                         resolved_module_request_paths.insert(
@@ -1092,6 +1103,10 @@ pub(super) fn collect_diagnostics(
                     &program_paths,
                 ) {
                     let canonical = normalize_resolved_path(&resolved, options);
+                    let canonical = package_redirects
+                        .get(&canonical)
+                        .cloned()
+                        .unwrap_or(canonical);
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                         propagate_module_export_maps(
                             &mut binder,
