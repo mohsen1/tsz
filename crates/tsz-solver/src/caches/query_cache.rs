@@ -996,7 +996,25 @@ impl QueryDatabase for QueryCache<'_> {
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator = evaluator.with_query_db(self);
         let result = evaluator.evaluate(type_id);
-        self.eval_cache.borrow_mut().insert(key, result);
+
+        // PERF: Persist intermediate evaluation results from this session into
+        // the long-lived eval_cache. During recursive mapped type expansion
+        // (e.g., DeepPartial<T>), the evaluator computes many sub-results
+        // that would otherwise be recomputed in subsequent top-level evaluate
+        // calls. Only persist entries where the result differs from the input
+        // (identity mappings are free to recompute) and skip intrinsics.
+        {
+            let mut cache = self.eval_cache.borrow_mut();
+            cache.insert(key, result);
+            for (intermediate_id, intermediate_result) in evaluator.drain_cache() {
+                if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
+                    cache
+                        .entry((intermediate_id, no_unchecked_indexed_access))
+                        .or_insert(intermediate_result);
+                }
+            }
+        }
+
         if let Some(query_id) = trace_query_id {
             query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
         }
