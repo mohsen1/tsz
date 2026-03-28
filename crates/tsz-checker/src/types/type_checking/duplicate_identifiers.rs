@@ -162,10 +162,7 @@ impl<'a> CheckerState<'a> {
 
             if has_local && has_remote {
                 // Interfaces always merge with other interfaces across files in TypeScript.
-                // Classes also merge with interfaces. Only report cross-file conflicts when
-                // the symbol includes declaration kinds that actually conflict (variables,
-                // type aliases, enums).
-                let is_mergeable_across_files = (symbol.flags & symbol_flags::INTERFACE) != 0
+                let is_interface_merge = (symbol.flags & symbol_flags::INTERFACE) != 0
                     && (symbol.flags
                         & (symbol_flags::FUNCTION_SCOPED_VARIABLE
                             | symbol_flags::BLOCK_SCOPED_VARIABLE
@@ -173,7 +170,18 @@ impl<'a> CheckerState<'a> {
                             | symbol_flags::REGULAR_ENUM
                             | symbol_flags::CONST_ENUM))
                         == 0;
-                if !is_mergeable_across_files {
+                // var declarations merge across script files (non-modules).
+                let is_var_merge = !is_external_module
+                    && (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                    && (symbol.flags
+                        & (symbol_flags::BLOCK_SCOPED_VARIABLE
+                            | symbol_flags::CLASS
+                            | symbol_flags::FUNCTION
+                            | symbol_flags::REGULAR_ENUM
+                            | symbol_flags::CONST_ENUM
+                            | symbol_flags::TYPE_ALIAS))
+                        == 0;
+                if !is_interface_merge && !is_var_merge {
                     cross_file_conflicts.push(symbol.escaped_name.clone());
                 }
             }
