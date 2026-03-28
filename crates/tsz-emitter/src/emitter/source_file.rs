@@ -1,6 +1,7 @@
 use super::Printer;
 use super::core::JsxEmit;
 use crate::enums::evaluator::EnumEvaluator;
+use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
@@ -2541,6 +2542,49 @@ impl<'a> Printer<'a> {
         } else {
             binding_name.clone()
         };
+        if self.ctx.options.legacy_decorators
+            && self.ctx.target_es5
+            && has_decorators
+            && export_name.as_deref() == Some("default")
+            && class.name.is_none()
+        {
+            let mut es5_emitter = ClassES5Emitter::new(self.arena);
+            es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+            es5_emitter.set_indent_level(self.writer.indent_level());
+            es5_emitter.set_transforms(self.transforms.clone());
+            es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            if let Some(text) = self.source_text_for_map() {
+                es5_emitter.set_source_text(text);
+            }
+            es5_emitter
+                .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+            es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                class_decorators: self.collect_class_decorators(&class.modifiers),
+                has_member_decorators: false,
+                emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
+            });
+            let mut output = es5_emitter.emit_class_with_name(idx, &binding_name);
+            self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+            output = output.replacen(
+                &format!("var {binding_name} = "),
+                &format!("{binding_name} = "),
+                1,
+            );
+            if self.in_system_execute_body {
+                let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+                if let Some(stripped) = output.strip_prefix(&leading_indent) {
+                    output = stripped.to_string();
+                }
+            }
+            self.write(&output);
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.write_export_binding_start("default");
+            self.write(&binding_name);
+            self.write_export_binding_end();
+            return true;
+        }
         if self.ctx.options.target.supports_es2025()
             && has_decorators
             && !self.ctx.options.legacy_decorators
