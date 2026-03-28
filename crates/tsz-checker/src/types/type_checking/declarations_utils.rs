@@ -30,21 +30,27 @@ impl<'a> CheckerState<'a> {
         }
 
         for i in 0..first_profile.len() {
-            let (first_name, first_constraint) = &first_profile[i];
-            let (second_name, second_constraint) = &second_profile[i];
+            let (first_name, first_constraint, first_default) = &first_profile[i];
+            let (second_name, second_constraint, second_default) = &second_profile[i];
 
             if first_name != second_name {
                 return false;
             }
 
             // TSC uses isTypeIdenticalTo for constraint comparison (not assignability).
-            // This matters for `any`: A<any> is mutually assignable to A<Date>,
-            // but they are NOT identical. With type interning, TypeId equality = identity.
-            if let (Some(first_constraint), Some(second_constraint)) =
-                (first_constraint, second_constraint)
-                && first_constraint != second_constraint
-            {
-                return false;
+            // Only mismatch when BOTH have constraints and they differ.
+            // If one has a constraint and the other doesn't, tsc considers them compatible.
+            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint) {
+                if fc != sc {
+                    return false;
+                }
+            }
+
+            // Defaults: only mismatch when BOTH have defaults and they differ.
+            if let (Some(fd), Some(sd)) = (first_default, second_default) {
+                if fd != sd {
+                    return false;
+                }
             }
         }
 
@@ -71,8 +77,8 @@ impl<'a> CheckerState<'a> {
         // Check the overlapping portion only
         let min_len = first_profile.len().min(second_profile.len());
         for i in 0..min_len {
-            let (first_name, first_constraint) = &first_profile[i];
-            let (second_name, second_constraint) = &second_profile[i];
+            let (first_name, first_constraint, first_default) = &first_profile[i];
+            let (second_name, second_constraint, second_default) = &second_profile[i];
 
             if first_name != second_name {
                 return false;
@@ -83,9 +89,11 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
             }
-            // If one has a constraint and the other doesn't, they differ
-            if first_constraint.is_some() != second_constraint.is_some() {
-                return false;
+
+            if let (Some(fd), Some(sd)) = (first_default, second_default) {
+                if fd != sd {
+                    return false;
+                }
             }
         }
 
@@ -97,7 +105,7 @@ impl<'a> CheckerState<'a> {
     fn interface_type_parameter_profile(
         &mut self,
         decl_idx: NodeIndex,
-    ) -> Option<Vec<(String, Option<TypeId>)>> {
+    ) -> Option<Vec<(String, Option<TypeId>, Option<TypeId>)>> {
         let node = self.ctx.arena.get(decl_idx)?;
         // Handle both interface and class declarations
         let list = if let Some(interface) = self.ctx.arena.get_interface(node) {
@@ -128,12 +136,19 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
+            let default = if type_param.default != NodeIndex::NONE {
+                Some(self.get_type_from_type_node(type_param.default))
+            } else {
+                None
+            };
+
             profile.push((
                 self.ctx
                     .arena
                     .resolve_identifier_text(param_name)
                     .to_string(),
                 constraint,
+                default,
             ));
         }
 
