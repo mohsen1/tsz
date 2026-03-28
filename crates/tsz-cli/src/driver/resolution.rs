@@ -312,7 +312,11 @@ pub(crate) fn collect_type_packages_from_root(root: &Path) -> Vec<PathBuf> {
                         continue;
                     }
                     if scope_path.is_dir() {
-                        packages.push(scope_path);
+                        let scope_name = scope_entry.file_name();
+                        let scope_name = scope_name.to_string_lossy();
+                        if !scope_name.starts_with('.') {
+                            packages.push(scope_path);
+                        }
                     }
                 }
             }
