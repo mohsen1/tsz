@@ -286,12 +286,43 @@ impl<'a> SignatureHelpProvider<'a> {
             CallSite::Regular(data) => data.type_arguments.is_some(),
             CallSite::TaggedTemplate(_) => false,
         };
+        // Extract source text for each explicit type argument node
+        let explicit_type_arg_texts: Vec<String> = if has_explicit_type_args {
+            if let CallSite::Regular(data) = &call_site {
+                if let Some(ref type_args) = data.type_arguments {
+                    type_args
+                        .nodes
+                        .iter()
+                        .map(|&node_idx| {
+                            if let Some(node) = self.arena.get(node_idx) {
+                                let start = node.pos as usize;
+                                let end = (node.end as usize).min(self.source_text.len());
+                                if start < end {
+                                    self.source_text[start..end].trim().to_string()
+                                } else {
+                                    "unknown".to_string()
+                                }
+                            } else {
+                                "unknown".to_string()
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
         let mut signatures = self.get_signatures_from_type(
             callee_type,
             &checker,
             effective_call_kind,
             &callee_name,
             has_explicit_type_args,
+            &explicit_type_arg_texts,
         );
 
         if let Some(docs) = docs {
@@ -301,15 +332,14 @@ impl<'a> SignatureHelpProvider<'a> {
             self.apply_source_signature_type_overrides(&mut signatures, symbol_id);
         }
 
-        // When no explicit type arguments are provided, substitute type parameter
-        // names with "unknown" in the displayed signature. This must happen after
-        // apply_source_signature_type_overrides since that can overwrite labels
-        // with raw source text containing type parameter names.
-        if !has_explicit_type_args {
-            for sig in &mut signatures {
-                if !sig.type_param_substitutions.is_empty() {
-                    apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
-                }
+        // Substitute type parameter names in the displayed signature. This must
+        // happen after apply_source_signature_type_overrides since that can
+        // overwrite labels with raw source text containing type parameter names.
+        // When explicit type arguments are provided, we substitute with the
+        // actual type argument text; otherwise we use defaults/constraints/unknown.
+        for sig in &mut signatures {
+            if !sig.type_param_substitutions.is_empty() {
+                apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
             }
         }
 
@@ -795,6 +825,7 @@ impl<'a> SignatureHelpProvider<'a> {
         call_kind: CallKind,
         callee_name: &str,
         has_explicit_type_args: bool,
+        explicit_type_arg_texts: &[String],
     ) -> Vec<SignatureCandidate> {
         if let Some(shape_id) = visitor::function_shape_id(self.interner, type_id) {
             let shape = self.interner.function_shape(shape_id);
@@ -804,6 +835,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 false,
                 callee_name,
                 has_explicit_type_args,
+                explicit_type_arg_texts,
             )];
         }
 
@@ -832,6 +864,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         false,
                         callee_name,
                         has_explicit_type_args,
+                        explicit_type_arg_texts,
                     ));
                 }
             }
@@ -853,6 +886,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         true,
                         callee_name,
                         has_explicit_type_args,
+                        explicit_type_arg_texts,
                     ));
                 }
             }
@@ -870,6 +904,7 @@ impl<'a> SignatureHelpProvider<'a> {
                     call_kind,
                     callee_name,
                     has_explicit_type_args,
+                    explicit_type_arg_texts,
                 ));
             }
             return sigs;
@@ -1047,6 +1082,7 @@ impl<'a> SignatureHelpProvider<'a> {
         is_constructor: bool,
         callee_name: &str,
         has_explicit_type_args: bool,
+        explicit_type_arg_texts: &[String],
     ) -> SignatureCandidate {
         let (required_params, total_params, has_rest) = self.signature_meta(&shape.params);
         let param_names = shape
@@ -1054,32 +1090,61 @@ impl<'a> SignatureHelpProvider<'a> {
             .iter()
             .map(|param| param.name.map(|atom| checker.ctx.types.resolve_atom(atom)))
             .collect();
-        let type_param_substitutions = if !has_explicit_type_args && !shape.type_params.is_empty() {
-            shape
-                .type_params
-                .iter()
-                .map(|tp| {
-                    let name = checker.ctx.types.resolve_atom(tp.name);
-                    let substitution = if let Some(default) = tp.default {
-                        checker.format_type(default)
-                    } else if let Some(constraint) = tp.constraint {
-                        checker.format_type(constraint)
-                    } else {
-                        "unknown".to_string()
-                    };
-                    (name, substitution)
-                })
-                .collect()
+        let type_param_substitutions = if !shape.type_params.is_empty() {
+            if has_explicit_type_args && !explicit_type_arg_texts.is_empty() {
+                // Use the actual explicit type argument text for substitution
+                shape
+                    .type_params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tp)| {
+                        let name = checker.ctx.types.resolve_atom(tp.name);
+                        let substitution = if i < explicit_type_arg_texts.len() {
+                            explicit_type_arg_texts[i].clone()
+                        } else if let Some(default) = tp.default {
+                            checker.format_type(default)
+                        } else if let Some(constraint) = tp.constraint {
+                            checker.format_type(constraint)
+                        } else {
+                            "unknown".to_string()
+                        };
+                        (name, substitution)
+                    })
+                    .collect()
+            } else if !has_explicit_type_args {
+                // No explicit type args: use defaults/constraints/unknown
+                shape
+                    .type_params
+                    .iter()
+                    .map(|tp| {
+                        let name = checker.ctx.types.resolve_atom(tp.name);
+                        let substitution = if let Some(default) = tp.default {
+                            checker.format_type(default)
+                        } else if let Some(constraint) = tp.constraint {
+                            checker.format_type(constraint)
+                        } else {
+                            "unknown".to_string()
+                        };
+                        (name, substitution)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         };
+        // When explicit type args are provided and we have substitutions,
+        // hide the <T, U> prefix since the types are instantiated in params.
+        let show_type_params = has_explicit_type_args
+            && (explicit_type_arg_texts.is_empty() || type_param_substitutions.is_empty());
         SignatureCandidate {
             info: self.format_signature(
                 shape,
                 checker,
                 is_constructor,
                 callee_name,
-                has_explicit_type_args,
+                show_type_params,
             ),
             required_params,
             total_params,

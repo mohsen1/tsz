@@ -1224,7 +1224,8 @@ fn test_signature_help_generic_function() {
 #[test]
 fn test_signature_help_generic_function_with_explicit_type_args() {
     // Generic function called WITH explicit type arguments:
-    // TypeScript shows the type parameter list and the parameterized types.
+    // Type parameters are instantiated with the explicit type args and
+    // the <T> prefix is hidden (matching TypeScript behavior).
     let source = "function identity<T>(value: T): T { return value; }\nidentity<number>(42);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -1241,17 +1242,22 @@ fn test_signature_help_generic_function_with_explicit_type_args() {
         .expect("Should find signature help for generic function with explicit type args");
     let sig = &help.signatures[help.active_signature as usize];
     assert!(
-        sig.label.contains("<T>"),
-        "Label should contain type parameter <T> with explicit type args, got: {}",
+        !sig.label.contains("<T>"),
+        "Label should NOT contain <T> when explicit type args instantiate it, got: {}",
         sig.label
     );
     assert!(
-        sig.prefix.contains("<T>"),
-        "Prefix should contain type parameter, got: {}",
-        sig.prefix
+        sig.label.contains("number"),
+        "Label should show instantiated type 'number', got: {}",
+        sig.label
     );
     assert_eq!(sig.parameters.len(), 1);
     assert_eq!(sig.parameters[0].name, "value");
+    assert!(
+        sig.parameters[0].label.contains("number"),
+        "Parameter label should show 'number' instead of 'T', got: {}",
+        sig.parameters[0].label
+    );
 }
 
 #[test]
@@ -1737,7 +1743,7 @@ fn test_signature_help_constructor_with_new() {
 
 #[test]
 fn test_signature_help_generic_function_with_explicit_type_arg() {
-    // identity<string>(|) should show generic signature
+    // identity<string>(|) should show instantiated signature
     let source =
         "function identity<T>(value: T): T { return value; }\nidentity<string>(\"hello\");";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
@@ -1758,8 +1764,13 @@ fn test_signature_help_generic_function_with_explicit_type_arg() {
     let h = help.unwrap();
     let sig = &h.signatures[h.active_signature as usize];
     assert!(
-        sig.label.contains("<T>"),
-        "Label should include type parameter, got: {}",
+        !sig.label.contains("<T>"),
+        "Label should NOT contain <T> when explicit type arg instantiates it, got: {}",
+        sig.label
+    );
+    assert!(
+        sig.label.contains("string"),
+        "Label should show instantiated type 'string', got: {}",
         sig.label
     );
 }
