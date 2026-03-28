@@ -975,9 +975,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let index_info = self.ctx.types.get_index_signatures(iface_type);
+        let mut index_info = self.ctx.types.get_index_signatures(iface_type);
 
-        if index_info.string_index.is_none() && index_info.number_index.is_none() {
+        // The solver's IndexInfo may store a symbol index signature in the
+        // string_index slot with key_type=SYMBOL. Extract it so symbol-keyed
+        // inherited properties are checked against the correct index kind.
+        let symbol_value_type = if let Some(ref si) = index_info.string_index
+            && si.key_type == TypeId::SYMBOL
+        {
+            let vt = si.value_type;
+            index_info.string_index = None;
+            Some(vt)
+        } else {
+            None
+        };
+        let symbol_index_sig_node = string_index_sig_node;
+
+        if index_info.string_index.is_none()
+            && index_info.number_index.is_none()
+            && symbol_value_type.is_none()
+        {
             return;
         }
 
@@ -1000,6 +1017,27 @@ impl<'a> CheckerState<'a> {
 
             let prop_type = prop.type_id;
             if self.type_contains_error(prop_type) {
+                continue;
+            }
+
+            // Symbol-keyed inherited properties (e.g. [Symbol.iterator]) are
+            // checked against the symbol index signature, NOT string/number.
+            let is_symbol_property =
+                prop_name.starts_with("[Symbol.") || prop_name.starts_with("__@");
+            if is_symbol_property {
+                if let Some(sym_value_type) = symbol_value_type
+                    && !self.is_assignable_to(prop_type, sym_value_type)
+                {
+                    let prop_type_str = self.format_type(prop_type);
+                    let index_type_str = self.format_type(sym_value_type);
+                    let error_node = symbol_index_sig_node.unwrap_or(iface_node);
+
+                    self.error_at_node_msg(
+                        error_node,
+                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &[&prop_name, &prop_type_str, "symbol", &index_type_str],
+                    );
+                }
                 continue;
             }
 
