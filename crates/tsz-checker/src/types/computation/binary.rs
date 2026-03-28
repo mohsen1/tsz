@@ -857,6 +857,14 @@ impl<'a> CheckerState<'a> {
                     self.check_private_identifier_in_expression(left_idx, right_type);
                 }
 
+                // TS18046: 'x' is of type 'unknown'.
+                // TSC emits TS18046 for `unknown` RHS before other checks.
+                if right_type == TypeId::UNKNOWN {
+                    self.error_is_of_type_unknown(right_idx);
+                    type_stack.push(TypeId::BOOLEAN);
+                    continue;
+                }
+
                 // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
                 // This prevents using 'in' with primitives like string | number
                 if !self.is_valid_in_operator_rhs(right_type) {
