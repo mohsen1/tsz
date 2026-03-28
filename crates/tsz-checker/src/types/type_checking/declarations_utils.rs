@@ -51,6 +51,47 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Check if class+interface merged declarations have compatible type
+    /// parameters. Unlike the interface-only check, this allows different
+    /// arity when the declaration with more params has defaults for the
+    /// extras (e.g., React Component pattern: class<P,S> + interface<P,S,SS=any>).
+    /// Only the overlapping parameters are checked for name+constraint identity.
+    pub(crate) fn class_interface_type_parameters_are_merge_compatible(
+        &mut self,
+        first: NodeIndex,
+        second: NodeIndex,
+    ) -> bool {
+        let Some(first_profile) = self.interface_type_parameter_profile(first) else {
+            return false;
+        };
+        let Some(second_profile) = self.interface_type_parameter_profile(second) else {
+            return false;
+        };
+
+        // Check the overlapping portion only
+        let min_len = first_profile.len().min(second_profile.len());
+        for i in 0..min_len {
+            let (first_name, first_constraint) = &first_profile[i];
+            let (second_name, second_constraint) = &second_profile[i];
+
+            if first_name != second_name {
+                return false;
+            }
+
+            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint) {
+                if fc != sc {
+                    return false;
+                }
+            }
+            // If one has a constraint and the other doesn't, they differ
+            if first_constraint.is_some() != second_constraint.is_some() {
+                return false;
+            }
+        }
+
+        true
+    }
+
     /// Collect type parameter names and constraint type ids from an interface
     /// or class declaration.
     fn interface_type_parameter_profile(
