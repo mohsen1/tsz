@@ -2150,8 +2150,17 @@ impl<'a> CheckerState<'a> {
         let Some(spread_shape) =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
         else {
-            // If spread type has no object shape (e.g., type parameter), emit
-            // whole-type TS2322: "Type 'U' is not assignable to type 'Attribs1'".
+            // For generic spreads, check if explicit attributes might cover
+            // the gap (e.g., `<B1 {...obj} x="hi" />`). When other attributes
+            // are provided alongside the spread, skip TS2322 for the spread
+            // since the whole-object check handles combined coverage.
+            if spread_has_type_params && !overridden_names.is_empty() {
+                return false;
+            }
+            // Check assignability before emitting TS2322.
+            if self.is_assignable_to(spread_type, props_type) {
+                return false;
+            }
             let spread_name = self.format_type(spread_type);
             let message =
                 format!("Type '{spread_name}' is not assignable to type '{props_display}'.");
@@ -2189,6 +2198,12 @@ impl<'a> CheckerState<'a> {
                     && !overridden_names.contains(req_name.as_str())
                 {
                     if spread_has_type_params {
+                        // For generic spreads, the object shape may not include all
+                        // properties from the type parameter's constraint. Check
+                        // assignability before concluding a property is missing.
+                        if self.is_assignable_to(spread_type, props_type) {
+                            return false;
+                        }
                         let spread_name = self.format_type(spread_type);
                         let message = format!(
                             "Type '{spread_name}' is not assignable to type '{props_display}'."
@@ -2233,10 +2248,28 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             };
 
+            // Strip undefined from spread property type symmetrically with expected.
+            // Optional properties include undefined in their type, but at write position
+            // undefined should be stripped from both sides.
+            let source_type = if prop.optional {
+                tsz_solver::remove_undefined(self.ctx.types, prop.type_id)
+            } else {
+                prop.type_id
+            };
+
             // Check if the spread property type is assignable to the expected type
-            if !self.is_assignable_to(prop.type_id, expected_type) {
+            if !self.is_assignable_to(source_type, expected_type) {
                 has_type_mismatch = true;
                 break;
+            }
+        }
+
+        // For generic spreads, per-property checking can produce false positives
+        // because get_object_shape may not capture all type parameter contributions.
+        // Fall back to whole-type assignability before emitting TS2322.
+        if has_type_mismatch && spread_has_type_params {
+            if self.is_assignable_to(spread_type, props_type) {
+                has_type_mismatch = false;
             }
         }
 
