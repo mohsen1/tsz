@@ -639,9 +639,12 @@ impl<'a> CheckerState<'a> {
                     if base_class_idx.is_none() {
                         // tsc points at the parameter declaration (starting at the
                         // first modifier like 'public'), not just the identifier name.
-                        self.error_at_node(
-                            param_idx,
-                            &crate::diagnostics::format_message(
+                        // Use ctx.error() directly to bypass normalized_anchor_span
+                        // which would strip modifiers and point at just the name.
+                        self.ctx.error(
+                            param_node.pos,
+                            param_node.end - param_node.pos,
+                            crate::diagnostics::format_message(
                                 diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
                                 &[base_class_name],
                             ),
@@ -656,18 +659,20 @@ impl<'a> CheckerState<'a> {
                         if let Some(suggestion) = self
                             .find_override_name_suggestion(base_instance_member_names, &param_name)
                         {
-                            self.error_at_node(
-                                param_idx,
-                                &crate::diagnostics::format_message(
+                            self.ctx.error(
+                                param_node.pos,
+                                param_node.end - param_node.pos,
+                                crate::diagnostics::format_message(
                                     diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
                                     &[base_class_name, &suggestion],
                                 ),
                                 diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
                             );
                         } else {
-                            self.error_at_node(
-                                param_idx,
-                                &crate::diagnostics::format_message(
+                            self.ctx.error(
+                                param_node.pos,
+                                param_node.end - param_node.pos,
+                                crate::diagnostics::format_message(
                                     diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
                                     &[base_class_name],
                                 ),
@@ -678,9 +683,10 @@ impl<'a> CheckerState<'a> {
                 } else if no_implicit_override && base_member.is_some() {
                     // tsc points TS4115 at the parameter declaration (starting at the
                     // first modifier like 'public'), not just the identifier name.
-                    self.error_at_node(
-                        param_idx,
-                        &crate::diagnostics::format_message(
+                    self.ctx.error(
+                        param_node.pos,
+                        param_node.end - param_node.pos,
+                        crate::diagnostics::format_message(
                             diagnostic_messages::THIS_PARAMETER_PROPERTY_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_ME,
                             &[base_class_name],
                         ),
