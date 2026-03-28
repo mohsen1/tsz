@@ -1883,54 +1883,70 @@ impl ParserState {
             );
         }
 
-        // NOTE: public/private/protected/abstract are contextual keywords in object literals.
-        // When used as a modifier (followed by another property name), TS1042 is reported.
-        // When used as a property name (followed by `:`, `,`, `}`, etc.), they're treated as identifiers.
+        // NOTE: Certain keywords can appear as modifiers before object literal members.
+        // When used as a modifier (followed by another property name), they are consumed
+        // and errors are reported. When used as a property name (followed by `:`, `,`, `}`,
+        // etc.), they're treated as identifiers.
+        //
+        // public/private/protected/abstract → TS1042 "modifier cannot be used here"
+        // static/export → silently consumed (tsc parses them via parseModifiers() and
+        //   the grammar checker handles them separately; no TS1042 is emitted)
         if matches!(
             self.token(),
             SyntaxKind::PrivateKeyword
                 | SyntaxKind::ProtectedKeyword
                 | SyntaxKind::PublicKeyword
                 | SyntaxKind::AbstractKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::ExportKeyword
         ) && !self.look_ahead_is_property_name_after_keyword()
         {
-            use tsz_common::diagnostics::diagnostic_codes;
-            let modifier_name = match self.token() {
-                SyntaxKind::PublicKeyword => "'public'",
-                SyntaxKind::PrivateKeyword => "'private'",
-                SyntaxKind::ProtectedKeyword => "'protected'",
-                SyntaxKind::AbstractKeyword => "'abstract'",
-                _ => "modifier",
-            };
-            self.parse_error_at_current_token(
-                &format!("{modifier_name} modifier cannot be used here."),
-                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE, // TS1042
+            let emit_ts1042 = matches!(
+                self.token(),
+                SyntaxKind::PrivateKeyword
+                    | SyntaxKind::ProtectedKeyword
+                    | SyntaxKind::PublicKeyword
+                    | SyntaxKind::AbstractKeyword
             );
-            // TSC also emits TS1184 — but only when the modifier precedes a
-            // shorthand method (`public foo() {}`).  Property assignments
-            // (`public foo: v`) and accessor declarations (`public get foo()`)
-            // only get TS1042.
-            {
-                let snap = self.scanner.save_state();
-                let saved_tok = self.current_token;
-                self.next_token(); // peek past modifier
-                let is_method = if self.is_identifier_or_keyword() {
-                    // Check if identifier is followed by `(` or `<` (method call)
-                    self.next_token();
-                    matches!(
-                        self.token(),
-                        SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken
-                    )
-                } else {
-                    false
+            if emit_ts1042 {
+                use tsz_common::diagnostics::diagnostic_codes;
+                let modifier_name = match self.token() {
+                    SyntaxKind::PublicKeyword => "'public'",
+                    SyntaxKind::PrivateKeyword => "'private'",
+                    SyntaxKind::ProtectedKeyword => "'protected'",
+                    SyntaxKind::AbstractKeyword => "'abstract'",
+                    _ => "modifier",
                 };
-                self.scanner.restore_state(snap);
-                self.current_token = saved_tok;
-                if is_method {
-                    self.parse_companion_error_at_current_token(
-                        "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE, // TS1184
-                    );
+                self.parse_error_at_current_token(
+                    &format!("{modifier_name} modifier cannot be used here."),
+                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE, // TS1042
+                );
+                // TSC also emits TS1184 — but only when the modifier precedes a
+                // shorthand method (`public foo() {}`).  Property assignments
+                // (`public foo: v`) and accessor declarations (`public get foo()`)
+                // only get TS1042.
+                {
+                    let snap = self.scanner.save_state();
+                    let saved_tok = self.current_token;
+                    self.next_token(); // peek past modifier
+                    let is_method = if self.is_identifier_or_keyword() {
+                        // Check if identifier is followed by `(` or `<` (method call)
+                        self.next_token();
+                        matches!(
+                            self.token(),
+                            SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken
+                        )
+                    } else {
+                        false
+                    };
+                    self.scanner.restore_state(snap);
+                    self.current_token = saved_tok;
+                    if is_method {
+                        self.parse_companion_error_at_current_token(
+                            "Modifiers cannot appear here.",
+                            diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE, // TS1184
+                        );
+                    }
                 }
             }
             self.next_token(); // consume the modifier
@@ -2087,6 +2103,15 @@ impl ParserState {
         } else {
             0
         };
+
+        // After consuming '!', check for method syntax again: `foo!() { }` or `foo!<T>() { }`
+        // tsc's parser handles this because it checks for method tokens after consuming '!'.
+        if exclamation_pos != 0
+            && (self.is_token(SyntaxKind::OpenParenToken)
+                || self.is_token(SyntaxKind::LessThanToken))
+        {
+            return self.parse_object_method_after_name(start_pos, name, false, false);
+        }
 
         if self.parse_optional(SyntaxKind::ColonToken) {
             let expr = self.parse_assignment_expression();
