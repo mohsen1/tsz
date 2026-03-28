@@ -2196,13 +2196,11 @@ impl<'a> Printer<'a> {
                                 .get_specifier_name_text(spec.property_name)
                                 .unwrap_or_else(|| export_name.clone());
 
-                            if self
-                                .ctx
-                                .module_state
-                                .hoisted_func_exports
-                                .iter()
-                                .any(|(exported, local)| exported == &export_name && local == &local_name)
-                            {
+                            if self.ctx.module_state.hoisted_func_exports.iter().any(
+                                |(exported, local)| {
+                                    exported == &export_name && local == &local_name
+                                },
+                            ) {
                                 continue;
                             }
 
@@ -2445,7 +2443,24 @@ impl<'a> Printer<'a> {
         binding_name: &str,
         export_name: &str,
     ) -> String {
-        let export_stmt = self.top_level_using_export_binding_stmt(export_name, binding_name);
+        let leading_indent = if self.in_system_execute_body {
+            Some("    ".repeat(self.writer.indent_level() as usize))
+        } else {
+            None
+        };
+        if let Some(indent) = leading_indent.as_ref()
+            && let Some(stripped) = emitted.strip_prefix(indent)
+        {
+            emitted = stripped.to_string();
+        }
+        let export_stmt = if let Some(indent) = leading_indent.as_ref() {
+            format!(
+                "{indent}{}",
+                self.top_level_using_export_binding_stmt(export_name, binding_name)
+            )
+        } else {
+            self.top_level_using_export_binding_stmt(export_name, binding_name)
+        };
 
         if export_name == "default" {
             if !emitted.ends_with('\n') {
@@ -2607,12 +2622,9 @@ impl<'a> Printer<'a> {
                     &binding_name,
                     export_name,
                 ));
-            } else if let Some(mut rewritten) = self.render_simple_tc39_decorated_class_es5(
-                node,
-                idx,
-                &binding_name,
-                &display_name,
-            ) {
+            } else if let Some(mut rewritten) =
+                self.render_simple_tc39_decorated_class_es5(node, idx, &binding_name, &display_name)
+            {
                 rewritten = rewritten.replacen(
                     &format!("var {binding_name} = "),
                     &format!("{binding_name} = "),
