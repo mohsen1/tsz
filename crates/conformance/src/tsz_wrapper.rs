@@ -260,14 +260,23 @@ pub fn prepare_test_dir(
         .or_else(|| options.get("noimplicitreferences"))
         .is_some_and(|v| v == "true");
     let no_types_and_symbols = no_types_and_symbols_enabled(options);
-    let harness_root_file = if no_implicit_references && !filenames.is_empty() {
-        filenames.iter().rev().find_map(|(name, _)| {
-            if name.replace('\\', "/").ends_with("tsconfig.json") {
-                None
-            } else {
-                Some(name.replace("..", "_").trim_start_matches('/').to_string())
-            }
-        })
+    let harness_root_files: Option<Vec<String>> = if no_implicit_references && !filenames.is_empty()
+    {
+        let files: Vec<String> = filenames
+            .iter()
+            .filter_map(|(name, _)| {
+                if name.replace('\\', "/").ends_with("tsconfig.json") {
+                    None
+                } else {
+                    Some(name.replace("..", "_").trim_start_matches('/').to_string())
+                }
+            })
+            .collect();
+        if files.is_empty() {
+            None
+        } else {
+            Some(files)
+        }
     } else {
         None
     };
@@ -365,10 +374,10 @@ pub fn prepare_test_dir(
                 );
             }
         }
-        let tsconfig_content = if let Some(root_file) = harness_root_file {
+        let tsconfig_content = if let Some(root_files) = harness_root_files {
             serde_json::json!({
                 "compilerOptions": compiler_options,
-                "files": [root_file],
+                "files": root_files,
                 "exclude": ["node_modules"]
             })
         } else {
