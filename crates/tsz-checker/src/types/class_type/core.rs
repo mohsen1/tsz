@@ -1049,6 +1049,10 @@ impl<'a> CheckerState<'a> {
                 if deferred.is_getter {
                     let getter_type = if deferred.accessor.type_annotation.is_some() {
                         self.get_type_from_type_node(deferred.accessor.type_annotation)
+                    } else if let Some(jsdoc_type) =
+                        self.jsdoc_type_annotation_for_node(deferred.member_idx)
+                    {
+                        jsdoc_type
                     } else {
                         let t = self.infer_getter_return_type(deferred.accessor.body);
                         self.ctx.node_types.insert(deferred.member_idx.0, t);
@@ -1076,11 +1080,26 @@ impl<'a> CheckerState<'a> {
                         .parameters
                         .nodes
                         .first()
-                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                        .and_then(|param| {
-                            (!self.ctx.is_js_file() && param.type_annotation.is_some())
-                                .then(|| self.get_type_from_type_node(param.type_annotation))
+                        .and_then(|&param_idx| {
+                            let param_node = self.ctx.arena.get(param_idx)?;
+                            let param = self.ctx.arena.get_parameter(param_node)?;
+                            // TS type annotation (non-JS files)
+                            if !self.ctx.is_js_file() && param.type_annotation.is_some() {
+                                return Some(self.get_type_from_type_node(param.type_annotation));
+                            }
+                            // JSDoc @param annotation (JS files)
+                            if self.ctx.is_js_file() {
+                                let jsdoc = self.get_jsdoc_for_function(deferred.member_idx)?;
+                                let pname = self.parameter_name_for_error(param.name);
+                                let comment_start =
+                                    self.get_jsdoc_comment_pos_for_function(deferred.member_idx);
+                                return self.resolve_jsdoc_param_type_with_pos(
+                                    &jsdoc,
+                                    &pname,
+                                    comment_start,
+                                );
+                            }
+                            None
                         })
                         .unwrap_or(TypeId::UNKNOWN);
                     let entry = accessors
