@@ -28,6 +28,23 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn imported_namespace_display_module_name(&self, module_name: &str) -> String {
+        fn trim_namespace_display_path(resolved_name: &str) -> String {
+            let trimmed = resolved_name
+                .strip_prefix("./")
+                .unwrap_or(resolved_name)
+                .trim_start_matches('/');
+
+            let components: Vec<_> = trimmed.split('/').filter(|segment| !segment.is_empty()).collect();
+            if let Some(node_modules_idx) =
+                components.iter().position(|segment| *segment == "node_modules")
+                && node_modules_idx > 0
+            {
+                return components[node_modules_idx - 1..].join("/");
+            }
+
+            trimmed.to_string()
+        }
+
         let resolved_name = self
             .ctx
             .resolve_import_target(module_name)
@@ -39,15 +56,7 @@ impl<'a> CheckerState<'a> {
                     .map(|source_file| source_file.file_name.clone())
             })
             .unwrap_or_else(|| module_name.to_string());
-        let trimmed = resolved_name
-            .strip_prefix("./")
-            .unwrap_or(&resolved_name)
-            .trim_start_matches('/');
-        let trimmed = if let Some(node_modules_idx) = trimmed.find("node_modules/") {
-            trimmed[node_modules_idx..].to_string()
-        } else {
-            trimmed.to_string()
-        };
+        let trimmed = trim_namespace_display_path(&resolved_name);
         for ext in &[
             ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
             ".mjs", ".cjs",

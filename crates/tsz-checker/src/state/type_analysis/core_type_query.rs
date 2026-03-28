@@ -5,6 +5,7 @@ use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::PropertyInfo;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -45,7 +46,9 @@ impl<'a> CheckerState<'a> {
 
         if self.is_import_type_query(type_query.expr_name) {
             trace!("get_type_from_type_query: is import type query");
-            return TypeId::ANY;
+            return self
+                .resolve_typeof_import_query(type_query.expr_name)
+                .unwrap_or(TypeId::ANY);
         }
 
         let name_text = self.entity_name_text(type_query.expr_name);
@@ -529,5 +532,147 @@ impl<'a> CheckerState<'a> {
                 _ => return false,
             }
         }
+    }
+
+    fn decompose_typeof_import_query(&self, expr_name: NodeIndex) -> Option<(NodeIndex, Vec<String>)> {
+        let mut current = expr_name;
+        let mut segments = Vec::new();
+
+        loop {
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
+                    let call_expr = self.ctx.arena.get_call_expr(node)?;
+                    let callee = self.ctx.arena.get(call_expr.expression)?;
+                    if callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16 {
+                        segments.reverse();
+                        return Some((current, segments));
+                    }
+                    return None;
+                }
+                tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let access = self.ctx.arena.get_access_expr(node)?;
+                    let name_node = self.ctx.arena.get(access.name_or_argument)?;
+                    let ident = self.ctx.arena.get_identifier(name_node)?;
+                    segments.push(ident.escaped_text.clone());
+                    current = access.expression;
+                }
+                tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME => {
+                    let name = self.ctx.arena.get_qualified_name(node)?;
+                    let right_node = self.ctx.arena.get(name.right)?;
+                    let ident = self.ctx.arena.get_identifier(right_node)?;
+                    segments.push(ident.escaped_text.clone());
+                    current = name.left;
+                }
+                tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let paren = self.ctx.arena.get_parenthesized(node)?;
+                    current = paren.expression;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn build_typeof_import_namespace_type(
+        &mut self,
+        module_name: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<TypeId> {
+        use tsz_common::Visibility;
+
+        if let Some(json_namespace_type) = self
+            .json_module_namespace_type_for_module(module_name, Some(self.ctx.current_file_idx))
+        {
+            return Some(json_namespace_type);
+        }
+
+        if self
+            .ctx
+            .module_namespace_resolution_set
+            .contains(module_name)
+        {
+            return Some(TypeId::ANY);
+        }
+        self.ctx
+            .module_namespace_resolution_set
+            .insert(module_name.to_string());
+
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode_override,
+            )
+            .or_else(|| self.ctx.resolve_import_target(module_name));
+
+        let result = if let Some(exports_table) = self.resolve_effective_module_exports_from_file(
+            module_name,
+            Some(self.ctx.current_file_idx),
+        ) {
+            let mut props = Vec::new();
+            for (name, &export_sym_id) in exports_table.iter() {
+                if let Some(target_idx) = target_idx {
+                    self.ctx.register_symbol_file_target(export_sym_id, target_idx);
+                }
+                let prop_type = self.get_type_of_symbol(export_sym_id);
+                props.push(PropertyInfo {
+                    name: self.ctx.types.intern_string(name),
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                });
+            }
+            let namespace_type = self.ctx.types.factory().object(props);
+            self.ctx.namespace_module_names.insert(
+                namespace_type,
+                self.imported_namespace_display_module_name(module_name),
+            );
+            Some(namespace_type)
+        } else if let Some(surface) = self.resolve_js_export_surface_for_module(
+            module_name,
+            Some(self.ctx.current_file_idx),
+        ) {
+            let namespace_type = self.ctx.types.factory().object(surface.named_exports.clone());
+            self.ctx.namespace_module_names.insert(
+                namespace_type,
+                self.imported_namespace_display_module_name(module_name),
+            );
+            Some(namespace_type)
+        } else if target_idx.is_some() {
+            Some(TypeId::ANY)
+        } else {
+            None
+        };
+
+        self.ctx.module_namespace_resolution_set.remove(module_name);
+        result
+    }
+
+    fn resolve_typeof_import_query(&mut self, expr_name: NodeIndex) -> Option<TypeId> {
+        let (call_idx, segments) = self.decompose_typeof_import_query(expr_name)?;
+        let (module_name, _) = self.get_import_type_module_specifier(call_idx)?;
+        let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
+
+        let mut current = self.build_typeof_import_namespace_type(
+            &module_name,
+            resolution_mode_override,
+        )?;
+        for segment in segments {
+            let access = self.resolve_property_access_with_env(current, &segment);
+            current = match access {
+                crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
+                    self.resolve_type_query_type(type_id)
+                }
+                _ => return Some(TypeId::ERROR),
+            };
+        }
+        Some(current)
     }
 }

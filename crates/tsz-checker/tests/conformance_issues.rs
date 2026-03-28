@@ -20288,6 +20288,97 @@ foo;
 }
 
 #[test]
+fn test_typeof_import_package_namespace_preserves_argument_ts2345() {
+    let files = vec![
+        (
+            "/private/tmp/fixture/p1/node_modules/csv-parse/lib/index.d.ts",
+            "export function bar(): number;\n",
+        ),
+        (
+            "/private/tmp/fixture/p1/index.ts",
+            r#"
+export interface MutableRefObject<T> {
+    current: T;
+}
+export function useRef<T>(current: T): MutableRefObject<T> {
+    return { current };
+}
+export const useCsvParser = () => {
+    const parserRef = useRef<typeof import("csv-parse")>(null);
+    return parserRef;
+};
+"#,
+        ),
+    ];
+
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new(name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == "/private/tmp/fixture/p1/index.ts")
+        .expect("entry file should exist");
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_resolved_modules(FxHashSet::from_iter(["csv-parse".to_string()]));
+    checker.ctx.set_resolved_module_paths(Arc::new(FxHashMap::from_iter([(
+        (entry_idx, "csv-parse".to_string()),
+        0usize,
+    )])));
+
+    checker.check_source_file(roots[entry_idx]);
+
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2345),
+        "Expected TS2345 for null passed to typeof import(\"csv-parse\") ref. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "typeof import(\"p1/node_modules/csv-parse/lib/index\")"
+                )
+        }),
+        "Expected TS2345 message to preserve the resolved package path. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_define_property_prototype_descriptor_setter_is_contextualized() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "mod1.js",
