@@ -351,10 +351,10 @@ impl DocumentFormattingProvider {
 
             let mut structural_line = trimmed.to_string();
             if line_index + 1 < lines.len()
-                && Self::looks_like_method_signature(trimmed)
+                && Self::can_precede_empty_block(trimmed)
                 && lines[line_index + 1].trim() == "{}"
             {
-                // Match tsserver-style formatting for compact empty method bodies.
+                // Match tsserver-style formatting for compact empty blocks/bodies.
                 structural_line = format!("{} {{ }}", Self::normalize_member_spacing(trimmed));
             }
 
@@ -646,6 +646,43 @@ impl DocumentFormattingProvider {
             || trimmed.starts_with("private ")
             || trimmed.starts_with("protected ")
             || trimmed.starts_with("readonly ")
+    }
+
+    /// Returns true if a line can precede `{}` and should be merged into `... { }`.
+    fn can_precede_empty_block(trimmed: &str) -> bool {
+        // Method/function signatures ending with ')'
+        if trimmed.ends_with(')') {
+            return true;
+        }
+        // Generic signatures ending with '>'
+        if trimmed.ends_with('>') {
+            return true;
+        }
+        // Standalone keywords: else, do, try, finally
+        if matches!(trimmed, "else" | "do" | "try" | "finally") {
+            return true;
+        }
+        // catch(...) is covered by ends_with ')' above
+        // Declarations: class/interface/enum/namespace/module (line ends with identifier)
+        if trimmed.starts_with("class ")
+            || trimmed.starts_with("interface ")
+            || trimmed.starts_with("enum ")
+            || trimmed.starts_with("namespace ")
+            || trimmed.starts_with("module ")
+            || trimmed.starts_with("abstract class ")
+            || trimmed.starts_with("export class ")
+            || trimmed.starts_with("export interface ")
+            || trimmed.starts_with("export enum ")
+            || trimmed.starts_with("export default class")
+            || trimmed.starts_with("declare class ")
+            || trimmed.starts_with("declare interface ")
+            || trimmed.starts_with("declare enum ")
+            || trimmed.starts_with("declare namespace ")
+            || trimmed.starts_with("declare module ")
+        {
+            return true;
+        }
+        false
     }
 
     fn normalize_member_spacing(line: &str) -> String {
