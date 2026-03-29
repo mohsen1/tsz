@@ -796,9 +796,43 @@ impl<'a> CheckerState<'a> {
             && assign_query::contains_type_parameters(self.ctx.types, actual)
             && assign_query::contains_type_parameters(self.ctx.types, expected)
         {
+            // Don't defer when the base types of generic instantiations are different
+            // classes. For example, B<T> vs A<T> where A has private members should
+            // NOT be deferred — the mismatch is structural and type parameter resolution
+            // cannot fix it. Only defer when the types could plausibly become compatible
+            // once type parameters are resolved.
+            if self.are_incompatible_generic_class_instances(actual, expected) {
+                return false;
+            }
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
+    }
+
+    /// Check if `actual` and `expected` are generic instantiations of different classes.
+    ///
+    /// When `B<T>` and `A<T>` are Applications of different class definitions,
+    /// the mismatch is structural (e.g., different private brands) and cannot be
+    /// resolved by type parameter instantiation. In this case, deferral is incorrect.
+    fn are_incompatible_generic_class_instances(&self, actual: TypeId, expected: TypeId) -> bool {
+        use tsz_solver::{application_id, lazy_def_id};
+
+        let db = self.ctx.types;
+
+        // Extract the base DefId from an Application type (e.g., A<T> -> DefId_A)
+        let base_def = |ty: TypeId| -> Option<tsz_solver::DefId> {
+            let app_id = application_id(db, ty)?;
+            let app = db.type_application(app_id);
+            lazy_def_id(db, app.base)
+        };
+
+        let actual_def = base_def(actual);
+        let expected_def = base_def(expected);
+
+        match (actual_def, expected_def) {
+            (Some(a), Some(e)) => a != e,
+            _ => false,
+        }
     }
 
     fn call_target_generic_rest_requires_fixed_arity_error(

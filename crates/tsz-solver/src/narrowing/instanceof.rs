@@ -594,6 +594,8 @@ impl<'a> NarrowingContext<'a> {
     /// Extract the `DefId` from a type if it is a class (`Lazy(DefId)` with `DefKind::Class`).
     ///
     /// Returns `None` for non-class types, non-Lazy types, or when no resolver is available.
+    /// Also handles generic instantiations like `A<T>` (`Application(base=Lazy(DefId), args=[T])`)
+    /// by extracting the DefId from the base type.
     fn get_class_def_id(&self, type_id: TypeId) -> Option<DefId> {
         let resolver = self.resolver?;
 
