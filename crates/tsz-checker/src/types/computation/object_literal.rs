@@ -1989,8 +1989,10 @@ impl<'a> CheckerState<'a> {
                     // even a valid assignment target.
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);
                     let resolved_spread = self.resolve_lazy_type(resolved_spread);
-                    let is_valid_spread = if invalid_rest_target {
-                        true // suppress TS2698 when TS2701 already reported
+                    let is_valid_spread = if invalid_rest_target || self.ctx.in_destructuring_target
+                    {
+                        true // suppress TS2698 for REST targets in destructuring patterns
+                    // and when TS2701 already reported
                     } else {
                         crate::query_boundaries::type_computation::access::is_valid_spread_type(
                             self.ctx.types,
