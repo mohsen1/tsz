@@ -3311,6 +3311,15 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
         })
         .collect();
 
+    // Pre-compute the symbol->file index as a shared read-only map.
+    // Each checker gets an Arc clone (O(1)) instead of O(N) per-checker insertion.
+    let global_symbol_file_index: Arc<FxHashMap<tsz_binder::SymbolId, usize>> = Arc::new(
+        symbol_file_targets
+            .iter()
+            .copied()
+            .collect::<FxHashMap<_, _>>(),
+    );
+
     // First, collect all functions from all files (sequential)
     let mut all_functions: Vec<(usize, NodeIndex)> = Vec::new();
 
@@ -3350,9 +3359,9 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker.ctx.set_current_file_idx(file_idx);
-            for (sym_id, owner_idx) in &symbol_file_targets {
-                checker.ctx.register_symbol_file_target(*sym_id, *owner_idx);
-            }
+            checker
+                .ctx
+                .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
 
             let mut function_results = Vec::new();
 
@@ -3434,6 +3443,15 @@ pub fn check_files_parallel(
         })
         .collect();
 
+    // Pre-compute the symbol->file index as a shared read-only map.
+    // Each checker gets an Arc clone (O(1)) instead of O(N) per-checker insertion.
+    let global_symbol_file_index: Arc<FxHashMap<tsz_binder::SymbolId, usize>> = Arc::new(
+        symbol_file_targets
+            .iter()
+            .copied()
+            .collect::<FxHashMap<_, _>>(),
+    );
+
     let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()
         .map(|(file_idx, file)| {
@@ -3463,10 +3481,9 @@ pub fn check_files_parallel(
 
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker.ctx.set_current_file_idx(file_idx);
-
-            for (sym_id, owner_idx) in &symbol_file_targets {
-                checker.ctx.register_symbol_file_target(*sym_id, *owner_idx);
-            }
+            checker
+                .ctx
+                .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
 
             if !lib_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(lib_contexts.clone());

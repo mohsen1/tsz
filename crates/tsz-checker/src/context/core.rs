@@ -95,30 +95,35 @@ impl TypeCache {
 impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
-    /// Checks the local `cross_file_symbol_targets` overlay first (for dynamically
-    /// discovered mappings), then falls back to the shared `global_symbol_file_index`
-    /// base map (pre-built from `ProjectEnv`). Returns `None` if the symbol has no
-    /// known cross-file owner.
+    /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
+    /// no RefCell overhead), then falls back to the local `cross_file_symbol_targets`
+    /// overlay for dynamically-discovered mappings. Returns `None` if the symbol
+    /// has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
-        // Check local overlay first (dynamically discovered during this check)
-        if let Some(&idx) = self.cross_file_symbol_targets.borrow().get(&sym_id) {
+        // Check shared base map first (covers all pre-computed entries, no RefCell cost)
+        if let Some(&idx) = self
+            .global_symbol_file_index
+            .as_ref()
+            .and_then(|map| map.get(&sym_id))
+        {
             return Some(idx);
         }
-        // Fall back to shared base map
-        self.global_symbol_file_index
-            .as_ref()
-            .and_then(|map| map.get(&sym_id).copied())
+        // Fall back to local overlay (dynamically discovered during this check)
+        self.cross_file_symbol_targets
+            .borrow()
+            .get(&sym_id)
+            .copied()
     }
 
     /// Check whether a `SymbolId` has a known cross-file owner.
     pub fn has_symbol_file_index(&self, sym_id: SymbolId) -> bool {
-        self.cross_file_symbol_targets
-            .borrow()
-            .contains_key(&sym_id)
+        self.global_symbol_file_index
+            .as_ref()
+            .is_some_and(|map| map.contains_key(&sym_id))
             || self
-                .global_symbol_file_index
-                .as_ref()
-                .is_some_and(|map| map.contains_key(&sym_id))
+                .cross_file_symbol_targets
+                .borrow()
+                .contains_key(&sym_id)
     }
 
     /// Register a dynamically-discovered `SymbolId` → file index mapping
@@ -163,11 +168,20 @@ impl<'a> CheckerContext<'a> {
 
     /// Check whether any symbol-file targets exist (overlay or global).
     pub fn has_any_symbol_file_targets(&self) -> bool {
-        !self.cross_file_symbol_targets.borrow().is_empty()
-            || self
-                .global_symbol_file_index
-                .as_ref()
-                .is_some_and(|map| !map.is_empty())
+        self.global_symbol_file_index
+            .as_ref()
+            .is_some_and(|map| !map.is_empty())
+            || !self.cross_file_symbol_targets.borrow().is_empty()
+    }
+
+    /// Set the shared read-only symbol→file index.
+    ///
+    /// This replaces the per-checker O(N) loop that called `register_symbol_file_target`
+    /// for each pre-computed entry. The `Arc` map is shared across all checkers (O(1) clone).
+    /// Dynamically-discovered mappings still go through `register_symbol_file_target`
+    /// into the local `cross_file_symbol_targets` overlay.
+    pub fn set_global_symbol_file_index(&mut self, index: Arc<FxHashMap<SymbolId, usize>>) {
+        self.global_symbol_file_index = Some(index);
     }
 
     /// Set lib contexts for global type resolution.
