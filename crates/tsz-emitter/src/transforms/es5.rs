@@ -944,6 +944,7 @@ impl<'a> ES5AsyncTransformer<'a> {
             this_arg: Box::new(this_arg),
             generator_body: Box::new(generator_body),
             hoisted_vars: Vec::new(),
+            promise_constructor: None,
         }
     }
 

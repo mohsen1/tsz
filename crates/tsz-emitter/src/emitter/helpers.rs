@@ -878,8 +878,23 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(node) {
-                    self.arena
+                    if self
+                        .arena
                         .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                    {
+                        return true;
+                    }
+                    // In CJS mode with `export =`, exported variables with no
+                    // initializers are already covered by the `exports.X = void 0`
+                    // preamble -- the bare `var X;` is redundant and should be erased.
+                    if self.ctx.is_commonjs()
+                        && self.ctx.module_state.has_export_assignment
+                        && self.all_declarations_lack_initializer(&var_stmt.declarations)
+                        && self.all_declaration_names_in_exported_set(&var_stmt.declarations)
+                    {
+                        return true;
+                    }
+                    false
                 } else {
                     false
                 }

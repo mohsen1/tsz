@@ -1375,8 +1375,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Emit TS2304 "Cannot find name 'X'" for an unresolvable JSDoc type reference.
-    /// Locates the name within the comment text range for precise error positioning.
+    /// Emit TS2304 "Cannot find name 'X'" or TS2552 "Did you mean 'Y'?" for an
+    /// unresolvable JSDoc type reference. Locates the name within the comment text
+    /// range for precise error positioning, then attempts spelling suggestions
+    /// to match tsc's behavior of upgrading to TS2552 when a close match exists.
     pub(crate) fn emit_jsdoc_cannot_find_name(
         &mut self,
         name: &str,
@@ -1384,6 +1386,8 @@ impl<'a> CheckerState<'a> {
         comment_end: u32,
         source_text: &str,
     ) {
+        use crate::diagnostics::{Diagnostic, diagnostic_codes};
+
         let end = (comment_end as usize).min(source_text.len());
         let comment_range = &source_text[comment_pos as usize..end];
         let (start, length) = if let Some(offset) = comment_range.find(name) {
@@ -1391,6 +1395,24 @@ impl<'a> CheckerState<'a> {
         } else {
             (comment_pos, 0)
         };
+
+        // Try spelling suggestions (e.g. "sting" → "string") to emit TS2552
+        // instead of plain TS2304, matching tsc behavior.
+        if self.ctx.spelling_suggestions_emitted < 10 {
+            if let Some(suggestion) = self.find_jsdoc_type_spelling_suggestion(name) {
+                self.ctx.spelling_suggestions_emitted += 1;
+                let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
+                self.ctx.push_diagnostic(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
+                ));
+                return;
+            }
+        }
+
         self.error_cannot_find_name_at_position(name, start, length);
     }
 

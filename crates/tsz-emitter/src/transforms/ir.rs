@@ -310,6 +310,8 @@ pub enum IRNode {
         generator_body: Box<Self>,
         /// Var declarations hoisted out of the generator body to the awaiter wrapper scope
         hoisted_vars: Vec<String>,
+        /// Custom promise constructor for the third `__awaiter` arg.
+        promise_constructor: Option<String>,
     },
 
     /// __generator helper body

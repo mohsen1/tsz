@@ -624,6 +624,17 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // When `export =` is present, exported variables with no initializers
+        // whose names are already in commonjs_exported_var_names are redundant
+        // (the preamble emitted `exports.X = void 0;`). Skip the bare `var X;`.
+        if self.ctx.is_commonjs()
+            && self.ctx.module_state.has_export_assignment
+            && self.all_declarations_lack_initializer(&var_stmt.declarations)
+            && self.all_declaration_names_in_exported_set(&var_stmt.declarations)
+        {
+            return;
+        }
+
         // Collect declaration names for export assignment
         let export_names: Vec<String> = if is_exported {
             self.collect_variable_names(&var_stmt.declarations)
@@ -1029,6 +1040,17 @@ impl<'a> Printer<'a> {
             }
         }
         true
+    }
+
+    /// Check if all declared names in a variable declaration list are present
+    /// in the `commonjs_exported_var_names` set (already handled by the CJS
+    /// preamble `exports.X = void 0;`).
+    pub(super) fn all_declaration_names_in_exported_set(&self, declarations: &NodeList) -> bool {
+        let names = self.collect_variable_names(declarations);
+        !names.is_empty()
+            && names
+                .iter()
+                .all(|n| self.commonjs_exported_var_names.contains(n))
     }
 
     /// Collect variable names from a declaration list for `CommonJS` export

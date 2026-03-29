@@ -234,7 +234,13 @@ impl<'a> Printer<'a> {
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         if is_async {
-            self.emit_async_function_es5_body("", &method.parameters.nodes, method.body, "this");
+            self.emit_async_function_es5_body(
+                "",
+                &method.parameters.nodes,
+                method.body,
+                "this",
+                method.type_annotation,
+            );
             return;
         }
 

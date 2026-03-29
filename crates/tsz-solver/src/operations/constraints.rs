@@ -1852,8 +1852,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && let Some(expanded) = self.checker.expand_type_alias_application(target)
                         && expanded != target
                     {
-                        self.constrain_types(ctx, var_map, source, expanded, priority);
-                        return;
+                        // When the source is an Array/Tuple/String and the expanded
+                        // form is iterable-like (has [Symbol.iterator] or number
+                        // index), skip the expansion and fall through to the iterable
+                        // special case below. The expanded Object form loses the
+                        // connection between array element types and the Application's
+                        // type arguments, causing incorrect inference (e.g.,
+                        // Map.groupBy([0,2,8], ...) would infer T=number[] instead of
+                        // T=number).
+                        let is_iterable_source = matches!(
+                            source_key,
+                            Some(TypeData::Array(_)) | Some(TypeData::Tuple(_))
+                        ) || matches!(source, TypeId::STRING)
+                            || matches!(
+                                source_key,
+                                Some(TypeData::Literal(crate::LiteralValue::String(_)))
+                                    | Some(TypeData::TemplateLiteral(_))
+                            );
+                        if !is_iterable_source || !self.is_iterable_like_evaluated_object(expanded)
+                        {
+                            self.constrain_types(ctx, var_map, source, expanded, priority);
+                            return;
+                        }
                     }
                 }
 
@@ -2435,10 +2455,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // First try expanding the type alias without evaluation — this preserves
             // inference variables in the body (e.g., Wrap<T[K]> → {primitive: T[K]}).
             // Falls back to evaluate_type which may resolve inference variables.
-            let evaluated_template = self
-                .checker
-                .expand_type_alias_application(template)
-                .unwrap_or_else(|| self.checker.evaluate_type(template));
+            let expanded = self.checker.expand_type_alias_application(template);
+            let evaluated_template =
+                expanded.unwrap_or_else(|| self.checker.evaluate_type(template));
             if evaluated_template != template {
                 let reversed = self.reverse_infer_through_template(
                     source_value,
@@ -2450,6 +2469,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
 
+            // When expansion produced an intermediate form (e.g., a mapped type body)
+            // that couldn't be reversed, also try full evaluation. This handles cases
+            // like `Identity<T[K]>` where expansion gives `{ [K in keyof T[K]]: T[K][K] }`
+            // (a mapped type we can't reverse through) but evaluation resolves T through
+            // its constraint to produce `string[]` (matching source).
+            let fully_evaluated = if expanded.is_some() {
+                let eval_result = self.checker.evaluate_type(template);
+                if eval_result != template && eval_result != evaluated_template {
+                    eval_result
+                } else {
+                    evaluated_template
+                }
+            } else {
+                evaluated_template
+            };
+
             // Case 2c: Evaluation collapsed the placeholder (resolved T through its
             // constraint), producing a type structurally equal to the source. This means
             // the Application is identity-like (e.g., KeepLiteralStrings<T[K]> = { [K in keyof T]: T[K] }
@@ -2459,7 +2494,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Guard: Only apply when evaluated result equals the source. This prevents
             // incorrect reversal through non-transparent Applications like Reducer<S[K], A>
             // where the Application wraps the placeholder in a different structure.
-            if evaluated_template == source_value {
+            if fully_evaluated == source_value {
                 for &t_arg in &template_app.args {
                     if let Some(rev) =
                         self.reverse_infer_through_template(source_value, t_arg, target_placeholder)
@@ -3423,7 +3458,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::TypeParameter(_))
             );
             if !source_is_type_param {
+                // Use contra mode for the reverse direction so that the
+                // placeholder appearing as source gets a contra-candidate
+                // instead of a hard upper bound. This matches the behavior
+                // of the complex-type branch below and prevents upper bounds
+                // from overriding correct covariant inference.
+                let was_contra = ctx.in_contra_mode;
+                ctx.in_contra_mode = true;
                 self.constrain_types(ctx, var_map, target_param, source_param, priority);
+                ctx.in_contra_mode = was_contra;
             }
         } else {
             // The target parameter is a complex type containing type variables
