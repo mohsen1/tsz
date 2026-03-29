@@ -2253,6 +2253,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .enumerate()
             .map(|(i, &arg)| {
+                // Preserve spread marker tuples [...T] created by the checker
+                // for generic TypeParameter spreads.  These are validated against
+                // the full rest param type in check_argument_types_with.
+                // Only match markers: a 1-rest-element tuple whose inner type
+                // is a TypeParameter (not a regular variadic tuple like [...string[]]).
+                if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(arg) {
+                    let elems = self.interner.tuple_list(elems_id);
+                    if elems.len() == 1
+                        && elems[0].rest
+                        && matches!(
+                            self.interner.lookup(elems[0].type_id),
+                            Some(TypeData::TypeParameter(_))
+                        )
+                    {
+                        return arg;
+                    }
+                }
                 let normalized = if final_arg_subst.is_empty() {
                     arg
                 } else {

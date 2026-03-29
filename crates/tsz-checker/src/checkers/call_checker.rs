@@ -13,7 +13,8 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{
-    AssignabilityChecker, CallResult, ContextualTypeContext, PendingDiagnosticBuilder, TypeId,
+    AssignabilityChecker, CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
+    TupleElement, TypeId,
 };
 
 /// Call-local context carrying the callable type during argument collection.
@@ -826,8 +827,20 @@ impl<'a> CheckerState<'a> {
                         && (array_element_type_for_type(self.ctx.types, constraint).is_some()
                             || tuple_elements_for_type(self.ctx.types, constraint).is_some())
                     {
-                        // Push the spread type as-is (the solver will handle it)
-                        arg_types.push(spread_type);
+                        // Wrap the spread type parameter in a variadic tuple
+                        // marker [...U] so the solver can distinguish `f(...u)`
+                        // (spread) from `f(u)` (non-spread).  Without this,
+                        // rest-tuple inference wraps U in [U] (a 1-element
+                        // tuple containing the array), which fails constraint
+                        // checks like `T extends (string|number|boolean)[]`
+                        // because `string[]` (the array) is not an element type.
+                        let spread_marker = self.ctx.types.tuple(vec![TupleElement {
+                            type_id: spread_type,
+                            name: None,
+                            optional: false,
+                            rest: true,
+                        }]);
+                        arg_types.push(spread_marker);
                         effective_index += 1;
                         continue;
                     }
