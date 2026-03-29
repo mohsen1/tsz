@@ -919,6 +919,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // are the enum values. Recursively extract from the members type.
                 self.extract_mapped_keys(members)
             }
+            TypeData::Intersection(members) => {
+                // Intersection of key sets: compute the intersection of extracted keys
+                // from each member. This handles constraints like `keyof T & keyof U`
+                // that remain as Intersection after evaluate_keyof_or_constraint.
+                let member_list = self.interner().type_list(members);
+                let mut member_keys: Vec<MappedKeys> = Vec::with_capacity(member_list.len());
+                for &member in member_list.iter() {
+                    match self.extract_mapped_keys(member) {
+                        Some(mk) => member_keys.push(mk),
+                        None => return None,
+                    }
+                }
+                if member_keys.is_empty() {
+                    return None;
+                }
+                // Start with the first member's keys and intersect with the rest.
+                let mut result = member_keys.remove(0);
+                for other in &member_keys {
+                    // For string/number index: intersection means both must have it.
+                    result.has_string = result.has_string && other.has_string;
+                    result.has_number = result.has_number && other.has_number;
+                    // For string literals: keep only those present in both sets.
+                    // If one side has `has_string` (string index signature), all
+                    // literals from the other side are kept (since string encompasses them).
+                    if other.has_string {
+                        // Other side accepts all strings, so keep result's literals.
+                    } else if result.has_string {
+                        // Result side accepts all strings, take other's literals.
+                        result.string_literals = other.string_literals.clone();
+                        result.has_string = false; // Narrowed to specific literals.
+                    } else {
+                        // Both have specific literals: keep only the intersection.
+                        let other_set: rustc_hash::FxHashSet<_> =
+                            other.string_literals.iter().copied().collect();
+                        result.string_literals.retain(|lit| other_set.contains(lit));
+                    }
+                }
+                if !result.has_string && !result.has_number && result.string_literals.is_empty() {
+                    // Intersection is empty — produces empty object.
+                    // Still return Some so we generate an empty object type rather than deferring.
+                }
+                Some(result)
+            }
             TypeData::Lazy(def_id) => {
                 // Lazy type reference (e.g., type alias `AB = A | B`): resolve and recurse.
                 if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner())
