@@ -795,8 +795,7 @@ impl<'a> DeclarationEmitter<'a> {
             .extend(js_commonjs_named_export_names);
         let (module_exports_obj_names, module_exports_obj_stmts) =
             self.collect_js_module_exports_object_names(source_file);
-        self.js_named_export_names
-            .extend(module_exports_obj_names);
+        self.js_named_export_names.extend(module_exports_obj_names);
         self.js_module_exports_object_stmts = module_exports_obj_stmts;
         let (cjs_aliases, cjs_alias_stmts) = self.collect_js_cjs_export_aliases(source_file);
         self.js_cjs_export_aliases = cjs_aliases;
