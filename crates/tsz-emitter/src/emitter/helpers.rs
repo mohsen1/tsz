@@ -1074,6 +1074,18 @@ impl<'a> Printer<'a> {
                         }
                         return !self.import_equals_has_value_usage_after_node(node, import_data);
                     }
+                    // Non-external import-equals (namespace aliases like `import Z = M`)
+                    // in module files: elide when the alias is only used in type
+                    // positions (e.g. `typeof Z`).  In script files (ModuleKind::None)
+                    // the alias creates a global variable that may be consumed
+                    // externally, so tsc preserves it unconditionally.
+                    if !is_external
+                        && !matches!(self.ctx.options.module, ModuleKind::None)
+                        && !self.ctx.options.verbatim_module_syntax
+                        && !self.source_is_js_file
+                    {
+                        return !self.import_equals_has_value_usage_after_node(node, import_data);
+                    }
                 }
                 false
             }
