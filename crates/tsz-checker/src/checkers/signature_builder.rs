@@ -98,6 +98,14 @@ impl<'a> CheckerState<'a> {
                     TypeId::BOOLEAN
                 };
                 type_predicate = Some(pred);
+            } else if let Some(ref jsdoc) = method_jsdoc {
+                // Also check for non-predicate JSDoc return types like `@return {false}`.
+                // Without this, body inference widens literal return types (e.g., `false`
+                // → `boolean`), which breaks union predicate narrowing that requires
+                // non-predicate members to return only `false` or `never`.
+                if let Some(jsdoc_ret_type) = self.resolve_jsdoc_return_type(jsdoc) {
+                    return_type = jsdoc_ret_type;
+                }
             }
         }
 

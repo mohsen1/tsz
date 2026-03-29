@@ -47,6 +47,39 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Resolve a non-predicate JSDoc `@return {TypeExpr}` to a TypeId.
+    ///
+    /// This handles cases like `@return {false}`, `@return {void}`, `@return {number}`, etc.
+    /// Returns `None` if no `@return` tag is found or the type expression can't be resolved.
+    /// Type predicate returns (like `@return {x is string}`) are excluded.
+    pub(crate) fn resolve_jsdoc_return_type(&mut self, jsdoc: &str) -> Option<TypeId> {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let Some(rest) = trimmed
+                .strip_prefix("@returns")
+                .or_else(|| trimmed.strip_prefix("@return"))
+            else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            if !rest.starts_with('{') {
+                continue;
+            }
+            let after_open = &rest[1..];
+            let end = after_open.find('}')?;
+            let type_expr = after_open[..end].trim();
+            if type_expr.is_empty() {
+                return None;
+            }
+            // Skip type predicates — handled separately
+            if type_expr.contains(" is ") || type_expr.starts_with("asserts ") {
+                return None;
+            }
+            return self.resolve_jsdoc_reference(type_expr);
+        }
+        None
+    }
+
     pub(crate) fn contextual_type_params_from_expected(
         &self,
         expected: TypeId,
