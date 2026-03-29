@@ -1314,13 +1314,18 @@ fn compile_inner(
     let load_libs_duration = load_libs_start.elapsed();
     perf_log_phase("load_libs", load_libs_start);
 
-    // PERF: Build checker lib contexts directly from binding-phase lib files.
-    // Since merge_lib_contexts_into_binder only READS from lib binders via Arc,
-    // the same immutable binder state safely serves both pipelines.
-    let lib_contexts = if !resolved.no_check {
-        load_lib_files_for_contexts(&lib_files)
+    // PERF: Start loading checker lib contexts in a background thread while we
+    // build the user program. The checker needs fresh binder state (separate from
+    // the binding-phase libs) because it mutates during declaration merging.
+    // By overlapping this with user file parsing+binding, we save ~100ms on
+    // workloads that load many lib files (e.g., default target with dom.d.ts).
+    let checker_lib_handle = if !resolved.no_check {
+        let lib_files_clone = lib_files.clone();
+        Some(std::thread::spawn(move || {
+            load_lib_files_for_contexts(&lib_files_clone)
+        }))
     } else {
-        Vec::new()
+        None
     };
 
     let build_program_start = Instant::now();
@@ -1349,6 +1354,14 @@ fn compile_inner(
     if let Some(ref mut c) = effective_cache {
         update_import_symbol_ids(&program, &resolved, &base_dir, c);
     }
+
+    // Wait for checker lib contexts (already running in background)
+    let build_lib_contexts_start = Instant::now();
+    let lib_contexts = match checker_lib_handle {
+        Some(handle) => handle.join().expect("checker lib loading panicked"),
+        None => Vec::new(),
+    };
+    perf_log_phase("build_lib_contexts", build_lib_contexts_start);
 
     let collect_diagnostics_start = Instant::now();
     let parallel_type_caches = std::sync::Mutex::new(FxHashMap::default());
