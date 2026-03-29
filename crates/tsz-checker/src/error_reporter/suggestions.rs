@@ -4,23 +4,17 @@ use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
-/// Built-in TypeScript type keywords that tsc registers as intrinsic types
+/// Built-in TypeScript intrinsic type names that tsc registers as symbols
 /// in the checker's globals. Used as candidates for spelling suggestions
 /// so that typos like "sting" → "string" produce TS2552.
-const BUILTIN_TYPE_KEYWORDS: &[&str] = &[
-    "string",
-    "number",
-    "boolean",
-    "symbol",
-    "bigint",
-    "void",
-    "never",
-    "any",
-    "unknown",
-    "undefined",
-    "null",
-    "object",
-];
+///
+/// NOTE: Only types that tsc registers as actual symbol entries in its
+/// global scope are included here. Keyword types like `null`, `undefined`,
+/// `unknown`, `void`, `never`, and `any` are parsed syntactically and do
+/// NOT appear in tsc's globals map, so they must NOT be offered as
+/// spelling suggestions.
+const BUILTIN_TYPE_KEYWORDS: &[&str] =
+    &["string", "number", "boolean", "symbol", "bigint", "object"];
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
