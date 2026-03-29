@@ -1868,3 +1868,28 @@ let r = f<string, number>("hello");
         "Wrong type arg count should emit TS2558"
     );
 }
+
+#[test]
+fn overload_candidate_callback_body_errors_do_not_suppress_legitimate_errors() {
+    // Regression test: overload resolution must not suppress legitimate
+    // callback body errors like TS2454 (used before assigned) when
+    // rejecting overload candidates due to type-relation errors.
+    // The callback body error rejection only considers type-relation codes
+    // (TS2322, TS2345, TS2339, TS2769), not TS2454.
+    let source = r#"
+declare function foo(func: (x: string, y: string) => any): boolean;
+declare function foo(func: (x: string, y: number) => any): string;
+
+var out = foo((x, y) => {
+    var bar: { (a: typeof x): void; (b: typeof y): void; };
+    return bar;
+});
+"#;
+    let codes = get_codes(source);
+    // TS2454 should still be emitted for the unassigned `bar` variable,
+    // not suppressed by overload candidate rejection.
+    assert!(
+        codes.contains(&2454),
+        "TS2454 for unassigned 'bar' should not be suppressed by overload resolution, got: {codes:?}"
+    );
+}

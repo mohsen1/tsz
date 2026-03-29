@@ -209,6 +209,54 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Check if any diagnostics were produced inside callback argument bodies
+    /// since the snapshot.
+    ///
+    /// TypeScript rejects overload candidates when the callback body produces
+    /// errors (e.g., a failing inner call like `.concat()`) even when the
+    /// callback's return type structurally matches the expected type. Without
+    /// this check, overloads that infer degenerate types (like `never[]`) can
+    /// appear to succeed while hiding real type errors.
+    /// Codes that indicate an inner call or type relation failed due to wrong
+    /// type inference — these should cause overload candidate rejection.
+    const CALLBACK_BODY_REJECTION_CODES: &'static [u32] = &[
+        2322, // Type 'X' is not assignable to type 'Y'
+        2345, // Argument of type 'X' is not assignable to parameter of type 'Y'
+        2339, // Property 'X' does not exist on type 'Y'
+        2769, // No overload matches this call
+    ];
+
+    fn overload_candidate_has_callback_body_errors(
+        &self,
+        args: &[NodeIndex],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> bool {
+        let speculative = self.ctx.speculative_diagnostics_since(snap);
+        if speculative.is_empty() {
+            return false;
+        }
+        for &arg_idx in args {
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                continue;
+            };
+            let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+            if !is_callback_arg {
+                continue;
+            }
+            if let Some((body_start, body_end)) = self.callback_body_span(arg_idx) {
+                if speculative.iter().any(|diag| {
+                    diag.start >= body_start
+                        && diag.start < body_end
+                        && Self::CALLBACK_BODY_REJECTION_CODES.contains(&diag.code)
+                }) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn prune_callback_body_diagnostics(
         &mut self,
         args: &[NodeIndex],
@@ -1565,7 +1613,6 @@ impl<'a> CheckerState<'a> {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
                     }
-
                     // When the matched overload is generic and has contextual refresh args,
                     // re-collect argument types with instantiated parameter types. The first
                     // pass used the union-contextual type which has unresolved type parameters,
@@ -1683,6 +1730,20 @@ impl<'a> CheckerState<'a> {
                     } else {
                         (arg_types.clone(), return_type)
                     };
+
+                    // After the instantiated retry, the callback body has been fully
+                    // evaluated with concrete contextual types. If it produced errors
+                    // (e.g., a failing `.concat()` inside the callback), reject this
+                    // overload. The degenerate type parameter inference (e.g.,
+                    // `U = never[]` from `reduce`) masks real type errors that should
+                    // cause a fallback to a different overload or NoOverloadMatch.
+                    if did_instantiated_retry
+                        && self
+                            .overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
+                    {
+                        self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                        continue;
+                    }
 
                     // Merge the node types inferred during argument collection.
                     // If we did the instantiated retry, node_types already contains the
@@ -1997,6 +2058,17 @@ impl<'a> CheckerState<'a> {
                         failures.push(PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
                         ));
+                        self.ctx
+                            .rollback_diagnostics_filtered(&candidate_snap, |diag| {
+                                Self::should_preserve_speculative_call_diagnostic(diag)
+                            });
+                        continue;
+                    }
+                    // Reject candidates with callback body errors (e.g., inner
+                    // call failures) — same rationale as the first-pass check.
+                    if self.overload_candidate_has_callback_body_errors(args, &candidate_snap) {
+                        all_arg_count_mismatches = false;
+                        has_non_count_non_type_failure = true;
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                                 Self::should_preserve_speculative_call_diagnostic(diag)
