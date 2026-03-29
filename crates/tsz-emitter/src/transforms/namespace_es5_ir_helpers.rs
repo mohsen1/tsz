@@ -274,9 +274,10 @@ pub(super) fn convert_exported_variable_declarations(
     arena: &NodeArena,
     declarations: &NodeList,
     ns_name: &str,
-) -> Vec<IRNode> {
+) -> (Vec<IRNode>, Vec<String>) {
     let mut result = Vec::new();
     let mut assignment_targets: Vec<(String, IRNode)> = Vec::new();
+    let mut hoisted_temps: Vec<String> = Vec::new();
 
     for &decl_list_idx in &declarations.nodes {
         if let Some(decl_list_node) = arena.get(decl_list_idx)
@@ -288,7 +289,9 @@ pub(super) fn convert_exported_variable_declarations(
                     && let Some(name) = get_identifier_text(arena, decl.name)
                     && decl.initializer.is_some()
                 {
-                    let value = AstToIr::new(arena).convert_expression(decl.initializer);
+                    let converter = AstToIr::new(arena);
+                    let value = converter.convert_expression(decl.initializer);
+                    hoisted_temps.extend(converter.take_hoisted_temps());
                     assignment_targets.push((name, value));
                 }
                 // No initializer: tsc omits the assignment entirely in namespaces
@@ -297,16 +300,19 @@ pub(super) fn convert_exported_variable_declarations(
     }
 
     if assignment_targets.is_empty() {
-        return result;
+        return (result, hoisted_temps);
     }
 
     if assignment_targets.len() == 1 {
         let (name, value) = assignment_targets.remove(0);
-        return vec![IRNode::NamespaceExport {
-            namespace: ns_name.to_string().into(),
-            name: name.into(),
-            value: Box::new(value),
-        }];
+        return (
+            vec![IRNode::NamespaceExport {
+                namespace: ns_name.to_string().into(),
+                name: name.into(),
+                value: Box::new(value),
+            }],
+            hoisted_temps,
+        );
     }
 
     let parts: Vec<String> = assignment_targets
@@ -315,7 +321,7 @@ pub(super) fn convert_exported_variable_declarations(
         .collect();
     result.push(IRNode::Raw(format!("{};", parts.join(", ")).into()));
 
-    result
+    (result, hoisted_temps)
 }
 
 /// Convert variable declarations to proper IR (`VarDecl` nodes)
@@ -323,8 +329,9 @@ pub(super) fn convert_variable_declarations(
     arena: &NodeArena,
     declarations: &NodeList,
     empty_decl_keyword: &str,
-) -> Vec<IRNode> {
+) -> (Vec<IRNode>, Vec<String>) {
     let mut result = Vec::new();
+    let mut hoisted_temps: Vec<String> = Vec::new();
 
     for &decl_list_idx in &declarations.nodes {
         let decl_list_node = arena.get(decl_list_idx);
@@ -344,7 +351,10 @@ pub(super) fn convert_variable_declarations(
                     // Use AstToIr for eager lowering of initializers
                     // This converts expressions to proper IR (NumericLiteral, CallExpr, etc.)
                     let initializer = (decl.initializer.is_some()).then(|| {
-                        Box::new(AstToIr::new(arena).convert_expression(decl.initializer))
+                        let converter = AstToIr::new(arena);
+                        let expr = converter.convert_expression(decl.initializer);
+                        hoisted_temps.extend(converter.take_hoisted_temps());
+                        Box::new(expr)
                     });
 
                     result.push(IRNode::VarDecl {
@@ -366,7 +376,7 @@ pub(super) fn convert_variable_declarations(
         }
     }
 
-    result
+    (result, hoisted_temps)
 }
 
 const fn declaration_keyword_from_flags(flags: u16) -> &'static str {

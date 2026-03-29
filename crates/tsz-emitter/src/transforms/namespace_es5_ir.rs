@@ -54,6 +54,8 @@
 mod namespace_es5_ir_helpers;
 use namespace_es5_ir_helpers::*;
 
+use std::cell::RefCell;
+
 use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
 use crate::transforms::enum_es5_ir::transform_enum_to_ir;
 use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
@@ -95,6 +97,9 @@ pub struct NamespaceES5Transformer<'a> {
     prior_exported_vars: std::collections::HashSet<String>,
     /// Whether legacy decorators are enabled (experimentalDecorators)
     legacy_decorators: bool,
+    /// Hoisted temp variable names collected from expression conversions
+    /// (e.g., from computed property lowering inside object literals)
+    hoisted_temps: RefCell<Vec<String>>,
 }
 
 impl<'a> NamespaceES5Transformer<'a> {
@@ -107,6 +112,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
+            hoisted_temps: RefCell::new(Vec::new()),
         }
     }
 
@@ -119,6 +125,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
+            hoisted_temps: RefCell::new(Vec::new()),
         }
     }
 
@@ -762,6 +769,21 @@ impl<'a> NamespaceES5Transformer<'a> {
             }
         }
 
+        // Insert `var _a;` declarations at the top for hoisted temp variables
+        // collected during expression conversion (e.g., computed property lowering
+        // in object literals: `{ [expr]: val }` → `(_a = {}, _a[expr] = val, _a)`).
+        let extra_temps: Vec<String> = std::mem::take(&mut *self.hoisted_temps.borrow_mut());
+        if !extra_temps.is_empty() {
+            let var_decls: Vec<IRNode> = extra_temps
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            result.insert(0, IRNode::VarDeclList(var_decls));
+        }
+
         result
     }
 
@@ -1080,19 +1102,19 @@ impl<'a> NamespaceES5Transformer<'a> {
         if is_exported {
             // For exported variables, emit directly as namespace property assignments:
             // `Namespace.X = initializer;` instead of `var X = initializer; Namespace.X = X;`
-            Some(IRNode::Sequence(convert_exported_variable_declarations(
-                self.arena,
-                &var_data.declarations,
-                ns_name,
-            )))
+            let (decls, temps) =
+                convert_exported_variable_declarations(self.arena, &var_data.declarations, ns_name);
+            self.hoisted_temps.borrow_mut().extend(temps);
+            Some(IRNode::Sequence(decls))
         } else {
             let empty_decl_keyword =
                 self.declaration_keyword_from_var_declarations(&var_data.declarations);
-            let decls = convert_variable_declarations(
+            let (decls, temps) = convert_variable_declarations(
                 self.arena,
                 &var_data.declarations,
                 empty_decl_keyword,
             );
+            self.hoisted_temps.borrow_mut().extend(temps);
             Some(IRNode::Sequence(decls))
         }
     }
