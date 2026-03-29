@@ -824,12 +824,38 @@ impl<'a> EnumES5Transformer<'a> {
                 let end = node.end as usize;
                 if end <= source_text.len() {
                     let raw = &source_text[start..end];
-                    // Strip surrounding quotes from source text to get inner content
+                    let is_single_quoted = raw.starts_with('\'');
                     let inner = raw
                         .strip_prefix('"')
                         .or_else(|| raw.strip_prefix('\''))
                         .and_then(|s| s.strip_suffix('"').or_else(|| s.strip_suffix('\'')))
                         .unwrap_or(raw);
+                    if is_single_quoted {
+                        let mut converted = String::with_capacity(inner.len());
+                        let mut chars = inner.chars().peekable();
+                        while let Some(c) = chars.next() {
+                            if c == '\\' {
+                                if let Some(&next) = chars.peek() {
+                                    if next == '\'' {
+                                        converted.push('\'');
+                                        chars.next();
+                                    } else {
+                                        converted.push('\\');
+                                        converted.push(next);
+                                        chars.next();
+                                    }
+                                } else {
+                                    converted.push('\\');
+                                }
+                            } else if c == '"' {
+                                converted.push('\\');
+                                converted.push('"');
+                            } else {
+                                converted.push(c);
+                            }
+                        }
+                        return IRNode::RawStringLiteral(converted.into());
+                    }
                     return IRNode::RawStringLiteral(inner.to_string().into());
                 }
             }
