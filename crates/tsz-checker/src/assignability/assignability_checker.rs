@@ -4,9 +4,10 @@
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     check_application_variance_assignability, classify_for_assignability_eval,
-    contains_infer_types, get_allowed_keys, get_keyof_type, get_string_literal_value,
-    get_union_members, is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
-    is_relation_cacheable, keyof_object_properties, map_compound_members,
+    contains_free_infer_types, contains_infer_types, get_allowed_keys, get_keyof_type,
+    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_relation_cacheable, keyof_object_properties,
+    map_compound_members,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -560,8 +561,13 @@ impl<'a> CheckerState<'a> {
             // `X extends Y<infer V> ? V : never` contain structural `infer` patterns
             // that are resolved during evaluation. Without evaluation, the visitor
             // would find these structural infers and incorrectly suppress the diagnostic.
-            || contains_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
-            || contains_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
+            //
+            // Use contains_free_infer_types instead of contains_infer_types to avoid
+            // walking into TypeParameter constraints where structural `infer` patterns
+            // from type alias definitions (e.g., `type Foo = X extends Bar<infer V> ? V : never`)
+            // would cause false suppression of real assignability errors.
+            || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
+            || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
     }
 
     /// Suppress assignability diagnostics for parser-recovery artifacts.
