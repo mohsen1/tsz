@@ -369,6 +369,17 @@ impl<'a> CheckerState<'a> {
                             && n.kind == syntax_kind_ext::SPREAD_ELEMENT
                             && let Some(spread_data) = self.ctx.arena.get_spread(n)
                         {
+                            // Array literal spreads (e.g., ...[1, 2, 3]) were already
+                            // expanded to individual arguments during call checking,
+                            // so they have a known count — treat them like tuples.
+                            let inner_idx =
+                                self.ctx.arena.skip_parenthesized(spread_data.expression);
+                            if let Some(expr_node) = self.ctx.arena.get(inner_idx)
+                                && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                && self.ctx.arena.get_literal_expr(expr_node).is_some()
+                            {
+                                return false;
+                            }
                             let spread_type = self.get_type_of_node(spread_data.expression);
                             let spread_type = self.resolve_type_for_property_access(spread_type);
                             let spread_type = self.resolve_lazy_type(spread_type);
@@ -897,6 +908,17 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::tuple_elements(self.ctx.types, spread_type)
                 {
                     for _ in &elems {
+                        expanded.push(arg_idx);
+                    }
+                    continue;
+                }
+                // Array literal spreads have known element count — expand them
+                let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                if let Some(expr_node) = self.ctx.arena.get(inner_idx)
+                    && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+                {
+                    for _ in &literal.elements.nodes {
                         expanded.push(arg_idx);
                     }
                     continue;

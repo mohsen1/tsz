@@ -663,13 +663,15 @@ impl<'a> CheckerState<'a> {
                     expanded_count += elems.len();
                     continue;
                 }
-                // Check if it's an array literal spread
-                if array_element_type_for_type(self.ctx.types, spread_type).is_some()
-                    && let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
-                    && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
-                {
-                    expanded_count += literal.elements.nodes.len();
-                    continue;
+                // Check if it's an array literal spread (skip parentheses)
+                if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
+                    let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                    if let Some(expr_node) = self.ctx.arena.get(inner_idx)
+                        && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+                    {
+                        expanded_count += literal.elements.nodes.len();
+                        continue;
+                    }
                 }
             }
             expanded_count += 1;
@@ -787,8 +789,9 @@ impl<'a> CheckerState<'a> {
                     // For array literals, we want to check each element individually
                     // For non-literal arrays, treat as variadic (check element type against remaining params)
                     if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
-                        // Check if the spread expression is an array literal
-                        if let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
+                        // Check if the spread expression is an array literal (skip parentheses)
+                        let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                        if let Some(expr_node) = self.ctx.arena.get(inner_idx)
                             && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                         {
                             // It's an array literal - get each element's type individually
