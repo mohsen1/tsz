@@ -187,8 +187,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         use crate::visitor::{object_shape_id, object_with_index_shape_id};
 
-        // Resolve source shape first - if not an object, it's valid (primitives match Object)
+        // Type parameters must NOT short-circuit here: an unconstrained T could be
+        // instantiated with null/undefined/void, which are NOT assignable to Object.
+        // For constrained T, check if the constraint is assignable to Object.
         let source_eval = self.evaluate_type(source);
+        if let Some(info) = crate::visitor::type_param_info(self.interner, source_eval) {
+            return match info.constraint {
+                Some(constraint) => self.check_object_contract(constraint, target),
+                None => SubtypeResult::False,
+            };
+        }
+
+        // Resolve source shape first - if not an object, it's valid (primitives match Object)
         let s_shape_id = match object_shape_id(self.interner, source_eval)
             .or_else(|| object_with_index_shape_id(self.interner, source_eval))
         {

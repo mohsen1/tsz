@@ -20935,3 +20935,72 @@ interface Buzz { id: number; }
         "Expected error message to contain 'any', got: {msg}"
     );
 }
+
+// ── TS2413: Unconstrained type parameter not assignable to index sig ──
+
+#[test]
+fn test_ts2413_unconstrained_type_param_not_assignable_to_number_index() {
+    // TS2413: 'number' index type 'T' is not assignable to 'string' index type 'number'.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f<T>() {
+    var b: {
+        [x: string]: number;
+        [x: number]: T;
+    };
+}
+"#,
+    );
+    assert!(
+        has_error(&diagnostics, 2413),
+        "Expected TS2413 for unconstrained T vs number index signature. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2413_constrained_type_param_assignable_no_error() {
+    // When T extends number, T IS assignable to number, so no TS2413.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f<T extends number>() {
+    var b: {
+        [x: string]: number;
+        [x: number]: T;
+    };
+}
+"#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2413),
+        "Should NOT emit TS2413 when T extends number. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2413_unconstrained_type_param_vs_object_with_lib() {
+    if !lib_files_available() {
+        eprintln!("Skipping: lib files not available");
+        return;
+    }
+    // TS2413: 'number' index type 'T' is not assignable to 'string' index type 'Object'.
+    // An unconstrained type parameter T should NOT be assignable to Object because
+    // T could be instantiated with null/undefined/void.
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function other<T>(arg: T) {
+    var b: {
+        [x: string]: Object;
+        [x: number]: T;
+    };
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2413),
+        "Expected TS2413 for unconstrained T vs Object index signature. Got: {diagnostics:?}"
+    );
+}
