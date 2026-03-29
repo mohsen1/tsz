@@ -1308,6 +1308,8 @@ impl<'a> DeclarationEmitter<'a> {
                     "const"
                 } else if flags & tsz_parser::parser::node_flags::LET != 0 {
                     "let"
+                } else if self.source_is_js_file {
+                    "const"
                 } else {
                     "var"
                 };
