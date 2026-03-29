@@ -310,6 +310,19 @@ impl<'a> CheckerState<'a> {
                             shorthand.name,
                             source_type,
                         );
+                        // TS2322: Check that the source property type is assignable
+                        // to the target variable's declared type. This catches cases
+                        // like `({ q } = numMapPoint)` where `q` comes from an index
+                        // signature and `noUncheckedIndexedAccess` adds `| undefined`.
+                        // Skip when there is a default value (`{ x = 1 }`) because
+                        // the default narrows away `undefined` from the effective type.
+                        if !shorthand.equals_token {
+                            self.check_destructuring_leaf_assignability(
+                                &ident.escaped_text,
+                                source_type,
+                                shorthand.name,
+                            );
+                        }
                     }
                 }
             }
@@ -341,9 +354,17 @@ impl<'a> CheckerState<'a> {
                     (spread.expression, rest_type, true)
                 } else {
                     let elem_type = self.resolve_element_type_for_destructuring(source_type, index);
-                    let Some(elem_type) = elem_type else {
+                    let Some(mut elem_type) = elem_type else {
                         continue;
                     };
+                    // With noUncheckedIndexedAccess, array element access may not
+                    // exist at runtime — include `| undefined` in the element type.
+                    if self.ctx.no_unchecked_indexed_access() {
+                        elem_type = crate::query_boundaries::flow::add_undefined_for_indexed_access(
+                            self.ctx.types,
+                            elem_type,
+                        );
+                    }
                     (elem_idx, elem_type, false)
                 };
 
@@ -379,6 +400,39 @@ impl<'a> CheckerState<'a> {
                                 target_idx,
                                 target_idx,
                             );
+                        }
+                    } else if self.ctx.no_unchecked_indexed_access() && !is_spread {
+                        // With noUncheckedIndexedAccess, the element type includes
+                        // `| undefined`. Check that this augmented type is assignable
+                        // to the target variable's declared type. E.g.,
+                        // `[target_string] = strArray` should error when
+                        // `target_string: string` but element type is `string | undefined`.
+                        let target_type = self.get_type_of_assignment_target(target_idx);
+                        if target_type != TypeId::ANY
+                            && target_type != TypeId::ERROR
+                            && check_type != TypeId::ANY
+                            && check_type != TypeId::ERROR
+                        {
+                            self.ensure_relation_input_ready(check_type);
+                            self.ensure_relation_input_ready(target_type);
+                            if !self.is_assignable_to(check_type, target_type) {
+                                // Emit TS2322 directly with pre-resolved types.
+                                // The standard error pipeline would re-derive
+                                // the source type from the anchor node's parent
+                                // assignment, incorrectly showing the RHS array
+                                // type instead of the element type.
+                                let source_str = self.format_type_diagnostic(check_type);
+                                let target_str = self.format_type_diagnostic(target_type);
+                                let message = crate::diagnostics::format_message(
+                                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                    &[&source_str, &target_str],
+                                );
+                                self.error_at_node(
+                                    target_idx,
+                                    &message,
+                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                );
+                            }
                         }
                     }
                 }
