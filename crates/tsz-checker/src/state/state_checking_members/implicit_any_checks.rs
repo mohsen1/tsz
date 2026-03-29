@@ -687,6 +687,53 @@ impl<'a> CheckerState<'a> {
             }
             self.ctx.implicit_any_checked_closures.insert(func_idx);
         }
+
+        // Re-check closures whose TS7006 was emitted during return-type inference
+        // speculation and then rolled back. These closures had genuinely untyped
+        // parameters at the time of first processing (inside infer_return_type_from_body).
+        // Even if a later call inference retry provided contextual types (adding the
+        // closure to implicit_any_contextual_closures), tsc would have kept the TS7006
+        // from the initial inference pass. So we unconditionally re-emit here.
+        let speculative = std::mem::take(&mut self.ctx.speculative_implicit_any_closures);
+        for func_idx in speculative {
+            if self.find_jsdoc_for_function(func_idx).is_some() {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(func_idx) else {
+                continue;
+            };
+            let parameters = if let Some(func) = self.ctx.arena.get_function(node) {
+                &func.parameters
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                &method.parameters
+            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                &accessor.parameters
+            } else {
+                continue;
+            };
+            let param_nodes: Vec<_> = parameters.nodes.clone();
+            let mut param_index = 0;
+            for &param_idx in &param_nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if let Some(name_node) = self.ctx.arena.get(param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text.as_str() == "this"
+                {
+                    continue;
+                }
+                if param.type_annotation.is_some() {
+                    param_index += 1;
+                    continue;
+                }
+                self.maybe_report_implicit_any_parameter(param, false, param_index);
+                param_index += 1;
+            }
+        }
     }
 }
 
