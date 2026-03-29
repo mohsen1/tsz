@@ -743,7 +743,12 @@ impl<'a> CheckerState<'a> {
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None
                 } else {
-                    contextual_type
+                    // TypeScript ignores `any` and `unknown` contextual return types
+                    // during generic inference — they carry no useful information and
+                    // can cause type parameters to be inferred as `any`/`unknown`,
+                    // which destroys contextual typing for callback parameters
+                    // (e.g., `T & ((arg: string) => any)` becoming just `any`).
+                    contextual_type.filter(|&ct| ct != TypeId::ANY && ct != TypeId::UNKNOWN)
                 };
                 trace!(
                     type_params = ?shape
