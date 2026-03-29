@@ -2327,11 +2327,13 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                } else if has_interface && has_function {
-                    // Interface + multiple conflicting function default exports:
+                } else if has_interface && has_function && value_count <= 1 {
+                    // Interface + multiple conflicting function default exports (no other values):
                     // TS2323 for all declarations. Note: a single function + interface
                     // is allowed (declaration merging), but that case is excluded by
                     // is_conflict requiring value_count > 1.
+                    // When additional value exports exist (e.g., identifier references to
+                    // classes), tsc uses TS2528 instead, so we fall through to the else.
                     for &export_idx in &export_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
@@ -2342,7 +2344,18 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
+                    // tsc skips interface declarations when emitting TS2528 (interfaces
+                    // merge with values and don't count as conflicting defaults).
                     for &export_idx in &export_default_indices {
+                        let is_interface = self
+                            .ctx
+                            .arena
+                            .get_export_decl_at(export_idx)
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                            .is_some_and(|n| n.kind == syntax_kind_ext::INTERFACE_DECLARATION);
+                        if is_interface {
+                            continue;
+                        }
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
                             anchor,
