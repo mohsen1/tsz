@@ -1340,6 +1340,7 @@ impl ParserState {
                 text,
                 raw_text: None,
                 value: None,
+                has_invalid_escape: false,
             },
         )
     }
@@ -1365,6 +1366,7 @@ impl ParserState {
                 text,
                 raw_text: None,
                 value: None,
+                has_invalid_escape: false,
             },
         )
     }

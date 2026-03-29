@@ -164,6 +164,8 @@ pub struct LiteralData {
     pub raw_text: Option<String>,
     /// For numeric literals only
     pub value: Option<f64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_invalid_escape: bool,
 }
 
 /// Data for binary expressions
