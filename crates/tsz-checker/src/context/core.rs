@@ -188,10 +188,23 @@ impl<'a> CheckerContext<'a> {
     /// Note: `lib_contexts` may include both actual lib files AND user files for cross-file
     /// resolution. Use `set_actual_lib_file_count()` to track how many are actual lib files.
     pub fn set_lib_contexts(&mut self, lib_contexts: Vec<LibContext>) {
-        self.lib_binders_cached = lib_contexts
-            .iter()
-            .map(|lc| Arc::clone(&lc.binder))
-            .collect();
+        self.lib_binders_cached = Arc::new(
+            lib_contexts
+                .iter()
+                .map(|lc| Arc::clone(&lc.binder))
+                .collect(),
+        );
+        self.lib_contexts = Arc::new(lib_contexts);
+    }
+
+    /// Set pre-wrapped Arc lib contexts (for O(1) sharing between checkers).
+    pub fn set_lib_contexts_shared(&mut self, lib_contexts: Arc<Vec<LibContext>>) {
+        self.lib_binders_cached = Arc::new(
+            lib_contexts
+                .iter()
+                .map(|lc| Arc::clone(&lc.binder))
+                .collect(),
+        );
         self.lib_contexts = lib_contexts;
     }
 

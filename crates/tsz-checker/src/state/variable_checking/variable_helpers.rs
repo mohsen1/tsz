@@ -1464,7 +1464,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        for lib_ctx in &self.ctx.lib_contexts {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
             let binder = &lib_ctx.binder;
             if let Some(arena) = binder.symbol_arenas.get(&sym_id)
                 && let Some(source_file) = arena.source_files.first()

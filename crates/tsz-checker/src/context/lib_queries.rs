@@ -33,7 +33,7 @@ impl<'a> CheckerContext<'a> {
             };
 
         // Check lib contexts
-        for lib_ctx in &self.lib_contexts {
+        for lib_ctx in self.lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get("Promise")
                 && check_symbol_has_value(sym_id, &lib_ctx.binder)
             {
@@ -62,7 +62,7 @@ impl<'a> CheckerContext<'a> {
     /// Returns true if Symbol is declared in lib contexts, globals, or type declarations.
     pub fn has_symbol_in_lib(&self) -> bool {
         // Check lib contexts first
-        for lib_ctx in &self.lib_contexts {
+        for lib_ctx in self.lib_contexts.iter() {
             if lib_ctx.binder.file_locals.has("Symbol") {
                 return true;
             }
@@ -86,7 +86,7 @@ impl<'a> CheckerContext<'a> {
     /// This is a generalized version of `has_symbol_in_lib` for any symbol name.
     pub fn has_name_in_lib(&self, name: &str) -> bool {
         // Check lib contexts first
-        for lib_ctx in &self.lib_contexts {
+        for lib_ctx in self.lib_contexts.iter() {
             if lib_ctx.binder.file_locals.has(name) {
                 return true;
             }

@@ -138,10 +138,12 @@ impl<'a> CheckerState<'a> {
     /// Collect lib binders from `lib_contexts` for cross-arena symbol lookup.
     /// This enables symbol resolution across lib.d.ts files when `lib_binders`
     /// is not populated in the binder (e.g., in the driver.rs path).
-    pub(crate) fn get_lib_binders(&self) -> Vec<Arc<tsz_binder::BinderState>> {
-        // PERF: Clone the pre-computed cached vec. This still clones Arc refcounts
-        // but avoids iterating lib_contexts and extracting binder fields each time.
-        self.ctx.lib_binders_cached.clone()
+    ///
+    /// Returns an `Arc`-wrapped vec for O(1) cloning. The `Arc<Vec<_>>` auto-derefs
+    /// to `&[Arc<BinderState>]` so callers using `&lib_binders` work unchanged.
+    pub(crate) fn get_lib_binders(&self) -> Arc<Vec<Arc<tsz_binder::BinderState>>> {
+        // O(1) Arc::clone — the entire vec is shared, not individual elements.
+        Arc::clone(&self.ctx.lib_binders_cached)
     }
 
     /// Check if a symbol represents a class member (property, method, accessor, or constructor).
@@ -298,8 +300,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let ignore_libs = !self.ctx.has_lib_loaded();
+        let empty_binders: Arc<Vec<Arc<tsz_binder::BinderState>>> = Arc::new(Vec::new());
         let lib_binders = if ignore_libs {
-            Vec::new()
+            empty_binders
         } else {
             self.get_lib_binders()
         };
@@ -649,8 +652,9 @@ impl<'a> CheckerState<'a> {
 
         let ignore_libs = !self.ctx.has_lib_loaded();
         // Collect lib binders for cross-arena symbol lookup
+        let empty_binders: Arc<Vec<Arc<tsz_binder::BinderState>>> = Arc::new(Vec::new());
         let lib_binders = if ignore_libs {
-            Vec::new()
+            empty_binders
         } else {
             self.get_lib_binders()
         };
@@ -684,7 +688,7 @@ impl<'a> CheckerState<'a> {
         // However, skip this early check when the name is declared in a local scope (namespace, etc.)
         // so that local symbols can shadow global ones.
         if !ignore_libs && !name_in_local_scope {
-            for lib_ctx in &self.ctx.lib_contexts {
+            for lib_ctx in self.ctx.lib_contexts.iter() {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                     // After lib merge, the file binder has the same symbols with
                     // potentially different IDs. Use file binder's ID for returns,
@@ -1316,7 +1320,7 @@ impl<'a> CheckerState<'a> {
                 return Some(val_sym_id.0);
             }
             // Search lib binders directly for a value declaration
-            for lib_binder in &lib_binders {
+            for lib_binder in lib_binders.iter() {
                 if let Some(val_sym_id) = lib_binder.file_locals.get(name)
                     && let Some(val_symbol) = lib_binder.get_symbol(val_sym_id)
                     && (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0

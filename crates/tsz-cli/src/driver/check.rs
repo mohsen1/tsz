@@ -861,7 +861,7 @@ pub(super) fn collect_diagnostics(
     // build_global_indices computes the 4 binder-derived indices once here so that
     // per-file checker creation via apply_to skips the O(N) binder scans.
     let mut project_env = tsz::checker::context::ProjectEnv {
-        lib_contexts: lib_contexts.to_vec(),
+        lib_contexts: std::sync::Arc::new(lib_contexts.to_vec()),
         all_arenas: Arc::clone(&all_arenas),
         all_binders: Arc::clone(&all_binders),
         skeleton_declared_modules,

@@ -1364,7 +1364,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(name) = name_hint {
-            for lib_ctx in &self.ctx.lib_contexts {
+            for lib_ctx in self.ctx.lib_contexts.iter() {
                 if let Some(symbol) = lib_ctx.binder.symbols.get(sym_id)
                     && symbol.escaped_name == name
                 {
@@ -1395,7 +1395,7 @@ impl<'a> CheckerState<'a> {
             return Some((symbol, arena));
         }
 
-        for lib_ctx in &self.ctx.lib_contexts {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
             if let Some(symbol) = lib_ctx.binder.symbols.get(sym_id) {
                 return Some((symbol, lib_ctx.arena.as_ref()));
             }

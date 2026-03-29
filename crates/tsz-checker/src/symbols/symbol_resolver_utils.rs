@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Then scan lib binders directly.
-        for lib_binder in &lib_binders {
+        for lib_binder in lib_binders.iter() {
             if let Some(val_sym_id) = lib_binder.file_locals.get(name)
                 && let Some(val_symbol) = lib_binder.get_symbol(val_sym_id)
                 && (val_symbol.flags & symbol_flags::VALUE) != 0
@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
 
         // Legacy path: check lib binders for global symbols
         let lib_binders = self.get_lib_binders();
-        for lib_binder in &lib_binders {
+        for lib_binder in lib_binders.iter() {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 return Some(sym_id);
             }
@@ -1092,8 +1092,10 @@ impl<'a> CheckerState<'a> {
     /// Resolves a string identifier relative to the scope of a given node.
     pub(crate) fn resolve_name_at_node(&self, name: &str, node_idx: NodeIndex) -> Option<SymbolId> {
         let ignore_libs = !self.ctx.has_lib_loaded();
+        let empty_binders: std::sync::Arc<Vec<std::sync::Arc<tsz_binder::BinderState>>> =
+            std::sync::Arc::new(Vec::new());
         let lib_binders = if ignore_libs {
-            Vec::new()
+            empty_binders
         } else {
             self.get_lib_binders()
         };

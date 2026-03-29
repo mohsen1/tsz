@@ -318,7 +318,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Fallback: check if the symbol is from any lib context that is a .d.ts
-        for lib_ctx in &self.ctx.lib_contexts {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
             if lib_ctx.binder.symbols.get(sym_id).is_some()
                 && lib_ctx
                     .arena

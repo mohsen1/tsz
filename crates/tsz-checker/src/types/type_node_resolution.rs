@@ -953,7 +953,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
 
             // Also check lib contexts for the member (e.g., global namespace types)
-            for lib_ctx in &self.ctx.lib_contexts {
+            for lib_ctx in self.ctx.lib_contexts.iter() {
                 if let Some(lib_resolved) = lib_ctx.binder.resolve_import_symbol(left_sym_id)
                     && let Some(lib_symbol) = lib_ctx.binder.get_symbol(lib_resolved)
                     && let Some(exports) = lib_symbol.exports.as_ref()
@@ -996,7 +996,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
-        for lib_ctx in &self.ctx.lib_contexts {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
             if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                 let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
                 if (symbol.flags

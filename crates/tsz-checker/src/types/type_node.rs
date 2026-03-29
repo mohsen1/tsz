@@ -1274,7 +1274,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
-        for lib_ctx in &self.ctx.lib_contexts {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
             if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                 let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
                 if (symbol.flags
@@ -1332,7 +1332,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return Some(sym_id.0);
         }
 
-        for lib_ctx in &self.ctx.lib_contexts {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
             if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id)
                 && (symbol.flags

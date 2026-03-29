@@ -3419,14 +3419,17 @@ pub fn check_files_parallel(
     ensure_rayon_global_pool();
 
     // Create lib_contexts from lib_files (contains both arena and binder).
-    // LibContext fields are Arc-wrapped, so cloning is O(1) per field.
-    let lib_contexts: Vec<LibContext> = lib_files
-        .iter()
-        .map(|lib| LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
+    // Wrapped in Arc so that per-file checkers and child delegations share
+    // the same Vec with O(1) clone cost (single atomic refcount increment).
+    let lib_contexts: Arc<Vec<LibContext>> = Arc::new(
+        lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect(),
+    );
 
     let shared_binders: Vec<Arc<BinderState>> = program
         .files
@@ -3504,7 +3507,9 @@ pub fn check_files_parallel(
             .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
 
         if !lib_contexts.is_empty() {
-            checker.ctx.set_lib_contexts(lib_contexts.clone());
+            checker
+                .ctx
+                .set_lib_contexts_shared(Arc::clone(&lib_contexts));
             checker.ctx.set_actual_lib_file_count(lib_contexts.len());
         }
 
