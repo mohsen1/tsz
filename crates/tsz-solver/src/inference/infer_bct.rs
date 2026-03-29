@@ -128,11 +128,7 @@ impl<'a> InferenceContext<'a> {
     /// 3. Otherwise → find single common supertype via tournament reduction
     ///    (matching tsc's `getSingleCommonSupertype` reduceLeft fallback)
     /// 4. Add stripped nullable types back to the result
-    pub fn get_common_supertype_for_inference(
-        &self,
-        types: &[TypeId],
-        first_wins_for_incompatible: bool,
-    ) -> TypeId {
+    pub fn get_common_supertype_for_inference(&self, types: &[TypeId]) -> TypeId {
         if types.is_empty() {
             return TypeId::UNKNOWN;
         }
@@ -283,11 +279,14 @@ impl<'a> InferenceContext<'a> {
         // (leftmost wins). It does NOT create a union.
         //
         // However, our BCT `is_subtype` is simplified and may miss subtype
-        // relationships that tsc's full `isTypeSubtypeOf` catches (e.g., bivariant
-        // function params, class hierarchy through complex generics). We only use
-        // first-wins when `first_wins_for_incompatible` is true (all candidates
-        // were fresh literals that got widened). For non-fresh candidates, we fall
-        // back to union creation as a safe fallback.
+        // relationships that tsc's full `isTypeSubtypeOf` catches. We use
+        // first-wins when nullable types were stripped from the candidates,
+        // indicating a "loose" inference context (like `new Array(...)` with
+        // mixed types). In tsc, without strictNullChecks, null/undefined are
+        // subtypes of everything and don't affect the first-wins result.
+        // When no nullable was stripped, we fall back to union creation for
+        // safety with complex candidates (tuples, objects, etc.).
+        let first_wins_for_incompatible = has_undefined || has_null;
         let mut result = primary_types[0];
         for &candidate in &primary_types[1..] {
             if self.is_subtype(candidate, result) {
@@ -296,11 +295,11 @@ impl<'a> InferenceContext<'a> {
                 // result is a subtype of candidate → candidate is broader
                 result = candidate;
             } else if !first_wins_for_incompatible {
-                // For non-fresh candidates, create a union as a safe fallback
+                // For non-nullable contexts, create a union as a safe fallback
                 // since our simplified is_subtype may miss valid relationships.
                 result = self.interner.union2(result, candidate);
             }
-            // When first_wins_for_incompatible: keep result (first/leftmost wins)
+            // When nullable was stripped: keep result (first/leftmost wins)
         }
 
         // If nullable types were stripped, add them back. This matches tsc's
