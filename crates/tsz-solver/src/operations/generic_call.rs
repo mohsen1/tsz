@@ -2750,6 +2750,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return Some((arg_type, target_type));
         }
 
+        // Generic function references (e.g., `id: <a>(value: a) => a`) are marked
+        // contextually sensitive because they have type parameters, but unlike
+        // lambda expressions with untyped parameters, they don't need contextual
+        // typing — their params are fully annotated. Pre-instantiate them against
+        // the target signature so they contribute inference candidates in Round 1.
+        // This matches tsc behavior where variable references to generic functions
+        // are never context-sensitive (isContextSensitive is an AST-level check).
+        //
+        // Example: `withFew<a, r>([1,2,3], id, fail)` — `id` should contribute
+        // `r = number[]` in Round 1, preventing `r = never` from `fail` alone.
+        if let Some(TypeData::Function(shape_id)) = self.interner.lookup(arg_type) {
+            let shape = self.interner.function_shape(shape_id);
+            if !shape.type_params.is_empty()
+                && !self.function_signature_is_contextually_sensitive(&shape.params)
+            {
+                let instantiated = self
+                    .instantiate_generic_function_argument_against_target(arg_type, target_type);
+                if instantiated != arg_type {
+                    return Some((instantiated, target_type));
+                }
+            }
+        }
+
         if self.should_skip_contextual_arg_in_round1(arg_type) {
             return None;
         }
