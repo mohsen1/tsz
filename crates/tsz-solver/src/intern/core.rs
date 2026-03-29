@@ -202,11 +202,11 @@ pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 
-/// Maximum cumulative evaluation fuel across all TypeEvaluator instances.
+/// Maximum cumulative evaluation fuel across all `TypeEvaluator` instances.
 ///
 /// Mirrors TypeScript's `instantiationCount` limit (5,000,000 in tsc). This
 /// prevents deeply recursive type libraries from consuming unbounded memory
-/// through type instantiation that creates new TypeIds on each expansion.
+/// through type instantiation that creates new `TypeIds` on each expansion.
 ///
 /// When exceeded, evaluators return `TypeId::ERROR`, matching TS2589.
 /// Set lower than tsc's limit because our per-evaluation work is heavier
@@ -558,7 +558,7 @@ pub struct TypeInterner {
     /// Mirrors TypeScript's `instantiationCount` which limits total type instantiation
     /// work across the entire program check. Prevents deeply recursive type libraries
     /// (like ts-toolbelt) from consuming unbounded memory through repeated type
-    /// instantiation that creates new TypeIds on each expansion.
+    /// instantiation that creates new `TypeIds` on each expansion.
     ///
     /// When this counter exceeds `MAX_EVALUATION_FUEL`, evaluators bail out early
     /// with `TypeId::ERROR`, matching tsc's TS2589 behavior.
@@ -1195,7 +1195,7 @@ impl TypeInterner {
 
     /// Consume evaluation fuel and return whether fuel is exhausted.
     ///
-    /// This is a global budget across all TypeEvaluator instances. When exhausted,
+    /// This is a global budget across all `TypeEvaluator` instances. When exhausted,
     /// the interner is poisoned and subsequent operations return ERROR.
     #[inline]
     pub fn consume_evaluation_fuel(&self, amount: u32) -> bool {

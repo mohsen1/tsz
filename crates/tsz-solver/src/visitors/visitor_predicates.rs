@@ -208,6 +208,40 @@ pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Check if a type provides structural wrapping that breaks type alias
+/// circular reference chains.  In TypeScript, recursion through "deferred"
+/// types is legal:
+///   - Array, Tuple, `ReadonlyType` wrapping those
+///   - Object / `ObjectWithIndex` (object literal types)
+///   - Function / Callable (function/constructor types)
+///   - Mapped types, Application (generic instantiation)
+///
+/// Conversely, Lazy, Union, and Intersection are transparent -- they do NOT
+/// provide structural wrapping by themselves.
+///
+/// For union types the body is considered deferred only when **every** member
+/// is itself deferred (e.g., `JsonValue[] | readonly JsonValue[]`).
+pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match types.lookup(type_id) {
+        Some(
+            TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_)
+            | TypeData::Mapped(_)
+            | TypeData::Application(_),
+        ) => true,
+        Some(TypeData::ReadonlyType(inner)) => is_structurally_deferred_type(types, inner),
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            !members.is_empty() && members.iter().all(|&m| is_structurally_deferred_type(types, m))
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a type parameter.
 pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
