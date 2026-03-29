@@ -640,25 +640,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.skip_this_binding.set(prev);
                     result
                 } else {
-                    // Unconstrained type parameters: try apparent Object members as fallback.
-                    // tsc treats unconstrained T as having Object prototype methods
-                    // (toString, valueOf, hasOwnProperty, etc.) because the implicit
-                    // constraint is `{}` which includes Object methods.
-                    match apparent_object_member_kind(prop_name) {
-                        Some(ApparentMemberKind::Value(type_id)) => {
-                            PropertyAccessResult::simple(type_id)
-                        }
-                        Some(ApparentMemberKind::Method(return_type)) => {
-                            PropertyAccessResult::Success {
-                                type_id: return_type,
-                                write_type: None,
-                                from_index_signature: false,
-                            }
-                        }
-                        None => PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
-                        },
+                    // Unconstrained type parameters have no properties in tsc.
+                    // In TypeScript 6.0+, an unconstrained T is treated as `{}`
+                    // which does NOT include Object prototype methods (toString,
+                    // valueOf, hasOwnProperty, etc.). Accessing any property on
+                    // bare T emits TS2339 "Property X does not exist on type T".
+                    PropertyAccessResult::PropertyNotFound {
+                        type_id: obj_type,
+                        property_name: prop_atom,
                     }
                 }
             }
