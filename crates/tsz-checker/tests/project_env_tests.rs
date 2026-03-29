@@ -15,7 +15,7 @@ use tsz_solver::TypeInterner;
 /// Helper: create a minimal `ProjectEnv` with all fields defaulted.
 fn empty_project_env() -> ProjectEnv {
     ProjectEnv {
-        lib_contexts: vec![],
+        lib_contexts: Arc::new(vec![]),
         all_arenas: Arc::new(vec![]),
         all_binders: Arc::new(vec![]),
         skeleton_declared_modules: None,
