@@ -897,9 +897,12 @@ pub fn load_lib_files_for_binding_strict(
     // Batch reading brings this down to ~2-5ms total for the entire directory.
     // Check if all requested lib files are available as embedded content.
     // If so, skip the batch disk read entirely (zero I/O startup).
+    // Embedded files use bare names (e.g., "dom.d.ts") while on-disk files
+    // have a "lib." prefix (e.g., "lib.dom.d.ts"). Strip the prefix for lookup.
     let all_embedded = lib_files.iter().all(|p| {
         p.file_name()
             .and_then(|n| n.to_str())
+            .map(|name| name.strip_prefix("lib.").unwrap_or(name))
             .is_some_and(crate::embedded_libs::is_embedded_lib)
     });
 
@@ -992,8 +995,11 @@ fn collect_lib_files_recursive_cached(
     file_cache: &FxHashMap<PathBuf, String>,
 ) -> Result<()> {
     // Skip canonicalize (stat syscall) when using embedded content.
-    let basename_check = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let lib_path = if crate::embedded_libs::is_embedded_lib(basename_check) && file_cache.is_empty()
+    // Embedded files use bare names (e.g., "dom.d.ts") while on-disk files
+    // have a "lib." prefix (e.g., "lib.dom.d.ts"). Strip the prefix for lookup.
+    let raw_basename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let embedded_name = raw_basename.strip_prefix("lib.").unwrap_or(raw_basename);
+    let lib_path = if crate::embedded_libs::is_embedded_lib(embedded_name) && file_cache.is_empty()
     {
         path.to_path_buf()
     } else {
@@ -1008,7 +1014,8 @@ fn collect_lib_files_recursive_cached(
     // removed at build time, reducing parse work by ~58%. This is safe because
     // declaration files don't use comments for semantics.
     let basename = lib_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let source_text = if let Some(embedded) = crate::embedded_libs::get_lib_content(basename) {
+    let embedded_key = basename.strip_prefix("lib.").unwrap_or(basename);
+    let source_text = if let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key) {
         // Built-in embedded content — zero I/O, comment-stripped for faster parsing
         embedded.to_string()
     } else if let Some(cached) = file_cache.get(&lib_path) {
