@@ -2351,6 +2351,20 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+            } else if has_interface && !(has_function && value_count == 1) {
+                // Multiple default exports with at least one interface but not a valid
+                // interface + function merge. E.g.:
+                //   export default interface A {}
+                //   export default B;  // B is an interface
+                // TSC reports TS2528 because these can't merge.
+                for &export_idx in &export_default_indices {
+                    let anchor = self.get_default_export_anchor(export_idx);
+                    self.error_at_node(
+                        anchor,
+                        diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                        diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                    );
+                }
             }
         }
     }
