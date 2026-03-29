@@ -65,6 +65,9 @@ impl<'a> CheckerState<'a> {
                 first_type_idx
             };
 
+            // Skip through parenthesized expressions: `extends (null)` → `extends null`
+            let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+
             let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
                 continue;
             };

@@ -2464,6 +2464,7 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         Some(TypeData::Lazy(_)) => true, // unresolved references are assumed valid
         Some(TypeData::Application(_)) => true, // generic applications are object-like
         Some(TypeData::Mapped(_)) => true, // mapped types are object-like
+        Some(TypeData::ReadonlyType(inner)) => is_valid_base_type(db, inner),
         // Intrinsics (never, void, null, etc.), literals, None => not valid base types
         _ => false,
     }
