@@ -1632,13 +1632,22 @@ impl ProjectEnv {
             ctx.global_arena_index = Some(Arc::clone(idx));
         }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
-        // Pre-populate DefIds from all cross-file binders' semantic_defs.
-        // This moves identity creation to apply_to time (deterministic, early)
-        // rather than on-demand in get_or_create_def_id's O(N) repair path.
-        ctx.pre_populate_def_ids_from_all_binders();
-        // Resolve cross-batch heritage now that all DefIds from all binders
-        // are registered. This wires up extends/implements at the DefId level.
-        ctx.resolve_cross_batch_heritage();
+        // When the shared DefinitionStore was fully populated (via from_semantic_defs
+        // during project setup), skip the expensive per-binder iteration. Instead,
+        // rely on warm_local_caches_from_shared_store() (called below) to populate
+        // local caches from the globally unique DefId assignments. Heritage resolution
+        // was already done in from_semantic_defs, so skip that too.
+        //
+        // This eliminates O(files * total_defs * DashMap_lookup) work when many files
+        // are checked in parallel -- the root cause of hangs on large type libraries
+        // like ts-toolbelt with hundreds of interrelated type definitions.
+        if !ctx.definition_store.is_fully_populated() {
+            // Pre-populate DefIds from all cross-file binders' semantic_defs.
+            ctx.pre_populate_def_ids_from_all_binders();
+            // Resolve cross-batch heritage now that all DefIds from all binders
+            // are registered. This wires up extends/implements at the DefId level.
+            ctx.resolve_cross_batch_heritage();
+        }
         // Install the shared O(1) symbol→file index. When present, all base entries
         // are accessible via `resolve_symbol_file_index()`, so we skip the O(N) copy
         // into the local overlay. Only fall back to the O(N) copy when no global

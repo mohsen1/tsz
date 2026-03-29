@@ -44,6 +44,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // loop so their capacity is preserved across iterations.
         let mut loop_bindings: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut loop_visited: FxHashSet<(TypeId, TypeId)> = FxHashSet::default();
+        // Cycle detection for the tail-recursion loop.
+        // Tracks (check_type, extends_type) pairs seen during tail calls.
+        // When the same pair is encountered again, the conditional is cyclically
+        // self-referential (e.g., the true/false branch evaluates back to the
+        // same conditional). Without this, libraries like ts-toolbelt that have
+        // deeply nested conditional types can cause infinite loops.
+        let mut tail_seen: FxHashSet<(TypeId, TypeId, TypeId, TypeId)> = FxHashSet::default();
 
         loop {
             // When tail recursion reaches the limit, the type didn't converge.
@@ -55,6 +62,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             let cond = &current_cond;
+
+            // Cycle detection: if we've seen this exact conditional state before,
+            // the tail-recursion loop is cycling. Return ERROR to break the loop.
+            if tail_recursion_count > 0
+                && !tail_seen.insert((
+                    cond.check_type,
+                    cond.extends_type,
+                    cond.true_type,
+                    cond.false_type,
+                ))
+            {
+                self.mark_depth_exceeded();
+                return TypeId::ERROR;
+            }
 
             // Pre-evaluation Application-level infer matching.
             // When both check and extends are Applications (e.g., Promise<string> vs

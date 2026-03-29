@@ -202,6 +202,17 @@ pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 
+/// Maximum cumulative evaluation fuel across all TypeEvaluator instances.
+///
+/// Mirrors TypeScript's `instantiationCount` limit (5,000,000 in tsc). This
+/// prevents deeply recursive type libraries from consuming unbounded memory
+/// through type instantiation that creates new TypeIds on each expansion.
+///
+/// When exceeded, evaluators return `TypeId::ERROR`, matching TS2589.
+/// Set lower than tsc's limit because our per-evaluation work is heavier
+/// (we eagerly expand where tsc defers).
+pub(crate) const MAX_EVALUATION_FUEL: u32 = 2_000_000;
+
 pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
 type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
@@ -541,6 +552,17 @@ pub struct TypeInterner {
     /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
     /// emits TS2590. The checker reads and clears this flag to emit the diagnostic.
     union_too_complex: AtomicBool,
+    /// Global evaluation fuel counter.
+    ///
+    /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
+    /// Mirrors TypeScript's `instantiationCount` which limits total type instantiation
+    /// work across the entire program check. Prevents deeply recursive type libraries
+    /// (like ts-toolbelt) from consuming unbounded memory through repeated type
+    /// instantiation that creates new TypeIds on each expansion.
+    ///
+    /// When this counter exceeds `MAX_EVALUATION_FUEL`, evaluators bail out early
+    /// with `TypeId::ERROR`, matching tsc's TS2589 behavior.
+    evaluation_fuel: AtomicU32,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -585,6 +607,7 @@ impl TypeInterner {
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
+            evaluation_fuel: AtomicU32::new(0),
         }
     }
 
@@ -1168,6 +1191,28 @@ impl TypeInterner {
     #[inline]
     fn approximate_count(&self) -> usize {
         self.alloc_counter.load(Ordering::Relaxed) as usize
+    }
+
+    /// Consume evaluation fuel and return whether fuel is exhausted.
+    ///
+    /// This is a global budget across all TypeEvaluator instances. When exhausted,
+    /// the interner is poisoned and subsequent operations return ERROR.
+    #[inline]
+    pub fn consume_evaluation_fuel(&self, amount: u32) -> bool {
+        let prev = self.evaluation_fuel.fetch_add(amount, Ordering::Relaxed);
+        if prev.wrapping_add(amount) > MAX_EVALUATION_FUEL {
+            self.poisoned
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check whether global evaluation fuel is exhausted without consuming any.
+    #[inline]
+    pub fn is_evaluation_fuel_exhausted(&self) -> bool {
+        self.evaluation_fuel.load(Ordering::Relaxed) > MAX_EVALUATION_FUEL
     }
 
     #[inline]

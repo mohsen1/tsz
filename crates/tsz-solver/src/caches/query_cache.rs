@@ -895,6 +895,14 @@ impl TypeDatabase for QueryCache<'_> {
     fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
         self.interner.is_this_type_marker_def_id(def_id)
     }
+
+    fn consume_evaluation_fuel(&self, amount: u32) -> bool {
+        self.interner.consume_evaluation_fuel(amount)
+    }
+
+    fn is_evaluation_fuel_exhausted(&self) -> bool {
+        self.interner.is_evaluation_fuel_exhausted()
+    }
 }
 
 /// Implement `TypeResolver` for `QueryCache` with noop resolution.
