@@ -240,20 +240,43 @@ impl<'a> CheckerState<'a> {
                                 if let Some(bin) = self.ctx.arena.get_binary_expr(value_node)
                                     && bin.operator_token == SyntaxKind::EqualsToken as u16
                                     && let Some(lhs_node) = self.ctx.arena.get(bin.left)
-                                    && (lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                        || lhs_node.kind
-                                            == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
                                 {
-                                    let prop_type = self.resolve_property_type_for_destructuring(
-                                        source_type,
-                                        &name,
-                                    );
-                                    if let Some(prop_type) = prop_type {
-                                        self.check_destructuring_property_accessibility(
-                                            bin.left, prop_type,
+                                    if lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        || lhs_node.kind
+                                            == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    {
+                                        let prop_type = self
+                                            .resolve_property_type_for_destructuring(
+                                                source_type,
+                                                &name,
+                                            );
+                                        if let Some(prop_type) = prop_type {
+                                            self.check_destructuring_property_accessibility(
+                                                bin.left, prop_type,
+                                            );
+                                        }
+                                    } else {
+                                        // { name: target = default } — leaf target with default.
+                                        // Check that the source property type is assignable to the
+                                        // target's declared type. E.g., `{ 0: a = "" }` from
+                                        // `(string | number)[]` should check `string | number`
+                                        // against `a`'s type.
+                                        self.check_destructuring_leaf_assignability(
+                                            &name,
+                                            source_type,
+                                            bin.left,
                                         );
                                     }
                                 }
+                            } else {
+                                // { name: target } — leaf target without default.
+                                // Check that the source property type is assignable to the
+                                // target's declared type.
+                                self.check_destructuring_leaf_assignability(
+                                    &name,
+                                    source_type,
+                                    prop.initializer,
+                                );
                             }
                         }
                     } else {
@@ -393,6 +416,63 @@ impl<'a> CheckerState<'a> {
         }
         // Fall back to array element type
         tsz_solver::type_queries::get_array_element_type(self.ctx.types, source_type)
+    }
+
+    /// TS2322: Check that a source property type is assignable to a leaf
+    /// destructuring target's declared type.
+    ///
+    /// For `{ name: target }` or `{ name: target = default }`, resolve the
+    /// property type from `source_type` and check it against `target_idx`'s
+    /// declared type. This catches cases like:
+    ///   `var a: string; [...{ 0: a = "" }] = ["", 1];`
+    /// where property "0" has type `string | number` which is not assignable
+    /// to `a: string`.
+    fn check_destructuring_leaf_assignability(
+        &mut self,
+        property_name: &str,
+        source_type: TypeId,
+        target_idx: NodeIndex,
+    ) {
+        // Resolve the source property type. For numeric property names on
+        // tuple/array types, use element type access directly to avoid
+        // TypeId mismatches from string-based property resolution.
+        let prop_type = if let Ok(index) = property_name.parse::<usize>() {
+            self.resolve_element_type_for_destructuring(source_type, index)
+        } else {
+            self.resolve_property_type_for_destructuring(source_type, property_name)
+        };
+        let Some(prop_type) = prop_type else {
+            return;
+        };
+        if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
+            return;
+        }
+        let target_type = self.get_type_of_assignment_target(target_idx);
+        if target_type == TypeId::ANY || target_type == TypeId::ERROR {
+            return;
+        }
+        // Ensure both types are fully resolved before relation checking.
+        self.ensure_relation_input_ready(prop_type);
+        self.ensure_relation_input_ready(target_type);
+        if self.is_assignable_to(prop_type, target_type) {
+            return;
+        }
+        // Emit TS2322 directly. Format source type from the TypeId rather
+        // than from the anchor node — the anchor is the assignment target,
+        // not the source expression. Using the standard error pipeline
+        // with the target node would incorrectly resolve the target's own
+        // type as the source display string.
+        let source_str = self.format_type_diagnostic(prop_type);
+        let target_str = self.format_type_diagnostic(target_type);
+        let message = crate::diagnostics::format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        self.error_at_node(
+            target_idx,
+            &message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
     }
 
     /// TS2339: Check that a property exists on a type during destructuring.
