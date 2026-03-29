@@ -626,8 +626,9 @@ run_project_benchmark() {
         fi
     fi
 
-    # Pre-validate with timeout: record errors/timeouts in summary table.
-    # Project-level benchmarks get a longer timeout since they check many files.
+    # Pre-validate with timeout: warn about errors but still benchmark for
+    # performance data.  Type errors (false positives) don't prevent the compiler
+    # from completing, so we still get meaningful timing.
     # Very large fixtures (6000+ files) need an even longer timeout.
     local project_timeout
     if [ "$name" = "large-ts-repo" ]; then
@@ -639,8 +640,10 @@ run_project_benchmark() {
     run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
     local tsgo_check=0
     run_with_timeout "$project_timeout" $TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+    local diag_status=""
 
-    if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
+    # Timeouts are fatal for benchmarking — skip if either compiler timed out.
+    if [ "$tsz_check" -eq 124 ] || [ "$tsgo_check" -eq 124 ]; then
         local status=""
         local tsz_ms="N/A"
         local tsgo_ms="N/A"
@@ -649,41 +652,42 @@ run_project_benchmark() {
         local winner="error"
         local ratio="0"
 
-        echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
+        echo -e "${YELLOW}$name${NC} - ${RED}TIMEOUT${NC}"
 
         if [ "$tsz_check" -eq 124 ]; then
             status="tsz timeout"
             tsz_ms="TIMEOUT"
             echo -e "  ${CYAN}tsz:${NC} timed out after ${project_timeout}s" >&2
-        elif [ "$tsz_check" -ne 0 ]; then
-            status="tsz error"
-            tsz_ms="ERR"
-            local tsz_error=$(run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
-            echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
         if [ "$tsgo_check" -eq 124 ]; then
             status="${status:+${status}; }tsgo timeout"
             tsgo_ms="TIMEOUT"
             echo -e "  ${CYAN}tsgo:${NC} timed out after ${project_timeout}s" >&2
-        elif [ "$tsgo_check" -ne 0 ]; then
-            status="${status:+${status}; }tsgo error"
-            tsgo_ms="ERR"
-            local tsgo_error=$($TSGO --noEmit -p "$tsconfig" 2>&1 | head -1)
-            echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
-        fi
-
-        if [ "$name" != "nextjs" ]; then
-            status="${status:+${status}; }tsc ok"
         fi
 
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
     fi
 
+    # Non-timeout errors (type diagnostics): warn but proceed with benchmarking.
+    if [ "$tsz_check" -ne 0 ]; then
+        local tsz_error=$(run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
+        echo -e "  ${YELLOW}note:${NC} tsz reports errors (benchmarking anyway): $tsz_error" >&2
+        diag_status="tsz errors"
+    fi
+
+    if [ "$tsgo_check" -ne 0 ]; then
+        local tsgo_error=$($TSGO --noEmit -p "$tsconfig" 2>&1 | head -1)
+        echo -e "  ${YELLOW}note:${NC} tsgo reports errors (benchmarking anyway): $tsgo_error" >&2
+        diag_status="${diag_status:+${diag_status}; }tsgo errors"
+    fi
+
     echo -e "${GREEN}$name${NC} ($info)"
 
     # Run benchmark with -p (project mode).
+    # Use --ignore-failure so hyperfine still times commands that exit non-zero
+    # (e.g. tsz reporting type-check errors that tsc doesn't).
     # Use longer per-run timeout for project benchmarks; very large fixtures
     # (6000+ files) need more headroom because tsz/tsgo cold runs can exceed
     # the default 120s on lower-spec CI runners.
@@ -693,8 +697,6 @@ run_project_benchmark() {
     local proj_max
     if [ "$name" = "large-ts-repo" ]; then
         run_timeout=300
-        # Few runs are enough for a 6000-file project — variance is small in
-        # absolute % terms and total wall-clock matters for CI budget.
         proj_warmup=1
         proj_min=3
         proj_max=5
@@ -709,8 +711,8 @@ run_project_benchmark() {
         --warmup "$proj_warmup" \
         --min-runs "$proj_min" \
         --max-runs "$proj_max" \
-        --style full \
         --ignore-failure \
+        --style full \
         --export-json "$json_file" \
         -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit -p $tsconfig 2>/dev/null" \
         -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null"; then
@@ -740,7 +742,7 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${diag_status}\n"
         fi
     fi
     rm -f "$json_file"
@@ -2759,7 +2761,7 @@ main() {
         echo -e "$RESULTS_CSV" | awk -F',' '
             $1 != "" {
                 # Create a sort key: tsz wins get +ratio, tsgo wins get -ratio, errors sink
-                if ($10 != "") sort_key = -999999;
+                if ($8 == "error") sort_key = -999999;
                 else if ($8 == "tsz") sort_key = $9 + 0;
                 else sort_key = -($9 + 0);
                 print sort_key "," $0
@@ -2775,7 +2777,7 @@ main() {
 
             local status_display="${status:--}"
             local ratio_display="$ratio"
-            if [ -n "$status" ]; then
+            if [ "$winner" = "error" ]; then
                 ratio_display="N/A"
                 printf "%-45s %7s %6s %10s %10s ${RED}%8s${NC} ${RED}%7s${NC} ${RED}%12s${NC}\n" \
                     "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "error" "$ratio_display" "$status_display"
