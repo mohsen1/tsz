@@ -1016,53 +1016,75 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         }
 
-        // Build constructor paramtypes metadata if emit_decorator_metadata is enabled
-        let metadata_strs: Vec<String> = if self.emit_decorator_metadata {
-            if let Some(class_node) = self.arena.get(class_idx)
-                && let Some(class_data) = self.arena.get_class(class_node)
-            {
-                let mut meta = Vec::new();
-                for &member_idx in &class_data.members.nodes {
-                    if let Some(member_node) = self.arena.get(member_idx)
-                        && member_node.kind == syntax_kind_ext::CONSTRUCTOR
-                        && let Some(ctor) = self.arena.get_constructor(member_node)
-                    {
+        // Collect constructor parameter decorators (__param entries).
+        // tsc includes these in the class-level __decorate call between
+        // class decorators and __metadata entries.
+        let mut param_strs: Vec<String> = Vec::new();
+        let mut metadata_strs: Vec<String> = Vec::new();
+        if let Some(class_node) = self.arena.get(class_idx)
+            && let Some(class_data) = self.arena.get_class(class_node)
+        {
+            for &member_idx in &class_data.members.nodes {
+                if let Some(member_node) = self.arena.get(member_idx)
+                    && member_node.kind == syntax_kind_ext::CONSTRUCTOR
+                    && let Some(ctor) = self.arena.get_constructor(member_node)
+                {
+                    // Collect __param entries for constructor parameter decorators
+                    let all_param_decs = self.collect_param_decorators_es5(&ctor.parameters);
+                    for (param_idx, decs) in &all_param_decs {
+                        for dec_idx in decs {
+                            if let Some(dec_str) = self.render_single_decorator_expression(*dec_idx)
+                            {
+                                param_strs.push(format!("__param({param_idx}, {dec_str})"));
+                            }
+                        }
+                    }
+
+                    // Build constructor paramtypes metadata if emit_decorator_metadata is enabled
+                    if self.emit_decorator_metadata {
                         let param_types = serialize_param_types(self.arena, &ctor.parameters);
-                        meta.push(format!(
+                        metadata_strs.push(format!(
                             "__metadata(\"design:paramtypes\", [{param_types}])"
                         ));
-                        break;
                     }
+                    break;
                 }
-                meta
-            } else {
-                Vec::new()
             }
-        } else {
-            Vec::new()
-        };
+        }
 
         // Format matching tsc:
-        // ClassName = __decorate([\n        dec1,\n        dec2\n    ], ClassName)
+        // ClassName = __decorate([\n        dec1,\n        __param(0, dec),\n        __metadata(...)\n    ], ClassName)
         let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
         let outer_indent = "    ".repeat((self.indent_base + 1) as usize);
-        let total_entries = dec_strs.len() + metadata_strs.len();
+        let total_entries = dec_strs.len() + param_strs.len() + metadata_strs.len();
         let mut raw = String::new();
         raw.push_str(&self.class_name);
         raw.push_str(" = __decorate([");
-        for (i, dec_str) in dec_strs.iter().enumerate() {
+        let mut written = 0;
+        for dec_str in &dec_strs {
             raw.push('\n');
             raw.push_str(&inner_indent);
             raw.push_str(dec_str);
-            if i + 1 < total_entries {
+            written += 1;
+            if written < total_entries {
                 raw.push(',');
             }
         }
-        for (i, meta_str) in metadata_strs.iter().enumerate() {
+        for param_str in &param_strs {
+            raw.push('\n');
+            raw.push_str(&inner_indent);
+            raw.push_str(param_str);
+            written += 1;
+            if written < total_entries {
+                raw.push(',');
+            }
+        }
+        for meta_str in &metadata_strs {
             raw.push('\n');
             raw.push_str(&inner_indent);
             raw.push_str(meta_str);
-            if dec_strs.len() + i + 1 < total_entries {
+            written += 1;
+            if written < total_entries {
                 raw.push(',');
             }
         }
