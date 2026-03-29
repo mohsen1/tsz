@@ -1536,6 +1536,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // TS2322: Polymorphic `this` type assignment check.
+            // When the LHS is `this.prop` where the property's raw type in the class
+            // is `ThisType` (e.g., `self = this`), the RHS must also be `this`-typed.
+            // Concrete class types (C, D) are not assignable to the polymorphic `this`.
+            if check_assignability {
+                if let Some(error_emitted) =
+                    self.check_polymorphic_this_property_assignment(left_idx, right_idx, right_type)
+                {
+                    if error_emitted {
+                        check_assignability = false;
+                    }
+                }
+            }
+
             self.check_assignment_compatibility(
                 left_idx,
                 right_idx,
@@ -1554,6 +1568,131 @@ impl<'a> CheckerState<'a> {
         }
 
         right_type
+    }
+
+    /// Check if an assignment to `this.prop` violates polymorphic `this` type semantics.
+    ///
+    /// In TypeScript, properties declared with `this` type (e.g., `self = this`)
+    /// require the assigned value to also be `this`-typed. Concrete class types
+    /// are not assignable to the polymorphic `this` type.
+    ///
+    /// Returns `Some(true)` if TS2322 was emitted, `Some(false)` if the target
+    /// has `ThisType` but the source is compatible, or `None` if this check
+    /// doesn't apply.
+    fn check_polymorphic_this_property_assignment(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        right_type: TypeId,
+    ) -> Option<bool> {
+        // Check if LHS is a property access expression
+        let node = self.ctx.arena.get(left_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+
+        // Check if receiver is `this` keyword
+        let expr_node = self.ctx.arena.get(access.expression)?;
+        if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        // Must be inside a class
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+        let _class_idx = class_info.class_idx;
+
+        // Get the property name
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let property_name = ident.escaped_text.clone();
+
+        // Get the concrete class type for property lookup
+        let concrete_this = self.current_this_type()?;
+
+        // Resolve the raw property type (with ThisType preserved)
+        let raw_result = crate::query_boundaries::property_access::resolve_property_access_raw_this(
+            self.ctx.types,
+            concrete_this,
+            &property_name,
+        );
+
+        let raw_type = match raw_result {
+            crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
+                type_id
+            }
+            _ => return None,
+        };
+
+        // Check if the raw property type IS ThisType (bare polymorphic this)
+        if !tsz_solver::is_this_type(self.ctx.types, raw_type) {
+            return None;
+        }
+
+        // The property has ThisType. Check if the RHS is also this-typed.
+        // A value is this-typed if:
+        // 1. It's the `this` keyword itself
+        // 2. It's a `this.prop` access where the property also has ThisType
+        if self.expression_has_this_type(right_idx) {
+            return Some(false); // Compatible - both are this-typed
+        }
+
+        // The RHS is not this-typed — emit TS2322
+        let source_display = self.format_type_for_assignability_message(right_type);
+        self.error_at_node_msg(
+            left_idx,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_display, "this"],
+        );
+        Some(true)
+    }
+
+    /// Check if an expression produces a `this`-typed value.
+    ///
+    /// Returns true if the expression is the `this` keyword, or a property
+    /// access on `this` where the property's raw type contains `ThisType`.
+    fn expression_has_this_type(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        // `this` keyword is always this-typed
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+
+        // Check for `this.prop` where prop has ThisType
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                let is_this_receiver = self
+                    .ctx
+                    .arena
+                    .get(access.expression)
+                    .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
+
+                if is_this_receiver {
+                    if let Some(concrete_this) = self.current_this_type()
+                        && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let raw = crate::query_boundaries::property_access::resolve_property_access_raw_this(
+                            self.ctx.types,
+                            concrete_this,
+                            &ident.escaped_text,
+                        );
+                        if let crate::query_boundaries::common::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        } = raw
+                        {
+                            return tsz_solver::is_this_type(self.ctx.types, type_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
