@@ -530,32 +530,7 @@ impl<'a> InferenceContext<'a> {
         let has_index_signature_candidates = filtered_no_never
             .iter()
             .any(|candidate| candidate.from_index_signature);
-        // When candidates include nullish types (undefined/null) and no candidates
-        // are from object properties, use union semantics. This matches tsc's
-        // getCommonSupertype behavior for nullable inference patterns like
-        // equal<T>(a: T, b: T) called as equal(B, undefined | D) → T = B | undefined | D.
-        let has_nullish_candidates = candidate_types.iter().any(|&ty| {
-            if ty == TypeId::UNDEFINED || ty == TypeId::NULL || ty == TypeId::VOID {
-                return true;
-            }
-            // Also check inside union candidates: `undefined | D` contains undefined
-            if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
-                let member_list = self.interner.type_list(members);
-                member_list
-                    .iter()
-                    .any(|&m| m == TypeId::UNDEFINED || m == TypeId::NULL || m == TypeId::VOID)
-            } else {
-                false
-            }
-        });
-        let no_object_property_candidates = !filtered_no_never
-            .iter()
-            .any(|candidate| candidate.from_object_property);
-        let nullable_union_inference = has_nullish_candidates && no_object_property_candidates;
-        let resolved = if priority_implies_combination
-            || all_from_index_signatures
-            || nullable_union_inference
-        {
+        let resolved = if priority_implies_combination || all_from_index_signatures {
             // Union: used for return type inference, low-priority contexts,
             // index signature inference, and nullable parameter inference
             self.best_common_type(&candidate_types)
@@ -577,15 +552,7 @@ impl<'a> InferenceContext<'a> {
             } else {
                 candidate_types.clone()
             };
-            self.get_common_supertype_for_inference(
-                &widened_candidates,
-                // When all candidates are fresh literals that were widened, use
-                // first-wins (leftmost) semantics matching tsc's getSingleCommonSupertype.
-                // This is critical for cases like `new Map([["", true], ["", 0]])`
-                // where V gets fresh candidates `true` and `0`, widened to `boolean`
-                // and `number`. tsc resolves V=boolean (first wins), not boolean|number.
-                !preserve_literals && !is_const && !has_non_fresh,
-            )
+            self.get_common_supertype_for_inference(&widened_candidates)
         };
         // When candidates come from index signature inference (e.g., inferring T from
         // source properties against target `{ [x: string]: T }`), tsc creates a union
