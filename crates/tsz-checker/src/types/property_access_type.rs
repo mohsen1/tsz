@@ -834,11 +834,27 @@ impl<'a> CheckerState<'a> {
             })
             && let Some(flow_node) = self.flow_node_for_reference_usage(idx)
         {
-            object_type = self.flow_analyzer_for_property_reads().get_flow_type(
-                access.expression,
-                object_type,
-                flow_node,
-            );
+            // For identifier expressions, get_type_of_node_with_request() already
+            // applied flow narrowing to compute original_object_type. When the
+            // property-read flow node is identical to the expression's own flow
+            // node, re-narrowing the already-narrowed type would produce wrong
+            // results (double-narrowing through instanceof conditions). Only
+            // apply additional narrowing when the property access has a distinct
+            // flow node that may carry extra narrowing information.
+            let expr_flow = self.ctx.binder.get_node_flow(access.expression);
+            let is_redundant_identifier_narrow = self
+                .ctx
+                .arena
+                .get(access.expression)
+                .is_some_and(|expr| expr.kind == SyntaxKind::Identifier as u16)
+                && expr_flow == Some(flow_node);
+            if !is_redundant_identifier_narrow {
+                object_type = self.flow_analyzer_for_property_reads().get_flow_type(
+                    access.expression,
+                    object_type,
+                    flow_node,
+                );
+            }
         }
 
         let mut commonjs_namespace_override: Option<TypeId> = None;
@@ -1065,6 +1081,19 @@ impl<'a> CheckerState<'a> {
                 self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
         {
             display_object_type = preferred_type;
+        }
+
+        // For IndexAccess types (e.g., Entries[EntryId]), resolve to the base
+        // constraint for display purposes. tsc shows the apparent type in error
+        // messages (e.g., 'NumClass<number> | StrClass<string>'), not the raw
+        // indexed access type (e.g., 'Entries[EntryId]').
+        if let Some(tsz_solver::types::TypeData::IndexAccess(_, _)) =
+            self.ctx.types.lookup(display_object_type)
+        {
+            let resolved = self.resolve_index_access_base_constraint(display_object_type);
+            if resolved != display_object_type {
+                display_object_type = resolved;
+            }
         }
 
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
@@ -2384,5 +2413,48 @@ impl<'a> CheckerState<'a> {
         let init_type = self.get_type_of_node(var_decl.initializer);
         self.is_enum_member_type_for_widening(init_type)
             .then_some(init_type)
+    }
+
+    /// Resolve the base constraint of an IndexAccess type for display purposes.
+    ///
+    /// For `T[K]` where `T extends C` and `K extends D`, resolves through the
+    /// constraint chain to produce the concrete type (e.g., `C[D]` evaluated).
+    /// This matches tsc's behavior of showing the apparent type in error messages.
+    fn resolve_index_access_base_constraint(&mut self, type_id: TypeId) -> TypeId {
+        // First try standard evaluation (resolves T to its constraint)
+        let evaluated = self.evaluate_type_with_env(type_id);
+
+        // If fully resolved (no longer an IndexAccess), use it
+        if !matches!(
+            self.ctx.types.lookup(evaluated),
+            Some(tsz_solver::types::TypeData::IndexAccess(_, _))
+        ) {
+            return evaluated;
+        }
+
+        // Still an IndexAccess — try resolving the index type parameter's constraint.
+        // E.g., {[s:string]:V}[K] where K extends keyof T => evaluate {[s:string]:V}[keyof T] => V
+        if let Some(tsz_solver::types::TypeData::IndexAccess(ia_obj, ia_idx)) =
+            self.ctx.types.lookup(evaluated)
+        {
+            if let Some(tsz_solver::types::TypeData::TypeParameter(info)) =
+                self.ctx.types.lookup(ia_idx)
+            {
+                if let Some(constraint) = info.constraint {
+                    let resolved = self
+                        .ctx
+                        .types
+                        .evaluate_index_access_with_options(ia_obj, constraint, false);
+                    if !matches!(
+                        self.ctx.types.lookup(resolved),
+                        Some(tsz_solver::types::TypeData::IndexAccess(_, _))
+                    ) {
+                        return resolved;
+                    }
+                }
+            }
+        }
+
+        type_id
     }
 }
