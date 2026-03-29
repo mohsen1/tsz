@@ -801,9 +801,7 @@ impl<'a> Printer<'a> {
         let comment_start = start + (rest.len() - trimmed.len());
         while self.comment_emit_idx < self.all_comments.len() {
             let c = &self.all_comments[self.comment_emit_idx];
-            if (c.pos as usize) >= comment_start
-                && (c.pos as usize) < comment_start + line_end
-            {
+            if (c.pos as usize) >= comment_start && (c.pos as usize) < comment_start + line_end {
                 self.comment_emit_idx += 1;
                 break;
             } else if (c.pos as usize) > comment_start + line_end {
