@@ -3286,6 +3286,8 @@ fn collect_functions_from_node(
 /// # Returns
 /// `CheckResult` with diagnostics from all functions
 pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
+    ensure_rayon_global_pool();
+
     let shared_binders: Vec<Arc<BinderState>> = program
         .files
         .iter()
@@ -3398,18 +3400,26 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     }
 }
 
-/// Type check full source files in parallel.
+/// Type check full source files in parallel using Rayon.
 ///
-/// This runs `check_source_file` for each file, which validates all top-level
-/// statements and function bodies. Compiler options and lib contexts are applied
-/// so diagnostics match normal compilation behavior.
+/// Each file gets its own `CheckerState` with file-local mutable state, sharing
+/// only thread-safe structures (`Arc`-wrapped arenas/binders, `DashMap`-backed
+/// `TypeInterner` and `DefinitionStore`). Per-thread `QueryCache` instances use
+/// `RefCell`/`Cell` for zero-overhead single-threaded caching within each file.
+///
+/// Diagnostics are sorted by `(start, code)` within each file and deduplicated
+/// by `(start, code)` after collection, ensuring deterministic output regardless
+/// of thread scheduling.
 pub fn check_files_parallel(
     program: &MergedProgram,
     checker_options: &CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> CheckResult {
-    // Create lib_contexts from lib_files (contains both arena and binder)
-    // The binders in lib_files should match the binders in program.lib_binders
+    // Ensure Rayon global pool has adequate stack size for deep type-checking recursion.
+    ensure_rayon_global_pool();
+
+    // Create lib_contexts from lib_files (contains both arena and binder).
+    // LibContext fields are Arc-wrapped, so cloning is O(1) per field.
     let lib_contexts: Vec<LibContext> = lib_files
         .iter()
         .map(|lib| LibContext {
@@ -3452,56 +3462,79 @@ pub fn check_files_parallel(
             .collect::<FxHashMap<_, _>>(),
     );
 
-    let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
-        .enumerate()
-        .map(|(file_idx, file)| {
-            let binder = Arc::clone(&shared_binders[file_idx]);
+    // Closure that checks a single file and returns its result.
+    // Extracted so both sequential and parallel paths use identical logic.
+    let check_one_file = |file_idx: usize, file: &BoundFile| -> FileCheckResult {
+        let binder = Arc::clone(&shared_binders[file_idx]);
 
-            // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
-            // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
-            let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
+        // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
+        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
-            let mut checker = CheckerState::with_options_and_shared_def_store(
-                &file.arena,
-                binder.as_ref(),
-                &query_cache,
-                file.file_name.clone(),
-                checker_options,
-                std::sync::Arc::clone(&program.definition_store),
-            );
-            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        let mut checker = CheckerState::with_options_and_shared_def_store(
+            &file.arena,
+            binder.as_ref(),
+            &query_cache,
+            file.file_name.clone(),
+            checker_options,
+            std::sync::Arc::clone(&program.definition_store),
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
 
-            // Use skeleton-derived declared modules when available (skips binder scan).
-            if let Some(ref skel) = program.skeleton_index {
-                let (exact, patterns) = skel.build_declared_module_sets();
-                checker.ctx.set_declared_modules_from_skeleton(Arc::new(
-                    crate::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
-                ));
-            }
+        // Use skeleton-derived declared modules when available (skips binder scan).
+        if let Some(ref skel) = program.skeleton_index {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            checker.ctx.set_declared_modules_from_skeleton(Arc::new(
+                crate::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+            ));
+        }
 
-            checker.ctx.set_all_binders(Arc::clone(&all_binders));
-            checker.ctx.set_current_file_idx(file_idx);
-            checker
-                .ctx
-                .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(file_idx);
+        checker
+            .ctx
+            .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
 
-            if !lib_contexts.is_empty() {
-                checker.ctx.set_lib_contexts(lib_contexts.clone());
-                checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-            }
+        if !lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(lib_contexts.clone());
+            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        }
 
-            checker.check_source_file(file.source_file);
+        checker.check_source_file(file.source_file);
 
-            let diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+        let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
-            FileCheckResult {
-                file_idx,
-                file_name: file.file_name.clone(),
-                function_results: Vec::new(),
-                diagnostics,
-            }
-        })
-        .collect();
+        // Sort diagnostics by position for deterministic output within each file.
+        diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+
+        // Deduplicate within each file: same (start, code) = same diagnostic.
+        diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+
+        FileCheckResult {
+            file_idx,
+            file_name: file.file_name.clone(),
+            function_results: Vec::new(),
+            diagnostics,
+        }
+    };
+
+    // Single-file optimization: skip Rayon overhead when there's only one file.
+    // For multi-file projects, use parallel iteration via Rayon's work-stealing
+    // scheduler. `par_iter().enumerate()` preserves input ordering (file_idx) so
+    // results are deterministic regardless of which thread completes first.
+    let file_results: Vec<FileCheckResult> = if program.files.len() <= 1 {
+        program
+            .files
+            .iter()
+            .enumerate()
+            .map(|(file_idx, file)| check_one_file(file_idx, file))
+            .collect()
+    } else {
+        maybe_parallel_iter!(program.files)
+            .enumerate()
+            .map(|(file_idx, file)| check_one_file(file_idx, file))
+            .collect()
+    };
 
     let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
 
