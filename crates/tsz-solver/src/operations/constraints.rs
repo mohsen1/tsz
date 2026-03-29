@@ -1852,8 +1852,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && let Some(expanded) = self.checker.expand_type_alias_application(target)
                         && expanded != target
                     {
-                        self.constrain_types(ctx, var_map, source, expanded, priority);
-                        return;
+                        // When the source is an Array/Tuple/String and the expanded
+                        // form is iterable-like (has [Symbol.iterator] or number
+                        // index), skip the expansion and fall through to the iterable
+                        // special case below. The expanded Object form loses the
+                        // connection between array element types and the Application's
+                        // type arguments, causing incorrect inference (e.g.,
+                        // Map.groupBy([0,2,8], ...) would infer T=number[] instead of
+                        // T=number).
+                        let is_iterable_source = matches!(
+                            source_key,
+                            Some(TypeData::Array(_)) | Some(TypeData::Tuple(_))
+                        ) || matches!(source, TypeId::STRING)
+                            || matches!(
+                                source_key,
+                                Some(TypeData::Literal(crate::LiteralValue::String(_)))
+                                    | Some(TypeData::TemplateLiteral(_))
+                            );
+                        if !is_iterable_source || !self.is_iterable_like_evaluated_object(expanded)
+                        {
+                            self.constrain_types(ctx, var_map, source, expanded, priority);
+                            return;
+                        }
                     }
                 }
 
@@ -3423,7 +3443,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::TypeParameter(_))
             );
             if !source_is_type_param {
+                // Use contra mode for the reverse direction so that the
+                // placeholder appearing as source gets a contra-candidate
+                // instead of a hard upper bound. This matches the behavior
+                // of the complex-type branch below and prevents upper bounds
+                // from overriding correct covariant inference.
+                let was_contra = ctx.in_contra_mode;
+                ctx.in_contra_mode = true;
                 self.constrain_types(ctx, var_map, target_param, source_param, priority);
+                ctx.in_contra_mode = was_contra;
             }
         } else {
             // The target parameter is a complex type containing type variables
