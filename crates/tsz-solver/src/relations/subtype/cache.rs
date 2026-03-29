@@ -233,8 +233,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // PERF: Check null and undefined first (O(1) identity checks).
             // Only intern the empty object if the nullish members are present,
             // avoiding a Vec allocation + hash lookup on the common non-matching path.
-            let has_null = member_list.iter().any(|&m| m == TypeId::NULL);
-            let has_undef = member_list.iter().any(|&m| m == TypeId::UNDEFINED);
+            let has_null = member_list.contains(&TypeId::NULL);
+            let has_undef = member_list.contains(&TypeId::UNDEFINED);
             if has_null && has_undef {
                 let empty_obj = self.interner.object(vec![]);
                 let has_empty_obj = member_list
