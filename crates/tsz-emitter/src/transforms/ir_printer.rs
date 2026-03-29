@@ -431,12 +431,6 @@ impl<'a> IRPrinter<'a> {
 
             // Identifiers
             IRNode::Identifier(name) => {
-                if !self.commonjs_import_substitutions.is_empty() {
-                    eprintln!(
-                        "[IR_DEBUG] Identifier '{}', subs: {:?}",
-                        name, self.commonjs_import_substitutions
-                    );
-                }
                 if let Some(subst) = self.commonjs_import_substitutions.get(name.as_ref()) {
                     let subst = subst.clone();
                     self.write(&subst);
