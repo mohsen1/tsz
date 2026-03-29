@@ -488,12 +488,15 @@ if (chunk.isInit(chunk)) {
         .diagnostics
         .iter()
         .filter(|d| d.code != 2318)
-        .map(|d| (d.code, d.message_text.clone()))
+        .map(|d| d.code)
         .collect();
 
+    // Since Group.isInit() returns `boolean` (not a type predicate and not `false`),
+    // the union call is NOT a type predicate.  `chunk` is not narrowed, so accessing
+    // `chunk.c` should error because `Group` has no property `c`.
     assert!(
-        relevant.is_empty(),
-        "Union this-predicate narrowing should produce no errors, got: {relevant:?}"
+        relevant.contains(&2339),
+        "Expected TS2339 for property access on un-narrowed union, got: {relevant:?}"
     );
 }
 

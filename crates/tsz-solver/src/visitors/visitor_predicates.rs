@@ -358,11 +358,66 @@ pub fn contains_any_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 /// Check if a type contains the error type.
+///
+/// This handles `TypeId::ERROR` directly and also detects error types nested
+/// inside Application types (e.g., `Application(Error, args)` which displays
+/// as `error<args>`). The generic `contains_type_matching` visitor can't catch
+/// these because (a) its intrinsic fast-path skips `TypeId::ERROR` and (b) it
+/// doesn't check Application bases.
 pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::ERROR {
         return true;
     }
-    contains_type_matching(types, type_id, |key| matches!(key, TypeData::Error))
+    contains_error_type_recursive(types, type_id, &mut FxHashMap::default())
+}
+
+fn contains_error_type_recursive(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    memo: &mut FxHashMap<TypeId, bool>,
+) -> bool {
+    if type_id == TypeId::ERROR {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    if let Some(&cached) = memo.get(&type_id) {
+        return cached;
+    }
+    // Mark as false to break cycles
+    memo.insert(type_id, false);
+
+    let Some(key) = types.lookup(type_id) else {
+        return false;
+    };
+    if matches!(key, TypeData::Error) {
+        memo.insert(type_id, true);
+        return true;
+    }
+
+    let result = match key {
+        TypeData::Application(app_id) => {
+            let app = types.type_application(app_id);
+            // Check both base AND args for error types. Unlike the generic
+            // contains_type_matching which skips bases to avoid false positives
+            // with type parameters, error types in the base are always wrong.
+            contains_error_type_recursive(types, app.base, memo)
+                || app
+                    .args
+                    .iter()
+                    .any(|&a| contains_error_type_recursive(types, a, memo))
+        }
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            let members = types.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| contains_error_type_recursive(types, m, memo))
+        }
+        _ => false,
+    };
+    memo.insert(type_id, result);
+    result
 }
 
 /// Check if a type contains the `this` type anywhere.

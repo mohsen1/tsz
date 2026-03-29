@@ -1467,6 +1467,11 @@ impl<'a> DeclarationEmitter<'a> {
         });
         self.method_names_with_overloads = FxHashSet::default();
 
+        // Suppress method implementations that share a computed name with
+        // an accessor (tsc emits only the accessor in .d.ts).
+        let shadowed = self.computed_names_shadowed_by_accessors(&class.members);
+        self.method_names_with_overloads.extend(shadowed);
+
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
@@ -1502,6 +1507,63 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("}");
         self.write_line();
         self.emit_js_namespace_export_aliases_for_name(class.name);
+    }
+
+    /// Pre-scan class members: when a computed property name appears on both
+    /// a method implementation and a get/set accessor, tsc suppresses the
+    /// method in the .d.ts output (the accessor wins). This returns the set
+    /// of computed name texts that should be treated as "already declared"
+    /// so the method implementation is skipped.
+    pub(super) fn computed_names_shadowed_by_accessors(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut accessor_names: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        let mut method_impl_names: Vec<String> = Vec::new();
+        for &m in &members.nodes {
+            let Some(mn) = self.arena.get(m) else {
+                continue;
+            };
+            let is_accessor = mn.kind == syntax_kind_ext::GET_ACCESSOR
+                || mn.kind == syntax_kind_ext::SET_ACCESSOR;
+            let is_method = mn.kind == syntax_kind_ext::METHOD_DECLARATION;
+            if !is_accessor && !is_method {
+                continue;
+            }
+            let name_idx = if is_accessor {
+                self.arena.get_accessor(mn).map(|a| a.name)
+            } else {
+                self.arena.get_method_decl(mn).map(|md| md.name)
+            };
+            let Some(name_idx) = name_idx else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(name_idx) else {
+                continue;
+            };
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                continue;
+            }
+            let Some(text) = self.get_source_slice(name_node.pos, name_node.end) else {
+                continue;
+            };
+            if is_accessor {
+                accessor_names.insert(text);
+            } else if self
+                .arena
+                .get_method_decl(mn)
+                .is_some_and(|md| md.body.is_some())
+            {
+                method_impl_names.push(text);
+            }
+        }
+        let mut result = rustc_hash::FxHashSet::default();
+        for name in method_impl_names {
+            if accessor_names.contains(&name) {
+                result.insert(name);
+            }
+        }
+        result
     }
 
     pub(super) fn emit_class_member(&mut self, member_idx: NodeIndex) {

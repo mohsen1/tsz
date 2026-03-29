@@ -274,10 +274,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // For unions, all members must either:
                 //   (a) be a type predicate (contributing to the common narrowing), or
                 //   (b) be a non-predicate callable that returns exclusively `false` or `never`.
-                // TSC allows narrowing when members like `() => false` are in the union alongside
-                // predicates, but a member returning general `boolean` makes the guard unsound.
+                // A member returning general `boolean` (or any non-false truthy type) makes
+                // the overall union guard unsound, regardless of predicate target.
                 // If multiple predicate members exist, their predicates must match.
                 let mut common_sig: Option<PredicateSignature> = None;
+                let mut has_non_predicate_boolean = false;
 
                 for member in members {
                     if let Some(sig) = self.predicate_signature_for_type(member) {
@@ -291,11 +292,17 @@ impl<'a> FlowAnalyzer<'a> {
                     } else {
                         // Non-predicate member: only allowed if it returns exclusively `false`
                         // or `never`. A member returning `boolean` (or any truthy type) makes
-                        // the overall union guard unsound (TS spec).
+                        // the overall union guard unsound.
                         if !callable_returns_only_false_or_never(self.interner, member) {
-                            return None;
+                            has_non_predicate_boolean = true;
                         }
                     }
+                }
+                // If any non-predicate member returns something other than `false`/`never`,
+                // the union is NOT a type predicate — regardless of whether the predicate
+                // targets `this` or a parameter.  This matches tsc behavior.
+                if has_non_predicate_boolean {
+                    return None;
                 }
                 common_sig
             }

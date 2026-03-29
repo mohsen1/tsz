@@ -158,8 +158,14 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         // Get function details - all function types use FunctionData
-        let (name, params, body_idx, await_default_param_name, recover_await_default) = if node.kind
-            == syntax_kind_ext::FUNCTION_DECLARATION
+        let (
+            name,
+            params,
+            body_idx,
+            await_default_param_name,
+            recover_await_default,
+            type_annotation,
+        ) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || node.kind == syntax_kind_ext::ARROW_FUNCTION
         {
@@ -189,6 +195,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     func.body,
                     await_default_param_name,
                     recover_await_default,
+                    func.type_annotation,
                 )
             } else {
                 return IRNode::Undefined;
@@ -283,11 +290,15 @@ impl<'a> AsyncES5Transformer<'a> {
         // before `return __generator(...)`, not inside the switch/case statements.
         let hoisted_vars = Self::extract_and_remove_var_decls(&mut generator_body);
 
+        // Extract promise constructor from return type annotation
+        let promise_constructor = self.extract_promise_constructor(type_annotation);
+
         // Build the awaiter call
         let awaiter_call = IRNode::AwaiterCall {
             this_arg: Box::new(IRNode::This { captured: false }),
             generator_body: Box::new(generator_body),
             hoisted_vars,
+            promise_constructor,
         };
 
         // Build the function declaration/expression wrapper
@@ -314,6 +325,37 @@ impl<'a> AsyncES5Transformer<'a> {
                 body_source_range: None,
             }
         }
+    }
+
+    /// Extract a custom promise constructor expression from a function's return type annotation.
+    fn extract_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.arena.get_type_ref(type_node)?;
+        let type_name_node = self.arena.get(type_ref.type_name)?;
+        if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            Some(self.qualified_name_to_expression(type_ref.type_name))
+        } else {
+            None
+        }
+    }
+
+    /// Convert a type name node (identifier or qualified name) to a JS expression string.
+    fn qualified_name_to_expression(&self, idx: NodeIndex) -> String {
+        let Some(node) = self.arena.get(idx) else {
+            return String::new();
+        };
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            if let Some(qn) = self.arena.get_qualified_name(node) {
+                let left = self.qualified_name_to_expression(qn.left);
+                let right =
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, qn.right);
+                return format!("{left}.{right}");
+            }
+        }
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     /// Transform just the generator body (for use by the wrapper)

@@ -265,11 +265,18 @@ pub fn prepare_test_dir(
         let files: Vec<String> = filenames
             .iter()
             .filter_map(|(name, _)| {
-                if name.replace('\\', "/").ends_with("tsconfig.json") {
-                    None
-                } else {
-                    Some(name.replace("..", "_").trim_start_matches('/').to_string())
+                let normalized = name.replace('\\', "/");
+                if normalized.ends_with("tsconfig.json") {
+                    return None;
                 }
+                // When types is set, @types files are discovered via that
+                // mechanism — don't also add them as explicit root files.
+                // tsc's harness only adds non-node_modules files as roots.
+                if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/")
+                {
+                    return None;
+                }
+                Some(name.replace("..", "_").trim_start_matches('/').to_string())
             })
             .collect();
         if files.is_empty() {

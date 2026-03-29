@@ -1635,6 +1635,60 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // TS2820: before emitting generic TS2322, check if the property
+                // value is a string literal that is a near-miss of a target union
+                // member. Use the AST literal type (not the widened source_prop_type)
+                // so that `"hdpvd"` is compared against `"hddvd" | "bluray"`.
+                if let Some(literal_source_type) =
+                    self.literal_type_from_initializer(prop_value_idx)
+                {
+                    let evaluated_target =
+                        self.evaluate_type_with_env(target_prop_type_for_diagnostic);
+                    if let Some(suggestion) = self
+                        .find_string_literal_spelling_suggestion(
+                            literal_source_type,
+                            target_prop_type,
+                        )
+                        .or_else(|| {
+                            self.find_string_literal_spelling_suggestion(
+                                literal_source_type,
+                                evaluated_target,
+                            )
+                        })
+                    {
+                        let src_str = self.format_type_diagnostic(literal_source_type);
+                        let tgt_str = self.format_type_diagnostic(target_prop_type_for_diagnostic);
+                        let expanded_tgt_str = self.format_type_diagnostic(evaluated_target);
+                        let display_target = if expanded_tgt_str != tgt_str {
+                            &expanded_tgt_str
+                        } else {
+                            &tgt_str
+                        };
+                        let msg = format_message(
+                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+                            &[&src_str, display_target, &suggestion],
+                        );
+                        let anchor_idx = self.resolve_diagnostic_anchor_node(
+                            prop_name_idx,
+                            DiagnosticAnchorKind::Exact,
+                        );
+                        if let Some(anchor) =
+                            self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+                        {
+                            self.ctx
+                                .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                                    self.ctx.file_name.clone(),
+                                    anchor.start,
+                                    anchor.length,
+                                    msg,
+                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+                                ));
+                        }
+                        elaborated = true;
+                        continue;
+                    }
+                }
+
                 let source_prop_type_for_diagnostic =
                     if self.is_fresh_literal_expression(prop_value_idx) {
                         self.widen_literal_type(source_prop_type)
