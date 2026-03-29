@@ -1287,3 +1287,36 @@ const { fn1 = (x: number) => 0, fn2 = fn1 } = { fn1: x => x + 1, fn2: x => x + 2
         ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2352_tuple_different_length_assertion() {
+    // Same-length tuples with incompatible element types
+    let diags = check_source_diagnostics(
+        r#"var x: [number, string] = [1, "a"]; var y = x as [number, number];"#,
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == 2352).count(),
+        1,
+        "Expected TS2352 for [number, string] as [number, number]"
+    );
+
+    // Different-length tuples (shorter to longer)
+    let diags2 = check_source_diagnostics(
+        r#"var x: [number, string] = [1, "a"]; var y = x as [number, string, boolean];"#,
+    );
+    assert_eq!(
+        diags2.iter().filter(|d| d.code == 2352).count(),
+        1,
+        "Expected TS2352 for [number, string] as [number, string, boolean]"
+    );
+
+    // Angle bracket syntax
+    let diags3 = check_source_diagnostics(
+        r#"var x: [number, string] = [1, "a"]; var y = <[number, string, boolean]>x;"#,
+    );
+    assert_eq!(
+        diags3.iter().filter(|d| d.code == 2352).count(),
+        1,
+        "Expected TS2352 for <[number, string, boolean]>x"
+    );
+}

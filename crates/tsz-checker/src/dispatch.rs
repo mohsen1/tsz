@@ -932,6 +932,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 } else {
                                     self.checker.is_assignable_to(effective_asserted, expr_type)
                                 };
+
                                 if !source_to_target && !target_to_source {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it
@@ -965,7 +966,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     // comparability which succeeds when the generic
                                     // element could include the source element type.
                                     // Assume overlap to suppress false TS2352.
-                                    if array_like_generic_assertion_target {
+                                    // Only applies when the target actually contains
+                                    // type parameters — concrete tuple-to-tuple
+                                    // assertions (e.g. `[number, string] as [number, number]`)
+                                    // must NOT be suppressed.
+                                    if structured_generic_assertion_target
+                                        && array_like_generic_assertion_target
+                                    {
                                         let source_is_array = matches!(
                                             query_utils::classify_array_like(
                                                 self.checker.ctx.types,
