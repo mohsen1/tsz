@@ -359,7 +359,7 @@ impl<'a> CheckerState<'a> {
         decl.initializer.is_some() && self.node_is_empty_array_literal(decl.initializer)
     }
 
-    fn is_same_function_scope_as_declaration(&self, idx: NodeIndex, sym_id: SymbolId) -> bool {
+    pub(crate) fn is_same_function_scope_as_declaration(&self, idx: NodeIndex, sym_id: SymbolId) -> bool {
         let decl_node = self
             .ctx
             .binder
