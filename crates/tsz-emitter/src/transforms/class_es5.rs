@@ -77,6 +77,7 @@ pub struct ClassES5Emitter<'a> {
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
+    printer_options: Option<crate::emitter::PrinterOptions>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -93,6 +94,7 @@ impl<'a> ClassES5Emitter<'a> {
             remove_comments: false,
             tslib_prefix: false,
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            printer_options: None,
         }
     }
 
@@ -100,7 +102,14 @@ impl<'a> ClassES5Emitter<'a> {
         self.tslib_prefix = enable;
     }
 
-    pub fn set_commonjs_import_substitutions(&mut self, subs: rustc_hash::FxHashMap<String, String>) {
+    pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
+        self.printer_options = Some(options);
+    }
+
+    pub fn set_commonjs_import_substitutions(
+        &mut self,
+        subs: rustc_hash::FxHashMap<String, String>,
+    ) {
         self.commonjs_import_substitutions = subs;
     }
 
@@ -218,6 +227,9 @@ impl<'a> ClassES5Emitter<'a> {
         }
         if !self.commonjs_import_substitutions.is_empty() {
             printer.set_commonjs_import_substitutions(self.commonjs_import_substitutions.clone());
+        }
+        if let Some(ref opts) = self.printer_options {
+            printer.set_base_printer_options(opts.clone());
         }
         let mut output = printer.emit(&ir).to_string();
         if let Some(recovery_emit) = self.emit_var_function_recovery(class_idx) {

@@ -72,6 +72,7 @@ pub struct IRPrinter<'a> {
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
+    pub(crate) base_printer_options: Option<PrinterOptions>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -218,6 +219,7 @@ impl<'a> IRPrinter<'a> {
             remove_comments: false,
             tslib_prefix: false,
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            base_printer_options: None,
         }
     }
 
@@ -238,6 +240,7 @@ impl<'a> IRPrinter<'a> {
             remove_comments: false,
             tslib_prefix: false,
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            base_printer_options: None,
         }
     }
 
@@ -258,6 +261,7 @@ impl<'a> IRPrinter<'a> {
             remove_comments: false,
             tslib_prefix: false,
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            base_printer_options: None,
         }
     }
 
@@ -271,7 +275,10 @@ impl<'a> IRPrinter<'a> {
         self.tslib_prefix = enable;
     }
 
-    pub fn set_commonjs_import_substitutions(&mut self, subs: rustc_hash::FxHashMap<String, String>) {
+    pub fn set_commonjs_import_substitutions(
+        &mut self,
+        subs: rustc_hash::FxHashMap<String, String>,
+    ) {
         self.commonjs_import_substitutions = subs;
     }
 
@@ -301,6 +308,29 @@ impl<'a> IRPrinter<'a> {
     /// When true, suppress comment annotations like `/** @class */` in output.
     pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
+    }
+
+    pub fn set_base_printer_options(&mut self, options: PrinterOptions) {
+        self.base_printer_options = Some(options);
+    }
+
+    fn make_ast_printer_options(&self) -> PrinterOptions {
+        if let Some(ref base) = self.base_printer_options {
+            let mut opts = base.clone();
+            if self.target_es5 {
+                opts.target = crate::emitter::ScriptTarget::ES5;
+            }
+            opts
+        } else {
+            PrinterOptions {
+                target: if self.target_es5 {
+                    crate::emitter::ScriptTarget::ES5
+                } else {
+                    PrinterOptions::default().target
+                },
+                ..PrinterOptions::default()
+            }
+        }
     }
 
     /// Get the output
@@ -401,6 +431,12 @@ impl<'a> IRPrinter<'a> {
 
             // Identifiers
             IRNode::Identifier(name) => {
+                if !self.commonjs_import_substitutions.is_empty() {
+                    eprintln!(
+                        "[IR_DEBUG] Identifier '{}', subs: {:?}",
+                        name, self.commonjs_import_substitutions
+                    );
+                }
                 if let Some(subst) = self.commonjs_import_substitutions.get(name.as_ref()) {
                     let subst = subst.clone();
                     self.write(&subst);
@@ -1456,7 +1492,7 @@ impl<'a> IRPrinter<'a> {
                             let mut printer = AstPrinter::with_transforms_and_options(
                                 arena,
                                 transforms.clone(),
-                                PrinterOptions::default(),
+                                self.make_ast_printer_options(),
                             );
                             if let Some(source_text) = self.source_text {
                                 printer.set_source_text(source_text);
@@ -1500,10 +1536,7 @@ impl<'a> IRPrinter<'a> {
                             let mut printer = AstPrinter::with_transforms_and_options(
                                 arena,
                                 transforms.clone(),
-                                PrinterOptions {
-                                    target: crate::emitter::ScriptTarget::ES5,
-                                    ..PrinterOptions::default()
-                                },
+                                self.make_ast_printer_options(),
                             );
                             if let Some(source_text) = self.source_text {
                                 printer.set_source_text(source_text);
@@ -1536,10 +1569,7 @@ impl<'a> IRPrinter<'a> {
                                 let mut printer = AstPrinter::with_transforms_and_options(
                                     arena,
                                     transforms.clone(),
-                                    PrinterOptions {
-                                        target: crate::emitter::ScriptTarget::ES5,
-                                        ..PrinterOptions::default()
-                                    },
+                                    self.make_ast_printer_options(),
                                 );
                                 if let Some(source_text) = self.source_text {
                                     printer.set_source_text(source_text);
@@ -1582,10 +1612,7 @@ impl<'a> IRPrinter<'a> {
                             let mut printer = AstPrinter::with_transforms_and_options(
                                 arena,
                                 transforms.clone(),
-                                PrinterOptions {
-                                    target: crate::emitter::ScriptTarget::ES5,
-                                    ..PrinterOptions::default()
-                                },
+                                self.make_ast_printer_options(),
                             );
                             if let Some(source_text) = self.source_text {
                                 printer.set_source_text(source_text);
@@ -1600,20 +1627,17 @@ impl<'a> IRPrinter<'a> {
                     }
                 }
 
-                // When transforms exist, delegate to AstPrinter so that nested
-                // directives (e.g. ES5 template literal downleveling, this/arguments
-                // substitution) inside this subtree are applied correctly.
+                // Delegate to AstPrinter when transforms exist or when base
+                // printer options require JSX transformation.
                 if let Some(arena) = self.arena
-                    && let Some(ref transforms) = self.transforms
-                    && !transforms.is_empty()
+                    && (self.transforms.as_ref().is_some_and(|t| !t.is_empty())
+                        || self.base_printer_options.is_some())
                 {
+                    let transforms = self.transforms.clone().unwrap_or_default();
                     let mut printer = AstPrinter::with_transforms_and_options(
                         arena,
-                        transforms.clone(),
-                        PrinterOptions {
-                            target: crate::emitter::ScriptTarget::ES5,
-                            ..PrinterOptions::default()
-                        },
+                        transforms,
+                        self.make_ast_printer_options(),
                     );
                     if let Some(source_text) = self.source_text {
                         printer.set_source_text(source_text);
