@@ -618,6 +618,16 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // downlevelIteration must be checked BEFORE the simple-ident optimization,
+        // because `__read` is required even when the initializer is a plain identifier
+        // (e.g. `const [value] = data` with downlevelIteration → `__read(data, 1)`).
+        if self.ctx.options.downlevel_iteration
+            && pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            self.emit_es5_destructuring_with_read_node(decl.name, decl.initializer, first);
+            return;
+        }
+
         let is_simple_ident = self
             .arena
             .get(decl.initializer)
@@ -629,13 +639,6 @@ impl<'a> Printer<'a> {
                 decl.initializer,
             );
             self.emit_es5_destructuring_pattern_direct(pattern_node, &ident_text, first);
-            return;
-        }
-
-        if self.ctx.options.downlevel_iteration
-            && pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-        {
-            self.emit_es5_destructuring_with_read_node(decl.name, decl.initializer, first);
             return;
         }
 

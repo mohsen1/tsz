@@ -542,23 +542,50 @@ impl<'a> Printer<'a> {
         for param in &transforms.params {
             if let Some(initializer) = param.initializer {
                 if let Some(pattern) = param.pattern {
-                    // Has both default and binding pattern: use ternary in a single var statement.
-                    // TypeScript: var _b = _a === void 0 ? default : _a, _c = _b[1], ...
-                    let mut started = false;
-                    let temp = self.get_temp_var_name();
-                    self.emit_param_assignment_prefix(&mut started);
-                    self.write(&temp);
-                    self.write(" = ");
-                    self.write(&param.name);
-                    self.write(" === void 0 ? ");
-                    self.emit_expression(initializer);
-                    self.write(" : ");
-                    self.write(&param.name);
+                    // Special case: rest-only array pattern `[...r] = null`.
+                    // When the default is `null` (a keyword literal), tsc inlines:
+                    //   `var r = (param === void 0 ? null : param).slice(0)`
+                    // Other defaults (`undefined`, `{}`, `[]`) use the temp form.
+                    let init_is_null = self
+                        .arena
+                        .get(initializer)
+                        .is_some_and(|n| n.kind == SyntaxKind::NullKeyword as u16);
+                    if init_is_null
+                        && let Some(rest_name_idx) = self.get_rest_only_array_name(pattern)
+                    {
+                        let mut started = false;
+                        self.emit_param_assignment_prefix(&mut started);
+                        self.write_identifier_text(rest_name_idx);
+                        self.write(" = (");
+                        self.write(&param.name);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(initializer);
+                        self.write(" : ");
+                        self.write(&param.name);
+                        self.write(").slice(0)");
+                        if started {
+                            self.write(";");
+                            self.write_line();
+                        }
+                    } else {
+                        // Has both default and binding pattern: use ternary in a single var statement.
+                        // TypeScript: var _b = _a === void 0 ? default : _a, _c = _b[1], ...
+                        let mut started = false;
+                        let temp = self.get_temp_var_name();
+                        self.emit_param_assignment_prefix(&mut started);
+                        self.write(&temp);
+                        self.write(" = ");
+                        self.write(&param.name);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(initializer);
+                        self.write(" : ");
+                        self.write(&param.name);
 
-                    self.emit_param_binding_assignments(pattern, &temp, &mut started);
-                    if started {
-                        self.write(";");
-                        self.write_line();
+                        self.emit_param_binding_assignments(pattern, &temp, &mut started);
+                        if started {
+                            self.write(";");
+                            self.write_line();
+                        }
                     }
                 } else {
                     // Only default, no pattern: use if statement
@@ -1010,6 +1037,36 @@ impl<'a> Printer<'a> {
             return;
         };
         self.emit_es5_destructuring_pattern(pattern_node, temp_name);
+    }
+
+    /// If the pattern is an array binding with only a rest element and no other
+    /// non-omitted bindings, returns the `NodeIndex` of the rest element's name.
+    /// Used to inline `var r = (expr).slice(0)` instead of a temp variable.
+    fn get_rest_only_array_name(&self, pattern_idx: NodeIndex) -> Option<NodeIndex> {
+        let pattern_node = self.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return None;
+        }
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        let mut rest_name = None;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let elem_node = self.arena.get(elem_idx)?;
+            let elem = self.arena.get_binding_element(elem_node)?;
+            if elem.dot_dot_dot_token {
+                // Must be a simple identifier, not a nested pattern
+                if !self.has_identifier_text(elem.name) {
+                    return None;
+                }
+                rest_name = Some(elem.name);
+            } else {
+                // Non-rest element found — not rest-only
+                return None;
+            }
+        }
+        rest_name
     }
 
     pub(in crate::emitter) fn collect_object_rest_props(
