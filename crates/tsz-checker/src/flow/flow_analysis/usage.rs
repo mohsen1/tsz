@@ -250,6 +250,12 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        // Ambient declarations (`declare var x;`) have no runtime initialization —
+        // they declare a type, not a control-flow-tracked binding.  The `any` type
+        // from an ambient var should NOT be narrowed to `undefined` via flow analysis.
+        if self.is_ambient_declaration(value_decl) {
+            return false;
+        }
         if let Some(ext) = self.ctx.arena.get_extended(value_decl)
             && ext.parent.is_some()
             && let Some(parent_node) = self.ctx.arena.get(ext.parent)
