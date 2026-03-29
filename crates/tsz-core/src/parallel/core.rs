@@ -3462,6 +3462,15 @@ pub fn check_files_parallel(
             .collect::<FxHashMap<_, _>>(),
     );
 
+    // Pre-compute skeleton-derived declared modules ONCE and share via Arc.
+    // Previously this was computed per-file inside the closure, rebuilding the
+    // same FxHashSet/Vec on every file (O(N_files * N_modules) total work).
+    let shared_declared_modules: Option<Arc<crate::checker::context::GlobalDeclaredModules>> =
+        program.skeleton_index.as_ref().map(|skel| {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            Arc::new(crate::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns))
+        });
+
     // Closure that checks a single file and returns its result.
     // Extracted so both sequential and parallel paths use identical logic.
     let check_one_file = |file_idx: usize, file: &BoundFile| -> FileCheckResult {
@@ -3481,12 +3490,11 @@ pub fn check_files_parallel(
         );
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
 
-        // Use skeleton-derived declared modules when available (skips binder scan).
-        if let Some(ref skel) = program.skeleton_index {
-            let (exact, patterns) = skel.build_declared_module_sets();
-            checker.ctx.set_declared_modules_from_skeleton(Arc::new(
-                crate::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
-            ));
+        // Use pre-computed skeleton-derived declared modules (shared via Arc::clone).
+        if let Some(ref modules) = shared_declared_modules {
+            checker
+                .ctx
+                .set_declared_modules_from_skeleton(Arc::clone(modules));
         }
 
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
