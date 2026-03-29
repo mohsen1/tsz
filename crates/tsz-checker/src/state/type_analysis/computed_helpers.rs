@@ -369,7 +369,10 @@ impl<'a> CheckerState<'a> {
                     if target_sym_id == sym_id {
                         true
                     } else {
-                        let body = self.ctx.definition_store.get_body(def_id)
+                        let body = self
+                            .ctx
+                            .definition_store
+                            .get_body(def_id)
                             .filter(|&b| lazy_def_id(self.ctx.types, b).is_none());
                         if let Some(b) = body {
                             !tsz_solver::is_structurally_deferred_type(self.ctx.types, b)
@@ -601,29 +604,51 @@ impl<'a> CheckerState<'a> {
     /// - `type Recurse = { [K in keyof Recurse]: Recurse[K] }` (self)
     /// - `type A = { [K in keyof B]: B[K] }; type B = { [K in keyof A]: A[K] }` (mutual)
     fn alias_ast_is_deferred(&self, sym_id: SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else { return false; };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
         for &decl_idx in &symbol.declarations {
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else { continue; };
-            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION { continue; }
-            let Some(ta) = self.ctx.arena.get_type_alias(decl_node) else { continue; };
-            let Some(body_node) = self.ctx.arena.get(ta.type_node) else { continue; };
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                continue;
+            }
+            let Some(ta) = self.ctx.arena.get_type_alias(decl_node) else {
+                continue;
+            };
+            let Some(body_node) = self.ctx.arena.get(ta.type_node) else {
+                continue;
+            };
             let k = body_node.kind;
-            if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE
-                || k == syntax_kind_ext::TYPE_LITERAL || k == syntax_kind_ext::MAPPED_TYPE
-                || k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+            if k == syntax_kind_ext::ARRAY_TYPE
+                || k == syntax_kind_ext::TUPLE_TYPE
+                || k == syntax_kind_ext::TYPE_LITERAL
+                || k == syntax_kind_ext::MAPPED_TYPE
+                || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::CONSTRUCTOR_TYPE
                 || k == syntax_kind_ext::TYPE_OPERATOR
-            { return true; }
+            {
+                return true;
+            }
             if k == syntax_kind_ext::UNION_TYPE {
                 let children = self.ctx.arena.get_children(ta.type_node);
-                if !children.is_empty() && children.iter().all(|&c| {
-                    self.ctx.arena.get(c).is_some_and(|cn| {
-                        let ck = cn.kind;
-                        ck == syntax_kind_ext::ARRAY_TYPE || ck == syntax_kind_ext::TUPLE_TYPE
-                            || ck == syntax_kind_ext::TYPE_LITERAL || ck == syntax_kind_ext::MAPPED_TYPE
-                            || ck == syntax_kind_ext::FUNCTION_TYPE || ck == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            || ck == syntax_kind_ext::TYPE_OPERATOR
+                if !children.is_empty()
+                    && children.iter().all(|&c| {
+                        self.ctx.arena.get(c).is_some_and(|cn| {
+                            let ck = cn.kind;
+                            ck == syntax_kind_ext::ARRAY_TYPE
+                                || ck == syntax_kind_ext::TUPLE_TYPE
+                                || ck == syntax_kind_ext::TYPE_LITERAL
+                                || ck == syntax_kind_ext::MAPPED_TYPE
+                                || ck == syntax_kind_ext::FUNCTION_TYPE
+                                || ck == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || ck == syntax_kind_ext::TYPE_OPERATOR
+                        })
                     })
-                }) { return true; }
+                {
+                    return true;
+                }
             }
         }
         false
@@ -641,16 +666,22 @@ impl<'a> CheckerState<'a> {
         if node.kind != syntax_kind_ext::MAPPED_TYPE {
             return false;
         }
-        let Some(mapped) = self.ctx.arena.get_mapped_type(node) else { return false; };
+        let Some(mapped) = self.ctx.arena.get_mapped_type(node) else {
+            return false;
+        };
         let mut visited = FxHashSet::default();
         if let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter)
             && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node)
             && tp.constraint != NodeIndex::NONE
             && self.ast_contains_circular_type_ref(tp.constraint, sym_id, &mut visited)
-        { return true; }
+        {
+            return true;
+        }
         if mapped.name_type != NodeIndex::NONE
             && self.ast_contains_circular_type_ref(mapped.name_type, sym_id, &mut visited)
-        { return true; }
+        {
+            return true;
+        }
         false
     }
 
