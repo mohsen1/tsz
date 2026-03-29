@@ -778,6 +778,29 @@ ensure_utility_types_fixture() {
         git -C "$UTILITY_TYPES_DIR" fetch --quiet --depth 1 origin "$UTILITY_TYPES_REF"
         git -C "$UTILITY_TYPES_DIR" checkout --quiet --detach FETCH_HEAD
     fi
+
+    # Create flat tsconfig for project-mode benchmarking:
+    # - excludes spec/snap test files (need @types/jest)
+    # - uses skipLibCheck + types:[] to avoid needing external type deps
+    # - uses ES2015 target (ES5 is deprecated in TS 6+)
+    local flat_tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << 'FLATEOF'
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["dom", "es2017"],
+    "types": [],
+    "target": "ES2015",
+    "module": "commonjs",
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.snap.ts", "src/**/*.spec.ts"]
+}
+FLATEOF
+    fi
 }
 
 ensure_ts_toolbelt_fixture() {
@@ -801,6 +824,37 @@ ensure_ts_toolbelt_fixture() {
         git -C "$TS_TOOLBELT_DIR" fetch --quiet --depth 1 origin "$TS_TOOLBELT_REF"
         git -C "$TS_TOOLBELT_DIR" checkout --quiet --detach FETCH_HEAD
     fi
+
+    # Create flat tsconfig for project-mode benchmarking:
+    # - sources only (excludes tests/scripts which need external deps)
+    # - removes deprecated/unsupported options (suppressImplicitAnyIndexErrors, watch)
+    # - uses skipLibCheck + types:[] to avoid needing external type deps
+    local flat_tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << 'FLATEOF'
+{
+  "compilerOptions": {
+    "target": "ES2015",
+    "module": "commonjs",
+    "lib": ["esnext", "dom"],
+    "types": [],
+    "strict": false,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "downlevelIteration": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["sources/**/*.ts"],
+  "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
+}
+FLATEOF
+    fi
 }
 
 ensure_ts_essentials_fixture() {
@@ -823,6 +877,30 @@ ensure_ts_essentials_fixture() {
         echo -e "${CYAN}Pinning ts-essentials to ${TS_ESSENTIALS_REF:0:12}...${NC}"
         git -C "$TS_ESSENTIALS_DIR" fetch --quiet --depth 1 origin "$TS_ESSENTIALS_REF"
         git -C "$TS_ESSENTIALS_DIR" checkout --quiet --detach FETCH_HEAD
+    fi
+
+    # Create flat tsconfig for project-mode benchmarking:
+    # - lib sources only (excludes test dir which needs conditional-type-checks)
+    # - uses es2018 lib (covers esnext.asynciterable from original config)
+    # - uses skipLibCheck to avoid needing external type deps
+    local flat_tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << 'FLATEOF'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "commonjs",
+    "strict": true,
+    "lib": ["es2018"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["lib/**/*.ts"],
+  "exclude": ["test/**/*", "node_modules/**/*"]
+}
+FLATEOF
     fi
 }
 
@@ -977,6 +1055,69 @@ run_ts_essentials_benchmarks() {
             echo
         fi
     done
+}
+
+run_utility_types_project_benchmarks() {
+    if ! is_benchmark_selected "utility-types-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - utility-types (whole project)"
+    ensure_utility_types_fixture
+    echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
+    local src_dir="$UTILITY_TYPES_DIR/src"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "utility-types-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_toolbelt_project_benchmarks() {
+    if ! is_benchmark_selected "ts-toolbelt-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-toolbelt (whole project, 242 type-level files)"
+    ensure_ts_toolbelt_fixture
+    echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
+    local src_dir="$TS_TOOLBELT_DIR/sources"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "ts-toolbelt-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_essentials_project_benchmarks() {
+    if ! is_benchmark_selected "ts-essentials-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-essentials (whole project, 95 type utility files)"
+    ensure_ts_essentials_fixture
+    echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+    local src_dir="$TS_ESSENTIALS_DIR/lib"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "ts-essentials-project" "$tsconfig" "$src_dir"
+    echo
 }
 
 run_nextjs_benchmarks() {
@@ -2233,6 +2374,9 @@ main() {
     run_utility_types_benchmarks
     run_ts_toolbelt_benchmarks
     run_ts_essentials_benchmarks
+    run_utility_types_project_benchmarks
+    run_ts_toolbelt_project_benchmarks
+    run_ts_essentials_project_benchmarks
     run_nextjs_benchmarks
     run_large_ts_repo_benchmarks
 
