@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, trace};
 
 /// Global counter for generating unique inference placeholder names.
-/// Each InferenceContext starts its variable counter at 0, so placeholder
+/// Each `InferenceContext` starts its variable counter at 0, so placeholder
 /// names like `__infer_0` collide across contexts when interned as Atoms.
 /// This counter ensures every placeholder gets a globally unique name.
 pub(crate) static PLACEHOLDER_COUNTER: AtomicU64 = AtomicU64::new(0);
