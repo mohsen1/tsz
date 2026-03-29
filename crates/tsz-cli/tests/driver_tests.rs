@@ -2801,6 +2801,63 @@ fn compile_resolves_node_modules_exports_subpath() {
 }
 
 #[test]
+fn compile_uses_versioned_types_export_conditions_without_false_ts2551() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "node16",
+            "moduleResolution": "node16",
+            "strict": true,
+            "noEmitOnError": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import * as mod from 'inner';\nmod.goodThing.toFixed();\n",
+    );
+    write_file(
+        &base.join("node_modules/inner/package.json"),
+        r#"{
+          "name": "inner",
+          "exports": {
+            ".": {
+              "types@>=10000": "./future-types.d.ts",
+              "types@>=1": "./new-types.d.ts",
+              "types": "./old-types.d.ts",
+              "import": "./index.mjs",
+              "node": "./index.js"
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/inner/old-types.d.ts"),
+        "export const oldThing: number;",
+    );
+    write_file(
+        &base.join("node_modules/inner/new-types.d.ts"),
+        "export const goodThing: number;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected versioned types export resolution to avoid bogus namespace-property diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(base.join("src/index.js").is_file());
+}
+
+#[test]
 fn compile_resolves_node_modules_types_versions() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
