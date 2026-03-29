@@ -606,9 +606,19 @@ impl<'a> Printer<'a> {
                     self.write(temp_var);
                     self.write(", ");
                     self.emit_property_key_string(accessor.name);
-                    self.write(", { get: function () ");
+                    self.write(", {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write("get: function () ");
+                    let prev_fb = self.emitting_function_body_block;
+                    self.emitting_function_body_block = true;
+                    let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
                     self.emit(accessor.body);
-                    self.write(", enumerable: false, configurable: true })");
+                    self.hoisted_assignment_temps = saved_temps;
+                    self.emitting_function_body_block = prev_fb;
+                    if let Some(body_node) = self.arena.get(accessor.body) {
+                        self.emit_accessor_descriptor_trailing(body_node.pos, body_node.end);
+                    }
                 }
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -617,11 +627,21 @@ impl<'a> Printer<'a> {
                     self.write(temp_var);
                     self.write(", ");
                     self.emit_property_key_string(accessor.name);
-                    self.write(", { set: function (");
+                    self.write(", {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write("set: function (");
                     self.emit_function_parameters_js(&accessor.parameters.nodes);
                     self.write(") ");
+                    let prev_fb = self.emitting_function_body_block;
+                    self.emitting_function_body_block = true;
+                    let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
                     self.emit(accessor.body);
-                    self.write(", enumerable: false, configurable: true })");
+                    self.hoisted_assignment_temps = saved_temps;
+                    self.emitting_function_body_block = prev_fb;
+                    if let Some(body_node) = self.arena.get(accessor.body) {
+                        self.emit_accessor_descriptor_trailing(body_node.pos, body_node.end);
+                    }
                 }
             }
             k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
@@ -732,6 +752,67 @@ impl<'a> Printer<'a> {
         {
             self.write(&lit.text);
         }
+    }
+
+    /// Emit the trailing portion of an `Object.defineProperty` accessor descriptor.
+    fn emit_accessor_descriptor_trailing(&mut self, body_pos: u32, body_end: u32) {
+        // body_end includes trailing trivia; find the actual `}` position first.
+        let token_end = self.find_token_end_before_trivia(body_pos, body_end);
+        // Check for a trailing `// ...` comment between `}` and the next newline.
+        let trailing_comment = self.extract_trailing_line_comment(token_end);
+        if let Some(ref comment) = trailing_comment {
+            self.write(" ");
+            self.write(comment);
+            self.write_line();
+            self.write(",");
+        } else {
+            self.write(",");
+        }
+        self.write_line();
+        self.write("enumerable: false,");
+        self.write_line();
+        self.write("configurable: true");
+        self.write_line();
+        self.decrease_indent();
+        self.write("})");
+    }
+
+    /// Extract a trailing `// ...` comment at source position `pos`, and advance
+    /// `comment_emit_idx` past it so the main comment system won't re-emit it.
+    fn extract_trailing_line_comment(&mut self, pos: u32) -> Option<String> {
+        if self.ctx.options.remove_comments {
+            return None;
+        }
+        let source = self.source_text?;
+        let start = pos as usize;
+        if start >= source.len() {
+            return None;
+        }
+        let rest = &source[start..];
+        let trimmed = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
+        if !trimmed.starts_with("//") {
+            return None;
+        }
+        let line_end = trimmed.find('\n').unwrap_or(trimmed.len());
+        let comment_text = trimmed[..line_end].trim_end().to_string();
+
+        // Advance comment_emit_idx past this comment so the main comment
+        // system does not emit it again at statement level.
+        let comment_start = start + (rest.len() - trimmed.len());
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c = &self.all_comments[self.comment_emit_idx];
+            if (c.pos as usize) >= comment_start
+                && (c.pos as usize) < comment_start + line_end
+            {
+                self.comment_emit_idx += 1;
+                break;
+            } else if (c.pos as usize) > comment_start + line_end {
+                break;
+            }
+            self.comment_emit_idx += 1;
+        }
+
+        Some(comment_text)
     }
 
     /// Emit ES5-compatible function expression for arrow function
