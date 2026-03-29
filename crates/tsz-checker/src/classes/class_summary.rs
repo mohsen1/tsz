@@ -425,6 +425,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Class chain summaries are used for type compatibility checks (e.g., TS2416).
+        // Method return types must be widened (e.g., "base" → string) to avoid false
+        // incompatibilities. Temporarily disable preserve_literal_types during summary
+        // construction so that infer_return_type_from_body widens literal returns.
+        let saved_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = false;
+
         let mut summary = ClassChainSummary::default();
         let mut visited = FxHashSet::default();
         let mut current = Some(class_idx);
@@ -451,6 +458,8 @@ impl<'a> CheckerState<'a> {
 
             current = self.get_base_class_idx(current_idx);
         }
+
+        self.ctx.preserve_literal_types = saved_preserve;
 
         // Cache the result
         self.ctx
