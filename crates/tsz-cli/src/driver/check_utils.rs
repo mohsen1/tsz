@@ -1379,9 +1379,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
 /// its parser handles the constructs leniently.
 pub(super) const fn is_checker_grammar_code_suppressed_in_js(code: u32) -> bool {
     matches!(
-        code,
-        17012 // '{0}' is not a valid meta-property for keyword '{1}'
-        | 18016 // Private identifiers are not allowed outside class bodies
+        code, 17012 // '{0}' is not a valid meta-property for keyword '{1}'
     )
 }
 
