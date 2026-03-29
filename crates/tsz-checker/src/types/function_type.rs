@@ -1140,27 +1140,23 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // For `?`-optional params (not default-value), tsc includes
-                // `| undefined` in the signature type unconditionally (for display).
-                // The body-scope type only includes it under strictNullChecks.
+                // Store the declared type for optional params — do NOT add
+                // `| undefined` here.  The solver's `check_argument_types_with`
+                // already unions `| undefined` at check time, and tsc uses the
+                // declared type (without undefined) in error messages.
                 let needs_undefined = param.question_token
                     && type_id != TypeId::ANY
                     && type_id != TypeId::UNKNOWN
                     && type_id != TypeId::ERROR
                     && !tsz_solver::type_contains_undefined(self.ctx.types, type_id);
-                let sig_type_id = if needs_undefined {
-                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
-                } else {
-                    type_id
-                };
                 params.push(ParamInfo {
                     name,
-                    type_id: sig_type_id,
+                    type_id,
                     optional,
                     rest,
                 });
                 let cached_type = if needs_undefined && self.ctx.strict_null_checks() {
-                    sig_type_id
+                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
                 } else {
                     type_id
                 };
