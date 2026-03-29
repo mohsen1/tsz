@@ -1663,7 +1663,7 @@ impl<'a> CheckerState<'a> {
         let real_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
 
         // Check lib_contexts (lib files + some user files)
-        for lib_ctx in &self.ctx.lib_contexts {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(sym) = lib_ctx.binder.get_symbol(sym_id)
                 && (sym.flags & real_value_flags) != 0

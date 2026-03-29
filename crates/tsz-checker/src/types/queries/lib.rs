@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::TypeInstantiator;
 
         let factory = self.ctx.types.factory();
-        let lib_contexts = &self.ctx.lib_contexts;
+        let lib_contexts = &*self.ctx.lib_contexts;
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;

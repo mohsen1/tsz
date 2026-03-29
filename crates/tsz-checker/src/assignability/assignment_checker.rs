@@ -757,7 +757,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Also check if it's from a lib context
-        for lib in &self.ctx.lib_contexts {
+        for lib in self.ctx.lib_contexts.iter() {
             if let Some(sym) = lib.binder.get_symbol(sym_id)
                 && sym.escaped_name == name
             {

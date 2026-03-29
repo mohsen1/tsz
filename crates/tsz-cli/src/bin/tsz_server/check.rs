@@ -153,7 +153,7 @@ impl Server {
         };
 
         let mut project_env = ProjectEnv {
-            lib_contexts,
+            lib_contexts: std::sync::Arc::new(lib_contexts),
             all_arenas,
             all_binders,
             skeleton_declared_modules,
@@ -450,7 +450,7 @@ impl Server {
         };
 
         let mut project_env = ProjectEnv {
-            lib_contexts,
+            lib_contexts: std::sync::Arc::new(lib_contexts),
             all_arenas,
             all_binders,
             skeleton_declared_modules,

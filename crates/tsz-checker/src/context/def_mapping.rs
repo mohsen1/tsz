@@ -706,7 +706,7 @@ impl<'a> CheckerContext<'a> {
     /// Returns the total number of `DefIds` pre-populated across all lib binders.
     pub fn pre_populate_def_ids_from_lib_binders(&self) -> usize {
         let mut total = 0;
-        for lib_ctx in &self.lib_contexts {
+        for lib_ctx in self.lib_contexts.iter() {
             total += self.populate_def_ids_from_semantic_defs(&lib_ctx.binder.semantic_defs);
         }
         total
@@ -1024,7 +1024,7 @@ impl<'a> CheckerContext<'a> {
             &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
         > = {
             let mut v = vec![&self.binder.semantic_defs];
-            for lib_ctx in &self.lib_contexts {
+            for lib_ctx in self.lib_contexts.iter() {
                 v.push(&lib_ctx.binder.semantic_defs);
             }
             if let Some(ref binders) = self.all_binders {

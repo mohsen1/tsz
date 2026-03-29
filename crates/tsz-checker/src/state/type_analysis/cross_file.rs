@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
             return Some(sym);
         }
         // 2. Check lib files (lib.d.ts, etc.)
-        for lib in &self.ctx.lib_contexts {
+        for lib in self.ctx.lib_contexts.iter() {
             if let Some(sym) = lib.binder.get_symbol(sym_id) {
                 return Some(sym);
             }

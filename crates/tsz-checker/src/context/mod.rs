@@ -1342,12 +1342,18 @@ pub struct CheckerContext<'a> {
     /// Lib file contexts for global type resolution (lib.es5.d.ts, lib.dom.d.ts, etc.).
     /// Each entry is a (arena, binder) pair from a pre-parsed lib file.
     /// Used as a fallback when resolving type references not found in the main file.
-    pub lib_contexts: Vec<LibContext>,
+    ///
+    /// Wrapped in `Arc` so that child checkers (cross-file delegation) and parallel
+    /// per-file checkers can share the same lib contexts with O(1) clone cost instead
+    /// of cloning the entire Vec<LibContext> (which requires N Arc increments per clone).
+    pub lib_contexts: Arc<Vec<LibContext>>,
 
     /// Pre-computed lib binders extracted from `lib_contexts`.
     /// Avoids repeated `Vec<Arc<BinderState>>` allocation + Arc cloning on every
     /// symbol resolution call (called thousands of times per file).
-    pub lib_binders_cached: Vec<Arc<tsz_binder::BinderState>>,
+    ///
+    /// Wrapped in `Arc` for the same O(1) sharing reasons as `lib_contexts`.
+    pub lib_binders_cached: Arc<Vec<Arc<tsz_binder::BinderState>>>,
 
     /// Number of actual lib files loaded (not including user files).
     /// Used by `has_lib_loaded()` to correctly determine if standard library is available.
@@ -1481,7 +1487,7 @@ pub struct LibContext {
 #[derive(Clone)]
 pub struct ProjectEnv {
     /// Lib file contexts for global type resolution.
-    pub lib_contexts: Vec<LibContext>,
+    pub lib_contexts: Arc<Vec<LibContext>>,
     /// All AST arenas for cross-file resolution (indexed by `file_idx`).
     pub all_arenas: Arc<Vec<Arc<NodeArena>>>,
     /// All binders for cross-file resolution (indexed by `file_idx`).
@@ -1546,7 +1552,7 @@ pub struct ProjectEnv {
 impl Default for ProjectEnv {
     fn default() -> Self {
         Self {
-            lib_contexts: vec![],
+            lib_contexts: Arc::new(vec![]),
             all_arenas: Arc::new(vec![]),
             all_binders: Arc::new(vec![]),
             skeleton_declared_modules: None,
@@ -1581,7 +1587,7 @@ impl ProjectEnv {
     /// so the binder scan can be skipped for `declared_modules` and expando.
     pub fn apply_to(&self, ctx: &mut CheckerContext<'_>) {
         if !self.lib_contexts.is_empty() {
-            ctx.set_lib_contexts(self.lib_contexts.clone());
+            ctx.set_lib_contexts_shared(Arc::clone(&self.lib_contexts));
             ctx.set_actual_lib_file_count(self.lib_contexts.len());
         }
         ctx.set_typescript_dom_replacement_globals(

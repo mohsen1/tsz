@@ -270,7 +270,7 @@ impl<'a> CheckerState<'a> {
         ];
         for &(name, type_opt, kind) in boxed_names {
             if type_opt.is_some() {
-                for ctx in &self.ctx.lib_contexts {
+                for ctx in self.ctx.lib_contexts.iter() {
                     if let Some(sym_id) = ctx.binder.file_locals.get(name) {
                         let def_id = self.ctx.get_lib_def_id(sym_id);
                         self.ctx.types.register_boxed_def_id(kind, def_id);
@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
 
         // Register ThisType marker DefIds so ThisTypeMarkerExtractor can identify
         // ThisType<T> applications when the base type is Lazy(DefId).
-        for ctx in &self.ctx.lib_contexts {
+        for ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = ctx.binder.file_locals.get("ThisType") {
                 let def_id = self.ctx.get_lib_def_id(sym_id);
                 self.ctx.types.register_this_type_def_id(def_id);
@@ -334,7 +334,7 @@ impl<'a> CheckerState<'a> {
             // be resolved, causing false TS2345/TS2322 errors.
             for &(name, type_opt, kind) in boxed_names {
                 if let Some(ty) = type_opt {
-                    for ctx in &self.ctx.lib_contexts {
+                    for ctx in self.ctx.lib_contexts.iter() {
                         if let Some(sym_id) = ctx.binder.file_locals.get(name) {
                             let def_id = self.ctx.get_lib_def_id(sym_id);
                             env.insert_def(def_id, ty);
@@ -355,7 +355,7 @@ impl<'a> CheckerState<'a> {
         if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
             for &(name, type_opt, kind) in boxed_names {
                 if let Some(ty) = type_opt {
-                    for ctx in &self.ctx.lib_contexts {
+                    for ctx in self.ctx.lib_contexts.iter() {
                         if let Some(sym_id) = ctx.binder.file_locals.get(name) {
                             let def_id = self.ctx.get_lib_def_id(sym_id);
                             env.insert_def(def_id, ty);
@@ -423,7 +423,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        for ctx in &self.ctx.lib_contexts {
+        for ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = ctx.binder.file_locals.get("Function") {
                 let def_id = self.ctx.get_lib_def_id(sym_id);
                 self.ctx

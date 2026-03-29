@@ -1693,7 +1693,7 @@ impl<'a> CheckerState<'a> {
                                                 definition_store.clone(),
                                             );
                                         // Ensure lib checker can resolve types from other lib files
-                                        lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
+                                        lib_checker.ctx.lib_contexts = lib_contexts.clone();
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
                                         if !is_in_namespace && !is_in_external_module {
@@ -1984,7 +1984,7 @@ impl<'a> CheckerState<'a> {
                                         compiler_options.clone(),
                                         definition_store.clone(),
                                     );
-                                    cross_checker.ctx.set_lib_contexts(lib_contexts.clone());
+                                    cross_checker.ctx.lib_contexts = lib_contexts.clone();
                                     let other_type = cross_checker.get_type_of_node(other_decl);
                                     CheckerState::leave_cross_arena_delegation();
                                     if other_type != TypeId::ERROR
