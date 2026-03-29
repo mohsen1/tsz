@@ -1128,7 +1128,9 @@ pub fn classify_for_contextual_literal(
         }
         TypeData::Application(_) => ContextualLiteralAllowKind::Application,
         TypeData::Mapped(_) => ContextualLiteralAllowKind::Mapped,
-        TypeData::TemplateLiteral(_) => ContextualLiteralAllowKind::TemplateLiteral,
+        TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. } => {
+            ContextualLiteralAllowKind::TemplateLiteral
+        }
         _ => ContextualLiteralAllowKind::NotAllowed,
     }
 }

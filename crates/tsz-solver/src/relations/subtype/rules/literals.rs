@@ -11,7 +11,9 @@
 use crate::types::{
     IntrinsicKind, LiteralValue, TemplateLiteralId, TemplateSpan, TypeId, TypeListId,
 };
-use crate::visitor::{intrinsic_kind, literal_value, template_literal_id, union_list_id};
+use crate::visitor::{
+    intrinsic_kind, literal_value, string_intrinsic_components, template_literal_id, union_list_id,
+};
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -33,6 +35,15 @@ struct TemplateMatchSource<'a> {
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn matches_string_intrinsic_text(&mut self, target: TypeId, text: &str) -> bool {
+        if string_intrinsic_components(self.interner, target).is_none() {
+            return false;
+        }
+
+        let literal = self.interner.literal_string(text);
+        self.check_subtype(literal, target).is_true()
+    }
+
     /// Check if a literal value is compatible with an intrinsic type kind.
     ///
     /// Literal types are subtypes of their corresponding intrinsic types:
@@ -96,7 +107,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// The algorithm tries different ways to match literal spans against type holes,
     /// ensuring that all literal constraints are satisfied.
     pub(crate) fn check_literal_matches_template_literal(
-        &self,
+        &mut self,
         literal: Atom,
         template_spans: TemplateLiteralId,
     ) -> SubtypeResult {
@@ -116,7 +127,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Recursively match a string against template literal spans using backtracking.
     pub(crate) fn match_template_literal_recursive(
-        &self,
+        &mut self,
         remaining: &str,
         spans: &[TemplateSpan],
         span_idx: usize,
@@ -218,6 +229,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return self.match_union_pattern(remaining, spans, span_idx, members);
                 }
 
+                if string_intrinsic_components(self.interner, type_id).is_some() {
+                    let is_last_span = span_idx == spans.len() - 1;
+                    if is_last_span {
+                        return self.matches_string_intrinsic_text(type_id, remaining);
+                    }
+
+                    for len in 0..=remaining.len() {
+                        if self.matches_string_intrinsic_text(type_id, &remaining[..len])
+                            && self.match_template_literal_recursive(
+                                &remaining[len..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
                 match self.apparent_primitive_kind_for_type(type_id) {
                     Some(IntrinsicKind::String) => {
                         self.match_string_wildcard(remaining, spans, span_idx)
@@ -237,7 +269,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Match a string wildcard using backtracking.
     /// Tries all possible lengths from 0 to `remaining.len()`
     pub(crate) fn match_string_wildcard(
-        &self,
+        &mut self,
         remaining: &str,
         spans: &[TemplateSpan],
         span_idx: usize,
@@ -298,7 +330,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Match a number pattern - matches valid numeric strings.
     pub(crate) fn match_number_pattern(
-        &self,
+        &mut self,
         remaining: &str,
         spans: &[TemplateSpan],
         span_idx: usize,
@@ -331,7 +363,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Match a boolean pattern - matches "true" or "false".
     pub(crate) fn match_boolean_pattern(
-        &self,
+        &mut self,
         remaining: &str,
         spans: &[TemplateSpan],
         span_idx: usize,
@@ -353,7 +385,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Match a bigint pattern - matches integer strings.
     pub(crate) fn match_bigint_pattern(
-        &self,
+        &mut self,
         remaining: &str,
         spans: &[TemplateSpan],
         span_idx: usize,
@@ -382,7 +414,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Match a union pattern - try each member of the union.
     pub(crate) fn match_union_pattern(
-        &self,
+        &mut self,
         remaining: &str,
         spans: &[TemplateSpan],
         span_idx: usize,
@@ -750,6 +782,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 _ => false,
             }
+        } else if string_intrinsic_components(self.interner, t_type).is_some() {
+            let is_last_target = ti == target.len() - 1;
+            if is_last_target && self.matches_string_intrinsic_text(t_type, remaining) {
+                return true;
+            }
+
+            for len in 0..=remaining.len() {
+                if self.matches_string_intrinsic_text(t_type, &remaining[..len])
+                    && self.match_tt_recursive(
+                        source.source,
+                        source.source_span_index,
+                        source.source_offset + len,
+                        target,
+                        ti + 1,
+                    )
+                {
+                    return true;
+                }
+            }
+
+            false
         } else {
             false
         }
@@ -902,14 +955,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         _ => false,
                     }
                 } else {
-                    false
+                    if self.matches_string_intrinsic_text(t_type, text) {
+                        self.match_tt_recursive(source, next_si, 0, target, ti + 1)
+                    } else {
+                        false
+                    }
                 }
             }
         }
     }
 
     /// Check if remaining target spans can match empty input.
-    fn tt_remaining_target_accepts_empty(&self, target: &[ResolvedSpan], ti: usize) -> bool {
+    fn tt_remaining_target_accepts_empty(&mut self, target: &[ResolvedSpan], ti: usize) -> bool {
         for span in target.iter().skip(ti) {
             match span {
                 ResolvedSpan::Text(text) => {
@@ -919,7 +976,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 ResolvedSpan::Type(type_id) => {
                     // Only string type can match empty string
-                    if intrinsic_kind(self.interner, *type_id) != Some(IntrinsicKind::String) {
+                    if intrinsic_kind(self.interner, *type_id) != Some(IntrinsicKind::String)
+                        && !self.matches_string_intrinsic_text(*type_id, "")
+                    {
                         return false;
                     }
                 }

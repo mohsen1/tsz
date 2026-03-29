@@ -1071,6 +1071,37 @@ var r = foo<number>({ bar: 1, baz: '' });
     );
 }
 
+#[test]
+fn test_ts2322_string_intrinsic_targets_widen_literal_sources() {
+    let source = r#"
+let x: Uppercase<string>;
+x = "AbC";
+
+let y: Lowercase<string>;
+y = "AbC";
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    assert!(
+        messages.contains(&"Type 'string' is not assignable to type 'Uppercase<string>'."),
+        "Expected widened source diagnostic for Uppercase<string>, got: {messages:?}"
+    );
+    assert!(
+        messages.contains(&"Type 'string' is not assignable to type 'Lowercase<string>'."),
+        "Expected widened source diagnostic for Lowercase<string>, got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|message| message.contains("\"AbC\"")),
+        "String intrinsic diagnostics should widen the source literal, got: {messages:?}"
+    );
+}
+
 // =============================================================================
 // User-Defined Generic Type Application Tests (TS2322 False Positives)
 // These test the root cause of 11,000+ extra TS2322 errors
