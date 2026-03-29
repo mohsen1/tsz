@@ -2438,9 +2438,10 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 /// - The `object` intrinsic (`NonPrimitive`)
 /// - `any`
 /// - An intersection where every member is a valid base type
+/// - A union where every member is a valid base type (e.g. from overloaded constructors)
 /// - A type parameter
 ///
-/// Primitives, `never`, `void`, `undefined`, `null`, `unknown`, unions, and literals
+/// Primitives, `never`, `void`, `undefined`, `null`, `unknown`, and literals
 /// are NOT valid base types. Used for TS2509 checking.
 #[allow(clippy::match_same_arms)]
 pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -2454,10 +2455,15 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             let members = db.type_list(list_id);
             members.iter().all(|&m| is_valid_base_type(db, m))
         }
+        Some(TypeData::Union(list_id)) => {
+            // Union of construct return types from overloaded constructors is valid
+            let members = db.type_list(list_id);
+            members.iter().all(|&m| is_valid_base_type(db, m))
+        }
         Some(TypeData::Lazy(_)) => true, // unresolved references are assumed valid
         Some(TypeData::Application(_)) => true, // generic applications are object-like
         Some(TypeData::Mapped(_)) => true, // mapped types are object-like
-        // Intrinsics (never, void, null, etc.), literals, unions, None => not valid base types
+        // Intrinsics (never, void, null, etc.), literals, None => not valid base types
         _ => false,
     }
 }
