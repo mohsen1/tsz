@@ -2157,7 +2157,6 @@ impl<'a> CheckerState<'a> {
             let mut has_function = false;
             let mut value_count = 0;
             let mut function_name: Option<String> = None;
-            let mut all_same_function = true;
 
             for &export_idx in &export_default_indices {
                 let wrapped_kind = self
@@ -2190,18 +2189,15 @@ impl<'a> CheckerState<'a> {
                                 // Same non-empty function name: overload, don't count again
                             }
                             _ => {
-                                all_same_function = false;
                                 value_count += 1;
                             }
                         }
                     }
                     Some(k) if k == syntax_kind_ext::CLASS_DECLARATION => {
                         has_class = true;
-                        all_same_function = false;
                         value_count += 1;
                     }
                     _ => {
-                        all_same_function = false;
                         value_count += 1;
                     }
                 }
