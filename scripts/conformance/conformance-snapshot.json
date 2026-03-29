@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-29T15:30:26Z",
-  "git_sha": "45114f73e54440ea599fb058a8ca339ad4a5ed90",
+  "timestamp": "2026-03-29T16:36:55Z",
+  "git_sha": "d090e91bef620f36c1e4d1ee9f80e7beca10cff5",
   "summary": {
     "total_tests": 12581,
-    "passed": 11473,
-    "failed": 1108,
+    "passed": 11478,
+    "failed": 1103,
     "pass_rate": 91.2
   },
   "areas_by_pass_rate": [
@@ -143,10 +143,10 @@
     },
     {
       "area": "salsa",
-      "total": 190,
-      "passed": 156,
+      "total": 191,
+      "passed": 157,
       "failed": 34,
-      "pass_rate": 82.11
+      "pass_rate": 82.2
     },
     {
       "area": "declarationEmit",
@@ -332,10 +332,10 @@
     },
     {
       "area": "compiler",
-      "total": 6513,
-      "passed": 6006,
-      "failed": 507,
-      "pass_rate": 92.22
+      "total": 6518,
+      "passed": 6010,
+      "failed": 508,
+      "pass_rate": 92.21
     },
     {
       "area": "externalModules/typeOnly",
@@ -872,15 +872,15 @@
       "count": 2
     },
     {
+      "code": "TS1274",
+      "count": 2
+    },
+    {
       "code": "TS1273",
       "count": 2
     },
     {
       "code": "TS1277",
-      "count": 2
-    },
-    {
-      "code": "TS1274",
       "count": 2
     },
     {
@@ -912,11 +912,11 @@
       "count": 1
     },
     {
-      "code": "TS2669",
+      "code": "TS1294",
       "count": 1
     },
     {
-      "code": "TS1294",
+      "code": "TS1253",
       "count": 1
     }
   ],
@@ -974,10 +974,6 @@
       "count": 6
     },
     {
-      "code": "TS2416",
-      "count": 6
-    },
-    {
       "code": "TS7006",
       "count": 6
     },
@@ -995,6 +991,10 @@
     },
     {
       "code": "TS2554",
+      "count": 5
+    },
+    {
+      "code": "TS2416",
       "count": 5
     },
     {
@@ -1128,10 +1128,6 @@
       "count": 1
     },
     {
-      "code": "TS2669",
-      "count": 1
-    },
-    {
       "code": "TS2323",
       "count": 1
     },
@@ -1140,11 +1136,11 @@
       "count": 1
     },
     {
-      "code": "TS18046",
+      "code": "TS5033",
       "count": 1
     },
     {
-      "code": "TS5033",
+      "code": "TS18046",
       "count": 1
     },
     {
@@ -1236,11 +1232,15 @@
       "count": 1
     },
     {
+      "code": "TS2877",
+      "count": 1
+    },
+    {
       "code": "TS2876",
       "count": 1
     },
     {
-      "code": "TS2877",
+      "code": "TS1362",
       "count": 1
     }
   ],
@@ -1291,10 +1291,6 @@
     },
     {
       "code": "TS2694",
-      "count": 1
-    },
-    {
-      "code": "TS2677",
       "count": 1
     },
     {
@@ -1356,11 +1352,11 @@
       "count": 2
     },
     {
-      "code": "TS2702",
+      "code": "TS2693",
       "count": 1
     },
     {
-      "code": "TS2693",
+      "code": "TS2702",
       "count": 1
     },
     {
@@ -1396,11 +1392,11 @@
       "count": 1
     },
     {
-      "code": "TS7009",
+      "code": "TS2300",
       "count": 1
     },
     {
-      "code": "TS2300",
+      "code": "TS7009",
       "count": 1
     },
     {
@@ -1466,10 +1462,6 @@
       "count": 6
     },
     {
-      "code": "TS2416",
-      "count": 6
-    },
-    {
       "code": "TS7006",
       "count": 6
     },
@@ -1487,6 +1479,10 @@
     },
     {
       "code": "TS2554",
+      "count": 5
+    },
+    {
+      "code": "TS2416",
       "count": 5
     },
     {
@@ -1577,7 +1573,7 @@
   "top_extra_codes": [
     {
       "code": "TS2322",
-      "count": 40
+      "count": 41
     },
     {
       "code": "TS2339",
@@ -1656,10 +1652,6 @@
       "count": 3
     },
     {
-      "code": "TS2677",
-      "count": 3
-    },
-    {
       "code": "TS2344",
       "count": 3
     },
@@ -1732,6 +1724,10 @@
       "count": 2
     },
     {
+      "code": "TS2677",
+      "count": 2
+    },
+    {
       "code": "TS2786",
       "count": 2
     }
@@ -1739,8 +1735,8 @@
   "categories": {
     "false_positive": 38,
     "all_missing": 90,
-    "wrong_code": 308,
-    "fingerprint_only": 561,
-    "close_to_passing": 205
+    "wrong_code": 305,
+    "fingerprint_only": 563,
+    "close_to_passing": 203
   }
 }
