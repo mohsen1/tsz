@@ -1103,11 +1103,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // When the target has a rest parameter (e.g., ...args: number[]),
         // it can absorb unlimited arguments — skip the too-many check entirely
         // so we fall through to per-parameter type checking.
-        if !self.allow_bivariant_param_count
-            && !rest_is_top
-            && !target_has_rest
-            && source_required > target_fixed_count
-        {
+        if !rest_is_top && !target_has_rest && source_required > target_fixed_count {
             return Some(SubtypeFailureReason::TooManyParameters {
                 source_count: source_required,
                 target_count: target_fixed_count,

@@ -1523,7 +1523,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && target_params_unpacked
                 .last()
                 .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
-        if ((!self.allow_bivariant_param_count && !target_has_rest) || guard_target_rest_arity)
+        if (!target_has_rest || guard_target_rest_arity)
             && source_required
                 > target_fixed_count
                     + if target_has_rest {
@@ -2146,7 +2146,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && target_params
                 .last()
                 .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
-        if ((!self.allow_bivariant_param_count && !target_has_rest) || guard_target_rest_arity)
+        if (!target_has_rest || guard_target_rest_arity)
             && source_required
                 > target_fixed_count
                     + if target_has_rest {
