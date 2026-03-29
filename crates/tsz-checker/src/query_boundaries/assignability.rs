@@ -160,6 +160,10 @@ pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::type_queries::contains_infer_types_db(db, type_id)
 }
 
+pub(crate) fn contains_free_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::contains_free_infer_types(db, type_id)
+}
+
 pub(crate) fn contains_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_any_type(db, type_id)
 }
