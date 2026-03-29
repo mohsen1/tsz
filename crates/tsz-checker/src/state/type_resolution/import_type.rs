@@ -276,6 +276,59 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve the type parameters (with constraints) of a JSDoc typedef in another file.
+    /// Used for TS2344 constraint checking on `import('./file').Foo<T>` where `Foo` is a
+    /// JSDoc `@typedef` rather than a regular TS export symbol.
+    pub(crate) fn resolve_import_typedef_type_params(
+        &mut self,
+        module_specifier: &str,
+        member_name: &str,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_specifier,
+                None,
+            )
+            .or_else(|| self.ctx.resolve_import_target(module_specifier));
+        let Some(target_file_idx) = target_file_idx else {
+            return Vec::new();
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx).cloned() else {
+            return Vec::new();
+        };
+
+        for source_file in &target_arena.source_files {
+            let comments = source_file.comments.clone();
+            let source_text = source_file.text.to_string();
+            let mut checker = Box::new(CheckerState::with_parent_cache(
+                &target_arena,
+                &target_binder,
+                self.ctx.types,
+                source_file.file_name.clone(),
+                self.ctx.compiler_options.clone(),
+                self,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
+            checker.ctx.current_file_idx = target_file_idx;
+            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+            if let Some((_, type_params)) =
+                checker.resolve_jsdoc_typedef_info(member_name, &comments, &source_text)
+            {
+                self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+                if !type_params.is_empty() {
+                    return type_params;
+                }
+            }
+        }
+
+        Vec::new()
+    }
+
     /// Format a generic type name with its type parameter names for TS2314 messages.
     /// e.g., "Foo" + [T, U] → "Foo<T, U>"
     pub(crate) fn format_generic_display_name_with_interner(

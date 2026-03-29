@@ -1133,14 +1133,8 @@ impl<'a> CheckerState<'a> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         let Some(sf) = self.ctx.arena.source_files.first() else {
-            eprintln!("[DEBUG check_jsdoc_typedef_base_types] No source file");
             return;
         };
-        eprintln!(
-            "[DEBUG check_jsdoc_typedef_base_types] file={}, comments={}",
-            sf.file_name,
-            sf.comments.len()
-        );
         if sf.comments.is_empty() {
             return;
         }
@@ -1301,10 +1295,6 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(ref base_type) = typedef_info.base_type {
                     let expr = base_type.trim();
-                    eprintln!(
-                        "[DEBUG JSDoc TS2344] base_type={:?}, expr={:?}",
-                        base_type, expr
-                    );
                     if expr == "Object" || expr == "object" || expr.is_empty() {
                         continue;
                     }
@@ -1345,12 +1335,21 @@ impl<'a> CheckerState<'a> {
                                     scope_updates.push((tp.name.clone(), previous));
                                 }
 
-                                let type_params = self
+                                // Try symbol-based resolution first (for TS exports),
+                                // then fall back to cross-file JSDoc typedef resolution
+                                // (for types defined via @typedef in JS files).
+                                let mut type_params = self
                                     .resolve_jsdoc_import_member(&module_specifier, &member_name)
                                     .map(|sym_id| {
                                         self.type_reference_symbol_type_with_params(sym_id).1
                                     })
                                     .unwrap_or_default();
+                                if type_params.is_empty() {
+                                    type_params = self.resolve_import_typedef_type_params(
+                                        &module_specifier,
+                                        &member_name,
+                                    );
+                                }
 
                                 if !type_params.is_empty() {
                                     let comment_text = &source_text[comment.pos as usize
