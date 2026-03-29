@@ -329,12 +329,22 @@ impl ParserState {
             })
     }
 
-    /// Check if we're in a declaration file (.d.ts/.d.mts/.d.cts).
+    /// Check if we're in a declaration file (.d.ts/.d.mts/.d.cts, or .d.<ext>.ts).
     pub(crate) fn is_declaration_file(&self) -> bool {
         let file_name = self.file_name.to_ascii_lowercase();
-        file_name.ends_with(".d.ts")
+        if file_name.ends_with(".d.ts")
             || file_name.ends_with(".d.mts")
             || file_name.ends_with(".d.cts")
+        {
+            return true;
+        }
+        // Arbitrary extension declaration files: .d.<ext>.ts (e.g. .d.html.ts)
+        if file_name.ends_with(".ts") {
+            let basename = file_name.rsplit('/').next().unwrap_or(&file_name);
+            let basename = basename.rsplit('\\').next().unwrap_or(basename);
+            return basename.contains(".d.");
+        }
+        false
     }
 
     /// Get current token

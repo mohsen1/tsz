@@ -1449,7 +1449,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Skip for any/error/null — these are permissive.
-            // TypeScript explicitly allows `class extends null` (TS does not emit TS2509 for null).
+            // `class extends null` is valid TS (produces a class with no prototype).
             if base_type == TypeId::ANY || base_type == TypeId::ERROR || base_type == TypeId::NULL {
                 continue;
             }

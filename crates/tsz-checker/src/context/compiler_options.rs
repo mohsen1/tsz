@@ -8,15 +8,28 @@ use tsz_solver::judge::JudgeConfig;
 
 use super::CheckerContext;
 
-/// Check if a file name represents a declaration file (.d.ts, .d.tsx, .d.mts, .d.cts).
+/// Check if a file name represents a declaration file (.d.ts, .d.tsx, .d.mts, .d.cts,
+/// or arbitrary extension declaration files like .d.html.ts).
 ///
 /// Use this for checking file names other than the current file.
 /// For the current file, prefer `CheckerContext::is_declaration_file()`.
 pub(crate) fn is_declaration_file_name(file_name: &str) -> bool {
-    file_name.ends_with(".d.ts")
+    // Standard declaration extensions
+    if file_name.ends_with(".d.ts")
         || file_name.ends_with(".d.tsx")
         || file_name.ends_with(".d.mts")
         || file_name.ends_with(".d.cts")
+    {
+        return true;
+    }
+    // Arbitrary extension declaration files: .d.<ext>.ts (e.g. .d.html.ts)
+    // Per TypeScript: if file ends with .ts and the basename contains ".d."
+    if file_name.ends_with(".ts") {
+        let basename = file_name.rsplit('/').next().unwrap_or(file_name);
+        let basename = basename.rsplit('\\').next().unwrap_or(basename);
+        return basename.contains(".d.");
+    }
+    false
 }
 
 /// Check if a file name represents a JavaScript file (.js, .jsx, .mjs, .cjs).
