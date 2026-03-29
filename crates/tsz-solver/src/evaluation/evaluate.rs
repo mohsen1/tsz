@@ -60,6 +60,12 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// Used during intersection evaluation to prevent premature `this` binding to
     /// individual members instead of the full intersection type.
     suppress_this_binding: bool,
+    /// PERF: Cache for subtype check results used in conditional type evaluation.
+    /// Key: (check_type, extends_type), Value: is_subtype.
+    /// Deeply recursive conditional types (DeepReadonly, Compute, etc.) often check
+    /// the same (check, extends) pair many times across distributed branches and
+    /// tail-recursion iterations. Caching avoids redundant structural comparison.
+    conditional_subtype_cache: FxHashMap<(TypeId, TypeId), bool>,
 }
 
 /// Array methods that return any (used for apparent type computation).
@@ -119,6 +125,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             ),
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
+            conditional_subtype_cache: FxHashMap::default(),
         }
     }
 }
@@ -160,6 +167,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             ),
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
+            conditional_subtype_cache: FxHashMap::default(),
         }
     }
 
@@ -231,6 +239,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) const fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
         self.query_db
+    }
+
+    /// PERF: Look up a cached subtype result from conditional type evaluation.
+    #[inline]
+    pub(crate) fn cached_conditional_subtype(
+        &self,
+        check: TypeId,
+        extends: TypeId,
+    ) -> Option<bool> {
+        self.conditional_subtype_cache
+            .get(&(check, extends))
+            .copied()
+    }
+
+    /// PERF: Cache a subtype result from conditional type evaluation.
+    #[inline]
+    pub(crate) fn cache_conditional_subtype(
+        &mut self,
+        check: TypeId,
+        extends: TypeId,
+        result: bool,
+    ) {
+        self.conditional_subtype_cache
+            .insert((check, extends), result);
     }
 
     /// Check if `no_unchecked_indexed_access` is enabled.
