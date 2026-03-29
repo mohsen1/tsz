@@ -87,6 +87,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
                         hoisted_vars: Vec::new(),
+                        promise_constructor: None,
                     }]
                 } else {
                     let mut method_body = self.convert_block_body(method_data.body);
@@ -584,6 +585,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
                         hoisted_vars: Vec::new(),
+                        promise_constructor: None,
                     }]
                 } else {
                     let class_alias = self.get_class_alias_for_static_method(method_data.body);
@@ -963,6 +965,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
                             hoisted_vars: Vec::new(),
+                            promise_constructor: None,
                         }]
                     } else {
                         let local_class_alias =
@@ -1051,6 +1054,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
                             hoisted_vars: Vec::new(),
+                            promise_constructor: None,
                         }]
                     } else {
                         let mut method_body = self.convert_block_body(method_data.body);
