@@ -2908,13 +2908,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_ty: TypeId,
         target_ty: TypeId,
     ) -> TypeId {
-        // Callable types represent class constructor values (e.g., `Promise`).
-        // They must not be decomposed into a Function type, because that loses
-        // static members and the construct-signature wrapper. This function is
-        // designed for inline arrows/lambdas whose generic type params should be
-        // instantiated against the target; class values are already concrete.
-        if matches!(self.interner.lookup(source_ty), Some(TypeData::Callable(_))) {
-            return source_ty;
+        // Class constructor Callable types (e.g., `Promise`) must not be
+        // decomposed into a Function type, because that loses static members and
+        // the construct-signature wrapper.  However, ordinary declared generic
+        // functions (e.g., `declare function identity<T>(value: T): T`) are ALSO
+        // represented as Callable types and DO need to be instantiated against the
+        // target callback signature.  We distinguish the two by checking whether
+        // the Callable has call signatures with type parameters — if so, it is a
+        // generic function that needs instantiation, not a class constructor value.
+        if let Some(TypeData::Callable(shape_id)) = self.interner.lookup(source_ty) {
+            let shape = self.interner.callable_shape(shape_id);
+            let has_generic_call_sig = shape
+                .call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty());
+            if !has_generic_call_sig {
+                return source_ty;
+            }
         }
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);

@@ -201,46 +201,40 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             expected,
         )?;
+        // Only applies when the source is generic and the target is concrete.
         if source_fn.type_params.is_empty() || !target_fn.type_params.is_empty() {
             return None;
         }
 
+        // Check that at least one source type parameter can be mapped from
+        // the target's parameter types, confirming these are comparable
+        // callable signatures worth building a concrete display target for.
         let tracked_type_params: FxHashSet<_> =
             source_fn.type_params.iter().map(|tp| tp.name).collect();
-        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
-
-        for (source_param, target_param) in source_fn.params.iter().zip(target_fn.params.iter()) {
-            let target_type = if target_param.optional {
-                self.ctx
-                    .types
-                    .factory()
-                    .union2(target_param.type_id, TypeId::UNDEFINED)
-            } else {
-                target_param.type_id
-            };
-            if matches!(target_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
-                continue;
-            }
-
-            for ty in common::collect_all_types(self.ctx.types, source_param.type_id) {
-                let Some(tp) = common::type_param_info(self.ctx.types, ty) else {
-                    continue;
-                };
-                if tracked_type_params.contains(&tp.name) && substitution.get(tp.name).is_none() {
-                    substitution.insert(tp.name, target_type);
+        let has_mappable_param = source_fn.params.iter().zip(target_fn.params.iter()).any(
+            |(source_param, target_param)| {
+                let target_type = target_param.type_id;
+                if matches!(target_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                    return false;
                 }
-            }
-        }
-
-        if substitution.is_empty() {
+                common::collect_all_types(self.ctx.types, source_param.type_id)
+                    .into_iter()
+                    .any(|ty| {
+                        common::type_param_info(self.ctx.types, ty)
+                            .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+                    })
+            },
+        );
+        if !has_mappable_param {
             return None;
         }
 
-        // Use the target's return type, not the source's instantiated return type.
-        // The source's return type reflects what the source *would* produce, but the
-        // assignability re-check needs the target's actual expected return type.
-        // Using the source's return type (e.g., T instantiated to the param union)
-        // makes the re-check trivially pass for generic identity-like functions.
+        // Build a concrete display target using the target's return type.
+        // Previously this used the source's return type instantiated with
+        // the target's param types, but that produced a target that was
+        // trivially assignable from the source (e.g., `(v:string) => string`
+        // for `identity<T>(v:T):T` vs `(v:string) => boolean`), suppressing
+        // the TS2345 error that tsc emits.
         Some(
             self.ctx
                 .types
