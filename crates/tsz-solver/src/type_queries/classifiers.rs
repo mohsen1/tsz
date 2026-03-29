@@ -137,6 +137,7 @@ pub fn classify_for_assignability_eval(
         TypeData::KeyOf(_)
         | TypeData::Mapped(_)
         | TypeData::Conditional(_)
+        | TypeData::StringIntrinsic { .. }
         | TypeData::TypeQuery(_) => AssignabilityEvalKind::NeedsEnvEval,
         _ => AssignabilityEvalKind::Resolved,
     }

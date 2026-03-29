@@ -344,7 +344,7 @@ impl<'a> CheckerState<'a> {
         {
             ty
         } else {
-            tsz_solver::evaluate_type(self.ctx.types, ty)
+            self.evaluate_type_for_assignability(ty)
         };
 
         if let Some(app) = query::type_application(self.ctx.types, ty) {
@@ -782,6 +782,14 @@ impl<'a> CheckerState<'a> {
 
         if evaluated == TypeId::NEVER
             || tsz_solver::literal_value(self.ctx.types, evaluated).is_some()
+        {
+            return true;
+        }
+
+        if (tsz_solver::lazy_def_id(self.ctx.types, ty).is_some()
+            || tsz_solver::string_intrinsic_components(self.ctx.types, ty).is_some())
+            && (tsz_solver::is_template_literal_type(self.ctx.types, evaluated)
+                || tsz_solver::string_intrinsic_components(self.ctx.types, evaluated).is_some())
         {
             return true;
         }
@@ -1546,6 +1554,18 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if tsz_solver::literal_value(self.ctx.types, source).is_some()
+            && tsz_solver::string_intrinsic_components(self.ctx.types, target)
+                .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+
+        if let Some(display) = self.preferred_evaluated_source_display(source) {
+            return display;
+        }
+
         if self.is_literal_sensitive_assignment_target(target)
             && let Some(display) = self.literal_expression_display(anchor_idx)
         {
@@ -1753,6 +1773,18 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if tsz_solver::literal_value(self.ctx.types, source).is_some()
+            && tsz_solver::string_intrinsic_components(self.ctx.types, target)
+                .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+
+        if let Some(display) = self.preferred_evaluated_source_display(source) {
+            return display;
+        }
+
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
                 return display;
@@ -1815,7 +1847,33 @@ impl<'a> CheckerState<'a> {
         self.format_assignability_type_for_message(source, target)
     }
 
+    fn preferred_evaluated_source_display(&mut self, source: TypeId) -> Option<String> {
+        if tsz_solver::is_template_literal_type(self.ctx.types, source) {
+            return Some(self.format_type_diagnostic_structural(source));
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(source);
+        if evaluated == source || evaluated == TypeId::ERROR {
+            return None;
+        }
+
+        if tsz_solver::literal_value(self.ctx.types, evaluated).is_some()
+            || tsz_solver::is_template_literal_type(self.ctx.types, evaluated)
+            || tsz_solver::string_intrinsic_components(self.ctx.types, evaluated).is_some()
+        {
+            return Some(self.format_type_diagnostic_structural(evaluated));
+        }
+
+        None
+    }
+
     pub(super) fn is_literal_sensitive_assignment_target(&mut self, target: TypeId) -> bool {
+        if tsz_solver::string_intrinsic_components(self.ctx.types, target)
+            .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
+        {
+            return false;
+        }
+
         let target = self.evaluate_type_for_assignability(target);
         self.is_literal_sensitive_assignment_target_inner(target)
     }

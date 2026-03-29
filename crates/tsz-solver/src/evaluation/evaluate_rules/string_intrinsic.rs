@@ -97,15 +97,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             | TypeData::IndexAccess(_, _) => self.interner().string_intrinsic(kind, evaluated_arg),
 
             // Handle chained string intrinsics: Uppercase<Lowercase<T>>
-            // The inner intrinsic already wraps the type, so wrap again with outer
+            // Same-kind string mappings are idempotent: Uppercase<Uppercase<T>> = Uppercase<T>.
+            // Different kinds must remain nested because compositions like
+            // Uppercase<Lowercase<T>> can denote a strictly smaller set.
             TypeData::StringIntrinsic {
-                kind: _inner_kind,
+                kind: inner_kind,
                 type_arg: _inner_arg,
             } => {
-                // Wrap the already-evaluated intrinsic with the outer one
-                // This creates Uppercase<Lowercase<T>> structure which will be
-                // evaluated layer by layer when the type parameter is substituted
-                self.interner().string_intrinsic(kind, evaluated_arg)
+                if kind == inner_kind {
+                    evaluated_arg
+                } else {
+                    // Preserve cross-kind composition so later substitution can
+                    // still distinguish sets like Uppercase<Lowercase<T>>.
+                    self.interner().string_intrinsic(kind, evaluated_arg)
+                }
             }
 
             // For all other types, return error

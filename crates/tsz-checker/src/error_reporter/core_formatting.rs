@@ -133,6 +133,14 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         other: TypeId,
     ) -> String {
+        if tsz_solver::literal_value(self.ctx.types, ty).is_some()
+            && tsz_solver::string_intrinsic_components(self.ctx.types, other)
+                .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
+        {
+            let widened = self.widen_type_for_display(ty);
+            return self.format_type_for_assignability_message(widened);
+        }
+
         if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
             return enum_name;
         }

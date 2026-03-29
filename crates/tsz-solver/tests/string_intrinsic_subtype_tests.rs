@@ -8,7 +8,9 @@
 
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{StringIntrinsicKind, TypeData, TypeId, TypeParamInfo};
+use crate::types::{StringIntrinsicKind, TemplateSpan, TypeData, TypeId, TypeParamInfo};
+use crate::evaluate_type;
+use crate::{RelationContext, RelationKind, RelationPolicy, query_relation};
 
 // =============================================================================
 // Rule 1: StringIntrinsic(kind, T) <: string
@@ -222,5 +224,84 @@ fn uppercase_literal_is_subtype_of_uppercase_string() {
     assert!(
         !checker.is_subtype_of(lowercase_literal, uppercase_string),
         "\"bar\" should not be assignable to Uppercase<string>"
+    );
+}
+
+#[test]
+fn nested_same_kind_string_intrinsic_is_idempotent() {
+    let interner = TypeInterner::new();
+
+    let uppercase_string =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+    let nested_uppercase =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, uppercase_string);
+
+    let evaluated = evaluate_type(&interner, nested_uppercase);
+    assert_eq!(
+        evaluated, uppercase_string,
+        "Uppercase<Uppercase<string>> should normalize to Uppercase<string>"
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(uppercase_string, nested_uppercase),
+        "Uppercase<string> should be assignable to Uppercase<Uppercase<string>>"
+    );
+    assert!(
+        checker.is_subtype_of(nested_uppercase, uppercase_string),
+        "Uppercase<Uppercase<string>> should be assignable to Uppercase<string>"
+    );
+}
+
+#[test]
+fn uppercase_template_literal_accepts_only_uppercase_suffixes() {
+    let interner = TypeInterner::new();
+
+    let uppercase_string =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+    let uppercase_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("AA")),
+        TemplateSpan::Type(uppercase_string),
+    ]);
+
+    let empty_suffix = interner.literal_string("AA");
+    let uppercase_suffix = interner.literal_string("AAFOO");
+    let mixed_suffix = interner.literal_string("AAFoo");
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(empty_suffix, uppercase_template),
+        "\"AA\" should match `AA${{Uppercase<string>}}` because the empty suffix is uppercase"
+    );
+    assert!(
+        checker.is_subtype_of(uppercase_suffix, uppercase_template),
+        "\"AAFOO\" should match `AA${{Uppercase<string>}}`"
+    );
+    assert!(
+        !checker.is_subtype_of(mixed_suffix, uppercase_template),
+        "\"AAFoo\" should not match `AA${{Uppercase<string>}}`"
+    );
+}
+
+#[test]
+fn assignability_query_normalizes_nested_uppercase_intrinsics() {
+    let interner = TypeInterner::new();
+
+    let uppercase_string =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+    let nested_uppercase =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, uppercase_string);
+
+    let result = query_relation(
+        &interner,
+        uppercase_string,
+        nested_uppercase,
+        RelationKind::Assignable,
+        RelationPolicy::default(),
+        RelationContext::default(),
+    );
+    assert!(
+        result.is_related(),
+        "Assignable relation should treat Uppercase<string> as compatible with Uppercase<Uppercase<string>>"
     );
 }
