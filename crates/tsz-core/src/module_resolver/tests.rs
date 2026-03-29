@@ -2509,6 +2509,82 @@ fn test_lookup_module_preserve_uses_syntax_directed_conditions() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn test_lookup_versioned_types_condition_prefers_matching_export_branch() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_lookup_versioned_types_condition");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/inner")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/inner/package.json"),
+        r#"{
+            "name":"inner",
+            "exports":{
+                ".":{
+                    "types@>=10000":"./future-types.d.ts",
+                    "types@>=1":"./new-types.d.ts",
+                    "types":"./old-types.d.ts",
+                    "import":"./index.mjs",
+                    "node":"./index.js"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/old-types.d.ts"),
+        "export const oldThing: number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/new-types.d.ts"),
+        "export const goodThing: number;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import * as mod from 'inner';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: crate::checker::context::CheckerOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "inner",
+        containing_file: &dir.join("src/index.ts"),
+        specifier_span: Span::new(22, 29),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+
+    let resolved_path = result
+        .resolved_path
+        .expect("versioned types condition should resolve");
+    assert!(
+        resolved_path.ends_with("new-types.d.ts"),
+        "expected versioned types branch, got {}",
+        resolved_path.display()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // -----------------------------------------------------------------------
 // ModuleLookupOutcome / classify() tests
 // -----------------------------------------------------------------------

@@ -184,6 +184,29 @@ impl ModuleResolver {
         conditions
     }
 
+    fn condition_key_matches(&self, key: &str, conditions: &[String]) -> bool {
+        if conditions.iter().any(|condition| condition == key) {
+            return true;
+        }
+
+        let Some(at_pos) = key.find('@') else {
+            return false;
+        };
+
+        let base_condition = &key[..at_pos];
+        let version_range = &key[at_pos + 1..];
+        if !conditions
+            .iter()
+            .any(|condition| condition == base_condition)
+        {
+            return false;
+        }
+
+        let compiler_version =
+            types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
+        match_types_versions_range(version_range, compiler_version).is_some()
+    }
+
     /// Resolve package exports with explicit conditions
     pub(super) fn resolve_package_exports_with_conditions(
         &self,
@@ -247,7 +270,7 @@ impl ModuleResolver {
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order (not our conditions order)
                 for (key, value) in cond_entries {
-                    if conditions.iter().any(|c| c == key) {
+                    if self.condition_key_matches(key, conditions) {
                         // null means explicitly blocked - stop here
                         if matches!(value, PackageExports::Null) {
                             return None;
@@ -283,7 +306,7 @@ impl ModuleResolver {
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order
                 for (key, nested) in cond_entries {
-                    if conditions.iter().any(|c| c == key) {
+                    if self.condition_key_matches(key, conditions) {
                         // null means explicitly blocked - stop here
                         if matches!(nested, PackageExports::Null) {
                             return None;
