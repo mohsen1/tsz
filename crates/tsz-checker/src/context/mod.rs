@@ -945,6 +945,10 @@ pub struct CheckerContext<'a> {
     /// Positions of ALL parse errors (including non-suppressing ones like TS1359).
     /// Used for TS2456 suppression when a parse error falls within a type alias.
     pub all_parse_error_positions: Vec<u32>,
+    /// Positions of nullable-type parse errors (`?T` / `T?` syntax, TS17019/TS17020).
+    /// Used by TS2677 to widen predicate types to `T | null | undefined`.
+    /// Excludes `!T` / `T!` errors which should not trigger widening.
+    pub nullable_type_parse_error_positions: Vec<u32>,
 
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,

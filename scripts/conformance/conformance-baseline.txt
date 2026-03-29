@@ -215,7 +215,6 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx | expected:[TS
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx | expected:[TS1003,TS1005,TS1109] actual:[TS1003,TS1005,TS1109]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx | expected:[TS7026] actual:[]
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2740,TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/lambdaArgCrash.ts | expected:[TS2304,TS2345] actual:[TS2304,TS2345]
@@ -393,7 +392,7 @@ FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts | expected:[TS
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts | expected:[TS1002,TS1125] actual:[TS1002,TS1125]
 FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts | expected:[TS2344] actual:[]
-FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2344,TS2416,TS2744]
+FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2344,TS2420,TS2430,TS2744]
 FAIL TypeScript/tests/cases/compiler/superWithTypeArgument3.ts | expected:[TS2754] actual:[TS2345,TS2564,TS2754]
 FAIL TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNames.ts | expected:[TS2307,TS2564] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNamesImportRef.ts | expected:[TS2307] actual:[]
@@ -518,7 +517,7 @@ FAIL TypeScript/tests/cases/conformance/enums/enumErrors.ts | expected:[TS1357] 
 FAIL TypeScript/tests/cases/conformance/es2018/invalidTaggedTemplateEscapeSequences.ts | expected:[TS1125] actual:[TS1125]
 FAIL TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts | expected:[TS2339] actual:[TS2536]
 FAIL TypeScript/tests/cases/conformance/es2019/globalThisUnknownNoImplicitAny.ts | expected:[TS2339,TS7015,TS7017,TS7053] actual:[TS2339,TS7015,TS7017,TS7053]
-FAIL TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts | expected:[TS2339,TS2364,TS17012] actual:[TS2339,TS17012]
+FAIL TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts | expected:[TS2339,TS2364,TS17012] actual:[TS17012]
 FAIL TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace_exportAssignment.ts | expected:[TS2498] actual:[]
 FAIL TypeScript/tests/cases/conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts | expected:[TS2307,TS6046] actual:[TS2307,TS6046]
 FAIL TypeScript/tests/cases/conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_syntax.ts | expected:[TS1003] actual:[TS2305,TS2661]
@@ -774,17 +773,15 @@ FAIL TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceMode
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesTypesVersionPackageExports.ts | expected:[] actual:[TS2551]
 FAIL TypeScript/tests/cases/conformance/node/nodePackageSelfName.ts | expected:[TS2835] actual:[]
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts | expected:[] actual:[TS2307]
-FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts | expected:[TS5024,TS6263] actual:[TS2769,TS5024]
+FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts | expected:[TS5024,TS6263] actual:[TS5024]
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForTsJsImport.ts | expected:[TS2307] actual:[TS2307,TS2846,TS5097]
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFilesForNodeNativeModules.ts | expected:[TS5024,TS6263] actual:[TS5024]
 FAIL TypeScript/tests/cases/conformance/override/override19.ts | expected:[TS4113,TS4117] actual:[TS4113,TS4117]
 FAIL TypeScript/tests/cases/conformance/override/override_js4.ts | expected:[TS4123] actual:[TS4122]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts | expected:[TS1005] actual:[TS1005,TS1103,TS1431,TS1432]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binaryNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.decmialNegative.ts | expected:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189] actual:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.hexNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.octalNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.unicodeEscape.ts | expected:[TS1125,TS1199] actual:[TS1125,TS1199]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression14.ts | expected:[TS8009,TS8010] actual:[TS8009,TS8010]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration6.ts | expected:[TS1174,TS2304] actual:[TS1174,TS2304]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parserConditionalExpression1.ts | expected:[TS2304,TS7017] actual:[TS2304,TS7017]
@@ -6407,9 +6404,6 @@ PASS TypeScript/tests/cases/compiler/taggedTemplatesInDifferentScopes.ts
 PASS TypeScript/tests/cases/compiler/taggedTemplatesInModuleAndGlobal.ts
 PASS TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteNoSubstitutionTemplate1.ts
 PASS TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteNoSubstitutionTemplate2.ts
-PASS TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteTemplateExpressions2.ts
-PASS TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteTemplateExpressions3.ts
-PASS TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteTemplateExpressions6.ts
 PASS TypeScript/tests/cases/compiler/tailRecursiveConditionalTypes.ts
 PASS TypeScript/tests/cases/compiler/targetEs6DecoratorMetadataImportNotElided.ts
 PASS TypeScript/tests/cases/compiler/targetTypeArgs.ts
@@ -7403,7 +7397,6 @@ PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateStaticShadowingProtectedStatic.ts
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateStaticShadowingPublicStatic.ts
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedGenericClassWithAny.ts
-PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/superInStaticMembers1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers3.ts

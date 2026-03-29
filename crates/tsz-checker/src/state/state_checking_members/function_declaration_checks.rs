@@ -693,10 +693,15 @@ impl<'a> CheckerState<'a> {
 
         // When the predicate type was parsed from `?T` (prefix ?), the parser recovers
         // just `T` but tsc semantically treats it as `T | null | undefined`. Detect this
-        // by checking if the type node's position matches a parse error position (TS17020).
+        // by checking if the type node's position matches a nullable-type parse error.
+        // Only `?`-related errors trigger widening; `!`-related errors should not.
         if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
             let type_pos = type_node.pos;
-            if self.ctx.all_parse_error_positions.contains(&type_pos) {
+            if self
+                .ctx
+                .nullable_type_parse_error_positions
+                .contains(&type_pos)
+            {
                 predicate_type = self.ctx.types.factory().union(vec![
                     predicate_type,
                     TypeId::NULL,
