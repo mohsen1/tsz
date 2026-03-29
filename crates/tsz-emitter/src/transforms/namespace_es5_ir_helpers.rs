@@ -546,7 +546,9 @@ pub(super) fn rewrite_exported_var_refs(
         IRNode::Parenthesized(inner) | IRNode::SpreadElement(inner) => {
             rewrite_exported_var_refs(inner, ns_name, names)
         }
-        IRNode::CommaExpr(exprs) | IRNode::ArrayLiteral(exprs) => {
+        IRNode::CommaExpr(exprs)
+        | IRNode::CommaExprMultiline(exprs)
+        | IRNode::ArrayLiteral(exprs) => {
             for expr in exprs.iter_mut() {
                 rewrite_exported_var_refs(expr, ns_name, names);
             }

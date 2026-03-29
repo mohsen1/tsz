@@ -102,11 +102,11 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_use_define_for_class_fields(enable);
     }
 
-    pub const fn set_temp_var_counter(&mut self, counter: u32) {
+    pub fn set_temp_var_counter(&mut self, counter: u32) {
         self.transformer.set_temp_var_counter(counter);
     }
 
-    pub const fn temp_var_counter(&self) -> u32 {
+    pub fn temp_var_counter(&self) -> u32 {
         self.transformer.temp_var_counter()
     }
 

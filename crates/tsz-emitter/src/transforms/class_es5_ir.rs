@@ -85,8 +85,8 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
 };
 use rustc_hash::FxHashMap;
-use std::cell::Cell;
-use tsz_parser::parser::node::NodeArena;
+use std::cell::{Cell, RefCell};
+use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::contains_this_reference;
@@ -313,12 +313,15 @@ pub struct ES5ClassTransformer<'a> {
     /// Base indent level for raw IR strings (0 for top-level, 1+ for nested contexts)
     indent_base: u32,
     /// Counter for generating unique temp variable names (_a, _b, _c, ...)
-    temp_var_counter: u32,
+    temp_var_counter: Cell<u32>,
     /// Mapping from computed property name expression `NodeIndex` to temp variable name.
     computed_prop_temp_map: std::collections::HashMap<NodeIndex, String>,
     /// Alias used for `this` in static property initializers/static blocks for the current class.
     current_static_class_alias: Option<String>,
     use_define_for_class_fields: bool,
+    /// Additional hoisted temp variable names collected from expression conversions
+    /// (e.g., from computed property lowering inside object literals)
+    extra_hoisted_temps: RefCell<Vec<String>>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -337,10 +340,11 @@ impl<'a> ES5ClassTransformer<'a> {
             legacy_decorators: false,
             emit_decorator_metadata: false,
             indent_base: 0,
-            temp_var_counter: 0,
+            temp_var_counter: Cell::new(0),
             computed_prop_temp_map: std::collections::HashMap::new(),
             current_static_class_alias: None,
             use_define_for_class_fields: false,
+            extra_hoisted_temps: RefCell::new(Vec::new()),
         }
     }
 
@@ -348,12 +352,12 @@ impl<'a> ES5ClassTransformer<'a> {
         self.use_define_for_class_fields = enable;
     }
 
-    pub const fn set_temp_var_counter(&mut self, counter: u32) {
-        self.temp_var_counter = counter;
+    pub fn set_temp_var_counter(&mut self, counter: u32) {
+        self.temp_var_counter.set(counter);
     }
 
-    pub const fn temp_var_counter(&self) -> u32 {
-        self.temp_var_counter
+    pub fn temp_var_counter(&self) -> u32 {
+        self.temp_var_counter.get()
     }
 
     /// Check if an expression (possibly wrapped in type assertions) is side-effect-free.
@@ -390,9 +394,9 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     /// Generate a unique temp variable name (_a, _b, ..., _z, _27, _28, ...)
-    fn generate_temp_name(&mut self) -> String {
-        let idx = self.temp_var_counter;
-        self.temp_var_counter += 1;
+    fn generate_temp_name(&self) -> String {
+        let idx = self.temp_var_counter.get();
+        self.temp_var_counter.set(idx + 1);
         if idx < 26 {
             format!("_{}", (b'a' + idx as u8) as char)
         } else {
@@ -613,45 +617,56 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
-    /// Convert an AST statement to IR (avoids `ASTRef` when possible)
-    fn convert_statement(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
+    /// Create a base `AstToIr` converter with shared temp var counter and transforms
+    fn make_converter(&self) -> AstToIr<'a> {
+        let mut converter = AstToIr::new(self.arena)
+            .with_super(self.has_extends)
+            .with_temp_var_counter(self.temp_var_counter.get());
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }
-        converter.convert_statement(idx)
+        converter
+    }
+
+    /// Collect hoisted temps from a converter and update our temp counter
+    fn collect_from_converter(&self, converter: &AstToIr<'a>) {
+        self.temp_var_counter.set(converter.temp_var_counter());
+        self.extra_hoisted_temps
+            .borrow_mut()
+            .extend(converter.take_hoisted_temps());
+    }
+
+    /// Convert an AST statement to IR (avoids `ASTRef` when possible)
+    fn convert_statement(&self, idx: NodeIndex) -> IRNode {
+        let converter = self.make_converter();
+        let result = converter.convert_statement(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Convert an AST statement to IR with `this` captured as `_this`.
     /// Used in derived constructors after `super()` where `this` → `_this`.
     fn convert_statement_this_captured(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena)
-            .with_this_captured(true)
-            .with_super(self.has_extends);
-        if let Some(ref transforms) = self.transforms {
-            converter = converter.with_transforms(transforms.clone());
-        }
-        converter.convert_statement(idx)
+        let converter = self.make_converter().with_this_captured(true);
+        let result = converter.convert_statement(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Convert an AST expression to IR (avoids `ASTRef` when possible)
     fn convert_expression(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
-        if let Some(ref transforms) = self.transforms {
-            converter = converter.with_transforms(transforms.clone());
-        }
-        converter.convert_expression(idx)
+        let converter = self.make_converter();
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
     fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena)
-            .with_super(self.has_extends)
-            .with_static(true);
-        if let Some(ref transforms) = self.transforms {
-            converter = converter.with_transforms(transforms.clone());
-        }
-        converter.convert_statement(idx)
+        let converter = self.make_converter().with_static(true);
+        let result = converter.convert_statement(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Convert an AST statement to IR in static context with class alias for `this` substitution
@@ -660,25 +675,21 @@ impl<'a> ES5ClassTransformer<'a> {
         idx: NodeIndex,
         class_alias: &str,
     ) -> IRNode {
-        let mut converter = AstToIr::new(self.arena)
-            .with_super(self.has_extends)
+        let converter = self
+            .make_converter()
             .with_static(true)
             .with_class_alias(Some(class_alias.to_string()));
-        if let Some(ref transforms) = self.transforms {
-            converter = converter.with_transforms(transforms.clone());
-        }
-        converter.convert_statement(idx)
+        let result = converter.convert_statement(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Convert an AST expression to IR in static context
     fn convert_expression_static(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena)
-            .with_super(self.has_extends)
-            .with_static(true);
-        if let Some(ref transforms) = self.transforms {
-            converter = converter.with_transforms(transforms.clone());
-        }
-        converter.convert_expression(idx)
+        let converter = self.make_converter().with_static(true);
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Convert an AST expression to IR in static context with class alias for `this` substitution
@@ -687,14 +698,13 @@ impl<'a> ES5ClassTransformer<'a> {
         idx: NodeIndex,
         class_alias: &str,
     ) -> IRNode {
-        let mut converter = AstToIr::new(self.arena)
-            .with_super(self.has_extends)
+        let converter = self
+            .make_converter()
             .with_static(true)
             .with_class_alias(Some(class_alias.to_string()));
-        if let Some(ref transforms) = self.transforms {
-            converter = converter.with_transforms(transforms.clone());
-        }
-        converter.convert_expression(idx)
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Convert an AST expression to IR in static context with a raw `this` substitution.
@@ -703,14 +713,13 @@ impl<'a> ES5ClassTransformer<'a> {
         idx: NodeIndex,
         replacement: &str,
     ) -> IRNode {
-        let mut converter = AstToIr::new(self.arena)
-            .with_super(self.has_extends)
+        let converter = self
+            .make_converter()
             .with_static(true)
             .with_raw_this_substitution(Some(replacement.to_string()));
-        if let Some(ref transforms) = self.transforms {
-            converter = converter.with_transforms(transforms.clone());
-        }
-        converter.convert_expression(idx)
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
     }
 
     /// Collect decorator `NodeIndex` list from a modifier list
@@ -1196,6 +1205,9 @@ impl<'a> ES5ClassTransformer<'a> {
         class_alias: Option<String>,
         is_static: bool,
     ) -> Vec<IRNode> {
+        // Snapshot hoisted temps before converting statements
+        let hoisted_before = self.extra_hoisted_temps.borrow().len();
+
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
         {
@@ -1214,6 +1226,25 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             vec![]
         };
+
+        // Collect any hoisted temps that were created during statement conversion.
+        // These belong in THIS block's scope (e.g., method body), not the class IIFE.
+        let hoisted_after = self.extra_hoisted_temps.borrow().len();
+        if hoisted_after > hoisted_before {
+            let block_temps: Vec<String> = self
+                .extra_hoisted_temps
+                .borrow_mut()
+                .drain(hoisted_before..)
+                .collect();
+            let var_decls: Vec<IRNode> = block_temps
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            stmts.insert(0, IRNode::VarDeclList(var_decls));
+        }
 
         // If we have a class_alias, prepend the alias declaration: `var <alias> = this;`
         if let Some(alias) = class_alias {
@@ -1424,6 +1455,22 @@ impl<'a> ES5ClassTransformer<'a> {
             // Even without class-level decorators, constructor parameter decorators
             // need a class-level __decorate call: C = __decorate([__param(0, dec)], C)
             self.emit_ctor_param_decorator_ir(&mut body, class_idx);
+        }
+
+        // Emit var declarations for hoisted temp variables collected during
+        // member expression conversion (e.g., from computed property lowering
+        // inside object literals like `{ [expr]: val }` → `(_a = {}, _a[expr] = val, _a)`).
+        let extra_temps: Vec<String> = std::mem::take(&mut *self.extra_hoisted_temps.borrow_mut());
+        if !extra_temps.is_empty() {
+            let var_decls: Vec<IRNode> = extra_temps
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            // tsc puts `var _a;` at the very top of the IIFE body, before __extends.
+            body.insert(0, IRNode::VarDeclList(var_decls));
         }
 
         // return ClassName;
