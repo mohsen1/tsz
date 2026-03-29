@@ -76,6 +76,7 @@ pub struct ClassES5Emitter<'a> {
     remove_comments: bool,
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
+    commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -91,11 +92,16 @@ impl<'a> ClassES5Emitter<'a> {
             leading_comment: None,
             remove_comments: false,
             tslib_prefix: false,
+            commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
         }
     }
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
         self.tslib_prefix = enable;
+    }
+
+    pub fn set_commonjs_import_substitutions(&mut self, subs: rustc_hash::FxHashMap<String, String>) {
+        self.commonjs_import_substitutions = subs;
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
@@ -209,6 +215,9 @@ impl<'a> ClassES5Emitter<'a> {
         }
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
+        }
+        if !self.commonjs_import_substitutions.is_empty() {
+            printer.set_commonjs_import_substitutions(self.commonjs_import_substitutions.clone());
         }
         let mut output = printer.emit(&ir).to_string();
         if let Some(recovery_emit) = self.emit_var_function_recovery(class_idx) {
