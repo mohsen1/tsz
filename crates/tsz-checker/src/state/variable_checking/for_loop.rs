@@ -598,7 +598,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
+        // For destructuring patterns (array/object literal LHS), set the
+        // `in_destructuring_target` flag so nested spread/rest elements are
+        // treated as assignment targets, suppressing false TS2698 errors.
+        let is_destructuring_init = self.ctx.arena.get(initializer).is_some_and(|n| {
+            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        });
+        let prev_destructuring = self.ctx.in_destructuring_target;
+        if is_destructuring_init {
+            self.ctx.in_destructuring_target = true;
+        }
         let var_type = self.get_type_of_assignment_target(initializer);
+        self.ctx.in_destructuring_target = prev_destructuring;
         let target_type = if is_for_of
             && let Some(init_node) = self.ctx.arena.get(initializer)
             && init_node.kind == SyntaxKind::Identifier as u16

@@ -1163,3 +1163,40 @@ type T2 = [number, ...string[], boolean?];
     assert_eq!(ts1265_count, 1, "Expected 1 TS1265, got {ts1265_count}");
     assert_eq!(ts1266_count, 1, "Expected 1 TS1266, got {ts1266_count}");
 }
+
+/// TS2698 must NOT be emitted for rest elements in destructuring patterns.
+/// `{ ...x }` on the LHS of `=` or in a for-of initializer is a rest
+/// assignment target, not a value spread.
+/// Regression test for conformance test `nestedObjectRest.ts`.
+#[test]
+fn test_no_ts2698_for_destructuring_rest_in_assignment() {
+    let source = r#"
+var x: any;
+[{ ...x }] = [{ abc: 1 }];
+"#;
+    let diagnostics = check_source(source);
+    let ts2698 = diagnostics.iter().filter(|d| d.code == 2698).count();
+    assert_eq!(
+        ts2698,
+        0,
+        "TS2698 should not be emitted for rest in destructuring assignment, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Same as above but for for-of loop destructuring patterns.
+#[test]
+fn test_no_ts2698_for_destructuring_rest_in_for_of() {
+    let source = r#"
+var y: any;
+for ([{ ...y }] of [[{ abc: 1 }]]) ;
+"#;
+    let diagnostics = check_source(source);
+    let ts2698 = diagnostics.iter().filter(|d| d.code == 2698).count();
+    assert_eq!(
+        ts2698,
+        0,
+        "TS2698 should not be emitted for rest in for-of destructuring, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
