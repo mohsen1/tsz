@@ -12,7 +12,7 @@ use crate::inference::infer::{
     InferenceCandidate, InferenceContext, InferenceError, InferenceInfo, InferenceVar,
     MAX_CONSTRAINT_ITERATIONS, MAX_TYPE_RECURSION_DEPTH,
 };
-use crate::instantiation::instantiate::TypeSubstitution;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::types::{InferencePriority, ObjectFlags, TemplateSpan, TypeData, TypeId};
 use rustc_hash::FxHashSet;
@@ -118,7 +118,7 @@ impl<'a> InferenceContext<'a> {
             return Ok(ty);
         }
 
-        let (root, result, upper_bounds, upper_bounds_only) =
+        let (root, result, upper_bounds, upper_bounds_only, self_referential_bounds) =
             self.compute_constraint_result(var, None::<fn(TypeId, TypeId) -> bool>);
 
         // Validate against upper bounds.
@@ -136,6 +136,32 @@ impl<'a> InferenceContext<'a> {
                     lower: result,
                     upper,
                 });
+            }
+        }
+
+        // Validate against self-referential bounds (e.g., `T extends I2<T>`).
+        // These were skipped in compute_constraint_result because the variable
+        // occurs in its own constraint. Now that we have a resolved value, substitute
+        // it into the constraint and check if the resolved value satisfies it.
+        // This matches tsc's getInferredType which checks:
+        //   context.compareTypes(inferredType, instantiateType(constraint, nonFixingMapper))
+        // For self-referential constraints, the nonFixingMapper resolves the variable
+        // to its inferred value, making the constraint concrete and checkable.
+        if !self_referential_bounds.is_empty() && result != TypeId::ANY {
+            let names = self.type_param_names_for_root(root);
+            if let Some(&param_name) = names.first() {
+                let mut sub = TypeSubstitution::new();
+                sub.insert(param_name, result);
+                for &bound in &self_referential_bounds {
+                    let instantiated_bound = instantiate_type(self.interner, bound, &sub);
+                    if !self.is_subtype(result, instantiated_bound) {
+                        return Err(InferenceError::BoundsViolation {
+                            var,
+                            lower: result,
+                            upper: instantiated_bound,
+                        });
+                    }
+                }
             }
         }
 
@@ -173,20 +199,41 @@ impl<'a> InferenceContext<'a> {
             return Ok(ty);
         }
 
-        let (root, result, upper_bounds, upper_bounds_only) =
+        let (root, result, upper_bounds, upper_bounds_only, self_referential_bounds) =
             self.compute_constraint_result(var, Some(&mut is_subtype));
 
         // Skip upper bound validation for `any` — it satisfies all constraints in tsc.
         if !upper_bounds_only && result != TypeId::ANY {
             let filtered_upper_bounds = Self::filter_relevant_upper_bounds(&upper_bounds);
             if let Some(upper) =
-                self.first_failed_upper_bound(result, &filtered_upper_bounds, is_subtype)
+                self.first_failed_upper_bound(result, &filtered_upper_bounds, |a, b| {
+                    is_subtype(a, b)
+                })
             {
                 return Err(InferenceError::BoundsViolation {
                     var,
                     lower: result,
                     upper,
                 });
+            }
+        }
+
+        // Validate self-referential bounds (same as in resolve_with_constraints).
+        if !self_referential_bounds.is_empty() && result != TypeId::ANY {
+            let names = self.type_param_names_for_root(root);
+            if let Some(&param_name) = names.first() {
+                let mut sub = TypeSubstitution::new();
+                sub.insert(param_name, result);
+                for &bound in &self_referential_bounds {
+                    let instantiated_bound = instantiate_type(self.interner, bound, &sub);
+                    if !is_subtype(result, instantiated_bound) {
+                        return Err(InferenceError::BoundsViolation {
+                            var,
+                            lower: result,
+                            upper: instantiated_bound,
+                        });
+                    }
+                }
             }
         }
 
@@ -283,7 +330,7 @@ impl<'a> InferenceContext<'a> {
         &mut self,
         var: InferenceVar,
         mut external_is_subtype: Option<F>,
-    ) -> (InferenceVar, TypeId, Vec<TypeId>, bool)
+    ) -> (InferenceVar, TypeId, Vec<TypeId>, bool, Vec<TypeId>)
     where
         F: FnMut(TypeId, TypeId) -> bool,
     {
@@ -291,11 +338,13 @@ impl<'a> InferenceContext<'a> {
         let info = self.table.probe_value(root);
         let target_names = self.type_param_names_for_root(root);
         let mut upper_bounds = Vec::new();
+        let mut self_referential_bounds = Vec::new();
         let mut seen_upper_bounds = FxHashSet::default();
         let mut candidates = info.candidates;
         let contra_candidates = info.contra_candidates;
         for bound in info.upper_bounds {
             if self.occurs_in(root, bound) {
+                self_referential_bounds.push(bound);
                 continue;
             }
             if !target_names.is_empty() && self.upper_bound_cycles_param(bound, &target_names) {
@@ -423,7 +472,13 @@ impl<'a> InferenceContext<'a> {
             TypeId::UNKNOWN
         };
 
-        (root, result, upper_bounds, upper_bounds_only)
+        (
+            root,
+            result,
+            upper_bounds,
+            upper_bounds_only,
+            self_referential_bounds,
+        )
     }
 
     /// Resolve all type parameters using constraints.
