@@ -32,6 +32,7 @@ FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expec
 FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2440,TS2451]
 FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink.ts | expected:[TS2307] actual:[TS2694]
 FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink2.ts | expected:[TS2307] actual:[TS2694]
+FAIL TypeScript/tests/cases/compiler/declarationEmitIsolatedDeclarationErrorNotEmittedForNonEmittedFile.ts | expected:[TS9010] actual:[TS2339,TS9010]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMappedTypeTemplateTypeofSymbol.ts | expected:[TS4118] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts | expected:[TS4094] actual:[TS4094]
 FAIL TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts | expected:[TS2883] actual:[]
@@ -2638,7 +2639,6 @@ PASS TypeScript/tests/cases/compiler/declarationEmitInvalidExport.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReference.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReference2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReferenceAllowJs.ts
-PASS TypeScript/tests/cases/compiler/declarationEmitIsolatedDeclarationErrorNotEmittedForNonEmittedFile.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitJsReExportDefault.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitKeywordDestructuring.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitLambdaWithMissingTypeParameterNoCrash.ts
