@@ -13,6 +13,19 @@ impl<'a> CheckerState<'a> {
         call.arguments.as_ref()?.nodes.first().copied()
     }
 
+    /// Returns `true` if the call expression at `idx` has exactly one argument.
+    pub(super) fn call_has_single_argument(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        call.arguments
+            .as_ref()
+            .map_or(false, |args| args.nodes.len() == 1)
+    }
+
     pub(super) fn overload_callee_is_property_like(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 

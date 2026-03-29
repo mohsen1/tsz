@@ -2149,12 +2149,27 @@ impl<'a> CheckerState<'a> {
                 failure.code
                     == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
             });
+        // When all overload failures are argument type mismatches, anchor the
+        // TS2769 error at the offending argument, not the callee. This matches
+        // tsc's behavior: when every overload's per-overload TS2345 diagnostic
+        // lands on the same argument span, tsc reuses that span for TS2769
+        // regardless of whether the callee is a property access.
         let anchor_plain_call_argument =
             all_failures_are_argument_mismatches && !self.overload_callee_is_property_like(idx);
+        // For property-like callees (e.g., `obj.method(arg)`), also anchor at the
+        // argument when all failures necessarily target the same argument. TSC checks
+        // if all per-overload diagnostics share the same position (start + length).
+        // Since we don't track per-overload spans here, we approximate: for single-
+        // argument calls where all failures are TS2345, they necessarily all point to
+        // the same (only) argument.
+        let anchor_property_call_argument = all_failures_are_argument_mismatches
+            && self.overload_callee_is_property_like(idx)
+            && self.call_has_single_argument(idx);
         let anchor_first_argument = identical_argument_failures
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches
-            || anchor_plain_call_argument;
+            || anchor_plain_call_argument
+            || anchor_property_call_argument;
 
         let anchor_kind = if literal_anchor.is_some() {
             DiagnosticAnchorKind::Exact
