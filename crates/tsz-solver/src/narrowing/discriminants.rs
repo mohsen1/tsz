@@ -734,6 +734,26 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
+        // PERF: For single-property discriminant paths, try the fast path first
+        // using the type list directly from the union, avoiding a Vec allocation
+        // from resolve_members_and_evaluator. This is the common case for
+        // discriminated union narrowing (e.g., `x.kind === "foo"`).
+        if property_path.len() == 1 {
+            let resolved = self.resolve_type(union_type);
+            if let Some(members_id) = union_list_id(self.db, resolved) {
+                let members = self.db.type_list(members_id);
+                if let Some(fast_result) = self.fast_narrow_top_level_discriminant(
+                    union_type,
+                    &members,
+                    property_path[0],
+                    literal_value,
+                    true,
+                ) {
+                    return fast_result;
+                }
+            }
+        }
+
         let (resolved_type, members, property_evaluator) =
             self.resolve_members_and_evaluator(union_type);
 
@@ -746,18 +766,6 @@ impl<'a> NarrowingContext<'a> {
             "Narrowing union with {} members by discriminant property",
             members.len()
         );
-
-        if property_path.len() == 1
-            && let Some(fast_result) = self.fast_narrow_top_level_discriminant(
-                union_type,
-                &members,
-                property_path[0],
-                literal_value,
-                true,
-            )
-        {
-            return fast_result;
-        }
 
         let mut matching: Vec<TypeId> = Vec::new();
         // Track whether any member actually has the discriminant property.
@@ -931,6 +939,24 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
+        // PERF: For single-property discriminant paths, try the fast path first
+        // using the type list directly from the union, avoiding a Vec allocation.
+        if property_path.len() == 1 {
+            let resolved = self.resolve_type(union_type);
+            if let Some(members_id) = union_list_id(self.db, resolved) {
+                let members = self.db.type_list(members_id);
+                if let Some(fast_result) = self.fast_narrow_top_level_discriminant(
+                    union_type,
+                    &members,
+                    property_path[0],
+                    excluded_value,
+                    false,
+                ) {
+                    return fast_result;
+                }
+            }
+        }
+
         let (_resolved, members, property_evaluator) =
             self.resolve_members_and_evaluator(union_type);
 
@@ -939,18 +965,6 @@ impl<'a> NarrowingContext<'a> {
             excluded_value.0,
             members.len()
         );
-
-        if property_path.len() == 1
-            && let Some(fast_result) = self.fast_narrow_top_level_discriminant(
-                union_type,
-                &members,
-                property_path[0],
-                excluded_value,
-                false,
-            )
-        {
-            return fast_result;
-        }
 
         let mut remaining: Vec<TypeId> = Vec::new();
 
