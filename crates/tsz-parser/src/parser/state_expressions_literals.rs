@@ -2272,7 +2272,7 @@ impl ParserState {
         }
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
+            self.parse_return_type()
         } else {
             NodeIndex::NONE
         };
@@ -2371,7 +2371,7 @@ impl ParserState {
                     diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
                 );
             }
-            let _ = self.parse_type();
+            let _ = self.parse_return_type();
         }
 
         // Parse body if present. Missing body is reported in grammar check, not here.
@@ -2557,7 +2557,7 @@ impl ParserState {
         };
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
+            self.parse_return_type()
         } else {
             NodeIndex::NONE
         };
