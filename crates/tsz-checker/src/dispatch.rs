@@ -53,16 +53,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         request: &TypingRequest,
     ) -> TypeId {
         // Hard stack guard: bail when remaining stack is critically low.
-        // Amortize the stacker probe (involves reading the stack pointer) to
-        // every 64th call. 256 KB of headroom is enough to absorb 64 nested
-        // frames (~4 KB each) between probes.
-        if crate::checkers_domain::stack_overflow_tripped()
-            || (crate::checkers_domain::should_probe_stack()
-                && stacker::remaining_stack().is_some_and(|r| r < 256 * 1024))
-        {
-            crate::checkers_domain::trip_stack_overflow();
+        if crate::checkers_domain::stack_overflow_tripped() {
             return TypeId::ERROR;
         }
+        // Dynamically grow the stack when depth becomes significant.
+        // `stacker::maybe_grow(red_zone, new_stack, closure)` checks if the
+        // remaining stack is less than `red_zone` bytes; if so it allocates a
+        // fresh `new_stack`-byte segment and runs the closure there. This
+        // replaces the previous amortized-probe + bail approach, which could
+        // miss rapid stack consumption between probes. The stacker approach
+        // lets deeply recursive type-level libraries (ts-toolbelt, ts-essentials)
+        // succeed instead of crashing.
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.dispatch_type_computation_inner(idx, request)
+        })
+    }
+
+    fn dispatch_type_computation_inner(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };

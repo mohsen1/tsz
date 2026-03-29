@@ -416,8 +416,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Inner subtype check (after cycle detection and type evaluation)
+    /// Inner subtype check (after cycle detection and type evaluation).
+    ///
+    /// Wrapped with `stacker::maybe_grow()` so that deeply recursive structural
+    /// comparisons (e.g. ts-toolbelt type-level tests) grow the stack dynamically
+    /// instead of crashing even when the logical `RecursionGuard` has headroom.
     pub(crate) fn check_subtype_inner(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.check_subtype_inner_impl(source, target)
+        })
+    }
+
+    /// Actual structural comparison -- separated so `stacker::maybe_grow` can wrap it.
+    fn check_subtype_inner_impl(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
         // Types are already evaluated in check_subtype, so no need to re-evaluate here
 
         // Without strictNullChecks, null/undefined are assignable to all types

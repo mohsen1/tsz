@@ -631,6 +631,30 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         sym_id: tsz_binder::SymbolId,
         def_id: tsz_solver::def::DefId,
     ) {
+        // Depth guard for recursive type alias resolution chains.
+        // ts-toolbelt has type aliases like `type Merge<...> = ...Patch<...Diff<...>>`
+        // where each referenced alias recursively triggers lowering of its body,
+        // creating unbounded stack growth. Cap at 100 levels.
+        thread_local! {
+            static ALIAS_RESOLVE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        let depth = ALIAS_RESOLVE_DEPTH.get();
+        if depth >= 100 {
+            return;
+        }
+        // Dynamic stack growth: if remaining stack is low, grow it.
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            ALIAS_RESOLVE_DEPTH.set(depth + 1);
+            self.ensure_type_alias_resolved_inner(sym_id, def_id);
+            ALIAS_RESOLVE_DEPTH.set(depth);
+        });
+    }
+
+    fn ensure_type_alias_resolved_inner(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        def_id: tsz_solver::def::DefId,
+    ) {
         use tsz_binder::symbol_flags;
 
         if let Ok(env) = self.ctx.type_env.try_borrow()

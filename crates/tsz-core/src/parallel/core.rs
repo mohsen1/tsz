@@ -257,12 +257,18 @@ static RAYON_POOL_INIT: Once = Once::new();
 /// Ensure Rayon global pool is configured once with stack size suitable for checker recursion.
 ///
 /// We initialize lazily to avoid paying global pool startup cost for single-file sequential paths.
+///
+/// Worker threads get the same 64 MB stack as the main CLI thread. Type-level
+/// libraries (ts-toolbelt, ts-essentials) can produce deeply nested conditional/
+/// mapped type evaluation chains that easily exceed 8 MB even with logical
+/// recursion guards, because every `evaluate -> evaluate_application ->
+/// instantiate -> evaluate` cycle still consumes real stack frames.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn ensure_rayon_global_pool() {
     RAYON_POOL_INIT.call_once(|| {
         // If the pool was already initialized through another rayon call, keep going.
         let _ = rayon::ThreadPoolBuilder::new()
-            .stack_size(8 * 1024 * 1024)
+            .stack_size(64 * 1024 * 1024)
             .build_global();
     });
 }
