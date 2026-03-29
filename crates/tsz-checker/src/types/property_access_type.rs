@@ -1083,6 +1083,19 @@ impl<'a> CheckerState<'a> {
             display_object_type = preferred_type;
         }
 
+        // For IndexAccess types (e.g., Entries[EntryId]), resolve to the base
+        // constraint for display purposes. tsc shows the apparent type in error
+        // messages (e.g., 'NumClass<number> | StrClass<string>'), not the raw
+        // indexed access type (e.g., 'Entries[EntryId]').
+        if let Some(tsz_solver::types::TypeData::IndexAccess(_, _)) =
+            self.ctx.types.lookup(display_object_type)
+        {
+            let resolved = self.resolve_index_access_base_constraint(display_object_type);
+            if resolved != display_object_type {
+                display_object_type = resolved;
+            }
+        }
+
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
             return self.get_type_of_private_property_access(
                 idx,
@@ -2400,5 +2413,48 @@ impl<'a> CheckerState<'a> {
         let init_type = self.get_type_of_node(var_decl.initializer);
         self.is_enum_member_type_for_widening(init_type)
             .then_some(init_type)
+    }
+
+    /// Resolve the base constraint of an IndexAccess type for display purposes.
+    ///
+    /// For `T[K]` where `T extends C` and `K extends D`, resolves through the
+    /// constraint chain to produce the concrete type (e.g., `C[D]` evaluated).
+    /// This matches tsc's behavior of showing the apparent type in error messages.
+    fn resolve_index_access_base_constraint(&mut self, type_id: TypeId) -> TypeId {
+        // First try standard evaluation (resolves T to its constraint)
+        let evaluated = self.evaluate_type_with_env(type_id);
+
+        // If fully resolved (no longer an IndexAccess), use it
+        if !matches!(
+            self.ctx.types.lookup(evaluated),
+            Some(tsz_solver::types::TypeData::IndexAccess(_, _))
+        ) {
+            return evaluated;
+        }
+
+        // Still an IndexAccess — try resolving the index type parameter's constraint.
+        // E.g., {[s:string]:V}[K] where K extends keyof T => evaluate {[s:string]:V}[keyof T] => V
+        if let Some(tsz_solver::types::TypeData::IndexAccess(ia_obj, ia_idx)) =
+            self.ctx.types.lookup(evaluated)
+        {
+            if let Some(tsz_solver::types::TypeData::TypeParameter(info)) =
+                self.ctx.types.lookup(ia_idx)
+            {
+                if let Some(constraint) = info.constraint {
+                    let resolved = self
+                        .ctx
+                        .types
+                        .evaluate_index_access_with_options(ia_obj, constraint, false);
+                    if !matches!(
+                        self.ctx.types.lookup(resolved),
+                        Some(tsz_solver::types::TypeData::IndexAccess(_, _))
+                    ) {
+                        return resolved;
+                    }
+                }
+            }
+        }
+
+        type_id
     }
 }

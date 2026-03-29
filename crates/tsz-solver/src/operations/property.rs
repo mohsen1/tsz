@@ -797,6 +797,38 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if evaluated != obj_type {
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
+                    // Evaluation didn't change the type (still deferred).
+                    // Try resolving the base constraint of the indexed access:
+                    // if the index is a type parameter with a constraint, evaluate
+                    // object[constraint] to get the apparent result type.
+                    // E.g., {[s:string]:V}[K] where K extends keyof T => V
+                    if let Some(TypeData::IndexAccess(ia_obj, ia_idx)) =
+                        self.interner().lookup(obj_type)
+                    {
+                        if let Some(TypeData::TypeParameter(info)) = self.interner().lookup(ia_idx)
+                        {
+                            if let Some(constraint) = info.constraint {
+                                let base_constraint = self.db.evaluate_index_access_with_options(
+                                    ia_obj,
+                                    constraint,
+                                    self.no_unchecked_indexed_access,
+                                );
+                                if base_constraint != obj_type
+                                    && !matches!(
+                                        self.interner().lookup(base_constraint),
+                                        Some(TypeData::IndexAccess(_, _))
+                                    )
+                                {
+                                    return self.resolve_property_access_inner(
+                                        base_constraint,
+                                        prop_name,
+                                        prop_atom,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     let prop_atom =
                         prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
