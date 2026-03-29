@@ -841,6 +841,11 @@ impl<'a> FlowAnalyzer<'a> {
         if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return false;
         }
+        // Ambient declarations (`declare var x;`) have no runtime initialization.
+        // Their `any` type should not be narrowed via control-flow analysis.
+        if self.arena.is_in_ambient_context(decl_idx) {
+            return false;
+        }
         if let Some(ext) = self.arena.get_extended(decl_idx)
             && ext.parent.is_some()
             && let Some(parent_node) = self.arena.get(ext.parent)
