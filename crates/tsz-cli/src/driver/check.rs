@@ -888,8 +888,27 @@ pub(super) fn collect_diagnostics(
     // Build the shared SymbolId→file-index map once; shared via Arc across all checkers.
     // TODO: build_global_symbol_file_index not yet implemented on ProjectEnv
 
+    // Create a shared DefinitionStore for all parallel checkers.
+    // CRITICAL: All parallel checkers MUST share the same DefinitionStore so that
+    // DefId allocation is globally unique. Without this, independent DefId sequences
+    // in separate checkers cause TypeId collisions via Lazy(DefId) interning.
+    {
+        let mut all_semantic_defs = program.semantic_defs.clone();
+        for file in &program.files {
+            for (sym_id, entry) in &file.semantic_defs {
+                all_semantic_defs.insert(*sym_id, entry.clone());
+            }
+        }
+        let shared_store = Arc::new(tsz_solver::def::DefinitionStore::from_semantic_defs(
+            &all_semantic_defs,
+            |s| program.type_interner.intern_string(s),
+        ));
+        shared_store.init_file_locks(program.files.len());
+        project_env.shared_definition_store = Some(shared_store);
+    }
+
     // Prime Array<T> base type with global augmentations before any file checks.
-    // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
+    // The prime checker uses the shared DefinitionStore (via project_env.apply_to).
     if !program.files.is_empty() && !lib_contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];

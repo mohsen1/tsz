@@ -1547,6 +1547,9 @@ pub struct ProjectEnv {
     /// fingerprint against this value and skip the expensive O(N) binder scan
     /// when the project topology is unchanged.
     pub last_skeleton_fingerprint: Option<u64>,
+    /// Shared `DefinitionStore` for parallel checking.
+    /// When set, all parallel checkers share this store for globally unique DefIds.
+    pub shared_definition_store: Option<Arc<DefinitionStore>>,
 }
 
 impl Default for ProjectEnv {
@@ -1574,6 +1577,7 @@ impl Default for ProjectEnv {
             typescript_dom_replacement_globals: (false, false, false),
             has_deprecation_diagnostics: false,
             last_skeleton_fingerprint: None,
+            shared_definition_store: None,
         }
     }
 }
@@ -1649,6 +1653,11 @@ impl ProjectEnv {
         ctx.set_resolved_module_request_errors(Arc::clone(&self.resolved_module_request_errors));
         ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));
         ctx.file_is_esm_map = Some(Arc::clone(&self.file_is_esm_map));
+        // Install shared DefinitionStore for globally unique DefIds in parallel checking.
+        if let Some(ref store) = self.shared_definition_store {
+            ctx.definition_store = Arc::clone(store);
+            ctx.warm_local_caches_from_shared_store();
+        }
     }
 
     /// Build the 4 global binder indices from `all_binders`.

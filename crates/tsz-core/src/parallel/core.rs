@@ -3488,6 +3488,11 @@ pub fn check_files_parallel(
             Arc::new(crate::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns))
         });
 
+    // Initialize per-file delegation locks for parallel correctness.
+    program
+        .definition_store
+        .init_file_locks(program.files.len());
+
     // Closure that checks a single file and returns its result.
     // Extracted so both sequential and parallel paths use identical logic.
     let check_one_file = |file_idx: usize, file: &BoundFile| -> FileCheckResult {

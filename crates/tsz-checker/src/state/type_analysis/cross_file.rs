@@ -248,6 +248,21 @@ impl<'a> CheckerState<'a> {
                 return Some((cached_type, Vec::new()));
             }
 
+            // Thread-safe fast path: check the global resolved_symbol_types cache.
+            // When parallel checking is enabled, another thread may have already
+            // resolved this symbol's type via cross-file delegation.
+            if needs_cross_file_delegation {
+                let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
+                if let Some(cached_type) = self
+                    .ctx
+                    .definition_store
+                    .get_resolved_symbol_type(sym_id.0, target_file_idx as u32)
+                {
+                    self.ctx.symbol_types.insert(sym_id, cached_type);
+                    return Some((cached_type, Vec::new()));
+                }
+            }
+
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
             if !Self::enter_cross_arena_delegation() {
@@ -457,6 +472,16 @@ impl<'a> CheckerState<'a> {
             // This prevents redundant child checker creation for the same lib symbol.
             if !needs_cross_file_delegation {
                 self.ctx.lib_delegation_cache.insert(sym_id, result);
+            }
+
+            // Write through to the global resolved_symbol_types cache for parallel threads.
+            if needs_cross_file_delegation && result != TypeId::ERROR {
+                let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
+                self.ctx.definition_store.cache_resolved_symbol_type(
+                    sym_id.0,
+                    target_file_idx as u32,
+                    result,
+                );
             }
 
             self.ctx.leave_recursion();
