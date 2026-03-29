@@ -381,11 +381,6 @@ impl<'a> NarrowingContext<'a> {
                             };
                         }
                         // Check if member is a generic instantiation of the instance type.
-                        // For example, Set<string> is Application(base=Lazy(DefId_Set), args=[string])
-                        // and the instance type from `instanceof Set` is Lazy(DefId_Set).
-                        // In this case, keep the member — it's already a specific instantiation
-                        // of the constructor's type. Without this, Set<string> vs Set<T> fails
-                        // bidirectional assignability and falls through to intersection.
                         if self.is_instantiation_of(member, instance_type) {
                             trace!(
                                 "Union member {} is a generic instantiation of instance type {}, keeping",
@@ -706,6 +701,11 @@ impl<'a> NarrowingContext<'a> {
         } else {
             lazy_def_id(self.db, instance_type)
         };
+
+        // Fallback: if the instance type is an already-resolved Object (e.g., from
+        // class_def_for_instance_type), try the reverse lookup to find its class DefId.
+        let instance_def =
+            instance_def.or_else(|| self.resolver?.class_def_for_instance_type(instance_type));
 
         let instance_def = match instance_def {
             Some(d) => d,
