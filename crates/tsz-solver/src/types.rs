@@ -1454,6 +1454,12 @@ bitflags::bitflags! {
         /// `DT<{base: Base, new: New & Base}>` where `S["base"] & S["new"]`
         /// normalizes to the same type for both.
         const REJECTION_UNRELIABLE = 1 << 3;
+        /// The type parameter was found in a direct (non-mapped-type) position,
+        /// such as a function parameter, return type, or property type. When set
+        /// alongside NEEDS_STRUCTURAL_FALLBACK, the variance rejection can be
+        /// trusted because the direct usage provides a reliable variance signal
+        /// that dominates over the unreliable mapped-type contribution.
+        const DIRECT_USAGE = 1 << 4;
     }
 }
 
@@ -1489,6 +1495,13 @@ impl Variance {
     /// type arguments, producing structurally equivalent instantiations.
     pub const fn rejection_unreliable(&self) -> bool {
         self.contains(Self::REJECTION_UNRELIABLE)
+    }
+
+    /// Check if the type parameter was found in a direct (non-mapped-type) position.
+    /// When true alongside `needs_structural_fallback()`, the variance rejection
+    /// is still reliable because the direct usage provides a trustworthy signal.
+    pub const fn has_direct_usage(&self) -> bool {
+        self.contains(Self::DIRECT_USAGE)
     }
 
     /// Compose two variances (for nested generics).

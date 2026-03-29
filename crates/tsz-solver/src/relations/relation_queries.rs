@@ -435,10 +435,17 @@ pub fn check_application_variance<R: TypeResolver>(
     }
 
     // When structural fallback is needed (mapped types with modifiers like
-    // +?/-?/+readonly/-readonly), variance failures are NOT definitive.
-    // Return None to fall through to structural comparison.
+    // +?/-?/+readonly/-readonly), variance failures are NOT definitive —
+    // UNLESS the type parameter also has direct usage in non-mapped-type
+    // positions (function params, properties). Direct usage provides a
+    // reliable variance signal, so the rejection can be trusted. This matches
+    // tsc's probe-based variance where interfaces with both call signatures
+    // and mapped-type members get plain Invariant (no Unmeasurable flag).
     if needs_structural_fallback {
-        return None;
+        let has_reliable_rejection = variances.iter().any(|v| v.has_direct_usage());
+        if !has_reliable_rejection {
+            return None;
+        }
     }
     Some(false)
 }
