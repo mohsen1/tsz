@@ -2459,7 +2459,7 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             // Union can arise from construct-signature return-type merging
             // (get_construct_return_type_union). All members must be valid base types.
             let members = db.type_list(list_id);
-            members.iter().all(|&m| is_valid_base_type(db, m))
+            !members.is_empty() && members.iter().all(|&m| is_valid_base_type(db, m))
         }
         Some(TypeData::Lazy(_)) => true, // unresolved references are assumed valid
         Some(TypeData::Application(_)) => true, // generic applications are object-like
