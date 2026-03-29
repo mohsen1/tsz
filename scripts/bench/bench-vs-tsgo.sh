@@ -66,6 +66,9 @@ NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
 # pinned canary commit for reproducible benchmarks
 NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
+LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
+LARGE_TS_REF="${LARGE_TS_REF:-}"
+LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
 
 # Parse arguments
 QUICK_MODE=false
@@ -998,6 +1001,71 @@ run_nextjs_benchmarks() {
     fi
 
     run_project_benchmark "nextjs" "$tsconfig" "$src_dir"
+    echo
+}
+
+ensure_large_ts_repo_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if [ ! -d "$LARGE_TS_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning large-ts-repo fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$LARGE_TS_REPO" "$LARGE_TS_DIR"
+    fi
+
+    if [ -n "$LARGE_TS_REF" ]; then
+        local current_ref
+        current_ref="$(git -C "$LARGE_TS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+        if [ "$current_ref" != "$LARGE_TS_REF" ]; then
+            echo -e "${CYAN}Pinning large-ts-repo to ${LARGE_TS_REF:0:12}...${NC}"
+            git -C "$LARGE_TS_DIR" fetch --quiet --depth 1 origin "$LARGE_TS_REF"
+            git -C "$LARGE_TS_DIR" checkout --quiet --detach FETCH_HEAD
+        fi
+    fi
+
+    # Create flat tsconfig (includes all files directly) since tsz doesn't support
+    # --build mode for project references yet
+    local flat_tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << 'FLATEOF'
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2024"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["packages/**/src/**/*.ts"]
+}
+FLATEOF
+    fi
+}
+
+run_large_ts_repo_benchmarks() {
+    if ! is_benchmark_selected "large-ts-repo"; then
+        return
+    fi
+
+    print_header "Real-world External Project - large-ts-repo (6000+ files, parallel stress test)"
+    ensure_large_ts_repo_fixture
+    echo -e "${GREEN}✓${NC} large-ts-repo pinned at $(git -C "$LARGE_TS_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
+    local src_dir="$LARGE_TS_DIR/packages"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "large-ts-repo" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -2166,7 +2234,8 @@ main() {
     run_ts_toolbelt_benchmarks
     run_ts_essentials_benchmarks
     run_nextjs_benchmarks
-    
+    run_large_ts_repo_benchmarks
+
     print_header "Synthetic Benchmarks - Scaling Test"
     
     if [ "$QUICK_MODE" = true ]; then
