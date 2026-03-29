@@ -137,12 +137,9 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // TS9019: Binding elements can't be exported directly
+                // TSC emits per element name, not per whole pattern.
                 if self.is_binding_pattern(decl.name) {
-                    self.error_at_node(
-                        decl.name,
-                        diagnostic_messages::BINDING_ELEMENTS_CANT_BE_EXPORTED_DIRECTLY_WITH_ISOLATEDDECLARATIONS,
-                        diagnostic_codes::BINDING_ELEMENTS_CANT_BE_EXPORTED_DIRECTLY_WITH_ISOLATEDDECLARATIONS,
-                    );
+                    self.report_isolated_decl_binding_elements(decl.name);
                     continue;
                 }
 
@@ -396,7 +393,8 @@ impl<'a> CheckerState<'a> {
         {
             return assertion.type_node;
         }
-        param.name
+        // TSC points at the initializer expression, not the parameter name
+        param.initializer
     }
 
     /// Check if a parameter default is simple enough to not need a type annotation.
@@ -448,6 +446,10 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION =>
             {
+                true
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                // Template expressions always infer as `string`
                 true
             }
             _ => false,
@@ -1201,6 +1203,36 @@ impl<'a> CheckerState<'a> {
         };
         node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
             || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+    }
+
+    /// Report TS9019 for each named binding element in a binding pattern.
+    fn report_isolated_decl_binding_elements(&mut self, pattern_idx: NodeIndex) {
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        let element_indices: Vec<NodeIndex> = pattern.elements.nodes.clone();
+        for elem_idx in element_indices {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind == syntax_kind_ext::BINDING_ELEMENT {
+                if let Some(binding_elem) = self.ctx.arena.get_binding_element(elem_node) {
+                    let name_idx = binding_elem.name;
+                    if self.is_binding_pattern(name_idx) {
+                        self.report_isolated_decl_binding_elements(name_idx);
+                    } else if name_idx.is_some() {
+                        self.error_at_node(
+                            name_idx,
+                            diagnostic_messages::BINDING_ELEMENTS_CANT_BE_EXPORTED_DIRECTLY_WITH_ISOLATEDDECLARATIONS,
+                            diagnostic_codes::BINDING_ELEMENTS_CANT_BE_EXPORTED_DIRECTLY_WITH_ISOLATEDDECLARATIONS,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Check if an array literal has spread elements.
