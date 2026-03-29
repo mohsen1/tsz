@@ -1139,7 +1139,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             fallback_return: TypeId::ERROR,
                         };
                     }
-                    if track_direct_placeholder_vars {
+                    if track_direct_placeholder_vars
+                        && !matches!(
+                            self.interner.lookup(target_type),
+                            Some(TypeData::Union(_) | TypeData::Intersection(_))
+                        )
+                    {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
                             target_type,
                             &var_map,
@@ -1149,7 +1154,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 } else {
                     // Target type contains placeholders - check against their constraints
-                    if track_direct_placeholder_vars {
+                    if track_direct_placeholder_vars
+                        && !matches!(
+                            self.interner.lookup(target_type),
+                            Some(TypeData::Union(_) | TypeData::Intersection(_))
+                        )
+                    {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
                             target_type,
                             &var_map,
@@ -1190,12 +1200,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             } else if !is_rest_param_arg {
-                direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                    target_type,
-                    &var_map,
-                    &mut placeholder_probe_map,
-                    &mut placeholder_visited,
-                ));
+                // Only add to direct_param_vars when the type parameter appears
+                // as a naked (top-level) parameter type, NOT inside a union/intersection.
+                // When T appears in `T | string`, inference candidates come from union
+                // decomposition and should merge into a union (tsc's getCommonSupertype).
+                // When T appears as a naked `T` in multiple parameters (e.g., `x: T, y: T`),
+                // first-wins behavior applies for incompatible candidates.
+                let is_union_or_intersection = matches!(
+                    self.interner.lookup(target_type),
+                    Some(TypeData::Union(_) | TypeData::Intersection(_))
+                );
+                if !is_union_or_intersection {
+                    direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                        target_type,
+                        &var_map,
+                        &mut placeholder_probe_map,
+                        &mut placeholder_visited,
+                    ));
+                }
             }
 
             // When the target is a bare type parameter placeholder whose constraint
@@ -1463,7 +1485,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .as_ref()
                     .and_then(|params| self.param_type_for_arg_index(params, i, arg_types.len()));
 
-                if original_has_placeholders && !is_rest_param_arg {
+                if original_has_placeholders
+                    && !is_rest_param_arg
+                    && !matches!(
+                        self.interner.lookup(target_type),
+                        Some(TypeData::Union(_) | TypeData::Intersection(_))
+                    )
+                {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
                         target_type,
                         &var_map,
