@@ -1655,6 +1655,21 @@ impl<'a> InferenceContext<'a> {
                 continue;
             }
 
+            // Don't fix a variable to `never` when it's the only covariant
+            // candidate and there are no contra-candidates. `never` is the
+            // bottom type and provides no useful contextual type for Round 2.
+            // If a deferred (context-sensitive) argument provides a better
+            // candidate in Round 2, it should be used instead. If `never` is
+            // truly the correct inference, the final resolution will still
+            // produce `never` after all rounds complete.
+            if result == TypeId::NEVER
+                && !candidates.is_empty()
+                && candidates.iter().all(|c| c.type_id == TypeId::NEVER)
+                && concrete_contra_candidates.is_empty()
+            {
+                continue;
+            }
+
             // Fix this variable by setting resolved field
             // This prevents Round 2 from overriding with lower-priority constraints
             self.table.union_value(
