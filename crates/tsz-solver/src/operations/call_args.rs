@@ -341,6 +341,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> Option<CallResult> {
         let arg_count = arg_types.len();
         for (i, arg_type) in arg_types.iter().enumerate() {
+            // Detect spread marker tuples [...T] created by the checker for generic
+            // TypeParameter spreads.  Only match markers: a 1-rest-element tuple
+            // whose inner type is a TypeParameter (not a regular variadic tuple).
+            if let Some(rest_param) = params.last().filter(|p| p.rest)
+                && i >= params.len().saturating_sub(1)
+                && let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(*arg_type)
+            {
+                let elems = self.interner.tuple_list(elems_id);
+                if elems.len() == 1
+                    && elems[0].rest
+                    && matches!(
+                        self.interner.lookup(elems[0].type_id),
+                        Some(TypeData::TypeParameter(_))
+                    )
+                {
+                    let inner = elems[0].type_id;
+                    let rest_type = self.unwrap_readonly(rest_param.type_id);
+                    let rest_start = params.len().saturating_sub(1);
+                    let consumed_offset = i - rest_start;
+                    let remaining_rest_type =
+                        self.remaining_rest_type_after_offset(rest_type, consumed_offset);
+                    if self.checker.is_assignable_to(inner, remaining_rest_type) {
+                        continue;
+                    }
+                    return Some(CallResult::ArgumentTypeMismatch {
+                        index: i,
+                        expected: remaining_rest_type,
+                        actual: inner,
+                        fallback_return: TypeId::ERROR,
+                    });
+                }
+            }
+
             let Some(param_type) = self.param_type_for_arg_index(params, i, arg_count) else {
                 break;
             };
@@ -882,6 +915,44 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         utils::expand_tuple_rest(self.interner, type_id)
     }
 
+    /// Given a rest param type and an offset of consumed fixed elements,
+    /// return the remaining type that the spread should match.
+    /// For Array types or TypeParameters, return as-is (spread covers all).
+    /// For Tuple types like `[number, ...U]` with offset 1, return `U`
+    /// (the variadic portion after the fixed prefix).
+    fn remaining_rest_type_after_offset(&self, rest_type: TypeId, consumed: usize) -> TypeId {
+        if consumed == 0 {
+            return rest_type;
+        }
+        if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(rest_type) {
+            let elems = self.interner.tuple_list(elems_id);
+            // Skip `consumed` fixed (non-rest) elements.  The first rest element
+            // covers the entire variadic span; return its inner type directly so
+            // that `U <: U` succeeds when the spread marker wraps the same var.
+            let mut skipped = 0;
+            for elem in elems.iter() {
+                if elem.rest {
+                    // Reached the variadic portion — return its type.
+                    return elem.type_id;
+                }
+                skipped += 1;
+                if skipped >= consumed {
+                    // Build a sub-tuple from the remaining elements.
+                    let remaining: Vec<TupleElement> = elems[skipped..].to_vec();
+                    if remaining.is_empty() {
+                        return rest_type;
+                    }
+                    // If only one rest element remains, return its inner type.
+                    if remaining.len() == 1 && remaining[0].rest {
+                        return remaining[0].type_id;
+                    }
+                    return self.interner.tuple(remaining);
+                }
+            }
+        }
+        rest_type
+    }
+
     pub(crate) fn rest_tuple_inference_target(
         &mut self,
         params: &[ParamInfo],
@@ -962,16 +1033,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let tuple_elements: Vec<TupleElement> = if start_index < end_index {
             arg_types[start_index..end_index]
                 .iter()
-                .map(|&ty| TupleElement {
-                    type_id: ty,
-                    name: None,
-                    optional: false,
-                    rest: false,
+                .flat_map(|&ty| {
+                    // Recognize spread marker tuples [...T] from the checker.
+                    // Only match markers whose inner type is a TypeParameter.
+                    if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(ty) {
+                        let elems = self.interner.tuple_list(elems_id);
+                        if elems.len() == 1
+                            && elems[0].rest
+                            && matches!(
+                                self.interner.lookup(elems[0].type_id),
+                                Some(TypeData::TypeParameter(_))
+                            )
+                        {
+                            return elems.to_vec();
+                        }
+                    }
+                    vec![TupleElement {
+                        type_id: ty,
+                        name: None,
+                        optional: false,
+                        rest: false,
+                    }]
                 })
                 .collect()
         } else {
             Vec::new()
         };
+        // When all elements are rest-spread type parameters (e.g., [...U] from a
+        // single spread argument), use the inner type directly rather than wrapping
+        // in another tuple.  This ensures `f(...u)` where `u: U extends string[]`
+        // constrains `T = U` (not `T = [U]`) against `...args: T`.
+        if tuple_elements.len() == 1 && tuple_elements[0].rest {
+            return Some((start_index, target_type, tuple_elements[0].type_id));
+        }
         Some((
             start_index,
             target_type,
