@@ -74,10 +74,13 @@ impl<'a> CheckerState<'a> {
                 // computed properties from lib types or inherited properties.
                 match self.object_has_iterator_method(shape_id) {
                     Some(true) => {
-                        // [Symbol.iterator] exists and is callable, but we must also
-                        // verify that calling it returns a valid iterator (has next()).
-                        // Use the full property access chain to verify.
-                        self.type_has_symbol_iterator_via_property_access(type_id)
+                        // [Symbol.iterator] exists and is callable. Verify the
+                        // iterator protocol, but also accept cases where the return
+                        // type is `undefined`/`void` — these occur when the method
+                        // has a circular return type that resolves to implicit `any`
+                        // (e.g., `for (var v of new C) { }` where `C.[Symbol.iterator]()`
+                        // returns `v`). TypeScript does not emit TS2488 in these cases.
+                        self.type_has_symbol_iterator_via_property_access_lenient(type_id)
                     }
                     Some(false) => false,
                     None => self.type_has_symbol_iterator_via_property_access(type_id),
@@ -173,6 +176,30 @@ impl<'a> CheckerState<'a> {
             } => {
                 // Verify the full iterator protocol: calling [Symbol.iterator]()
                 // must return something with a `next()` method.
+                self.iterator_fn_returns_valid_iterator(type_id, iterator_fn_type)
+            }
+            _ => false,
+        }
+    }
+
+    /// Like `type_has_symbol_iterator_via_property_access`, but also accepts cases
+    /// where the iterator factory returns `undefined` or `void`. This handles
+    /// circular reference scenarios where the method return type wasn't updated to
+    /// `any` after circular detection (e.g., for-of self-referencing variables).
+    fn type_has_symbol_iterator_via_property_access_lenient(&mut self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let result = self.resolve_property_access_with_env(type_id, "[Symbol.iterator]");
+        match result {
+            PropertyAccessResult::Success {
+                type_id: iterator_fn_type,
+                ..
+            } => {
+                let iterator_type = self.get_call_return_type(iterator_fn_type);
+                // Accept undefined/void as they typically result from circular
+                // reference resolution where the type should really be `any`.
+                if iterator_type == TypeId::UNDEFINED || iterator_type == TypeId::VOID {
+                    return true;
+                }
                 self.iterator_fn_returns_valid_iterator(type_id, iterator_fn_type)
             }
             _ => false,
