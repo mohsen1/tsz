@@ -826,7 +826,7 @@ impl<'a> Printer<'a> {
             return None;
         }
         let rest = &source[start..];
-        let trimmed = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
+        let trimmed = rest.trim_start_matches([' ', '\t']);
         if !trimmed.starts_with("//") {
             return None;
         }

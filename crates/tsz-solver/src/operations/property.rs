@@ -804,28 +804,25 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // E.g., {[s:string]:V}[K] where K extends keyof T => V
                     if let Some(TypeData::IndexAccess(ia_obj, ia_idx)) =
                         self.interner().lookup(obj_type)
+                        && let Some(TypeData::TypeParameter(info)) = self.interner().lookup(ia_idx)
+                        && let Some(constraint) = info.constraint
                     {
-                        if let Some(TypeData::TypeParameter(info)) = self.interner().lookup(ia_idx)
+                        let base_constraint = self.db.evaluate_index_access_with_options(
+                            ia_obj,
+                            constraint,
+                            self.no_unchecked_indexed_access,
+                        );
+                        if base_constraint != obj_type
+                            && !matches!(
+                                self.interner().lookup(base_constraint),
+                                Some(TypeData::IndexAccess(_, _))
+                            )
                         {
-                            if let Some(constraint) = info.constraint {
-                                let base_constraint = self.db.evaluate_index_access_with_options(
-                                    ia_obj,
-                                    constraint,
-                                    self.no_unchecked_indexed_access,
-                                );
-                                if base_constraint != obj_type
-                                    && !matches!(
-                                        self.interner().lookup(base_constraint),
-                                        Some(TypeData::IndexAccess(_, _))
-                                    )
-                                {
-                                    return self.resolve_property_access_inner(
-                                        base_constraint,
-                                        prop_name,
-                                        prop_atom,
-                                    );
-                                }
-                            }
+                            return self.resolve_property_access_inner(
+                                base_constraint,
+                                prop_name,
+                                prop_atom,
+                            );
                         }
                     }
 

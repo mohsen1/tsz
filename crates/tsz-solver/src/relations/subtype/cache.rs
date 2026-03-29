@@ -149,7 +149,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Concrete primitive types that are mutually disjoint:
             // BOOLEAN(8), NUMBER(9), STRING(10), BIGINT(11), SYMBOL(12), OBJECT(13)
             const fn is_concrete_primitive(id: TypeId) -> bool {
-                matches!(id.0, 8 | 9 | 10 | 11 | 12 | 13)
+                matches!(id.0, 8..=13)
             }
             if is_concrete_primitive(source) && is_concrete_primitive(target) {
                 return SubtypeResult::False;
