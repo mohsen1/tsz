@@ -258,7 +258,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1147: Import declarations in a namespace cannot reference a module.
-            // tsc emits TS1147 AND TS2307 when the module cannot be resolved.
+            // tsc emits only TS1147 (not TS2307) when the import is inside a namespace.
             if inside_namespace {
                 self.error_at_node(
                     import.module_specifier,
@@ -704,8 +704,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Note: when inside a namespace, TS1147 was emitted above, but tsc
-        // ALSO emits TS2307 if the module cannot be resolved. Do not skip here.
+        // When inside a namespace, TS1147 was emitted above. tsc does NOT
+        // also emit TS2307 for unresolved modules in this case — skip resolution.
+        if inside_namespace {
+            return;
+        }
 
         if force_module_not_found {
             let (message, code) = self.module_not_found_diagnostic(module_name);
