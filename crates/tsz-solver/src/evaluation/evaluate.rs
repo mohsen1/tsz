@@ -380,6 +380,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         })
     }
 
+    /// Interval for checking global evaluation fuel.
+    ///
+    /// We amortize the atomic load by only checking the global fuel counter
+    /// every N iterations of the per-evaluator guard. This keeps the hot path
+    /// fast while still catching runaway expansion within a few hundred iterations.
+    const FUEL_CHECK_INTERVAL: u32 = 128;
+
     /// Actual evaluate logic -- separated so `stacker::maybe_grow` can wrap it.
     fn evaluate_guarded_inner(&mut self, type_id: TypeId) -> TypeId {
         use crate::recursion::RecursionResult;
@@ -410,6 +417,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             RecursionResult::IterationExceeded => {
                 self.cache.insert(type_id, type_id);
                 return type_id;
+            }
+        }
+
+        // Global fuel check: amortized to every FUEL_CHECK_INTERVAL iterations.
+        // This prevents deeply recursive type libraries (ts-toolbelt, ts-essentials)
+        // from consuming unbounded memory through type instantiation that creates
+        // new TypeIds on each expansion. Mirrors tsc's global `instantiationCount`.
+        if self.guard.iterations() % Self::FUEL_CHECK_INTERVAL == 0 {
+            if self
+                .interner
+                .consume_evaluation_fuel(Self::FUEL_CHECK_INTERVAL)
+            {
+                self.guard.mark_exceeded();
+                self.guard.leave(type_id);
+                self.cache.insert(type_id, TypeId::ERROR);
+                return TypeId::ERROR;
             }
         }
 

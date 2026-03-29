@@ -201,6 +201,26 @@ pub trait TypeDatabase {
     fn is_this_type_marker_def_id(&self, _def_id: DefId) -> bool {
         false
     }
+
+    /// Increment the global evaluation fuel counter and return whether fuel is exhausted.
+    ///
+    /// This counter tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
+    /// Unlike per-evaluator iteration limits, this enforces a system-wide budget that prevents
+    /// deeply recursive type libraries (like ts-toolbelt) from consuming unbounded memory
+    /// through type instantiation.
+    ///
+    /// Returns `true` if fuel is exhausted (evaluation should stop).
+    ///
+    /// Mirrors TypeScript's global `instantiationCount` which limits total type
+    /// instantiation work across the entire program check.
+    fn consume_evaluation_fuel(&self, _amount: u32) -> bool {
+        false
+    }
+
+    /// Check whether global evaluation fuel is exhausted without consuming any.
+    fn is_evaluation_fuel_exhausted(&self) -> bool {
+        false
+    }
 }
 
 impl TypeDatabase for TypeInterner {
@@ -505,6 +525,14 @@ impl TypeDatabase for TypeInterner {
 
     fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
         Self::is_this_type_marker_def_id(self, def_id)
+    }
+
+    fn consume_evaluation_fuel(&self, amount: u32) -> bool {
+        Self::consume_evaluation_fuel(self, amount)
+    }
+
+    fn is_evaluation_fuel_exhausted(&self) -> bool {
+        Self::is_evaluation_fuel_exhausted(self)
     }
 }
 
