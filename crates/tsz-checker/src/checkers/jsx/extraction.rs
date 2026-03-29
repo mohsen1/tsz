@@ -164,6 +164,15 @@ impl<'a> CheckerState<'a> {
             {
                 return fallback;
             }
+            // If LMA evaluation produced error types (e.g. due to unresolved qualified
+            // type references in complex conditional types like React's
+            // LibraryManagedAttributes), fall back to the raw props type rather than
+            // using a broken evaluation result that would cause false TS2322 diagnostics.
+            if evaluated != TypeId::ERROR
+                && tsz_solver::contains_error_type(self.ctx.types, evaluated)
+            {
+                return props_type;
+            }
             evaluated
         }
     }
