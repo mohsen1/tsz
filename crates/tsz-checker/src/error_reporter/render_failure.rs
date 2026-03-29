@@ -488,7 +488,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                let primary = Diagnostic::error(
+                let mut primary = Diagnostic::error(
                     file_name.clone(),
                     start,
                     length,
@@ -496,10 +496,9 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
 
-                // Emit TS2328 only when the mismatched parameter types are themselves
-                // callable (function/callback types). tsc emits TS2328 as a separate
-                // elaboration diagnostic in this case to explain why callback parameters
-                // are incompatible.
+                // Attach TS2328 as related information (not a standalone diagnostic)
+                // when the mismatched parameter types are themselves callable.
+                // tsc emits TS2328 as part of the diagnostic chain, not as a separate error.
                 let source_param_is_callable =
                     tsz_solver::type_queries::is_callable_type(self.ctx.types, *source_param);
                 let target_param_is_callable =
@@ -536,14 +535,16 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                         &[&source_name, &target_name],
                     );
-                    let ts2328_diag = Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        ts2328_message,
-                        diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
-                    );
-                    self.ctx.push_diagnostic(ts2328_diag);
+                    primary
+                        .related_information
+                        .push(DiagnosticRelatedInformation {
+                            category: DiagnosticCategory::Error,
+                            code: diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+                            file: file_name.to_string(),
+                            start,
+                            length,
+                            message_text: ts2328_message,
+                        });
                 }
 
                 primary
