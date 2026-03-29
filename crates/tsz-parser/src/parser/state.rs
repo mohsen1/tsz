@@ -1605,6 +1605,49 @@ impl ParserState {
         }
     }
 
+    fn recover_after_reserved_word_in_variable_declaration(&mut self, keyword: SyntaxKind) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        // Consume the reserved word token to prevent cascading errors.
+        self.next_token();
+
+        // In tsc, `var class;` causes the variable declaration list to abort, then the
+        // statement loop reparses `class` as a class declaration which expects `{` but
+        // finds `;`, emitting TS1005 '{' expected.' at the semicolon. We emit this
+        // directly since we consume the token rather than letting it be reparsed.
+        if keyword == SyntaxKind::ClassKeyword && self.is_token(SyntaxKind::SemicolonToken) {
+            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+        }
+
+        // After consuming the reserved word, if the next token can't continue the
+        // variable declaration (not `;`, `,`, `=`, `:`, `!`, `}`, or EOF), skip
+        // remaining tokens on this statement to prevent cascading errors.
+        // e.g., `const export as namespace oo4;` — after consuming `export` (TS1389),
+        // skip `as namespace oo4` so only the semicolon remains.
+        if !matches!(
+            self.token(),
+            SyntaxKind::SemicolonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::EqualsToken
+                | SyntaxKind::ColonToken
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::CloseBraceToken
+                | SyntaxKind::EndOfFileToken
+        ) && !self.scanner.has_preceding_line_break()
+        {
+            // Skip tokens until we reach a statement boundary
+            while !matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            ) && !self.scanner.has_preceding_line_break()
+            {
+                self.next_token();
+            }
+        }
+    }
+
     /// Error: TS1389 - '{0}' is not allowed as a variable declaration name.
     /// Emitted when a reserved word appears as the binding name of a var/let/const/using declaration.
     ///
@@ -1625,44 +1668,12 @@ impl ParserState {
                 &msg,
                 diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME,
             );
-            // Consume the reserved word token to prevent cascading errors
-            self.next_token();
-            // In tsc, `var class;` causes the variable declaration list to abort, then the
-            // statement loop reparses `class` as a class declaration which expects `{` but
-            // finds `;`, emitting TS1005 '{' expected.' at the semicolon. We emit this
-            // directly since we consume the token rather than letting it be reparsed.
-            if keyword == SyntaxKind::ClassKeyword && self.is_token(SyntaxKind::SemicolonToken) {
-                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
-            }
-
-            // After consuming the reserved word, if the next token can't continue the
-            // variable declaration (not `;`, `,`, `=`, `:`, `!`, `}`, or EOF), skip
-            // remaining tokens on this statement to prevent cascading errors.
-            // e.g., `const export as namespace oo4;` — after consuming `export` (TS1389),
-            // skip `as namespace oo4` so only the semicolon remains.
-            if !matches!(
-                self.token(),
-                SyntaxKind::SemicolonToken
-                    | SyntaxKind::CommaToken
-                    | SyntaxKind::EqualsToken
-                    | SyntaxKind::ColonToken
-                    | SyntaxKind::ExclamationToken
-                    | SyntaxKind::CloseBraceToken
-                    | SyntaxKind::EndOfFileToken
-            ) && !self.scanner.has_preceding_line_break()
-            {
-                // Skip tokens until we reach a statement boundary
-                while !matches!(
-                    self.token(),
-                    SyntaxKind::SemicolonToken
-                        | SyntaxKind::CloseBraceToken
-                        | SyntaxKind::EndOfFileToken
-                ) && !self.scanner.has_preceding_line_break()
-                {
-                    self.next_token();
-                }
-            }
+            self.recover_after_reserved_word_in_variable_declaration(keyword);
         }
+    }
+
+    pub(crate) fn recover_reserved_word_variable_declaration_tail(&mut self, keyword: SyntaxKind) {
+        self.recover_after_reserved_word_in_variable_declaration(keyword);
     }
 
     /// Error: TS1359 - Identifier expected. '{0}' is a reserved word that cannot be used here.

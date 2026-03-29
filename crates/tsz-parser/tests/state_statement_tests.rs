@@ -377,6 +377,70 @@ fn parse_contextual_keyword_as_var_name_no_ts1389() {
 }
 
 #[test]
+fn reserved_word_tail_after_missing_comma_in_type_annotation_stops_after_ts1389() {
+    let source = "class C {\n  foo() {\n    const x: \"\".typeof(this.foo);\n  }\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let comma_pos = source.find(".typeof").expect("dot before typeof") as u32;
+    let typeof_pos = comma_pos + 1;
+    let open_paren_pos = source.find("typeof(").expect("call tail after typeof") as u32 + 6;
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.start == comma_pos
+                && diag.message == "',' expected."
+        }),
+        "Expected TS1005 ',' expected at the dot before typeof, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
+                && diag.start == typeof_pos
+        }),
+        "Expected TS1389 at the typeof token, got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.start == open_paren_pos
+                && diag.message == "';' expected."
+        }),
+        "Recovery should skip the typeof call tail instead of emitting a stray ';' expected at `(`: {diags:?}"
+    );
+}
+
+#[test]
+fn member_call_tail_after_missing_comma_in_type_annotation_emits_second_comma_error() {
+    let source = "declare const x: \"foo\".charCodeAt(0);";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let dot_pos = source.find(".charCodeAt").expect("dot before charCodeAt") as u32;
+    let open_paren_pos = source.find("charCodeAt(").expect("call tail") as u32 + 10;
+
+    let comma_diags: Vec<_> = diags
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::EXPECTED && diag.message == "',' expected.")
+        .collect();
+
+    assert_eq!(
+        comma_diags.len(),
+        2,
+        "Expected exactly two TS1005 ',' expected diagnostics, got {diags:?}"
+    );
+    assert!(
+        comma_diags.iter().any(|diag| diag.start == dot_pos),
+        "Expected TS1005 ',' expected at the dot before charCodeAt, got {diags:?}"
+    );
+    assert!(
+        comma_diags.iter().any(|diag| diag.start == open_paren_pos),
+        "Expected TS1005 ',' expected at the opening paren of charCodeAt, got {diags:?}"
+    );
+}
+
+#[test]
 fn class_field_initializer_does_not_asi_before_computed_member() {
     let (parser, _root) = parse_source("class C {\n    [e]: number = 0\n    [e2]: number\n}");
     let diags = parser.get_diagnostics();
