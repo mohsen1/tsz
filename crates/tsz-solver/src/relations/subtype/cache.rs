@@ -138,20 +138,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Task #54: Structural Identity Fast-Path (O(1) after canonicalization)
-        // Check if source and target canonicalize to the same TypeId, which means
-        // they are structurally identical. This avoids expensive structural walks
-        // for types that are the same structure but were interned separately.
-        //
-        // Guarded by bypass_evaluation to prevent infinite recursion when called
-        // from TypeEvaluator during simplification (evaluation has already been done).
-        if !self.bypass_evaluation
-            && let Some(db) = self.query_db
-        {
-            let source_canon = db.canonical_id(source);
-            let target_canon = db.canonical_id(target);
-            if source_canon == target_canon {
-                return SubtypeResult::True;
+        // PERF: Intrinsic disjointness fast-path for common primitive pairs.
+        // Avoids cache lookup, canonical_id, and structural dispatch for the most
+        // common "obviously not a subtype" cases like number vs string.
+        // Both source and target are intrinsic (id < 100) and already known != each other.
+        if source.is_intrinsic() && target.is_intrinsic() {
+            // Intrinsic types that are known to be disjoint from each other.
+            // If both are "concrete" intrinsics (not any/unknown/never/error/void/undefined/null
+            // which have special assignability), they're disjoint.
+            // Concrete primitive types that are mutually disjoint:
+            // BOOLEAN(8), NUMBER(9), STRING(10), BIGINT(11), SYMBOL(12), OBJECT(13)
+            const fn is_concrete_primitive(id: TypeId) -> bool {
+                matches!(id.0, 8 | 9 | 10 | 11 | 12 | 13)
+            }
+            if is_concrete_primitive(source) && is_concrete_primitive(target) {
+                return SubtypeResult::False;
             }
         }
 
@@ -263,6 +264,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 } else {
                     SubtypeResult::False
                 };
+            }
+        }
+
+        // Structural Identity Fast-Path (O(1) after canonicalization)
+        // Check if source and target canonicalize to the same TypeId, which means
+        // they are structurally identical. This avoids expensive structural walks
+        // for types that are the same structure but were interned separately.
+        //
+        // PERF: Placed AFTER cache lookup because cache is a simple hash check,
+        // while canonical_id may allocate a Canonicalizer and traverse the type.
+        // Guarded by bypass_evaluation to prevent infinite recursion when called
+        // from TypeEvaluator during simplification (evaluation has already been done).
+        if !self.bypass_evaluation
+            && let Some(db) = self.query_db
+        {
+            let source_canon = db.canonical_id(source);
+            let target_canon = db.canonical_id(target);
+            if source_canon == target_canon {
+                return SubtypeResult::True;
             }
         }
 

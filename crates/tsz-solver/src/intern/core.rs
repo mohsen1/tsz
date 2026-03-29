@@ -1437,7 +1437,115 @@ impl TypeInterner {
                 return right;
             }
         }
+
+        // PERF: Fast path for `T | Union(members)` where T is a non-union, non-special type.
+        // Instead of full normalize_union (flatten + sort + dedup + absorb + reduce),
+        // directly insert T into the existing sorted member list. This turns the
+        // O(N log N) sort into O(N) for the common case of accumulating unions
+        // (e.g., deeply nested ternary chains where each level adds one type).
+        if let Some(result) = self.try_union2_insert(left, right) {
+            return result;
+        }
+        if let Some(result) = self.try_union2_insert(right, left) {
+            return result;
+        }
+
         self.union_from_iter([left, right])
+    }
+
+    /// Try to insert a single non-union type into an existing union without full normalization.
+    ///
+    /// Returns `Some(result)` if the fast path applies, `None` otherwise.
+    /// The fast path applies when:
+    /// - `single` is not a union, not NEVER/ANY/UNKNOWN/ERROR (special types need full handling)
+    /// - `existing` is a union
+    /// - `single` is not a literal that could be absorbed by a primitive in the union
+    /// - `single` is not a type that requires subtype reduction
+    fn try_union2_insert(&self, single: TypeId, existing: TypeId) -> Option<TypeId> {
+        // single must not be a union or special type
+        if single == TypeId::ANY
+            || single == TypeId::UNKNOWN
+            || single == TypeId::ERROR
+            || single == TypeId::NEVER
+        {
+            return None;
+        }
+
+        // Check single is not a union
+        if matches!(self.lookup(single), Some(TypeData::Union(_))) {
+            return None;
+        }
+
+        // existing must be a union
+        let Some(TypeData::Union(list_id)) = self.lookup(existing) else {
+            return None;
+        };
+
+        // Skip if single is a literal that could be absorbed by a primitive in the union.
+        // e.g., "hello" | string -> string (literal absorbed)
+        if let Some(TypeData::Literal(lit)) = self.lookup(single) {
+            let base_primitive = match lit {
+                crate::types::LiteralValue::String(_) => TypeId::STRING,
+                crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
+                crate::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+                crate::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
+            };
+            let members = self.type_list(list_id);
+            if members.contains(&base_primitive) {
+                // Literal absorbed by primitive - return existing union
+                return Some(existing);
+            }
+        }
+
+        let members = self.type_list(list_id);
+
+        // Check if single is already in the union (dedup)
+        if members.contains(&single) {
+            return Some(existing);
+        }
+
+        // Build new member list with single inserted.
+        // The existing members are already sorted and deduped.
+        // Use the allocation-order sort key: non-builtin types are sorted by
+        // their TypeId (which correlates with allocation order for user types).
+        let mut new_members: TypeListBuffer = SmallVec::with_capacity(members.len() + 1);
+
+        // Find insertion point using sort key comparison
+        let single_key = Self::builtin_sort_key(single);
+        let single_alloc = self.lookup_alloc_order(single);
+        let mut inserted = false;
+
+        for &m in members.iter() {
+            if !inserted {
+                let should_insert_before = {
+                    let m_key = Self::builtin_sort_key(m);
+                    match (single_key, m_key) {
+                        (Some(sk), Some(mk)) => sk < mk,
+                        (Some(_), None) => true, // builtins before non-builtins
+                        (None, Some(_)) => false, // non-builtins after builtins
+                        (None, None) => {
+                            // Both non-builtin: compare by allocation order
+                            let m_alloc = self.lookup_alloc_order(m);
+                            match (single_alloc, m_alloc) {
+                                (Some(sa), Some(ma)) => sa < ma,
+                                _ => single.0 < m.0,
+                            }
+                        }
+                    }
+                };
+                if should_insert_before {
+                    new_members.push(single);
+                    inserted = true;
+                }
+            }
+            new_members.push(m);
+        }
+        if !inserted {
+            new_members.push(single);
+        }
+
+        let list_id = self.intern_type_list_from_slice(&new_members);
+        Some(self.intern(TypeData::Union(list_id)))
     }
 
     /// Fast path for three-member unions without heap allocations.
