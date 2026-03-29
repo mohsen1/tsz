@@ -236,11 +236,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let return_type = crate::query_boundaries::common::instantiate_type(
-            self.ctx.types,
-            source_fn.return_type,
-            &substitution,
-        );
+        // Use the target's return type, not the source's instantiated return type.
+        // The source's return type reflects what the source *would* produce, but the
+        // assignability re-check needs the target's actual expected return type.
+        // Using the source's return type (e.g., T instantiated to the param union)
+        // makes the re-check trivially pass for generic identity-like functions.
         Some(
             self.ctx
                 .types
@@ -249,7 +249,7 @@ impl<'a> CheckerState<'a> {
                     type_params: vec![],
                     params: target_fn.params.clone(),
                     this_type: target_fn.this_type,
-                    return_type,
+                    return_type: target_fn.return_type,
                     type_predicate: target_fn.type_predicate,
                     is_constructor: target_fn.is_constructor,
                     is_method: target_fn.is_method,
