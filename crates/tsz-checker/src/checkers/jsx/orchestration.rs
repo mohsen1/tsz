@@ -895,11 +895,14 @@ impl<'a> CheckerState<'a> {
             //    tsc suppresses TS7026 to avoid double-reporting in error-recovery situations.
             use tsz_common::checker_options::JsxMode;
             let jsx_mode = self.ctx.compiler_options.jsx_mode;
-            // The @jsxImportSource pragma and jsxImportSource config only suppress TS7026
-            // when the jsx mode is react-jsx or react-jsxdev. In preserve/react/react-native
-            // modes, the pragma has no effect on JSX element typing (tsc still emits TS7026).
-            let uses_import_source =
-                jsx_mode == JsxMode::ReactJsx || jsx_mode == JsxMode::ReactJsxDev;
+            // Suppress TS7026 when the JSX runtime uses an import source:
+            // - react-jsx/react-jsxdev modes always use import source
+            // - jsxImportSource config option also indicates import source usage
+            // Note: a @jsxImportSource pragma alone (without the config option) does NOT
+            // suppress TS7026 in preserve mode — the pragma is only effective in react-jsx modes.
+            let uses_import_source = jsx_mode == JsxMode::ReactJsx
+                || jsx_mode == JsxMode::ReactJsxDev
+                || !self.ctx.compiler_options.jsx_import_source.is_empty();
             let file_has_any_parse_diag =
                 self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
             let recovered_adjacent_sibling =
@@ -1317,13 +1320,12 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
-        // Same suppression rules as the opening-element TS7026 check:
-        // - ReactJsx/ReactJsxDev use jsxImportSource (no global IntrinsicElements needed)
-        // - The @jsxImportSource pragma only suppresses TS7026 in react-jsx/react-jsxdev modes
-        // - File has parse errors → suppress to avoid double-reporting
+        // Same suppression rules as the opening-element TS7026 check.
         use tsz_common::checker_options::JsxMode;
         let jsx_mode = self.ctx.compiler_options.jsx_mode;
-        let uses_import_source = jsx_mode == JsxMode::ReactJsx || jsx_mode == JsxMode::ReactJsxDev;
+        let uses_import_source = jsx_mode == JsxMode::ReactJsx
+            || jsx_mode == JsxMode::ReactJsxDev
+            || !self.ctx.compiler_options.jsx_import_source.is_empty();
         let file_has_any_parse_diag =
             self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
         let recovered_adjacent_sibling = self.file_has_same_line_adjacent_jsx_recovery_pattern();
