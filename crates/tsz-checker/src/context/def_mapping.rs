@@ -402,22 +402,44 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up the `SymbolId` for a `DefId` (reverse mapping).
+    ///
+    /// Uses a two-tier lookup strategy:
+    /// 1. **Local cache** (`def_to_symbol`): O(1) `FxHashMap` lookup, no locking.
+    /// 2. **Shared store** (`DefinitionStore`): O(1) `DashMap` lookup via
+    ///    `get_symbol_id`. On hit, populates the local cache for future fast-path.
+    ///
+    /// This fallback ensures that DefIds created in child checker contexts
+    /// (e.g., cross-file delegation) are visible to the parent without
+    /// explicit merge-back of the `def_to_symbol` map.
     pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
-        self.def_to_symbol.borrow().get(&def_id).copied()
+        // Fast path: local cache
+        if let Some(sym_id) = self.def_to_symbol.borrow().get(&def_id).copied() {
+            return Some(sym_id);
+        }
+
+        // Fallback: shared DefinitionStore (thread-safe, cross-context)
+        if let Some(raw_sym_id) = self.definition_store.get_symbol_id(def_id) {
+            let sym_id = SymbolId(raw_sym_id);
+            // Populate local cache for future fast-path hits
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            self.symbol_to_def
+                .borrow_mut()
+                .entry(sym_id)
+                .or_insert(def_id);
+            return Some(sym_id);
+        }
+
+        None
     }
 
     /// Look up the `SymbolId` for a `DefId`, with fallback to the shared
     /// `DefinitionStore` for cross-context `DefIds`.
     ///
-    /// Use this when the DefId may have been created in a different checker
-    /// context (e.g., cross-file type references where `get_or_create_def_id`
-    /// invalidated the per-context mapping but the Lazy(DefId) type is still
-    /// alive in the type graph).
+    /// **Deprecated**: `def_to_symbol_id()` now includes the DefinitionStore
+    /// fallback directly. This method is retained for backward compatibility
+    /// but delegates to `def_to_symbol_id()`.
     pub fn def_to_symbol_id_with_fallback(&self, def_id: DefId) -> Option<SymbolId> {
-        self.def_to_symbol_id(def_id).or_else(|| {
-            let info = self.definition_store.get(def_id)?;
-            info.symbol_id.map(SymbolId)
-        })
+        self.def_to_symbol_id(def_id)
     }
 
     /// Get or create a `DefId` for a symbol and register its type parameters in one step.

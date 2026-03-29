@@ -679,9 +679,7 @@ impl<'a> CheckerState<'a> {
                                     .and_then(|(base, _)| {
                                         query::get_lazy_def_id(self.ctx.types, base)
                                     })
-                                    .and_then(|def_id| {
-                                        self.ctx.def_to_symbol.borrow().get(&def_id).copied()
-                                    })
+                                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
                                     .is_some_and(|ref_sym| {
                                         // The base is a type alias whose body is a mapped
                                         // type that references itself in its template
