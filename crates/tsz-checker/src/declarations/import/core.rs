@@ -843,7 +843,8 @@ impl<'a> CheckerState<'a> {
         let bindings_node = self.ctx.arena.get(clause.named_bindings);
         let has_named_imports = bindings_node
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS);
-        let mut has_named_default_binding = false;
+        let mut named_default_binding_nodes = Vec::new();
+        let mut has_non_default_named_imports = false;
 
         if has_named_imports
             && let Some(bindings_node) = bindings_node
@@ -870,11 +871,14 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if imported_ident.escaped_text.as_str() == "default" {
-                    has_named_default_binding = true;
-                    break;
+                    named_default_binding_nodes.push(*element_idx);
+                } else {
+                    has_non_default_named_imports = true;
                 }
             }
         }
+
+        let has_named_default_binding = !named_default_binding_nodes.is_empty();
 
         let has_namespace_import =
             bindings_node.is_some_and(|n| n.kind == syntax_kind_ext::NAMESPACE_IMPORT);
@@ -899,7 +903,7 @@ impl<'a> CheckerState<'a> {
         // Even with esModuleInterop enabled, namespace/named imports on `export =`
         // targeting a class/function/interface are invalid — the user must use a
         // default import (`import X from "mod"`) instead.
-        if (has_namespace_import || has_named_imports)
+        if (has_namespace_import || has_non_default_named_imports)
             && !clause.is_type_only
             && let Some(ref table) = exports_table
             && table.has("export=")
@@ -928,7 +932,7 @@ impl<'a> CheckerState<'a> {
             //   - ES module targets: TS2595 "can only be imported by using a default import"
             //   - CommonJS + .ts file: TS2616 "can only be imported by using 'import X = require(...)' or a default import"
             //   - CommonJS + .js file: TS2597 "can only be imported by using a 'require' call or by using a default import"
-            if has_named_imports {
+            if has_non_default_named_imports {
                 let is_es_module = (self.ctx.compiler_options.module as u32)
                     >= (tsz_common::ModuleKind::ES2015 as u32);
                 let is_js_file = self.ctx.file_name.ends_with(".js")
@@ -956,6 +960,9 @@ impl<'a> CheckerState<'a> {
                         };
 
                         let name = name_ident.escaped_text.as_str();
+                        if name == "default" {
+                            continue;
+                        }
 
                         let (msg, code) = if is_es_module {
                             // TS2595
@@ -1016,6 +1023,31 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if !has_default_import && has_named_default_binding {
+            let is_source_file = self.is_source_file_import(module_name);
+            if let Some(ref table) = exports_table {
+                if !table.has("default") && !table.has("export=") {
+                    for &specifier_node in &named_default_binding_nodes {
+                        self.emit_no_default_export_error(
+                            module_name,
+                            specifier_node,
+                            is_source_file,
+                        );
+                    }
+                }
+            } else if self
+                .ctx
+                .resolved_modules
+                .as_ref()
+                .is_some_and(|resolved| resolved.contains(module_name))
+                && resolved_target.is_some()
+            {
+                for &specifier_node in &named_default_binding_nodes {
+                    self.emit_no_default_export_error(module_name, specifier_node, is_source_file);
+                }
+            }
+        }
+
         // Check named imports: import { X, Y } from "module"
         // Note: tsc validates named imports even when TS1192 fires for the default import.
         if has_named_imports {
@@ -1066,7 +1098,7 @@ impl<'a> CheckerState<'a> {
 
                     let import_name = &identifier.escaped_text;
 
-                    if import_name == "default" && self.ctx.allow_synthetic_default_imports() {
+                    if import_name == "default" {
                         continue;
                     }
 
@@ -1175,7 +1207,7 @@ impl<'a> CheckerState<'a> {
 
                 let import_name = &identifier.escaped_text;
 
-                if import_name == "default" && self.ctx.allow_synthetic_default_imports() {
+                if import_name == "default" {
                     continue;
                 }
 

@@ -277,6 +277,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            if export_name == "default"
+                && module_exports.has("export=")
+                && self.ctx.allow_synthetic_default_imports()
+            {
+                continue;
+            }
+
             // Check if this name is exported from the source module
             if export_name != "*" && !module_exports.has(&export_name) {
                 if module_exports.has("default") || module_exports.has("export=") {

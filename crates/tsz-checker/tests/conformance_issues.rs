@@ -11238,6 +11238,17 @@ fn compile_named_files_get_diagnostics_with_options(
     entry_file: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
+    compile_named_files_get_diagnostics_with_options_and_import_reporting(
+        files, entry_file, options, false,
+    )
+}
+
+fn compile_named_files_get_diagnostics_with_options_and_import_reporting(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    report_unresolved_imports: bool,
+) -> Vec<(u32, String)> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
     let mut roots = Vec::with_capacity(files.len());
@@ -11278,6 +11289,7 @@ fn compile_named_files_get_diagnostics_with_options(
         .ctx
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
     checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.report_unresolved_imports = report_unresolved_imports;
 
     checker.check_source_file(roots[entry_idx]);
 
@@ -20597,6 +20609,125 @@ mdast.toString();
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 1192),
         "Expected no TS1192 for .d.ts files with allowSyntheticDefaultImports=true. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_named_default_import_from_export_equals_class_uses_default_import_rules() {
+    let files = [
+        (
+            "/mod.d.ts",
+            r#"
+declare class Example {
+    static answer(): number;
+}
+export = Example;
+"#,
+        ),
+        (
+            "/index.ts",
+            r#"
+import { default as Example } from "./mod";
+Example.answer();
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/index.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            es_module_interop: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected named default import from export= class to use default-import semantics without extra import diagnostics. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_named_default_reexport_from_export_equals_class_uses_default_import_rules() {
+    let files = [
+        (
+            "/mod.d.ts",
+            r#"
+declare class Example {
+    static answer(): number;
+}
+export = Example;
+"#,
+        ),
+        (
+            "/index.ts",
+            r#"
+export { default, default as Alias } from "./mod";
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/index.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            es_module_interop: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected named default re-exports from export= class to use default-import semantics without extra export diagnostics. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_named_default_reexport_from_export_equals_alias_chain_uses_default_import_rules() {
+    let files = [
+        (
+            "/mod.ts",
+            r#"
+declare function fun(): void;
+export default fun;
+"#,
+        ),
+        (
+            "/a.ts",
+            r#"
+import mod = require("./mod");
+export = mod;
+"#,
+        ),
+        (
+            "/b.ts",
+            r#"
+export { default } from "./a";
+export { default as def } from "./a";
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options_and_import_reporting(
+        &files,
+        "/b.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            es_module_interop: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected named default re-exports from export= alias chain to use default-import semantics without extra export diagnostics. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
