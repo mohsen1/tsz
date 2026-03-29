@@ -246,7 +246,7 @@ impl<'a> CheckerState<'a> {
         let def_id = crate::query_boundaries::property_access::def_id(self.ctx.types, object_type)?;
 
         // Look up the symbol for this DefId
-        let sym_id = self.ctx.def_to_symbol.borrow().get(&def_id).copied()?;
+        let sym_id = self.ctx.def_to_symbol_id(def_id)?;
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
         let name = &symbol.escaped_name;

@@ -333,23 +333,13 @@ impl<'a> CheckerState<'a> {
                     checker.ctx.symbol_resolution_set.insert(id);
                 }
             }
-            // Copy DefId ↔ SymbolId mappings so the child can detect circular type
-            // aliases across file boundaries.  Without these, is_direct_circular_reference
-            // cannot map a Lazy(DefId) back to a SymbolId in the resolution chain.
-            {
-                let parent_d2s = self.ctx.def_to_symbol.borrow();
-                let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
-                for (&def_id, &sym_id_val) in parent_d2s.iter() {
-                    child_d2s.entry(def_id).or_insert(sym_id_val);
-                }
-            }
-            {
-                let parent_s2d = self.ctx.symbol_to_def.borrow();
-                let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
-                for (&sym_id_val, &def_id) in parent_s2d.iter() {
-                    child_s2d.entry(sym_id_val).or_insert(def_id);
-                }
-            }
+            // DefId ↔ SymbolId mappings are no longer copied from parent to child.
+            // The child's `def_to_symbol_id()` and `get_existing_def_id()` methods
+            // fall back to the shared `DefinitionStore` on local cache miss, which
+            // contains all mappings registered by any checker context. This enables
+            // cross-file circular reference detection (e.g., `is_direct_circular_reference`)
+            // without the O(N) copy overhead.
+
             // Copy class_instance_resolution_set to detect circular class inheritance
             for &id in &self.ctx.class_instance_resolution_set {
                 checker.ctx.class_instance_resolution_set.insert(id);
@@ -389,22 +379,11 @@ impl<'a> CheckerState<'a> {
                     .collect()
             };
 
-            let child_def_to_symbol: Vec<(tsz_solver::DefId, SymbolId)> = checker
-                .ctx
-                .def_to_symbol
-                .borrow()
-                .iter()
-                .map(|(&k, &v)| (k, v))
-                .collect();
-
-            let child_def_type_params: Vec<(tsz_solver::DefId, Vec<tsz_solver::TypeParamInfo>)> =
-                checker
-                    .ctx
-                    .def_type_params
-                    .borrow()
-                    .iter()
-                    .map(|(k, v)| (*k, v.clone()))
-                    .collect();
+            // def_to_symbol and def_type_params are no longer collected from the
+            // child for merge-back. The child's `get_or_create_def_id()` and
+            // `insert_def_type_params()` write through to the shared
+            // `DefinitionStore`, so the parent can read them on next access via
+            // the fallback path in `def_to_symbol_id()` and `get_def_type_params()`.
 
             let child_type_env = checker.ctx.type_env.borrow().clone();
 
@@ -443,20 +422,11 @@ impl<'a> CheckerState<'a> {
             drop(checker);
 
             // Merge collected data into the parent.
+            // Note: def_to_symbol and def_type_params are NOT merged back here.
+            // The child already wrote through to the shared DefinitionStore, and
+            // the parent reads from DefinitionStore on local cache miss.
             for (sym_id, type_id) in child_symbol_types {
                 self.ctx.symbol_types.entry_or_insert(sym_id, type_id);
-            }
-            {
-                let mut parent_d2s = self.ctx.def_to_symbol.borrow_mut();
-                for (def_id, sym_id) in child_def_to_symbol {
-                    parent_d2s.entry(def_id).or_insert(sym_id);
-                }
-            }
-            {
-                let mut parent_params = self.ctx.def_type_params.borrow_mut();
-                for (def_id, params) in child_def_type_params {
-                    parent_params.entry(def_id).or_insert(params);
-                }
             }
             {
                 let mut parent_env = self.ctx.type_env.borrow_mut();
@@ -558,20 +528,8 @@ impl<'a> CheckerState<'a> {
                 checker.ctx.symbol_resolution_set.insert(id);
             }
         }
-        {
-            let parent_d2s = self.ctx.def_to_symbol.borrow();
-            let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
-            for (&def_id, &sym_id_val) in parent_d2s.iter() {
-                child_d2s.entry(def_id).or_insert(sym_id_val);
-            }
-        }
-        {
-            let parent_s2d = self.ctx.symbol_to_def.borrow();
-            let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
-            for (&sym_id_val, &def_id) in parent_s2d.iter() {
-                child_s2d.entry(sym_id_val).or_insert(def_id);
-            }
-        }
+        // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
+        // on cache miss — no parent-to-child copy needed.
         for &id in &self.ctx.class_constructor_resolution_set {
             checker.ctx.class_constructor_resolution_set.insert(id);
         }
@@ -669,20 +627,8 @@ impl<'a> CheckerState<'a> {
                 checker.ctx.symbol_resolution_set.insert(id);
             }
         }
-        {
-            let parent_d2s = self.ctx.def_to_symbol.borrow();
-            let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
-            for (&def_id, &sym_id_val) in parent_d2s.iter() {
-                child_d2s.entry(def_id).or_insert(sym_id_val);
-            }
-        }
-        {
-            let parent_s2d = self.ctx.symbol_to_def.borrow();
-            let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
-            for (&sym_id_val, &def_id) in parent_s2d.iter() {
-                child_s2d.entry(sym_id_val).or_insert(def_id);
-            }
-        }
+        // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
+        // on cache miss — no parent-to-child copy needed.
 
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.
@@ -743,20 +689,8 @@ impl<'a> CheckerState<'a> {
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
-        {
-            let parent_d2s = self.ctx.def_to_symbol.borrow();
-            let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
-            for (&def_id, &sym_id_val) in parent_d2s.iter() {
-                child_d2s.entry(def_id).or_insert(sym_id_val);
-            }
-        }
-        {
-            let parent_s2d = self.ctx.symbol_to_def.borrow();
-            let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
-            for (&sym_id_val, &def_id) in parent_s2d.iter() {
-                child_s2d.entry(sym_id_val).or_insert(def_id);
-            }
-        }
+        // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
+        // on cache miss — no parent-to-child copy needed.
 
         let interface_type_params = checker
             .ctx
