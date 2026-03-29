@@ -258,13 +258,13 @@ impl<'a> CheckerState<'a> {
                                     } else {
                                         // { name: target = default } — leaf target with default.
                                         // Check that the source property type is assignable to the
-                                        // target's declared type. E.g., `{ 0: a = "" }` from
-                                        // `(string | number)[]` should check `string | number`
-                                        // against `a`'s type.
-                                        self.check_destructuring_leaf_assignability(
+                                        // target's declared type. Narrow the source property type
+                                        // by stripping `undefined` since the default handles it.
+                                        self.check_destructuring_leaf_assignability_with_default(
                                             &name,
                                             source_type,
                                             bin.left,
+                                            bin.right,
                                         );
                                     }
                                 }
@@ -314,9 +314,17 @@ impl<'a> CheckerState<'a> {
                         // to the target variable's declared type. This catches cases
                         // like `({ q } = numMapPoint)` where `q` comes from an index
                         // signature and `noUncheckedIndexedAccess` adds `| undefined`.
-                        // Skip when there is a default value (`{ x = 1 }`) because
-                        // the default narrows away `undefined` from the effective type.
-                        if !shorthand.equals_token {
+                        // When a default value is present (`{ x = 1 }`), narrow the
+                        // source property type by stripping `undefined` before checking
+                        // assignability, since the default handles the absent/undefined case.
+                        if shorthand.equals_token {
+                            self.check_destructuring_leaf_assignability_with_default(
+                                &ident.escaped_text,
+                                source_type,
+                                shorthand.name,
+                                shorthand.object_assignment_initializer,
+                            );
+                        } else {
                             self.check_destructuring_leaf_assignability(
                                 &ident.escaped_text,
                                 source_type,
@@ -487,6 +495,37 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_idx: NodeIndex,
     ) {
+        self.check_destructuring_leaf_assignability_impl(
+            property_name,
+            source_type,
+            target_idx,
+            NodeIndex::NONE,
+        );
+    }
+
+    fn check_destructuring_leaf_assignability_with_default(
+        &mut self,
+        property_name: &str,
+        source_type: TypeId,
+        target_idx: NodeIndex,
+        default_expr: NodeIndex,
+    ) {
+        self.check_destructuring_leaf_assignability_impl(
+            property_name,
+            source_type,
+            target_idx,
+            default_expr,
+        );
+    }
+
+    fn check_destructuring_leaf_assignability_impl(
+        &mut self,
+        property_name: &str,
+        source_type: TypeId,
+        target_idx: NodeIndex,
+        default_expr: NodeIndex,
+    ) {
+        let has_default = !default_expr.is_none();
         // Resolve the source property type. For numeric property names on
         // tuple/array types, use element type access directly to avoid
         // TypeId mismatches from string-based property resolution.
@@ -495,11 +534,31 @@ impl<'a> CheckerState<'a> {
         } else {
             self.resolve_property_type_for_destructuring(source_type, property_name)
         };
-        let Some(prop_type) = prop_type else {
+        let Some(mut prop_type) = prop_type else {
             return;
         };
         if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
             return;
+        }
+        // When a default value is present, compute the effective destructured
+        // type: removeUndefined(sourcePropertyType) | typeOf(default).
+        // This matches tsc behavior:
+        //   `({ x = 0 } = a)` where `a.x` is `number | undefined`:
+        //     effective = number | number = number → assignable to number ✓
+        //   `({ x = undefined } = a)` where `a.x` is `number | undefined`:
+        //     effective = number | undefined → NOT assignable to number ✗
+        if has_default && self.ctx.compiler_options.strict_null_checks {
+            let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
+                self.ctx.types,
+                prop_type,
+                true,
+            );
+            let default_type = self.get_type_of_node(default_expr);
+            let factory = self.ctx.types.factory();
+            prop_type = factory.union2(non_undefined, default_type);
+            if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
+                return;
+            }
         }
         let target_type = self.get_type_of_assignment_target(target_idx);
         if target_type == TypeId::ANY || target_type == TypeId::ERROR {
