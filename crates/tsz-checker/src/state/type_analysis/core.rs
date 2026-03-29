@@ -866,7 +866,26 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(member_id);
             }
-            if let Some(local_sym_id) = self.ctx.binder.file_locals.get(member_name)
+            // Only the anonymous source-file module should see top-level file exports
+            // through `file_locals`. Named namespaces/modules must resolve members
+            // through their own declaration-local export tables; otherwise `X.bar`
+            // can accidentally bind to an unrelated `export function bar()` from the
+            // containing file and surface TS2749 instead of TS2694.
+            let has_named_module_declaration = symbol.declarations.iter().any(|&decl_idx| {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    return false;
+                };
+                if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                    return false;
+                }
+                self.ctx
+                    .arena
+                    .get_module(node)
+                    .and_then(|module| self.ctx.arena.get(module.name))
+                    .is_some_and(|name_node| name_node.kind == SyntaxKind::Identifier as u16)
+            });
+            if !has_named_module_declaration
+                && let Some(local_sym_id) = self.ctx.binder.file_locals.get(member_name)
                 && let Some(sym) = self.ctx.binder.get_symbol(local_sym_id)
                 && sym.is_exported
             {
