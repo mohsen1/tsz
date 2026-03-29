@@ -182,7 +182,7 @@ export function parseBaseline(content: string): BaselineContent {
       // exists with the same base name. If the matching source is a .d.ts,
       // the JS file is the library's runtime (e.g., tslib.d.ts + tslib.js
       // in node_modules), not compiler output.
-      const isTsOutput = seenTsSources.some(src => {
+      const matchingTsSource = seenTsSources.find(src => {
         if (src.endsWith('.d.ts')) return false;
         const base = src.replace(/\.(ts|tsx|mts|cts)$/, '');
         return (
@@ -192,6 +192,32 @@ export function parseBaseline(content: string): BaselineContent {
           name === `${base}.cjs`
         );
       });
+      let isTsOutput = !!matchingTsSource;
+      // When --allowJs is set, a .js input file can have the same base name as
+      // a .ts source file (e.g. a.ts and a.js). In that case tsc blocks the JS
+      // file's emit and places the .js file in the SOURCE section of the
+      // baseline, not the output section. Detect this by comparing content: if
+      // the JS content shares no substantive code lines with the TS source, it
+      // is an allowJs input, not compiler output.
+      if (isTsOutput && matchingTsSource) {
+        const jsContent = content.slice(segments[i].start, segments[i].end).trim();
+        const tsSegment = segments.find(s => s.name.trim() === matchingTsSource);
+        if (tsSegment) {
+          const tsContent = content.slice(tsSegment.start, tsSegment.end).trim();
+          const significantLines = (text: string) =>
+            text.split('\n')
+              .map(l => l.trim())
+              .filter(l => l.length > 0 && !l.startsWith('//') && !l.startsWith('/*') && l !== '{' && l !== '}' && l !== '"use strict";');
+          const tsLines = new Set(significantLines(tsContent));
+          const jsLines = significantLines(jsContent);
+          // If zero JS lines appear in the TS source, this .js file is an
+          // allowJs input (emit-blocked), not compiler output.
+          const hasOverlap = jsLines.some(line => tsLines.has(line));
+          if (!hasOverlap && jsLines.length > 0) {
+            isTsOutput = false;
+          }
+        }
+      }
       // Also check if a JS/JSX source file shares the same basename
       // (e.g., foo.jsx as input -> foo.js as output in @allowJs tests).
       // Only consider valid JS-to-JS compilation pairs: .jsx -> .js.
