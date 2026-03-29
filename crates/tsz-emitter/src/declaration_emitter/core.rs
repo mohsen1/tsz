@@ -126,6 +126,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_cjs_export_aliases: Vec<(String, String)>,
     /// Statements consumed by CJS export alias collection.
     pub(super) js_cjs_export_alias_statements: FxHashSet<NodeIndex>,
+    /// Statements consumed by `module.exports = { Name1, Name2 }` object pattern.
+    pub(super) js_module_exports_object_stmts: FxHashSet<NodeIndex>,
     /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
     /// top-level synthetic function declarations.
     /// The boolean marks whether the synthetic declaration should be exported.
@@ -251,6 +253,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_namespace_export_aliases: FxHashMap::default(),
             js_cjs_export_aliases: Vec::new(),
             js_cjs_export_alias_statements: FxHashSet::default(),
+            js_module_exports_object_stmts: FxHashSet::default(),
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
@@ -328,6 +331,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_namespace_export_aliases: FxHashMap::default(),
             js_cjs_export_aliases: Vec::new(),
             js_cjs_export_alias_statements: FxHashSet::default(),
+            js_module_exports_object_stmts: FxHashSet::default(),
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
@@ -789,6 +793,11 @@ impl<'a> DeclarationEmitter<'a> {
         ) = self.collect_js_commonjs_named_exports(source_file);
         self.js_named_export_names
             .extend(js_commonjs_named_export_names);
+        let (module_exports_obj_names, module_exports_obj_stmts) =
+            self.collect_js_module_exports_object_names(source_file);
+        self.js_named_export_names
+            .extend(module_exports_obj_names);
+        self.js_module_exports_object_stmts = module_exports_obj_stmts;
         let (cjs_aliases, cjs_alias_stmts) = self.collect_js_cjs_export_aliases(source_file);
         self.js_cjs_export_aliases = cjs_aliases;
         self.js_cjs_export_alias_statements = cjs_alias_stmts;
@@ -882,6 +891,9 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
+                continue;
+            }
+            if self.js_module_exports_object_stmts.contains(&stmt_idx) {
                 continue;
             }
             self.emit_statement(stmt_idx);
@@ -3165,6 +3177,8 @@ impl<'a> DeclarationEmitter<'a> {
                     "const"
                 } else if flags & tsz_parser::parser::node_flags::LET != 0 {
                     "let"
+                } else if self.source_is_js_file {
+                    "const"
                 } else {
                     "var"
                 };
