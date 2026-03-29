@@ -15415,6 +15415,66 @@ fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
     );
 }
 
+/// Given `f1<T>(x: T | string)` called with `number | string | boolean`,
+/// T should be inferred as `number | boolean` (string matches the fixed member,
+/// remaining members number and boolean should all become candidates for T).
+#[test]
+fn test_union_inference_multiple_unmatched_candidates() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    // Parameter: T | string
+    let param_type = interner.union(vec![t_type, TypeId::STRING]);
+
+    let func = FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // Calling with number | string | boolean
+    // T should be inferred as number | boolean (string is matched by fixed member)
+    let arg_type = interner.union(vec![TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN]);
+    let result = infer_generic_function(&interner, &mut checker, &func, &[arg_type]);
+
+    // The result should be number | boolean (the return type T is instantiated with the inferred T)
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::BOOLEAN]);
+    // If we get ERROR, the call resolution failed (ArgumentTypeMismatch)
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "Generic call should succeed, not return ERROR. T should be inferred as number | boolean."
+    );
+    assert_eq!(
+        result,
+        expected,
+        "T should be inferred as number | boolean, got {:?} (expected {:?})",
+        interner.lookup(result),
+        interner.lookup(expected),
+    );
+}
+
 // =============================================================================
 // Declared Constraint Literal Preservation Tests
 // =============================================================================

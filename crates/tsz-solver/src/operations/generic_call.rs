@@ -1153,10 +1153,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         ));
                     }
                 } else {
-                    // Target type contains placeholders - check against their constraints
+                    // Target type contains placeholders - check against their constraints.
+                    // Only track as "direct parameter" when the placeholder is NOT inside
+                    // a union/intersection. When the parameter type is `T | string`, the
+                    // inference decomposes the argument union and each non-matching member
+                    // becomes a separate candidate for T. These candidates should be combined
+                    // into a union, NOT reduced via first-wins logic. The first-wins behavior
+                    // in `resolve_direct_parameter_inference_type` is designed for cases where
+                    // T appears bare in multiple parameters (e.g., `f<T>(a: T, b: T)`) and
+                    // heterogeneous arguments produce conflicting candidates.
                     if track_direct_placeholder_vars
                         && !matches!(
-                            self.interner.lookup(target_type),
+                            self.interner.lookup(contextual_target_type),
                             Some(TypeData::Union(_) | TypeData::Intersection(_))
                         )
                     {
