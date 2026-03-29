@@ -529,8 +529,16 @@ impl TypeEnvironment {
     // =========================================================================
 
     /// Register a `DefId`'s resolved type.
+    ///
+    /// Writes to the local `def_types` cache and also to the shared
+    /// `DefinitionStore` (if set) so cross-file delegation results are
+    /// visible to parent checkers without explicit merge-back.
     pub fn insert_def(&mut self, def_id: DefId, type_id: TypeId) {
         self.def_types.insert(def_id.0, type_id);
+        // Write through to shared store for cross-checker visibility.
+        if let Some(ref store) = self.definition_store {
+            store.set_body(def_id, type_id);
+        }
     }
 
     /// Get a class `DefId`'s registered instance type.
@@ -548,6 +556,9 @@ impl TypeEnvironment {
     }
 
     /// Register a `DefId`'s resolved type with type parameters.
+    ///
+    /// Writes to the local cache and the shared `DefinitionStore` so
+    /// cross-file delegation results are visible without merge-back.
     pub fn insert_def_with_params(
         &mut self,
         def_id: DefId,
@@ -558,11 +569,23 @@ impl TypeEnvironment {
         if !params.is_empty() {
             self.def_type_params.insert(def_id.0, params);
         }
+        // Write through to shared store for cross-checker visibility.
+        if let Some(ref store) = self.definition_store {
+            store.set_body(def_id, type_id);
+        }
     }
 
     /// Get a `DefId`'s resolved type.
+    ///
+    /// First checks the local `def_types` cache, then falls back to the shared
+    /// `DefinitionStore.get_body()` if available. The fallback enables cross-file
+    /// delegation results to be visible without explicit merge-back: the child
+    /// checker writes to `DefinitionStore` and the parent reads via this fallback.
     pub fn get_def(&self, def_id: DefId) -> Option<TypeId> {
-        self.def_types.get(&def_id.0).copied()
+        self.def_types
+            .get(&def_id.0)
+            .copied()
+            .or_else(|| self.definition_store.as_ref()?.get_body(def_id))
     }
 
     /// Get a `DefId`'s type parameters.
@@ -571,8 +594,14 @@ impl TypeEnvironment {
     }
 
     /// Check if the environment contains a `DefId`.
+    ///
+    /// Checks local `def_types` first, then falls back to `DefinitionStore`.
     pub fn contains_def(&self, def_id: DefId) -> bool {
         self.def_types.contains_key(&def_id.0)
+            || self
+                .definition_store
+                .as_ref()
+                .is_some_and(|store| store.get_body(def_id).is_some())
     }
 
     /// Merge def entries (types and type params) from this environment into another.
