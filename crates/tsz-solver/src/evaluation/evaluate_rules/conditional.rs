@@ -571,32 +571,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Subtype check path — use strict checking (no bivariant rest)
             // to match tsc's `isTypeAssignableTo` which respects strictFunctionTypes.
             //
-            // Thread-local depth guard: evaluating conditional types can trigger
-            // subtype checks that evaluate MORE conditional types, creating an
-            // Evaluator → SubtypeChecker → Evaluator → ... chain where each
-            // instance has fresh cycle-detection state. Without this global
-            // depth limit, recursive generic types like `Vector<T> implements
-            // Seq<T>` with `Exclude<T, U>` in overloads cause stack overflow.
-            thread_local! {
-                static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-            }
-            let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
-                let c = d.get();
-                d.set(c + 1);
-                c
-            });
-            let is_sub = if prev_depth >= 50 {
-                // At excessive depth, conservatively assume not a subtype
-                // (takes the false/else branch of the conditional).
-                // This matches tsc's behavior of returning the deferred
-                // conditional when instantiation depth is exceeded.
-                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                false
+            // PERF: Check the evaluator's conditional_subtype_cache first. Deeply
+            // recursive conditional types (DeepReadonly, Compute, etc.) re-check
+            // the same (check, extends) pair many times across distributed branches
+            // and tail-recursion iterations. Caching avoids redundant structural
+            // comparison which dominates the time for these benchmarks.
+            let is_sub = if let Some(cached) =
+                self.cached_conditional_subtype(check_type, extends_type)
+            {
+                cached
             } else {
-                let mut strict_checker =
-                    SubtypeChecker::with_resolver(self.interner(), self.resolver());
-                let result = strict_checker.is_subtype_of(check_type, extends_type);
-                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                // Thread-local depth guard: evaluating conditional types can trigger
+                // subtype checks that evaluate MORE conditional types, creating an
+                // Evaluator → SubtypeChecker → Evaluator → ... chain where each
+                // instance has fresh cycle-detection state. Without this global
+                // depth limit, recursive generic types like `Vector<T> implements
+                // Seq<T>` with `Exclude<T, U>` in overloads cause stack overflow.
+                thread_local! {
+                    static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+                }
+                let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
+                    let c = d.get();
+                    d.set(c + 1);
+                    c
+                });
+                let result = if prev_depth >= 50 {
+                    // At excessive depth, conservatively assume not a subtype
+                    // (takes the false/else branch of the conditional).
+                    // This matches tsc's behavior of returning the deferred
+                    // conditional when instantiation depth is exceeded.
+                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                    false
+                } else {
+                    let mut strict_checker =
+                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let r = strict_checker.is_subtype_of(check_type, extends_type);
+                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                    r
+                };
+                self.cache_conditional_subtype(check_type, extends_type, result);
                 result
             };
             trace!(
