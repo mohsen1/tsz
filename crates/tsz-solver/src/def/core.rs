@@ -533,7 +533,7 @@ pub struct DefinitionStore {
     /// `pre_populate_def_ids_from_all_binders()` and `resolve_cross_batch_heritage()`
     /// calls. Set by `mark_fully_populated()` after the first complete population pass.
     ///
-    /// This prevents O(files * total_defs) work when checking many files in parallel,
+    /// This prevents O(files * `total_defs`) work when checking many files in parallel,
     /// which was the root cause of hangs on large type libraries like ts-toolbelt.
     fully_populated: std::sync::atomic::AtomicBool,
 }
@@ -848,7 +848,7 @@ impl DefinitionStore {
     ///
     /// Type parameters may be computed lazily after initial registration.
     /// Initialize per-file delegation locks for parallel checking.
-    /// Mark the store as fully populated (all DefIds registered, heritage resolved).
+    /// Mark the store as fully populated (all `DefIds` registered, heritage resolved).
     ///
     /// After this is called, `is_fully_populated()` returns `true`, allowing
     /// callers to skip redundant population passes.
