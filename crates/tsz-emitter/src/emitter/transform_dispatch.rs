@@ -832,15 +832,9 @@ impl<'a> Printer<'a> {
             }
         }
         if !self.commonjs_named_import_substitutions.is_empty() {
-            eprintln!(
-                "[DISPATCH_DEBUG] Passing CJS subs: {:?}",
-                self.commonjs_named_import_substitutions
-            );
             es5_emitter.set_commonjs_import_substitutions(
                 self.commonjs_named_import_substitutions.clone(),
             );
-        } else {
-            eprintln!("[DISPATCH_DEBUG] No CJS subs to pass");
         }
 
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
