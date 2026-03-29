@@ -2113,6 +2113,107 @@ impl<'a> DeclarationEmitter<'a> {
         (exported_names, function_statements, value_statements)
     }
 
+    /// Collect named export names from `module.exports = { Name1, Name2 }` patterns.
+    ///
+    /// When a JS file has `module.exports = { Foo, Bar }` where the shorthand
+    /// property names refer to top-level declarations, tsc treats those names
+    /// as named exports (emitting `export class Foo ...` rather than
+    /// `declare class Foo ...`).
+    pub(crate) fn collect_js_module_exports_object_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (FxHashSet<String>, FxHashSet<NodeIndex>) {
+        let empty = (FxHashSet::default(), FxHashSet::default());
+        if !self.source_file_is_js(source_file) {
+            return empty;
+        }
+
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        let mut names = FxHashSet::default();
+        let mut skipped_stmts = FxHashSet::default();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            // Look for expression statements: `module.exports = { ... }`
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            if !self.is_module_exports_reference(binary.left) {
+                continue;
+            }
+
+            let rhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right);
+            let Some(rhs_node) = self.arena.get(rhs) else {
+                continue;
+            };
+            if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let Some(obj) = self.arena.get_literal_expr(rhs_node) else {
+                continue;
+            };
+
+            let mut found_any = false;
+            for &member_idx in &obj.elements.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                // Handle shorthand properties: `{ FancyError }` -> name is `FancyError`
+                if member_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                        if let Some(name) = self.get_identifier_text(data.name) {
+                            if export_targets.contains_key(&name) {
+                                names.insert(name);
+                                found_any = true;
+                            }
+                        }
+                    }
+                }
+                // Handle property assignments: `{ FancyError: FancyError }`
+                else if member_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    if let Some(prop) = self.arena.get_property_assignment(member_node) {
+                        if let Some(prop_name) = self.get_identifier_text(prop.name) {
+                            if let Some(init_name) = self.get_identifier_text(prop.initializer) {
+                                if prop_name == init_name && export_targets.contains_key(&prop_name)
+                                {
+                                    names.insert(prop_name);
+                                    found_any = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if found_any {
+                skipped_stmts.insert(stmt_idx);
+            }
+        }
+
+        (names, skipped_stmts)
+    }
+
     pub(crate) fn js_supported_commonjs_named_export_for_statement(
         &self,
         stmt_idx: NodeIndex,
