@@ -68,6 +68,11 @@ pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
 
+/// Check if a type is structurally the Function interface (has apply/call/bind).
+pub(crate) fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_function_interface_structural(db, type_id)
+}
+
 /// Check if a type is a `this` type (visitor-based, handles Lazy indirection).
 pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::is_this_type(db, type_id)

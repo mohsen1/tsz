@@ -24,12 +24,14 @@ pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::F
 
 /// Check if a type is a callable type (function or callable with signatures).
 ///
-/// Returns true for `TypeData::Callable` and `TypeData::Function` types.
+/// Returns true for `TypeData::Callable`, `TypeData::Function`, and the
+/// intrinsic `TypeId::FUNCTION` (the global `Function` interface).
 pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(
-        db.lookup(type_id),
-        Some(TypeData::Callable(_) | TypeData::Function(_))
-    )
+    type_id == TypeId::FUNCTION
+        || matches!(
+            db.lookup(type_id),
+            Some(TypeData::Callable(_) | TypeData::Function(_))
+        )
 }
 
 /// Check if a type is structurally the Function interface from lib.d.ts.
