@@ -139,11 +139,9 @@ impl<'a> CheckerState<'a> {
     /// This enables symbol resolution across lib.d.ts files when `lib_binders`
     /// is not populated in the binder (e.g., in the driver.rs path).
     pub(crate) fn get_lib_binders(&self) -> Vec<Arc<tsz_binder::BinderState>> {
-        self.ctx
-            .lib_contexts
-            .iter()
-            .map(|lc| Arc::clone(&lc.binder))
-            .collect()
+        // PERF: Clone the pre-computed cached vec. This still clones Arc refcounts
+        // but avoids iterating lib_contexts and extracting binder fields each time.
+        self.ctx.lib_binders_cached.clone()
     }
 
     /// Check if a symbol represents a class member (property, method, accessor, or constructor).
@@ -299,13 +297,6 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        // Get identifier name for tracing
-        let ident_name = self
-            .ctx
-            .arena
-            .get_identifier_at(idx)
-            .map(|i| i.escaped_text.as_str().to_string());
-
         let ignore_libs = !self.ctx.has_lib_loaded();
         let lib_binders = if ignore_libs {
             Vec::new()
@@ -318,6 +309,15 @@ impl<'a> CheckerState<'a> {
             .flatten();
         let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
         let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
+
+        // PERF: ident_name is only used by trace! calls which are compiled out
+        // in release builds (release_max_level_warn). The to_string() allocation
+        // is eliminated by the compiler since ident_name becomes dead code.
+        let ident_name = self
+            .ctx
+            .arena
+            .get_identifier_at(idx)
+            .map(|i| i.escaped_text.as_str().to_string());
 
         trace!(
             ident_name = ?ident_name,

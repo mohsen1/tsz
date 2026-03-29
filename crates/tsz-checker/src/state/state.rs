@@ -1210,6 +1210,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[inline]
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_node_with_request(idx, &TypingRequest::NONE)
     }
@@ -1242,25 +1243,49 @@ impl<'a> CheckerState<'a> {
         }
 
         if use_node_cache && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            // PERF: Single arena lookup for the cached path — all subsequent
+            // checks reuse `node_kind` instead of re-fetching from the arena.
+            let node_kind = self.ctx.arena.get(idx).map(|n| n.kind).unwrap_or(0);
+
+            // PERF: Only Identifier and ThisKeyword can be narrowed by flow
+            // analysis, and only property/element access + super are
+            // super-sensitive. All other node kinds (literals, call results,
+            // binary expressions, etc.) can return the cached type immediately
+            // without touching flow caches, binder lookups, or RefCell borrows.
+            let is_identifier = node_kind == tsz_scanner::SyntaxKind::Identifier as u16;
+            let is_this_keyword = node_kind == tsz_scanner::SyntaxKind::ThisKeyword as u16;
+            let is_super_keyword = node_kind == tsz_scanner::SyntaxKind::SuperKeyword as u16;
+            let is_access_expr = {
+                use tsz_parser::parser::syntax_kind_ext;
+                node_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || node_kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            };
+            let needs_flow_or_super =
+                is_identifier || is_this_keyword || is_super_keyword || is_access_expr;
+
+            if !needs_flow_or_super {
+                // Fast path: non-narrowable, non-super, non-access node — return cached immediately.
+                tracing::trace!(
+                    idx = idx.0,
+                    type_id = cached.0,
+                    "(cached-fast) get_type_of_node"
+                );
+                return cached;
+            }
+
             // PERF: Skip super-sensitivity checks when not inside a class.
             // The `super` keyword can only appear inside class members, so
             // checking for it outside classes is pure overhead.
-            let is_super_sensitive =
-                self.ctx.enclosing_class.is_some() && {
-                    let is_super_sensitive_access =
-                        self.ctx.arena.get(idx).is_some_and(|node| {
-                            use tsz_parser::parser::syntax_kind_ext;
-                            (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                                && self.ctx.arena.get_access_expr(node).is_some_and(|access| {
-                                    self.is_super_expression(access.expression)
-                                })
-                        });
-                    let is_super_keyword = self.ctx.arena.get(idx).is_some_and(|node| {
-                        node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16
+            let is_super_sensitive = self.ctx.enclosing_class.is_some() && {
+                let is_super_sensitive_access = is_access_expr
+                    && self.ctx.arena.get(idx).is_some_and(|node| {
+                        self.ctx
+                            .arena
+                            .get_access_expr(node)
+                            .is_some_and(|access| self.is_super_expression(access.expression))
                     });
-                    is_super_sensitive_access || is_super_keyword
-                };
+                is_super_sensitive_access || is_super_keyword
+            };
 
             if is_super_sensitive {
                 // `super` diagnostics depend on the current class-member context.
@@ -1273,6 +1298,7 @@ impl<'a> CheckerState<'a> {
             // we can return it immediately — skipping FlowAnalyzer creation, is_narrowable_identifier
             // checks, parameter default checks, and all other setup (~300ns savings per call).
             else if !skip_flow_narrowing
+                && (is_identifier || is_this_keyword)
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
@@ -1329,8 +1355,8 @@ impl<'a> CheckerState<'a> {
             // x should have the narrowed type "string".
             //
             // Only apply narrowing if skip_flow_narrowing is false (respects testing/special contexts)
-            let should_narrow =
-                self.should_apply_flow_narrowing_for_identifier(idx, skip_flow_narrowing);
+            let should_narrow = (is_identifier || is_this_keyword)
+                && self.should_apply_flow_narrowing_for_identifier(idx, skip_flow_narrowing);
 
             if should_narrow {
                 // Skip second flow narrowing if check_flow_usage already narrowed
@@ -1369,14 +1395,7 @@ impl<'a> CheckerState<'a> {
             // property/element access nodes may have a different write type
             // than the cached read type. Bypass the cache so
             // get_type_of_property_access can return the write_type.
-            if skip_flow_narrowing
-                && self.ctx.arena.get(idx).is_some_and(|node| {
-                    use tsz_parser::parser::syntax_kind_ext;
-                    node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                })
-                || is_super_sensitive
-            {
+            if (skip_flow_narrowing && is_access_expr) || is_super_sensitive {
                 // Fall through to recompute with write-type awareness
             } else {
                 tracing::trace!(idx = idx.0, type_id = cached.0, "(cached) get_type_of_node");

@@ -174,6 +174,10 @@ impl<'a> CheckerContext<'a> {
     /// Note: `lib_contexts` may include both actual lib files AND user files for cross-file
     /// resolution. Use `set_actual_lib_file_count()` to track how many are actual lib files.
     pub fn set_lib_contexts(&mut self, lib_contexts: Vec<LibContext>) {
+        self.lib_binders_cached = lib_contexts
+            .iter()
+            .map(|lc| Arc::clone(&lc.binder))
+            .collect();
         self.lib_contexts = lib_contexts;
     }
 

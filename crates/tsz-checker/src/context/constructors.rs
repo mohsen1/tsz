@@ -231,6 +231,7 @@ impl<'a> CheckerContext<'a> {
             import_resolution_stack: Vec::new(),
             type_only_nodes: FxHashSet::default(),
             lib_contexts: Vec::new(),
+            lib_binders_cached: Vec::new(),
             actual_lib_file_count: 0,
             typescript_dom_replacement_loaded: false,
             typescript_dom_replacement_has_window: false,
