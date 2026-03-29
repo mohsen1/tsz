@@ -982,7 +982,17 @@ impl<'a> CheckerState<'a> {
                     // non-suppressing parse errors like TS1359.
                     let file_has_any_parse_diag =
                         self.has_parse_errors() || !self.ctx.all_parse_error_positions.is_empty();
-                    if !file_has_any_parse_diag && !has_import_partner {
+                    // Suppress TS2456 when the type alias body provides
+                    // structural wrapping (array, tuple, object literal,
+                    // mapped type, function).  Cross-file recursive type
+                    // aliases that go through such wrapping (e.g.,
+                    // `type JsonArray = JsonValue[]`) are valid in TypeScript
+                    // -- the structural wrapper breaks the direct circularity.
+                    // We check the LOCAL type_node AST (which is always in the
+                    // current arena) rather than the resolved type or
+                    // cross-file AST to avoid SymbolId/arena collisions.
+                    let body_is_deferred = self.alias_ast_is_deferred(sym_id);
+                    if !file_has_any_parse_diag && !has_import_partner && !body_is_deferred {
                         let name = escaped_name;
                         let message = format_message(
                             diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,

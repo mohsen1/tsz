@@ -603,7 +603,7 @@ impl<'a> CheckerState<'a> {
     /// This covers patterns like:
     /// - `type Recurse = { [K in keyof Recurse]: Recurse[K] }` (self)
     /// - `type A = { [K in keyof B]: B[K] }; type B = { [K in keyof A]: A[K] }` (mutual)
-    fn alias_ast_is_deferred(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn alias_ast_is_deferred(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
@@ -925,10 +925,14 @@ impl<'a> CheckerState<'a> {
                             // circular in TSC.
                             let generic_self_ref = ta.type_parameters.is_some()
                                 && self.is_simple_type_reference(ta.type_node);
+                            // Suppress TS2456 when the type alias body provides
+                            // structural wrapping (cross-file deferred cycles).
+                            let body_is_deferred = self.alias_ast_is_deferred(sym_id);
                             if name_matches
                                 && !has_parse_error_tp
                                 && !has_import_partner
                                 && !generic_self_ref
+                                && !body_is_deferred
                                 && !self.ctx.import_conflict_names.contains(&name)
                             {
                                 self.error_at_node(
