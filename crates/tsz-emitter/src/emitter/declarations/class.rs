@@ -3879,7 +3879,13 @@ impl<'a> Printer<'a> {
             if let Some(static_node) = self.arena.get(static_block_idx) {
                 let prev = self.emitting_function_body_block;
                 self.emitting_function_body_block = true;
+                // Save and restore hoisted temps so outer-scope vars (e.g. private
+                // field WeakMap names) don't get re-declared inside the IIFE body.
+                let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
                 self.emit_block(static_node, static_block_idx);
+                // Any temps generated inside the IIFE block have already been
+                // emitted by emit_block; restore the outer-scope temps.
+                self.hoisted_assignment_temps = saved_temps;
                 self.emitting_function_body_block = prev;
             } else {
                 self.write("{ }");
