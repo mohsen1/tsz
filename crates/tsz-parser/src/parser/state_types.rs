@@ -1902,9 +1902,12 @@ impl ParserState {
             );
             self.parse_expected_greater_than();
 
-            // Check if followed by ( to confirm this is a call
-            if !self.is_token(SyntaxKind::OpenParenToken) {
-                // Not a call - rollback
+            // Check if followed by ( (call) or a token that can follow type
+            // arguments in expression context (instantiation expression like `fx<>;`).
+            if !self.is_token(SyntaxKind::OpenParenToken)
+                && !self.can_follow_type_arguments_in_expression()
+            {
+                // Not a call or instantiation expression - rollback
                 self.scanner.restore_state(snapshot);
                 self.current_token = saved_token;
                 self.arena.nodes.truncate(saved_arena_len);
