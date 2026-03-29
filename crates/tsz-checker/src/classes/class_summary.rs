@@ -416,12 +416,15 @@ impl<'a> CheckerState<'a> {
         Some(self.summarize_class_initialization(class_idx, class))
     }
 
-    pub(crate) fn summarize_class_chain(&mut self, class_idx: NodeIndex) -> ClassChainSummary {
+    pub(crate) fn summarize_class_chain(
+        &mut self,
+        class_idx: NodeIndex,
+    ) -> std::rc::Rc<ClassChainSummary> {
         // Check cache first
         {
             let cache = self.ctx.class_chain_summary_cache.borrow();
             if let Some(cached) = cache.get(&class_idx) {
-                return cached.clone();
+                return std::rc::Rc::clone(cached);
             }
         }
 
@@ -461,11 +464,12 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.preserve_literal_types = saved_preserve;
 
-        // Cache the result
+        // Cache the result as Rc for cheap clone on subsequent lookups
+        let summary = std::rc::Rc::new(summary);
         self.ctx
             .class_chain_summary_cache
             .borrow_mut()
-            .insert(class_idx, summary.clone());
+            .insert(class_idx, std::rc::Rc::clone(&summary));
 
         summary
     }

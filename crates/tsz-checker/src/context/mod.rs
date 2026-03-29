@@ -823,8 +823,9 @@ pub struct CheckerContext<'a> {
     /// Cache for class chain summaries (class declaration `NodeIndex` -> summary).
     /// Avoids recomputing the full inheritance chain member walk on every property
     /// access and override check in class-heavy programs.
-    pub class_chain_summary_cache:
-        RefCell<FxHashMap<NodeIndex, crate::classes_domain::class_summary::ClassChainSummary>>,
+    pub class_chain_summary_cache: RefCell<
+        FxHashMap<NodeIndex, std::rc::Rc<crate::classes_domain::class_summary::ClassChainSummary>>,
+    >,
 
     /// Shared evaluation cache for `evaluate_type_with_env` results.
     /// Avoids re-evaluating the same `TypeId` through recursive mapped/conditional
