@@ -823,6 +823,7 @@ impl<'a> Printer<'a> {
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
         }
+        es5_emitter.set_printer_options(self.ctx.options.clone());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -831,7 +832,15 @@ impl<'a> Printer<'a> {
             }
         }
         if !self.commonjs_named_import_substitutions.is_empty() {
-            es5_emitter.set_commonjs_import_substitutions(self.commonjs_named_import_substitutions.clone());
+            eprintln!(
+                "[DISPATCH_DEBUG] Passing CJS subs: {:?}",
+                self.commonjs_named_import_substitutions
+            );
+            es5_emitter.set_commonjs_import_substitutions(
+                self.commonjs_named_import_substitutions.clone(),
+            );
+        } else {
+            eprintln!("[DISPATCH_DEBUG] No CJS subs to pass");
         }
 
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
