@@ -9,7 +9,6 @@ use crate::context::PendingImplicitAnyKind;
 use crate::query_boundaries::common as common_query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use std::rc::Rc;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -562,7 +561,7 @@ impl<'a> CheckerState<'a> {
         .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
         .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_type_environment(&self.ctx.type_environment)
         .with_narrowing_cache(&self.ctx.narrowing_cache)
         .with_call_type_predicates(&self.ctx.call_type_predicates)
         .with_flow_buffers(

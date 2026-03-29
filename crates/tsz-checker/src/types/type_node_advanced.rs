@@ -484,7 +484,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     });
 
                 if let Some(flow_node) = flow_node {
-                    use std::rc::Rc;
                     let analyzer = crate::FlowAnalyzer::with_node_types(
                         self.ctx.arena,
                         self.ctx.binder,
@@ -495,7 +494,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
                     .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
                     .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-                    .with_type_environment(Rc::clone(&self.ctx.type_environment))
+                    .with_type_environment(&self.ctx.type_environment)
                     .with_narrowing_cache(&self.ctx.narrowing_cache)
                     .with_call_type_predicates(&self.ctx.call_type_predicates)
                     .with_flow_buffers(

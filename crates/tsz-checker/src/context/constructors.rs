@@ -75,7 +75,7 @@ impl<'a> CheckerContext<'a> {
             node_types: crate::context::NodeTypeCache::with_capacity(arena.nodes.len()),
             request_node_types: FxHashMap::default(),
             request_cache_counters: crate::context::RequestCacheCounters::default(),
-            type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            type_environment: RefCell::new(TypeEnvironment::new()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),

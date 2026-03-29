@@ -1,7 +1,5 @@
 //! Flow-based definite assignment and declaration ordering checks.
 
-use std::rc::Rc;
-
 use crate::FlowAnalyzer;
 use crate::query_boundaries::definite_assignment::should_report_variable_use_before_assignment;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
@@ -1110,7 +1108,7 @@ impl<'a> CheckerState<'a> {
         )
         .with_flow_cache(&self.ctx.flow_analysis_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_type_environment(&self.ctx.type_environment)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         // Pre-seed the reference symbol cache when the checker has already

@@ -5,7 +5,6 @@ use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Rc;
 use tsz_binder::BinderState;
 use tsz_binder::{FlowNode, FlowNodeArena, FlowNodeId, SymbolId, flow_flags};
 use tsz_common::interner::Atom;
@@ -162,7 +161,7 @@ pub struct FlowAnalyzer<'a> {
     /// Optional cache for flow analysis results to avoid redundant graph traversals
     pub(crate) flow_cache: Option<&'a RefCell<FlowCache>>,
     /// Optional `TypeEnvironment` for resolving Lazy types during narrowing
-    pub(crate) type_environment: Option<Rc<RefCell<tsz_solver::TypeEnvironment>>>,
+    pub(crate) type_environment: Option<&'a RefCell<tsz_solver::TypeEnvironment>>,
     /// Cache for switch-reference relevance checks.
     /// Key: (`switch_expr_node`, `reference_node`) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
@@ -459,7 +458,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Set the `TypeEnvironment` for resolving Lazy types during narrowing.
     pub fn with_type_environment(
         mut self,
-        type_env: Rc<RefCell<tsz_solver::TypeEnvironment>>,
+        type_env: &'a RefCell<tsz_solver::TypeEnvironment>,
     ) -> Self {
         self.type_environment = Some(type_env);
         self
