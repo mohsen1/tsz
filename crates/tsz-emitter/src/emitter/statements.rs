@@ -624,7 +624,6 @@ impl<'a> Printer<'a> {
             return;
         }
 
-
         // When `export =` is present, exported variables with no initializers
         // whose names are already in commonjs_exported_var_names are redundant
         // (the preamble emitted `exports.X = void 0;`). Skip the bare `var X;`.

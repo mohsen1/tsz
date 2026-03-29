@@ -123,7 +123,13 @@ impl<'a> Printer<'a> {
         func_name: &str,
         this_expr: &str,
     ) {
-        self.emit_async_function_es5_body(func_name, &func.parameters.nodes, func.body, this_expr, func.type_annotation);
+        self.emit_async_function_es5_body(
+            func_name,
+            &func.parameters.nodes,
+            func.body,
+            this_expr,
+            func.type_annotation,
+        );
     }
 
     pub(in crate::emitter) fn emit_async_function_es5_body(
@@ -204,7 +210,9 @@ impl<'a> Printer<'a> {
                 self.write_helper("__awaiter");
                 self.write("(");
                 self.write(this_expr);
-                self.write(", arguments, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function (");
+                self.write(", arguments, ");
+                self.write_awaiter_promise_arg(&promise_ctor);
+                self.write(", function (");
                 self.emit_function_parameter_names_only(params);
                 self.write(") {");
                 self.write_line();
@@ -284,7 +292,9 @@ impl<'a> Printer<'a> {
                 self.write_helper("__awaiter");
                 self.write("(");
                 self.write(this_expr);
-                self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function () {");
+                self.write(", void 0, ");
+                self.write_awaiter_promise_arg(&promise_ctor);
+                self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
 
@@ -355,7 +365,9 @@ impl<'a> Printer<'a> {
                 //         ...
                 //     });
                 // });
-                self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function () {");
+                self.write(", void 0, ");
+                self.write_awaiter_promise_arg(&promise_ctor);
+                self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
@@ -373,7 +385,9 @@ impl<'a> Printer<'a> {
                 self.write("});");
             } else {
                 // Multi-line format with hoisted vars
-                self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function () {");
+                self.write(", void 0, ");
+                self.write_awaiter_promise_arg(&promise_ctor);
+                self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
                 self.write("var ");
@@ -443,7 +457,9 @@ impl<'a> Printer<'a> {
         self.write("(");
         self.write(this_expr);
         if move_params_to_generator {
-            self.write(", arguments, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function* (");
+            self.write(", arguments, ");
+            self.write_awaiter_promise_arg(&promise_ctor);
+            self.write(", function* (");
             let saved = self.ctx.emit_await_as_yield;
             self.ctx.emit_await_as_yield = true;
             self.emit_function_parameters_js(params);
@@ -454,9 +470,13 @@ impl<'a> Printer<'a> {
                 self.write(") {");
             }
         } else if body_is_empty_single_line {
-            self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function* () { });");
+            self.write(", void 0, ");
+            self.write_awaiter_promise_arg(&promise_ctor);
+            self.write(", function* () { });");
         } else {
-            self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function* () {");
+            self.write(", void 0, ");
+            self.write_awaiter_promise_arg(&promise_ctor);
+            self.write(", function* () {");
         }
 
         if body_is_empty_single_line {
@@ -522,7 +542,6 @@ impl<'a> Printer<'a> {
     ) -> bool {
         emit_utils::param_initializer_has_top_level_await(self.arena, param_idx)
     }
-
 
     fn first_await_default_param_name(&self, params: &[NodeIndex]) -> Option<String> {
         emit_utils::first_await_default_param_name(self.arena, params)
