@@ -2351,6 +2351,34 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+
+                // TS2393: Duplicate function implementation.
+                // When multiple `export default function` declarations have bodies,
+                // tsc emits TS2393 on each, regardless of whether they are named or anonymous.
+                if has_function {
+                    let func_impls: Vec<NodeIndex> = export_default_indices
+                        .iter()
+                        .filter_map(|&idx| {
+                            let ed = self.ctx.arena.get_export_decl_at(idx)?;
+                            let clause_node = self.ctx.arena.get(ed.export_clause)?;
+                            if clause_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                                return None;
+                            }
+                            let func = self.ctx.arena.get_function(clause_node)?;
+                            if func.body.is_some() { Some(idx) } else { None }
+                        })
+                        .collect();
+
+                    if func_impls.len() > 1 {
+                        for &impl_idx in &func_impls {
+                            self.error_at_node(
+                                impl_idx,
+                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            );
+                        }
+                    }
+                }
             } else if has_interface && !(has_function && value_count == 1) {
                 // Multiple default exports with at least one interface but not a valid
                 // interface + function merge. E.g.:
