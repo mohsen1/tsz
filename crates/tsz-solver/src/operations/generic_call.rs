@@ -15,7 +15,22 @@ use crate::types::{
 };
 use crate::{TypeDatabase, contains_type_by_id};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, trace};
+
+/// Global counter for generating unique inference placeholder names.
+/// Each InferenceContext starts its variable counter at 0, so placeholder
+/// names like `__infer_0` collide across contexts when interned as Atoms.
+/// This counter ensures every placeholder gets a globally unique name.
+pub(crate) static PLACEHOLDER_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generate a unique placeholder name for an inference variable.
+pub(crate) fn unique_placeholder_name(buf: &mut String) {
+    use std::fmt::Write;
+    let id = PLACEHOLDER_COUNTER.fetch_add(1, Ordering::Relaxed);
+    buf.clear();
+    write!(buf, "__infer_{id}").expect("write to String is infallible");
+}
 
 /// Check if a type constraint is a primitive type (string, number, boolean, bigint)
 /// or a union containing a primitive. Used to preserve literal types during inference
@@ -560,6 +575,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
+        // Store the placeholder atom for each type param var so we can look them
+        // up later (e.g., to build fixed_subst after Round 1).  Indexed in
+        // parallel with type_param_vars.
+        let mut type_param_placeholder_atoms: Vec<tsz_common::Atom> =
+            Vec::with_capacity(func.type_params.len());
 
         self.constraint_pairs.borrow_mut().clear();
         self.constraint_fixed_union_members.borrow_mut().clear();
@@ -586,10 +606,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             type_param_vars.push(var);
 
             // Create a unique placeholder type for this inference variable
-            // We use a TypeParameter with a special name to track it during constraint collection
-            use std::fmt::Write;
-            placeholder_buf.clear();
-            write!(placeholder_buf, "__infer_{}", var.0).expect("write to String is infallible");
+            // We use a TypeParameter with a special name to track it during constraint collection.
+            // Names are globally unique (via PLACEHOLDER_COUNTER) to prevent
+            // collisions when nested generic calls create overlapping placeholder sets.
+            unique_placeholder_name(&mut placeholder_buf);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
@@ -602,6 +622,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             substitution.insert(tp.name, placeholder_id);
             var_map.insert(placeholder_id, var);
+            type_param_placeholder_atoms.push(placeholder_atom);
 
             // Add the type parameter constraint as an upper bound, but only if the
             // constraint is concrete (doesn't reference other type params via placeholders).
@@ -1402,14 +1423,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // variables that were actually fixed. Unfixed placeholders remain
         // intact so Round 2 can still infer them.
         let mut fixed_subst = TypeSubstitution::new();
-        for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
+        for (i, (tp, &var)) in func
+            .type_params
+            .iter()
+            .zip(type_param_vars.iter())
+            .enumerate()
+        {
             if let Some(resolved) = infer_ctx.probe(var) {
                 // This var was fixed in Round 1 — map its placeholder name to the resolved type
-                use std::fmt::Write;
-                placeholder_buf.clear();
-                write!(placeholder_buf, "__infer_{}", var.0)
-                    .expect("write to String is infallible");
-                let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+                let placeholder_atom = type_param_placeholder_atoms[i];
                 fixed_subst.insert(placeholder_atom, resolved);
                 // Also map the original type param name, in case target_type references it
                 fixed_subst.insert(tp.name, resolved);
@@ -2179,11 +2201,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let mut s = TypeSubstitution::new();
             for (i, tp) in func.type_params.iter().enumerate() {
                 if let Some(inferred) = final_subst.get(tp.name) {
-                    use std::fmt::Write;
-                    placeholder_buf.clear();
-                    write!(placeholder_buf, "__infer_{}", type_param_vars[i].0)
-                        .expect("write to String is infallible");
-                    let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+                    let placeholder_atom = type_param_placeholder_atoms[i];
                     s.insert(placeholder_atom, inferred);
                 }
             }
@@ -2746,20 +2764,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ));
         }
 
-        if !self.is_contextually_sensitive(arg_type) {
-            return Some((arg_type, target_type));
-        }
-
-        // Generic function references (e.g., `id: <a>(value: a) => a`) are marked
-        // contextually sensitive because they have type parameters, but unlike
-        // lambda expressions with untyped parameters, they don't need contextual
-        // typing — their params are fully annotated. Pre-instantiate them against
-        // the target signature so they contribute inference candidates in Round 1.
-        // This matches tsc behavior where variable references to generic functions
-        // are never context-sensitive (isContextSensitive is an AST-level check).
+        // Generic function references (e.g., `<E>(ma: Either<E, number>) => boolean`)
+        // with fully-annotated parameters must be erased before inference. Without
+        // this, constrain_types creates fresh inference variables for the source
+        // function's type params that can cross-contaminate the outer call's inference
+        // context. Erasing the source's type params to their constraints (or `unknown`)
+        // matches tsc's getErasedSignature behavior during inference.
         //
-        // Example: `withFew<a, r>([1,2,3], id, fail)` — `id` should contribute
-        // `r = number[]` in Round 1, preventing `r = never` from `fail` alone.
+        // This check must run BEFORE the is_contextually_sensitive early return
+        // because generic functions with fully-typed params are NOT contextually
+        // sensitive (tsc's isContextSensitive is AST-level), so the early return
+        // would pass them through un-erased.
         if let Some(TypeData::Function(shape_id)) = self.interner.lookup(arg_type) {
             let shape = self.interner.function_shape(shape_id);
             if !shape.type_params.is_empty()
@@ -2771,6 +2786,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return Some((instantiated, target_type));
                 }
             }
+        }
+
+        if !self.is_contextually_sensitive(arg_type) {
+            return Some((arg_type, target_type));
         }
 
         if self.should_skip_contextual_arg_in_round1(arg_type) {
@@ -3051,13 +3070,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
 
         // When any target parameter type is a type parameter (inference placeholder
-        // from an outer generic call), don't map the source's type params to those
-        // placeholders. Instead, erase them to their constraints (or `unknown`).
-        // This matches tsc's `getErasedSignature` behavior: during inference,
-        // a generic function argument like `identity<T>(v: T) => T` should not
-        // create false return-type constraints (e.g., `T_outer <: boolean`)
-        // that pollute the outer inference by conflating the inner T with the
-        // outer placeholder.
+        // from an outer generic call), erase source type params to their constraints
+        // (or `unknown`). This matches tsc's `getErasedSignature` behavior: during
+        // inference, a generic function argument like `identity<T>(v: T) => T` should
+        // not create false return-type constraints that pollute the outer inference
+        // by conflating the inner T with the outer placeholder.
         if source_type_params_fully_determined_by_params {
             let any_target_param_is_type_param = target_param_types.iter().any(|&param_type| {
                 matches!(
@@ -3117,7 +3134,54 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let instantiated =
             self.instantiate_function_shape_from_argument_types(&source_fn, &target_param_types);
         self.contextual_type = prev_contextual_type;
-        self.interner.function(instantiated)
+        let result = self.interner.function(instantiated);
+
+        // If the instantiation produced a function with unresolved inference
+        // placeholders (e.g., because the target parameter was a Union that
+        // couldn't be structurally matched against the source's Application
+        // type), fall back to erasure.  This prevents leaking `__infer_*`
+        // placeholders into argument types and diagnostic messages.
+        if source_type_params_fully_determined_by_params
+            && crate::type_queries::contains_infer_types_db(
+                self.interner.as_type_database(),
+                result,
+            )
+        {
+            let mut erasure_sub = TypeSubstitution::new();
+            for tp in &source_fn.type_params {
+                erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+            }
+            let erased = FunctionShape {
+                params: source_fn
+                    .params
+                    .iter()
+                    .map(|p| ParamInfo {
+                        name: p.name,
+                        type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect(),
+                return_type: instantiate_type(self.interner, source_fn.return_type, &erasure_sub),
+                this_type: source_fn
+                    .this_type
+                    .map(|t| instantiate_type(self.interner, t, &erasure_sub)),
+                type_params: vec![],
+                type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
+                    asserts: pred.asserts,
+                    target: pred.target,
+                    type_id: pred
+                        .type_id
+                        .map(|tid| instantiate_type(self.interner, tid, &erasure_sub)),
+                    parameter_index: pred.parameter_index,
+                }),
+                is_constructor: source_fn.is_constructor,
+                is_method: source_fn.is_method,
+            };
+            return self.interner.function(erased);
+        }
+
+        result
     }
 
     fn single_concrete_upper_bound(
@@ -3514,6 +3578,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
+        let mut type_param_placeholder_atoms: Vec<tsz_common::Atom> =
+            Vec::with_capacity(func.type_params.len());
 
         self.constraint_pairs.borrow_mut().clear();
         self.constraint_fixed_union_members.borrow_mut().clear();
@@ -3530,9 +3596,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let var = infer_ctx.fresh_var();
             type_param_vars.push(var);
 
-            use std::fmt::Write;
-            placeholder_buf.clear();
-            write!(placeholder_buf, "__infer_{}", var.0).expect("write to String is infallible");
+            unique_placeholder_name(&mut placeholder_buf);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
@@ -3545,6 +3609,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             substitution.insert(tp.name, placeholder_id);
             var_map.insert(placeholder_id, var);
+            type_param_placeholder_atoms.push(placeholder_atom);
 
             // Track defaulted placeholders to prevent union inference in constrain_types
             if tp.default.is_some() {
@@ -3813,11 +3878,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Pass 1: Collect all resolved (non-UNKNOWN) type parameters
         let mut unresolved_indices = Vec::new();
         for (i, tp) in func.type_params.iter().enumerate() {
-            use std::fmt::Write;
-            placeholder_buf.clear();
-            write!(placeholder_buf, "__infer_{}", type_param_vars[i].0)
-                .expect("write to String is infallible");
-            let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+            let placeholder_atom = type_param_placeholder_atoms[i];
             // Skip the preferred_lower_bound optimization in compute_contextual_types.
             // Unlike resolve_generic_call_inner (which gates this on direct_param_vars
             // for parameters where the type IS the type parameter, like f<T>(x: T)),
@@ -3907,13 +3968,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Last resort: use the inference placeholder so callbacks get unique
             // placeholder types instead of the callee's raw type parameter.
             // This ensures that `foo((x) => 1, (x) => '')` produces arg types with
-            // `__infer_0` instead of `T`, avoiding name collisions with outer `T`.
+            // unique placeholder names instead of `T`, avoiding name collisions.
             {
-                use std::fmt::Write;
-                placeholder_buf.clear();
-                write!(placeholder_buf, "__infer_{}", type_param_vars[i].0)
-                    .expect("write to String is infallible");
-                let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+                let placeholder_atom = type_param_placeholder_atoms[i];
                 let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
                     is_const: tp.is_const,
                     name: placeholder_atom,
