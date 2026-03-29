@@ -1033,6 +1033,13 @@ pub struct CheckerContext<'a> {
     /// because their cached types prevent `get_type_of_function` from re-running.
     pub deferred_implicit_any_closures: Vec<NodeIndex>,
 
+    /// Closures whose TS7006 was emitted during return-type inference speculation
+    /// and then rolled back. These need re-checking after all call inference is
+    /// complete to determine if TS7006 should be in the final output.
+    /// Only closures NOT in `implicit_any_contextual_closures` (i.e., those that
+    /// never received contextual parameter types) will have TS7006 re-emitted.
+    pub speculative_implicit_any_closures: Vec<NodeIndex>,
+
     /// Set of class declaration nodes currently being checked.
     /// Used to prevent infinite recursion in `check_class_declaration` when
     /// class checking triggers type resolution that circles back to the same class.

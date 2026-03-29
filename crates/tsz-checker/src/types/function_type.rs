@@ -564,10 +564,12 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or_default();
 
-        if is_closure && ctx_helper.is_some() {
-            self.ctx.implicit_any_contextual_closures.insert(idx);
-            self.ctx.implicit_any_checked_closures.insert(idx);
-        }
+        // Track whether any parameter actually receives a contextual type from
+        // ctx_helper. Used after the loop to decide whether to mark the closure as
+        // "contextually checked". We cannot unconditionally mark based on
+        // ctx_helper.is_some() because the expected type may be a bare type parameter
+        // or non-callable type that provides no parameter types.
+        let mut any_param_contextually_typed = false;
 
         let mut contextual_index = 0;
         for &param_idx in &parameters.nodes {
@@ -714,6 +716,7 @@ impl<'a> CheckerState<'a> {
                     has_contextual_type && !has_never_expected_context;
                 if is_closure && suppresses_implicit_any_context {
                     self.ctx.implicit_any_contextual_closures.insert(idx);
+                    any_param_contextually_typed = true;
                 }
                 // Use type annotation if present, otherwise infer from context
                 let (type_id, has_external_binding_context) = if param.type_annotation.is_some() {

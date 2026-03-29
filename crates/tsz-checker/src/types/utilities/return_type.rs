@@ -438,6 +438,34 @@ impl<'a> CheckerState<'a> {
         // TypeQuery(SymbolRef), which correctly resolves to the constructor type.
         let result = self.resolve_lazy_class_to_constructor(result);
 
+        // Before rollback, identify closures that had TS7006 emitted during this
+        // speculation. After rollback, these diagnostics will be lost. Record the
+        // closures so `recheck_deferred_implicit_any_closures` can re-emit TS7006
+        // for any that truly lack contextual parameter types.
+        {
+            use crate::diagnostics::diagnostic_codes;
+            let speculative_diags = self.ctx.speculative_diagnostics_since(&snap.full.diag);
+            let has_implicit_any_diags = speculative_diags.iter().any(|d| {
+                d.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                    || d.code == diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                    || d.code == diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                    || d.code == diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+            });
+            if has_implicit_any_diags {
+                // Find closures checked during this speculation that did NOT receive
+                // contextual parameter types. These are candidates for TS7006 re-emission.
+                let new_checked: Vec<_> = self
+                    .ctx
+                    .implicit_any_checked_closures
+                    .difference(&snap.full.implicit_any_checked_closures)
+                    .filter(|idx| !self.ctx.implicit_any_contextual_closures.contains(idx))
+                    .copied()
+                    .collect();
+                self.ctx
+                    .speculative_implicit_any_closures
+                    .extend(new_checked);
+            }
+        }
         self.ctx.rollback_return_type(&snap);
 
         // Widen inferred return types when there is no contextual return type,
