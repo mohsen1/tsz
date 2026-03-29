@@ -329,8 +329,19 @@ impl<'a> TypeFormatter<'a> {
                 ) {
                     return format!("typeof {name}").into();
                 }
-                // For generic types, append type parameter names from the definition.
+                // For generic types, prefer the display_alias (which has the actual
+                // instantiated type arguments like `A<number>`) over appending raw
+                // type parameter names from the definition (like `A<T>`).
+                // The display_alias is set when an Application type is evaluated,
+                // and preserves the concrete type arguments from the instantiation.
                 if !def.type_params.is_empty() {
+                    if let Some(alias_origin) = self.interner.get_display_alias(type_id)
+                        && self.display_alias_visiting.insert(alias_origin)
+                    {
+                        let result = self.format(alias_origin);
+                        self.display_alias_visiting.remove(&alias_origin);
+                        return result;
+                    }
                     let params: Vec<String> = def
                         .type_params
                         .iter()
