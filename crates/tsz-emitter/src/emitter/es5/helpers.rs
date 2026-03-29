@@ -777,9 +777,7 @@ impl<'a> Printer<'a> {
                         break;
                     }
                 }
-                if bytes.get(pos) == Some(&b'(')
-                    && self.has_pending_comment_before(pos as u32)
-                {
+                if bytes.get(pos) == Some(&b'(') && self.has_pending_comment_before(pos as u32) {
                     self.emit_comments_before_pos(pos as u32);
                     self.pending_block_comment_space = false;
                     self.write(" ");
