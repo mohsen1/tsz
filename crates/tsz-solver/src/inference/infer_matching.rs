@@ -286,6 +286,17 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_mapped_type_array(source_elem, mapped_id, priority)?;
             }
 
+            // TypeApplication source: expand type alias and recurse.
+            // When a source type is a type alias application (e.g., `Mapper<string, number>`),
+            // expand it to its structural form so inference can match structurally against
+            // the target. Without this, composing generic functions whose return types use
+            // type aliases fails inference.
+            (Some(TypeData::Application(source_app_id)), _) => {
+                if let Some(expanded) = self.try_expand_application(source_app_id) {
+                    self.infer_from_types(expanded, target, priority)?;
+                }
+            }
+
             // TypeApplication target: expand type alias and recurse.
             // This handles cases like `Spec<T[P]>` where Spec is a mapped type alias.
             // Without expansion, inference against recursive type alias applications

@@ -501,8 +501,15 @@ impl<'a> CheckerState<'a> {
             callee_type
         };
 
+        // Resolve Lazy(DefId) and Application types before overload classification.
+        // Interface-typed callees are stored as Lazy(DefId) which classify_for_call_signatures
+        // doesn't handle, causing the overloaded path to be skipped and literal arguments
+        // to be widened to `string` instead of matching specialized signatures.
+        let resolved_for_classification =
+            self.evaluate_application_type(callee_type_for_resolution);
+        let resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
         let classification =
-            query::classify_for_call_signatures(self.ctx.types, callee_type_for_resolution);
+            query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         trace!(
             callee_type_for_resolution = ?callee_type_for_resolution,
             classification = ?classification,
@@ -514,7 +521,7 @@ impl<'a> CheckerState<'a> {
         // overload resolution accepts the call if ANY single signature matches.
         // Without this guard, `(F1 | F2)("a")` would succeed if F1 alone accepts
         // 1 arg, silently ignoring F2 which requires 2 args — missing TS2554.
-        let callee_is_union = common::is_union_type(self.ctx.types, callee_type_for_resolution);
+        let callee_is_union = common::is_union_type(self.ctx.types, resolved_for_classification);
         let overload_signatures = if callee_is_union {
             None
         } else {
@@ -523,7 +530,7 @@ impl<'a> CheckerState<'a> {
                     // Delegate to solver query for overload detection
                     call_checker::get_overload_call_signatures(
                         self.ctx.types,
-                        callee_type_for_resolution,
+                        resolved_for_classification,
                     )
                 }
                 query::CallSignaturesKind::MultipleSignatures(signatures) => {
