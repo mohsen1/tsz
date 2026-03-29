@@ -609,7 +609,17 @@ impl<'a> NarrowingContext<'a> {
             return Some(def_id);
         }
 
-        // Try 2: Reverse-lookup — the type is an already-resolved instance Object type
+        // Try 2: Application(base=Lazy(DefId), args) — generic class instances like A<T>
+        if let Some(app_id) = application_id(self.db, type_id) {
+            let app = self.db.type_application(app_id);
+            if let Some(def_id) = lazy_def_id(self.db, app.base)
+                && let Some(crate::def::DefKind::Class) = resolver.get_def_kind(def_id)
+            {
+                return Some(def_id);
+            }
+        }
+
+        // Try 3: Reverse-lookup — the type is an already-resolved instance Object type
         // that was registered via insert_class_instance_type
         resolver.class_def_for_instance_type(type_id)
     }
