@@ -424,16 +424,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This prevents deeply recursive type libraries (ts-toolbelt, ts-essentials)
         // from consuming unbounded memory through type instantiation that creates
         // new TypeIds on each expansion. Mirrors tsc's global `instantiationCount`.
-        if self.guard.iterations().is_multiple_of(Self::FUEL_CHECK_INTERVAL)
+        if self
+            .guard
+            .iterations()
+            .is_multiple_of(Self::FUEL_CHECK_INTERVAL)
             && self
                 .interner
                 .consume_evaluation_fuel(Self::FUEL_CHECK_INTERVAL)
-            {
-                self.guard.mark_exceeded();
-                self.guard.leave(type_id);
-                self.cache.insert(type_id, TypeId::ERROR);
-                return TypeId::ERROR;
-            }
+        {
+            self.guard.mark_exceeded();
+            self.guard.leave(type_id);
+            self.cache.insert(type_id, TypeId::ERROR);
+            return TypeId::ERROR;
+        }
 
         let key = match self.interner.lookup(type_id) {
             Some(k) => k,
