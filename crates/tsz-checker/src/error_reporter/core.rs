@@ -672,7 +672,63 @@ impl<'a> CheckerState<'a> {
         if formatted.contains(':') && formatted.ends_with(" }") && !formatted.ends_with("; }") {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
+        // Normalize `{prop: type}` to `{ prop: type; }` — tsc always adds
+        // spaces inside braces and trailing semicolons for inline object types.
+        // Handle both standalone `{...}` and intersection parts `& {...}`.
+        formatted = Self::normalize_inline_object_braces(&formatted);
         formatted
+    }
+
+    /// Normalize inline object type braces in annotation text to match TSC's
+    /// formatting: `{prop: type}` → `{ prop: type; }`.
+    fn normalize_inline_object_braces(text: &str) -> String {
+        let mut result = String::with_capacity(text.len() + 8);
+        let chars: Vec<char> = text.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        while i < len {
+            if chars[i] == '{' {
+                // Find the matching closing brace
+                let mut depth = 1;
+                let mut j = i + 1;
+                while j < len && depth > 0 {
+                    if chars[j] == '{' {
+                        depth += 1;
+                    } else if chars[j] == '}' {
+                        depth -= 1;
+                    }
+                    j += 1;
+                }
+                // j now points past the closing '}'
+                let inner_start = i + 1;
+                let inner_end = j - 1;
+                let inner: String = chars[inner_start..inner_end].iter().collect();
+                let trimmed = inner.trim();
+
+                if trimmed.is_empty() {
+                    result.push_str("{}");
+                } else {
+                    // Ensure `{ ... }` spacing
+                    let needs_space_start =
+                        !trimmed.is_empty() && (i + 1 >= len || chars[i + 1] != ' ');
+                    let needs_semicolon = !trimmed.ends_with(';')
+                        && !trimmed.ends_with("};")
+                        && trimmed.contains(':');
+                    result.push_str("{ ");
+                    result.push_str(trimmed);
+                    if needs_semicolon {
+                        result.push(';');
+                    }
+                    let _ = needs_space_start;
+                    result.push_str(" }");
+                }
+                i = j;
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
     }
 
     pub(crate) fn excess_property_target_annotation_text_for_site(
