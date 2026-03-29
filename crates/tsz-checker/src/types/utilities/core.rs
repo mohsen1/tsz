@@ -580,6 +580,96 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Merge multiple callable contextual types into a single combined callable.
+    ///
+    /// Given `[(value: Fizz, ...) => R1, (value: Buzz|undefined, ...) => R2]`,
+    /// produces `(value: Fizz | Buzz | undefined, ...) => R1 | R2`.
+    ///
+    /// Handles entries that are unions of function types (common when each
+    /// union member's mixed-overload handler returns multiple callback variants).
+    ///
+    /// This enables correct contextual typing for callback parameters in union method
+    /// calls (e.g., `(A[] | B[]).filter(cb)` where `cb`'s parameter should be `A | B`).
+    ///
+    /// Returns `None` if the types are not all Function types (or unions of Function
+    /// types) with compatible arity, falling back to simple union semantics.
+    fn merge_callable_contextual_types(&mut self, types: &[TypeId]) -> Option<TypeId> {
+        use tsz_solver::FunctionShape;
+
+        // Collect function shapes from all members, flattening unions.
+        let mut shapes: Vec<std::sync::Arc<FunctionShape>> = Vec::new();
+        for &ty in types {
+            if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty) {
+                shapes.push(shape);
+            } else if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, ty)
+            {
+                // Flatten union members: collect function shapes from each.
+                let mut found_any = false;
+                for &member in &members {
+                    if let Some(shape) =
+                        tsz_solver::type_queries::get_function_shape(self.ctx.types, member)
+                    {
+                        shapes.push(shape);
+                        found_any = true;
+                    }
+                }
+                if !found_any {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+
+        if shapes.len() < 2 {
+            return None;
+        }
+
+        // Check compatible arity: all must have the same number of non-rest params.
+        let first_non_rest_count = shapes[0].params.iter().filter(|p| !p.rest).count();
+        if !shapes
+            .iter()
+            .all(|s| s.params.iter().filter(|p| !p.rest).count() == first_non_rest_count)
+        {
+            return None;
+        }
+
+        let param_count = shapes[0].params.len();
+        if !shapes.iter().all(|s| s.params.len() == param_count) {
+            return None;
+        }
+
+        // Build combined parameters: union the type at each position.
+        let mut combined_params = Vec::with_capacity(param_count);
+        for i in 0..param_count {
+            let param_types: Vec<TypeId> = shapes.iter().map(|s| s.params[i].type_id).collect();
+            let combined_type = self.ctx.types.factory().union(param_types);
+            combined_params.push(tsz_solver::ParamInfo {
+                name: shapes[0].params[i].name,
+                type_id: combined_type,
+                optional: shapes.iter().all(|s| s.params[i].optional),
+                rest: shapes[0].params[i].rest,
+            });
+        }
+
+        // Union return types.
+        let return_types: Vec<TypeId> = shapes.iter().map(|s| s.return_type).collect();
+        let combined_return = self.ctx.types.factory().union(return_types);
+
+        let combined_shape = FunctionShape {
+            params: combined_params,
+            return_type: combined_return,
+            this_type: None,
+            type_params: vec![],
+            type_predicate: None,
+            is_constructor: false,
+            is_method: shapes[0].is_method,
+        };
+
+        Some(self.ctx.types.factory().function(combined_shape))
+    }
+
     pub(crate) fn contextual_parameter_type_for_call_with_env_from_expected(
         &mut self,
         expected: TypeId,
@@ -657,12 +747,28 @@ impl<'a> CheckerState<'a> {
                 return match contextual_members.len() {
                     0 => None,
                     1 => Some(contextual_members[0]),
-                    _ => Some(
-                        self.ctx
-                            .types
-                            .factory()
-                            .union_preserve_members(contextual_members),
-                    ),
+                    _ => {
+                        // When all collected types are callable (e.g., callback types from
+                        // mixed-overload union members like `(A[] | B[]).filter(cb)`),
+                        // merge them into a single combined callable with unioned parameters.
+                        // This matches tsc's behavior: the intersection of function types
+                        // produces a combined function with unioned parameter types
+                        // (contravariance), enabling correct contextual typing for callbacks.
+                        // Without this, the union of callback types causes get_parameter_type
+                        // to return None (param types disagree across members), yielding `any`.
+                        if let Some(merged) =
+                            self.merge_callable_contextual_types(&contextual_members)
+                        {
+                            Some(merged)
+                        } else {
+                            Some(
+                                self.ctx
+                                    .types
+                                    .factory()
+                                    .union_preserve_members(contextual_members),
+                            )
+                        }
+                    }
                 };
             }
         }
