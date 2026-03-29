@@ -68,8 +68,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let function_available = self.ctx.has_name_in_lib("Function");
-
         // We check if types exist globally (in libs or current file scope).
         // This matches tsc behavior where missing core types are reported
         // even when some libs are loaded (e.g., if --lib es6 is missing Array).
@@ -82,11 +80,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check CallableFunction/NewableFunction only when Function itself is
-        // missing. When Function IS available (even with --noLib), tsc does not
-        // separately require CallableFunction/NewableFunction — they are only
-        // reported alongside the core Function type absence.
-        if !function_available {
+        // Check CallableFunction/NewableFunction when strictBindCallApply is enabled.
+        // These types provide proper typing for .call()/.apply()/.bind() and are
+        // required when strict (which implies strictBindCallApply) is active.
+        // When strict is false / strictBindCallApply is off, tsc does NOT require them.
+        if self.ctx.compiler_options.strict_bind_call_apply {
             for &type_name in FUNCTION_AUX_TYPES {
                 if !self.ctx.has_name_in_lib(type_name) {
                     self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
