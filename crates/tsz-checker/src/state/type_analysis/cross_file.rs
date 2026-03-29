@@ -385,7 +385,10 @@ impl<'a> CheckerState<'a> {
             // `DefinitionStore`, so the parent can read them on next access via
             // the fallback path in `def_to_symbol_id()` and `get_def_type_params()`.
 
-            let child_type_env = checker.ctx.type_env.borrow().clone();
+            // type_env merge-back is no longer needed: the child's insert_def()
+            // and insert_def_with_params() write through to the shared
+            // DefinitionStore, and the parent's get_def()/resolve_lazy() falls
+            // back to DefinitionStore on local cache miss.
 
             let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
                 std::mem::take(&mut checker.ctx.namespace_module_names);
@@ -422,15 +425,12 @@ impl<'a> CheckerState<'a> {
             drop(checker);
 
             // Merge collected data into the parent.
-            // Note: def_to_symbol and def_type_params are NOT merged back here.
-            // The child already wrote through to the shared DefinitionStore, and
-            // the parent reads from DefinitionStore on local cache miss.
+            // Note: def_to_symbol, def_type_params, and type_env DefId->TypeId
+            // mappings are NOT merged back here. The child already wrote through
+            // to the shared DefinitionStore, and the parent reads from
+            // DefinitionStore on local cache miss.
             for (sym_id, type_id) in child_symbol_types {
                 self.ctx.symbol_types.entry_or_insert(sym_id, type_id);
-            }
-            {
-                let mut parent_env = self.ctx.type_env.borrow_mut();
-                child_type_env.merge_defs_into(&mut parent_env);
             }
             self.ctx
                 .namespace_module_names
