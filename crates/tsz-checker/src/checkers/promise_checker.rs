@@ -1288,6 +1288,15 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        // Also skip for types that extend a generator-like interface (e.g., `I1 extends Iterator<0, 1, 2>`).
+        // If we can extract the TReturn argument through heritage resolution, the type is
+        // generator-compatible and body-level checking is sufficient.
+        if self
+            .get_generator_return_type_argument(declared_return_type)
+            .is_some()
+        {
+            return;
+        }
         let gen_name = if is_async {
             "AsyncGenerator"
         } else {
