@@ -126,6 +126,60 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         )
     }
 
+    /// Check if a callback argument has more required parameters than the target
+    /// callback can accept. This is a pre-check that runs before bivariant callback
+    /// assignability, because bivariance only relaxes parameter TYPE checking, not
+    /// parameter COUNT checking.
+    ///
+    /// In TypeScript, `(items: X) => void` is NOT assignable to `() => any` because
+    /// the source requires 1 argument but the target is called with 0.
+    /// This mirrors tsc's behavior where function arity is enforced even in bivariant
+    /// callback positions.
+    fn callback_source_has_excess_required_params(&self, source: TypeId, target: TypeId) -> bool {
+        let Some(source_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), source)
+        else {
+            return false;
+        };
+        let Some(target_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), target)
+        else {
+            return false;
+        };
+
+        // If target has a rest parameter, the arity is effectively unlimited
+        // (handled by the existing generic rest check or the full subtype check).
+        let target_has_rest = target_fn.params.last().is_some_and(|p| p.rest);
+        if target_has_rest {
+            return false;
+        }
+
+        let source_required = crate::utils::required_param_count(&source_fn.params);
+        let target_fixed_count = target_fn.params.len();
+
+        // Extra source params of type `void` are effectively optional in TypeScript
+        if source_required > target_fixed_count {
+            let extra_are_void = source_fn
+                .params
+                .iter()
+                .skip(target_fixed_count)
+                .take(source_required.saturating_sub(target_fixed_count))
+                .all(|param| {
+                    param.type_id == TypeId::VOID
+                        || if let Some(crate::TypeData::Union(list_id)) =
+                            self.interner.lookup(param.type_id)
+                        {
+                            self.interner.type_list(list_id).contains(&TypeId::VOID)
+                        } else {
+                            false
+                        }
+                });
+            return !extra_are_void;
+        }
+
+        false
+    }
+
     fn callback_requires_more_fixed_params_than_generic_rest_allows(
         &self,
         source: TypeId,
@@ -392,6 +446,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 expanded_arg_type,
                 effective_param_type,
             ) {
+                return Some(CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected: param_type,
+                    actual: *arg_type,
+                    fallback_return: TypeId::ERROR,
+                });
+            }
+            // Pre-check: reject callbacks where the source has more required
+            // parameters than the target can accept. This must run before the
+            // bivariant callback check because bivariance only relaxes parameter
+            // TYPE checking, not parameter COUNT (arity) checking.
+            if use_bivariant_callbacks
+                && self.callback_source_has_excess_required_params(
+                    expanded_arg_type,
+                    effective_param_type,
+                )
+            {
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,
                     expected: param_type,
