@@ -315,9 +315,11 @@ fn collect_export_name_from_declaration(
                 if import_decl.is_type_only {
                     return;
                 }
+                // A string-literal module_specifier means `require("...")` — always a value.
                 if let Some(ref_node) = arena.get(import_decl.module_specifier)
                     && ref_node.kind == SyntaxKind::StringLiteral as u16
                 {
+                    exports.push(name);
                     return;
                 }
                 if is_import_alias_referencing_value(
