@@ -274,18 +274,9 @@ impl<'a> FlowAnalyzer<'a> {
                 // For unions, all members must either:
                 //   (a) be a type predicate (contributing to the common narrowing), or
                 //   (b) be a non-predicate callable that returns exclusively `false` or `never`.
-                // TSC allows narrowing when members like `() => false` are in the union alongside
-                // predicates, but a member returning general `boolean` makes the guard unsound.
+                // A member returning general `boolean` (or any non-false truthy type) makes
+                // the overall union guard unsound, regardless of predicate target.
                 // If multiple predicate members exist, their predicates must match.
-                //
-                // Exception: `this` predicates are sound even when some union members
-                // return general `boolean`, because the `this` predicate narrows the
-                // *receiver* itself — non-predicate members are filtered out of the
-                // receiver union by the narrowing, so they cannot produce unsound
-                // widening.  This matches TSC behavior for patterns like:
-                //   declare var x: A | B;
-                //   if (x.guard()) { /* x narrowed to A */ }
-                // where A.guard(): this is A  and  B.guard(): boolean.
                 let mut common_sig: Option<PredicateSignature> = None;
                 let mut has_non_predicate_boolean = false;
 
@@ -300,24 +291,18 @@ impl<'a> FlowAnalyzer<'a> {
                         }
                     } else {
                         // Non-predicate member: only allowed if it returns exclusively `false`
-                        // or `never`. A member returning `boolean` (or any truthy type) would
-                        // make the overall union guard unsound — unless the predicate targets
-                        // `this` (checked below).
+                        // or `never`. A member returning `boolean` (or any truthy type) makes
+                        // the overall union guard unsound.
                         if !callable_returns_only_false_or_never(self.interner, member) {
                             has_non_predicate_boolean = true;
                         }
                     }
                 }
-                // Allow non-predicate boolean members when the predicate targets `this`,
-                // since the narrowing filters the receiver union itself.
+                // If any non-predicate member returns something other than `false`/`never`,
+                // the union is NOT a type predicate — regardless of whether the predicate
+                // targets `this` or a parameter.  This matches tsc behavior.
                 if has_non_predicate_boolean {
-                    if let Some(ref sig) = common_sig {
-                        if sig.predicate.target != TypePredicateTarget::This {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
+                    return None;
                 }
                 common_sig
             }
