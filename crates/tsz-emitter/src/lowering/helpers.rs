@@ -1270,14 +1270,15 @@ impl<'a> LoweringPass<'a> {
                             return true;
                         }
                     }
-                    k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                        if let Some(export_decl) = self.arena.get_export_decl(node)
-                            && self.export_decl_has_runtime_value(export_decl)
-                        {
-                            return true;
-                        }
+                    k if k == syntax_kind_ext::EXPORT_DECLARATION
+                        || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                    {
+                        // Any export declaration (even ambient / type-only) makes the
+                        // file a module.  tsc wraps AMD/UMD/System output even when
+                        // all exports are `export declare`.  The runtime-value filter
+                        // is for *emitting* exports, not for module detection.
+                        return true;
                     }
-                    k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                         if let Some(var_stmt) = self.arena.get_variable(node)
                             && self
