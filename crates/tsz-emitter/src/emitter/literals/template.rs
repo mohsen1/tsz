@@ -1,6 +1,7 @@
 use crate::emitter::Printer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -17,6 +18,17 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_expression(tagged.tag);
+
+        // When the tag is `super` with type arguments (which are stripped),
+        // tsc emits `super. ` to preserve the intent of a property access.
+        if tagged.type_arguments.is_some() {
+            if let Some(tag_node) = self.arena.get(tagged.tag) {
+                if tag_node.kind == SyntaxKind::SuperKeyword as u16 {
+                    self.write(".");
+                }
+            }
+        }
+
         self.write_space();
         self.emit(tagged.template);
     }

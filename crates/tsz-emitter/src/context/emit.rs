@@ -253,6 +253,7 @@ pub struct EmitContext {
     /// Original module kind before wrapper body override (AMD/UMD → `CommonJS`).
     /// Used by export assignment to emit `return X` instead of `module.exports = X` in AMD.
     pub original_module_kind: Option<ModuleKind>,
+    pub file_is_module: bool,
 }
 
 impl EmitContext {
@@ -284,6 +285,7 @@ impl EmitContext {
             rewrite_arguments_to_arguments_1: false,
             auto_detect_module: false,
             original_module_kind: None,
+            file_is_module: false,
         };
         ctx.sync_target_gates();
         ctx
