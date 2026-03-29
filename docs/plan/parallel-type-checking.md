@@ -145,7 +145,7 @@ These are keyed by `NodeIndex` or `FlowNodeId` (per-file arena), or are per-file
 
 Since each parallel checker thread owns its own `CheckerState`, speculation is naturally thread-local. No synchronization needed.
 
-### Step 5: Enable Rayon parallel dispatch in `check_files_parallel()`
+### Step 5: Enable Rayon parallel dispatch in `check_files_parallel()` — DONE (1629452d)
 
 **File**: `crates/tsz-core/src/parallel/core.rs` (lines 3397-3496)
 
@@ -201,7 +201,7 @@ let file_results: Vec<FileCheckResult> = program.files
 
 **Verification**: Full benchmark suite, conformance suite, multi-file test projects.
 
-### Step 6: Diagnostic merging and deduplication
+### Step 6: Diagnostic merging and deduplication — DONE (included in Step 5)
 
 **File**: `crates/tsz-core/src/parallel/core.rs`
 
