@@ -561,6 +561,7 @@ impl ParserState {
                 text,
                 raw_text: None,
                 value,
+                has_invalid_escape: false,
             },
         )
     }
@@ -582,6 +583,7 @@ impl ParserState {
                 text,
                 raw_text: None,
                 value: None,
+                has_invalid_escape: false,
             },
         )
     }
@@ -1046,6 +1048,7 @@ impl ParserState {
                 text,
                 raw_text: Some(raw_text),
                 value: None,
+                has_invalid_escape: false,
             },
         )
     }
@@ -1343,6 +1346,8 @@ impl ParserState {
         let start_pos = self.token_pos();
         let is_unterminated = self.scanner.is_unterminated();
         let text = self.scanner.get_token_value_ref().to_string();
+        let has_invalid_escape =
+            (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let end_pos = self.token_end();
         self.report_invalid_string_or_template_escape_errors();
         self.parse_expected(SyntaxKind::NoSubstitutionTemplateLiteral);
@@ -1358,6 +1363,7 @@ impl ParserState {
                 text,
                 raw_text: None,
                 value: None,
+                has_invalid_escape,
             },
         )
     }
@@ -1381,6 +1387,8 @@ impl ParserState {
 
     fn parse_template_head(&mut self) -> NodeIndex {
         let head_text = self.scanner.get_token_value_ref().to_string();
+        let has_invalid_escape =
+            (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let head_start = self.token_pos();
         let head_end = self.token_end();
         self.report_invalid_string_or_template_escape_errors();
@@ -1394,6 +1402,7 @@ impl ParserState {
                 text: head_text,
                 raw_text: None,
                 value: None,
+                has_invalid_escape,
             },
         )
     }
@@ -1460,6 +1469,7 @@ impl ParserState {
                     text: String::new(),
                     raw_text: None,
                     value: None,
+                    has_invalid_escape: false,
                 },
             );
             let span_start = self
@@ -1488,6 +1498,7 @@ impl ParserState {
                     text: String::new(),
                     raw_text: None,
                     value: None,
+                    has_invalid_escape: false,
                 },
             );
             let span_start = self
@@ -1501,6 +1512,8 @@ impl ParserState {
 
         let is_unterminated = self.scanner.is_unterminated();
         let literal_text = self.scanner.get_token_value_ref().to_string();
+        let has_invalid_escape =
+            (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let literal_kind = if is_tail {
             SyntaxKind::TemplateTail
         } else {
@@ -1519,6 +1532,7 @@ impl ParserState {
                 text: literal_text,
                 raw_text: None,
                 value: None,
+                has_invalid_escape,
             },
         );
         if is_unterminated {

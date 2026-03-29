@@ -895,6 +895,7 @@ impl ParserState {
                 text,
                 raw_text: Some(raw_text),
                 value: None,
+                has_invalid_escape: false,
             },
         )
     }

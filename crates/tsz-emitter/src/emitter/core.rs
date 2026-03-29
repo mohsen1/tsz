@@ -242,6 +242,7 @@ pub(crate) struct RestParamTransform {
 
 pub(crate) struct TemplateParts {
     pub(crate) cooked: Vec<String>,
+    pub(crate) cooked_invalid: Vec<bool>,
     pub(crate) raw: Vec<String>,
     pub(crate) expressions: Vec<NodeIndex>,
 }
@@ -596,6 +597,7 @@ pub struct Printer<'a> {
     /// Temporary base-class alias for outer static `super` while emitting a static field
     /// initializer. This is cleared at the same nested scope boundaries as static `this`.
     pub(crate) scoped_static_super_base_alias: Option<Arc<str>>,
+    pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
 }
 
 impl<'a> Printer<'a> {
@@ -756,6 +758,7 @@ impl<'a> Printer<'a> {
             scoped_static_this_alias: None,
             scoped_static_super_direct_access: false,
             scoped_static_super_base_alias: None,
+            tagged_template_var_map: FxHashMap::default(),
         }
     }
 

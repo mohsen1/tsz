@@ -382,6 +382,7 @@ impl<'a> Printer<'a> {
         //    Pre-bundled files with define() wrappers already have it inside.
         // 3. alwaysStrict is on AND the file is not already an ES module output.
         let is_file_module = self.file_is_module(&source.statements);
+        self.ctx.file_is_module = is_file_module;
         let has_module_wrapper_stmt = source.statements.nodes.iter().any(|&idx| {
             let callee_idx = self
                 .arena
@@ -782,14 +783,8 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if has_es5_transforms && helpers.make_template_object {
-            let template_vars = self.collect_tagged_template_vars();
-            if !template_vars.is_empty() {
-                self.write("var ");
-                self.write(&template_vars.join(", "));
-                self.write(";");
-                self.write_line();
-            }
+        if has_es5_transforms && helpers.make_template_object && is_file_module {
+            self.build_tagged_template_var_map();
         }
 
         // Build value declaration names for filtering type-only export specifiers.
@@ -1631,6 +1626,20 @@ impl<'a> Printer<'a> {
                 self.cjs_destr_hoist_line,
                 &var_decl,
             );
+        }
+
+        // Emit cached template object variables at the END of the file for modules.
+        if has_es5_transforms && helpers.make_template_object && is_file_module {
+            let template_vars = self.collect_tagged_template_vars();
+            if !template_vars.is_empty() {
+                if !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
+                self.write("var ");
+                self.write(&template_vars.join(", "));
+                self.write(";");
+                self.write_line();
+            }
         }
 
         // Ensure output ends with a newline (matching tsc behavior)
