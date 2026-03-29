@@ -1251,6 +1251,15 @@ pub(super) fn collect_diagnostics(
                 .collect();
             checker.ctx.all_parse_error_positions =
                 file.parse_diagnostics.iter().map(|d| d.start).collect();
+            // Collect positions of nullable-type syntax errors (`?T`/`T?`) for TS2677
+            // widening. Exclude `!T`/`T!` errors which share the same error codes
+            // (17019/17020) but should not trigger predicate type widening.
+            checker.ctx.nullable_type_parse_error_positions = file
+                .parse_diagnostics
+                .iter()
+                .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
+                .map(|d| d.start)
+                .collect();
             // Track whether the file has "real" syntax errors (actual parse
             // failures like missing tokens or invalid characters) vs grammar
             // checks (strict mode violations, decorator errors, etc.).
@@ -1801,6 +1810,12 @@ pub(super) fn check_file_for_parallel<'a>(
         .collect();
     checker.ctx.all_parse_error_positions =
         file.parse_diagnostics.iter().map(|d| d.start).collect();
+    checker.ctx.nullable_type_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
+        .map(|d| d.start)
+        .collect();
     checker.ctx.has_real_syntax_errors = file
         .parse_diagnostics
         .iter()
