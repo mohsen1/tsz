@@ -414,6 +414,7 @@ fn test_parent_mapping_function() {
             text: "42".to_string(),
             raw_text: None,
             value: Some(42.0),
+            has_invalid_escape: false,
         },
     );
 
@@ -593,6 +594,7 @@ fn estimated_size_bytes_grows_with_literals() {
                 text,
                 raw_text: None,
                 value: None,
+                has_invalid_escape: false,
             },
         );
     }
