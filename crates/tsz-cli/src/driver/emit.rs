@@ -119,19 +119,18 @@ pub(crate) fn emit_outputs(
         let is_js_input = input_path
             .extension()
             .and_then(|e| e.to_str())
-            .map_or(false, |ext| matches!(ext, "js" | "jsx" | "mjs" | "cjs"));
-        if is_js_input {
-            if let Some(js_path) = js_output_path(
+            .is_some_and(|ext| matches!(ext, "js" | "jsx" | "mjs" | "cjs"));
+        if is_js_input
+            && let Some(js_path) = js_output_path(
                 context.base_dir,
                 context.root_dir,
                 context.out_dir,
                 context.options.jsx,
                 &input_path,
-            ) {
-                if ts_output_paths.contains(&js_path) {
-                    continue;
-                }
-            }
+            )
+            && ts_output_paths.contains(&js_path)
+        {
+            continue;
         }
 
         if let Some(js_path) = js_output_path(

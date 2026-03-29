@@ -20855,10 +20855,10 @@ class Foo<T> {
     );
 }
 
-/// Union of tuple types with .filter() should contextually type callback parameters
+/// Union of tuple types with `.filter()` should contextually type callback parameters
 /// as the union of element types, matching tsc behavior.
 ///
-/// When calling .filter() on a union of tuple types like `[Fizz] | readonly [Buzz?]`,
+/// When calling `.filter()` on a union of tuple types like `[Fizz] | readonly [Buzz?]`,
 /// the callback parameter `item` should be `Fizz | Buzz | undefined` (the union of
 /// all tuple element types). This is because filter has mixed generic/non-generic
 /// overloads, and tsc computes a combined callback with unioned parameters.
