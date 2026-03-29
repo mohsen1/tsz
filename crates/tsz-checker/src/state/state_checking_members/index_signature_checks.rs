@@ -330,8 +330,8 @@ impl<'a> CheckerState<'a> {
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
 
-        // Fast path: if no index signatures exist and no members have index signature syntax,
-        // skip all the expensive scanning and checking below.
+        // Fast path: if no index signatures exist, no members have index signature syntax,
+        // and no computed members synthesize index signatures, skip the check.
         let has_any_inherited_index =
             index_info.string_index.is_some() || index_info.number_index.is_some();
         let has_any_own_index = has_any_inherited_index
@@ -342,7 +342,14 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE)
             });
         if !has_any_own_index {
-            return;
+            // Check if any member has a computed property name with an entity
+            // expression that could synthesize an index signature.
+            let has_synthesizable = members
+                .iter()
+                .any(|&m| self.synthesized_computed_member_index_info(m).is_some());
+            if !has_synthesizable {
+                return;
+            }
         }
 
         // Track whether this container extends a base type.

@@ -6313,7 +6313,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Check import_symbol_map: each entry is (alias_sym_id, module_specifier).
         // If an alias resolves to the same original symbol, the name is in scope.
-        for (&alias_sym_id, _module_spec) in &self.import_symbol_map {
+        for &alias_sym_id in self.import_symbol_map.keys() {
             if let Some(resolved) = binder.resolve_import_symbol(alias_sym_id)
                 && resolved == original_sym_id
             {
@@ -6430,7 +6430,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Check whether a symbol with the given name/id is reachable in the
-    /// local scope (file_locals or current_scope) without an import qualifier.
+    /// local scope (`file_locals` or `current_scope`) without an import qualifier.
     fn symbol_name_is_locally_accessible(
         &self,
         binder: &BinderState,
@@ -6494,6 +6494,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    #[allow(dead_code)]
     pub(crate) fn resolve_symbol_module_path_cached(&mut self, sym_id: SymbolId) -> Option<String> {
         if let Some(cached) = self.symbol_module_specifier_cache.get(&sym_id) {
             return cached.clone();
@@ -6905,6 +6906,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Group foreign symbols by their module paths.
     ///
     /// Returns a map of module path -> Vec<SymbolId> for all foreign symbols.
+    #[allow(dead_code)]
     pub(crate) fn group_foreign_symbols_by_module(&mut self) -> FxHashMap<String, Vec<SymbolId>> {
         let mut module_map: FxHashMap<String, Vec<SymbolId>> = FxHashMap::default();
 
@@ -10310,6 +10312,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// When the printed type text has NO such non-portable import references,
     /// the type is already nameable from the consumer's perspective and the
     /// deeper type-graph portability walk can be skipped.
+    #[allow(dead_code)]
     fn printed_type_contains_non_portable_import(&self, printed: &str) -> bool {
         let mut remaining = printed;
         while let Some(start) = remaining.find("import(\"") {

@@ -1532,19 +1532,18 @@ impl Server {
             }
             // Keep walking up through call expressions and transparent wrappers
             // (non-null, type assertions) that start at the same position.
-            if let Some(ext) = arena.get_extended(current) {
-                if ext.parent.is_some() {
-                    if let Some(parent_node) = arena.get(ext.parent) {
-                        let same_pos = parent_node.pos == node.pos;
-                        let is_transparent = matches!(
-                            parent_node.kind,
-                            CALL_EXPRESSION | NON_NULL_EXPRESSION | AS_EXPRESSION | TYPE_ASSERTION
-                        );
-                        if same_pos && is_transparent {
-                            current = ext.parent;
-                            continue;
-                        }
-                    }
+            if let Some(ext) = arena.get_extended(current)
+                && ext.parent.is_some()
+                && let Some(parent_node) = arena.get(ext.parent)
+            {
+                let same_pos = parent_node.pos == node.pos;
+                let is_transparent = matches!(
+                    parent_node.kind,
+                    CALL_EXPRESSION | NON_NULL_EXPRESSION | AS_EXPRESSION | TYPE_ASSERTION
+                );
+                if same_pos && is_transparent {
+                    current = ext.parent;
+                    continue;
                 }
             }
             // If we already found a call, stop. Otherwise, walk up to parent.

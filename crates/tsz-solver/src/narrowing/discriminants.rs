@@ -383,15 +383,16 @@ impl<'a> NarrowingContext<'a> {
         // EXCLUSION case in if-chains, each condition produces a new sub-union with a unique
         // TypeId, so the index is never reused and building it is pure overhead.
         // Use direct linear scan for exclusion -- O(N) per condition with no index overhead.
-        if keep_matching && members.len() >= 8 {
-            if let Some(result) = self.fast_narrow_via_discriminant_index(
+        if keep_matching
+            && members.len() >= 8
+            && let Some(result) = self.fast_narrow_via_discriminant_index(
                 original_union_type,
                 members,
                 property,
                 literal_value,
-            ) {
-                return Some(result);
-            }
+            )
+        {
+            return Some(result);
         }
 
         // PERF: For the EXCLUSION case on discriminated unions, find the single member
@@ -549,6 +550,7 @@ impl<'a> NarrowingContext<'a> {
 
     /// O(1) discriminant narrowing for the false/excluding branch.
     /// Builds the index if needed, then returns all members NOT matching the literal.
+    #[allow(dead_code)]
     fn fast_narrow_excluding_via_discriminant_index(
         &self,
         original_union_type: TypeId,

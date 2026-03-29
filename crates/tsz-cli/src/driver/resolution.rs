@@ -1534,6 +1534,7 @@ fn find_node_modules_package_root(path: &Path) -> Option<PathBuf> {
 
 /// Build a redirect map for duplicate packages (same name+version at different
 /// `node_modules` paths). The shallowest copy becomes canonical.
+#[allow(clippy::print_stderr)]
 pub(crate) fn build_duplicate_package_redirects(
     file_names: &[String],
     options: &ResolvedCompilerOptions,

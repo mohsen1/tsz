@@ -102,6 +102,7 @@ impl<'a> CheckerState<'a> {
 
     /// Collect type parameter names and constraint type ids from an interface
     /// or class declaration.
+    #[allow(clippy::type_complexity)]
     fn interface_type_parameter_profile(
         &mut self,
         decl_idx: NodeIndex,
