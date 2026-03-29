@@ -514,6 +514,11 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2677: Check that a type predicate's type is assignable to its parameter's type.
+        if has_type_annotation {
+            self.check_function_decl_type_predicate_assignability(func_idx, func);
+        }
+
         // TS2705: Async function must return Promise
         self.check_async_return_type_is_promise(
             has_type_annotation,
@@ -640,6 +645,103 @@ impl<'a> CheckerState<'a> {
 
         if pushed_this_type {
             self.ctx.this_type_stack.pop();
+        }
+    }
+
+    /// TS2677: Check that a type predicate's type is assignable to its parameter's type
+    /// for function declarations (not function type nodes).
+    fn check_function_decl_type_predicate_assignability(
+        &mut self,
+        _func_idx: NodeIndex,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if func.type_annotation.is_none() {
+            return;
+        }
+
+        // Find the TypePredicate node in the return type annotation
+        let type_ann_idx = func.type_annotation;
+        let Some(type_ann_node) = self.ctx.arena.get(type_ann_idx) else {
+            return;
+        };
+
+        // The return type annotation should be a TypePredicate node
+        if type_ann_node.kind != syntax_kind_ext::TYPE_PREDICATE {
+            return;
+        }
+
+        let Some(pred_data) = self.ctx.arena.get_type_predicate(type_ann_node) else {
+            return;
+        };
+
+        if pred_data.type_node.is_none() {
+            return;
+        }
+
+        let Some(pred_name_node) = self.ctx.arena.get(pred_data.parameter_name) else {
+            return;
+        };
+        let Some(pred_name_ident) = self.ctx.arena.get_identifier(pred_name_node) else {
+            return;
+        };
+        let predicate_name = pred_name_ident.escaped_text.clone();
+
+        // Resolve the predicate type
+        let mut predicate_type = self.get_type_from_type_node(pred_data.type_node);
+
+        // When the predicate type was parsed from `?T` (prefix ?), the parser recovers
+        // just `T` but tsc semantically treats it as `T | null | undefined`. Detect this
+        // by checking if the type node's position matches a parse error position (TS17020).
+        if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
+            let type_pos = type_node.pos;
+            if self.ctx.all_parse_error_positions.contains(&type_pos) {
+                predicate_type = self.ctx.types.factory().union(vec![
+                    predicate_type,
+                    TypeId::NULL,
+                    TypeId::UNDEFINED,
+                ]);
+            }
+        }
+
+        // Find the parameter type
+        let mut param_type = None;
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let param_name_matches = self
+                .ctx
+                .arena
+                .get(param_data.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .is_some_and(|ident| ident.escaped_text == predicate_name);
+            if param_name_matches {
+                if !param_data.type_annotation.is_none() {
+                    param_type = Some(self.get_type_from_type_node(param_data.type_annotation));
+                }
+                break;
+            }
+        }
+
+        let Some(param_type) = param_type else {
+            return;
+        };
+
+        if !self.is_assignable_to(predicate_type, param_type) {
+            if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
+                self.ctx.error(
+                    type_node.pos,
+                    type_node.end - type_node.pos,
+                    "A type predicate's type must be assignable to its parameter's type."
+                        .to_string(),
+                    2677,
+                );
+            }
         }
     }
 

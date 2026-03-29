@@ -339,8 +339,14 @@ impl ParserState {
             } else {
                 (self.token_pos(), String::from("T"))
             };
+            // Simplify the suggestion for types that absorb null/undefined.
+            // TSC suggests just the type name when adding | null | undefined is redundant.
+            let suggestion = match suggested.as_str() {
+                "any" => "any".to_string(),
+                _ => format!("{suggested} | null | undefined"),
+            };
             let msg = format!(
-                "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggested} | null | undefined'?"
+                "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggestion}'?"
             );
             self.parse_error_at(
                 q_start,
@@ -577,8 +583,14 @@ impl ParserState {
                     (start_pos, String::from("T"))
                 };
                 self.next_token(); // consume '?'
+                // Simplify the suggestion for types that absorb undefined.
+                // TSC suggests just the type name when adding | undefined is redundant.
+                let suggestion = match suggested.as_str() {
+                    "any" | "unknown" | "never" | "void" | "undefined" => suggested.clone(),
+                    _ => format!("{suggested} | undefined"),
+                };
                 let msg = format!(
-                    "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggested} | undefined'?"
+                    "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggestion}'?"
                 );
                 self.parse_error_at(
                     diag_start,
