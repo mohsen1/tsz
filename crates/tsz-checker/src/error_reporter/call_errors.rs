@@ -1872,12 +1872,18 @@ impl<'a> CheckerState<'a> {
 
             // For object/array literal elements, use contextually-typed type
             // to decide whether to elaborate (avoids false positives from widening).
+            // Pass the target element type as contextual type so literal types
+            // are preserved (e.g., `"bluray"` stays as `"bluray"` instead of
+            // widening to `string` when checked against a discriminated union).
             if matches!(
                 elem_node.kind,
                 syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
             ) {
-                let contextual_elem_type = self.get_type_of_node(elem_idx);
+                let contextual_request =
+                    crate::context::TypingRequest::with_contextual_type(target_element_type);
+                let contextual_elem_type =
+                    self.get_type_of_node_with_request(elem_idx, &contextual_request);
                 if contextual_elem_type != TypeId::ERROR
                     && contextual_elem_type != TypeId::ANY
                     && target_element_type != TypeId::ERROR

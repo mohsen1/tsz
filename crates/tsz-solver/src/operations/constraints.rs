@@ -1502,6 +1502,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ) {
                     let sig = &s_callable.call_signatures[index];
                     self.constrain_call_signature_to_function(ctx, var_map, sig, &t_fn, priority);
+                } else if let Some(sig) = s_callable.call_signatures.last()
+                    && sig.type_params.is_empty()
+                {
+                    // Fallback: when no non-generic signature passes assignability
+                    // against the erased target (common when the target contains
+                    // inference placeholders erased to `unknown`), use the last
+                    // non-generic signature for inference. This matches tsc's
+                    // behavior of selecting the most general (last) overload.
+                    // Skip generic signatures — their type parameters create
+                    // additional complexity that can produce incorrect constraints.
+                    self.constrain_call_signature_to_function(ctx, var_map, sig, &t_fn, priority);
                 }
             }
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::Object(t_shape_id))) => {
