@@ -350,6 +350,23 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     }
                 }
 
+                // TS2766: Check that the containing generator's TNext is assignable
+                // to the delegated iterator's TNext. When yield* delegates to an
+                // iterator whose next() expects type X, the containing generator
+                // must send a compatible type.
+                if let Some(expected_generator) = self.get_expected_generator_type(idx) {
+                    let containing_next = self
+                        .checker
+                        .get_generator_next_type_argument(expected_generator)
+                        .unwrap_or(TypeId::UNDEFINED);
+                    self.checker.check_iterator_next_type_assignability(
+                        expression_type,
+                        containing_next,
+                        yield_expr.expression,
+                        crate::iterable_checker::IterationUseKind::YieldStar,
+                    );
+                }
+
                 if is_async_generator {
                     if self
                         .checker
