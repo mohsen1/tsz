@@ -610,6 +610,10 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2509: Base constructor return type is not an object type or intersection of
+        // object types with statically known members.
+        self.check_base_constructor_return_type(class);
+
         // Check for property type compatibility with base class (error 2416)
         // Property type in derived class must be assignable to same property in base class
         self.check_property_inheritance_compatibility(stmt_idx, class);
@@ -1392,6 +1396,78 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 );
             }
+        }
+    }
+
+    /// TS2509: Check that the base constructor return type is an object type or
+    /// intersection of object types with statically known members.
+    ///
+    /// When a class extends another via a heritage clause, the return type of
+    /// the base constructor must be valid. For example, if `Mix(Private, Private2)`
+    /// returns an intersection that reduces to `never`, this is not a valid base type.
+    fn check_base_constructor_return_type(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ref heritage_clauses) = class_data.heritage_clauses else {
+            return;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            let Some(&type_idx) = heritage.types.nodes.first() else {
+                continue;
+            };
+
+            let (expr_idx, type_arguments) = if let Some(type_node) = self.ctx.arena.get(type_idx)
+                && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+            {
+                (
+                    expr_type_args.expression,
+                    expr_type_args.type_arguments.as_ref(),
+                )
+            } else {
+                (type_idx, None)
+            };
+
+            // Get the base instance type (constructor return type)
+            let Some(base_type) = self.base_instance_type_from_expression(expr_idx, type_arguments)
+            else {
+                continue;
+            };
+
+            // Skip for any/error — these are permissive
+            if base_type == TypeId::ANY || base_type == TypeId::ERROR {
+                continue;
+            }
+
+            // Check if the base type is a valid base type
+            if !tsz_solver::type_queries::data::is_valid_base_type(self.ctx.types, base_type) {
+                let type_name = self.format_type(base_type);
+                let message = format_message(
+                    diagnostic_messages::BASE_CONSTRUCTOR_RETURN_TYPE_IS_NOT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYP,
+                    &[&type_name],
+                );
+                self.error_at_node(
+                    expr_idx,
+                    &message,
+                    diagnostic_codes::BASE_CONSTRUCTOR_RETURN_TYPE_IS_NOT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYP,
+                );
+            }
+
+            break; // Only check the first extends clause
         }
     }
 
