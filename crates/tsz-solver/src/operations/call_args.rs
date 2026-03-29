@@ -84,7 +84,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    fn function_signature_is_contextually_sensitive(&self, params: &[ParamInfo]) -> bool {
+    pub(crate) fn function_signature_is_contextually_sensitive(
+        &self,
+        params: &[ParamInfo],
+    ) -> bool {
         params.iter().any(|param| {
             param.type_id == TypeId::ANY || self.type_uses_inference_placeholders(param.type_id)
         })
