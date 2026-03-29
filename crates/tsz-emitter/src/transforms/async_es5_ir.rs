@@ -158,8 +158,14 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         // Get function details - all function types use FunctionData
-        let (name, params, body_idx, await_default_param_name, recover_await_default, type_annotation) = if node.kind
-            == syntax_kind_ext::FUNCTION_DECLARATION
+        let (
+            name,
+            params,
+            body_idx,
+            await_default_param_name,
+            recover_await_default,
+            type_annotation,
+        ) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || node.kind == syntax_kind_ext::ARROW_FUNCTION
         {
@@ -344,9 +350,8 @@ impl<'a> AsyncES5Transformer<'a> {
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             if let Some(qn) = self.arena.get_qualified_name(node) {
                 let left = self.qualified_name_to_expression(qn.left);
-                let right = crate::transforms::emit_utils::identifier_text_or_empty(
-                    self.arena, qn.right,
-                );
+                let right =
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, qn.right);
                 return format!("{left}.{right}");
             }
         }

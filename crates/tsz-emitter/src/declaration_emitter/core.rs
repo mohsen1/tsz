@@ -1509,7 +1509,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_js_namespace_export_aliases_for_name(class.name);
     }
 
-
     /// Pre-scan class members: when a computed property name appears on both
     /// a method implementation and a get/set accessor, tsc suppresses the
     /// method in the .d.ts output (the accessor wins). This returns the set
