@@ -1984,15 +1984,16 @@ impl<'a> CheckerState<'a> {
                     let spread_type =
                         self.get_type_of_node_with_request(spread_expr, &spread_request);
                     // TS2698: Spread types may only be created from object types.
-                    // Skip when TS2701 was already emitted (invalid rest target) —
-                    // the expression isn't a valid spread source because it's not
-                    // even a valid assignment target.
+                    // Only check in expression context — in destructuring targets,
+                    // `{ ...x }` is a rest binding (x receives remaining properties),
+                    // not a spread creation (reading x's properties), so the spread
+                    // validity check does not apply.
+                    // Also skip when TS2701 was already emitted (invalid rest target).
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);
                     let resolved_spread = self.resolve_lazy_type(resolved_spread);
-                    let is_valid_spread = if invalid_rest_target || self.ctx.in_destructuring_target
+                    let is_valid_spread = if self.ctx.in_destructuring_target || invalid_rest_target
                     {
-                        true // suppress TS2698 for REST targets in destructuring patterns
-                    // and when TS2701 already reported
+                        true // rest binding in destructuring or already reported TS2701
                     } else {
                         crate::query_boundaries::type_computation::access::is_valid_spread_type(
                             self.ctx.types,

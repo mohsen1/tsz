@@ -598,9 +598,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
-        // For destructuring patterns (array/object literal LHS), set the
-        // `in_destructuring_target` flag so nested spread/rest elements are
-        // treated as assignment targets, suppressing false TS2698 errors.
+        // For destructuring patterns (array/object literals), set the destructuring
+        // target flag so that downstream checks (e.g. TS2698 spread validation in
+        // object literals) correctly treat `{ ...x }` as a rest binding, not a spread.
         let is_destructuring_init = self.ctx.arena.get(initializer).is_some_and(|n| {
             n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
