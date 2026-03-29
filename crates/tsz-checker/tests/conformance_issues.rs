@@ -20854,3 +20854,84 @@ class Foo<T> {
         "Expected TS2719 for identically named but different types, got: {diagnostics:?}"
     );
 }
+
+/// Union of tuple types with .filter() should contextually type callback parameters
+/// as the union of element types, matching tsc behavior.
+///
+/// When calling .filter() on a union of tuple types like `[Fizz] | readonly [Buzz?]`,
+/// the callback parameter `item` should be `Fizz | Buzz | undefined` (the union of
+/// all tuple element types). This is because filter has mixed generic/non-generic
+/// overloads, and tsc computes a combined callback with unioned parameters.
+///
+/// The fix merges per-member callback function types into a single combined callable
+/// with unioned parameter types, rather than creating a union of callbacks that
+/// `get_parameter_type` can't extract parameter types from.
+#[test]
+fn test_union_of_tuple_types_filter_callback_contextual_typing() {
+    let source = r#"
+interface Fizz {
+    id: number;
+    fizz: string;
+}
+
+interface Buzz {
+    id: number;
+    buzz: string;
+}
+
+([] as [Fizz] | readonly [Buzz?]).filter(item => item?.id < 5);
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    // tsc expects TS18048: 'item.id' is possibly 'undefined'.
+    // This verifies that `item` is correctly typed as `Fizz | Buzz | undefined`
+    // (not `any`), because `item?.id` returns `number | undefined` and
+    // `(number | undefined) < 5` triggers the nullish comparison check.
+    assert!(
+        has_error(&diagnostics, 18048),
+        "Expected TS18048 for 'item.id' possibly undefined in tuple union filter callback. \
+         item should be Fizz | Buzz | undefined, not any. Got: {diagnostics:?}"
+    );
+}
+
+/// forEach on a union of array types should still give `any` for the callback parameter.
+///
+/// Unlike filter (which has mixed generic/non-generic overloads), forEach has a single
+/// overload. tsc gives `any` for the callback parameter in this case, and we should too.
+#[test]
+fn test_union_of_array_types_foreach_callback_stays_any() {
+    let source = r#"
+interface Fizz { id: number; }
+interface Buzz { id: number; }
+
+([] as Fizz[] | Buzz[]).forEach(item => {
+    const x: never = item;
+});
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    // item should be `any` (tsc behavior for forEach on union of arrays).
+    // `any` is not assignable to `never`, so TS2322 should fire.
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for any->never assignment. forEach on union should give `any` for item. Got: {diagnostics:?}"
+    );
+    // Verify the error message mentions `any`, confirming item is `any` not a specific type.
+    let msg = diagnostic_message(&diagnostics, 2322).unwrap_or("");
+    assert!(
+        msg.contains("'any'"),
+        "Expected error message to contain 'any', got: {msg}"
+    );
+}
