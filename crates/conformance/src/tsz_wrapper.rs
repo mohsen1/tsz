@@ -602,7 +602,15 @@ fn parse_diagnostic_fingerprints_from_text(
 
     let mut fingerprints = Vec::new();
     for raw_line in text.lines() {
-        let line = raw_line.trim();
+        if raw_line
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            continue;
+        }
+
+        let line = raw_line.trim_end();
         if line.is_empty() {
             continue;
         }
@@ -1286,13 +1294,28 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
-    static DIAG_CODE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"\berror\s+TS(?P<code>\d+):").expect("valid regex"));
+    static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*)$")
+            .expect("valid regex")
+    });
 
     let mut codes = Vec::new();
-    for caps in DIAG_CODE_RE.captures_iter(text) {
+    for raw_line in text.lines() {
+        if raw_line
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            continue;
+        }
+
+        let line = raw_line.trim_end();
+        let Some(caps) = DIAG_CODE_RE.captures(line) else {
+            continue;
+        };
         let Some(code) = caps
             .name("code")
+            .or_else(|| caps.name("code2"))
             .and_then(|m| m.as_str().parse::<u32>().ok())
         else {
             continue;

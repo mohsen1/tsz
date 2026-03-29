@@ -1025,6 +1025,23 @@ fn test_parse_diagnostics_from_text_ignores_non_error_lines() {
 }
 
 #[test]
+fn test_parse_error_codes_ignores_indented_related_diagnostics() {
+    let output = "test.ts(3,1): error TS2322: Type 'B' is not assignable to type 'A'.\n  test.ts(3,5): error TS2328: Types of parameters 'cb' and 'cb' are incompatible.\n  Types of property 'f' are incompatible.";
+
+    assert_eq!(parse_error_codes_from_text(output), vec![2322]);
+}
+
+#[test]
+fn test_parse_diagnostic_fingerprints_ignores_indented_related_diagnostics() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let output = "test.ts(3,1): error TS2322: Type 'B' is not assignable to type 'A'.\n  test.ts(3,5): error TS2328: Types of parameters 'cb' and 'cb' are incompatible.";
+
+    let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
+    assert_eq!(fingerprints.len(), 1);
+    assert_eq!(fingerprints[0].code, 2322);
+}
+
+#[test]
 fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let output = ": error TS5057: tsconfig not found at /var/tmp/tsconfig.json";
