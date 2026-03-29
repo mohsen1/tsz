@@ -1734,6 +1734,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "smallvec",
+ "stacker",
  "tracing",
  "tsz-binder",
  "tsz-common",

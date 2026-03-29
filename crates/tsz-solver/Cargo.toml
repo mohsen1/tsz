@@ -24,6 +24,7 @@ smallvec = { workspace = true }
 fixedbitset = { workspace = true }
 dashmap = { workspace = true }
 serde = { workspace = true }
+stacker = "0.1.23"
 
 [dev-dependencies]
 rayon = { workspace = true }

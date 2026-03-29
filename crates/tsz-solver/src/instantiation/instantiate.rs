@@ -398,6 +398,9 @@ impl<'a> TypeInstantiator<'a> {
     }
 
     /// Apply the substitution to a type, returning the instantiated type.
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to handle deeply nested generic
+    /// instantiation chains that would otherwise overflow the stack.
     pub fn instantiate(&mut self, type_id: TypeId) -> TypeId {
         // Fast path: intrinsic types don't need instantiation
         if type_id.is_intrinsic() {
@@ -414,7 +417,9 @@ impl<'a> TypeInstantiator<'a> {
         }
 
         self.depth += 1;
-        let result = self.instantiate_inner(type_id);
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.instantiate_inner(type_id)
+        });
         self.depth -= 1;
         result
     }

@@ -369,7 +369,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Inner evaluate logic, called after global depth check.
+    ///
+    /// Wrapped with `stacker::maybe_grow()` so that deeply nested conditional/
+    /// mapped type chains (ts-toolbelt, ts-essentials) can grow the stack
+    /// dynamically instead of crashing even if the logical recursion guard
+    /// has not yet tripped.
     fn evaluate_guarded(&mut self, type_id: TypeId) -> TypeId {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.evaluate_guarded_inner(type_id)
+        })
+    }
+
+    /// Actual evaluate logic -- separated so `stacker::maybe_grow` can wrap it.
+    fn evaluate_guarded_inner(&mut self, type_id: TypeId) -> TypeId {
         use crate::recursion::RecursionResult;
 
         if let Some(&cached) = self.cache.get(&type_id) {
