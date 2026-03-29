@@ -1285,8 +1285,19 @@ impl<'a> CheckerState<'a> {
                             let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
                                 || self.satisfies_array_like_constraint(base, inst_constraint);
                             if !is_satisfied {
-                                is_satisfied = self.is_function_constraint(original_constraint)
-                                    && query::is_callable_type(db, base);
+                                // When the constraint is a function type (e.g., `(...args: any) => any`),
+                                // accept any callable base type. For type parameters with callable
+                                // constraints (e.g., `F extends Function`), check the constraint.
+                                // Also check the structural Function interface pattern (apply/call/bind)
+                                // since Function may be lowered as an Object without call signatures.
+                                let is_fn_constraint = self
+                                    .is_function_constraint(original_constraint)
+                                    || query::is_callable_type(db, original_constraint);
+                                let base_is_callable = query::is_callable_type(db, base)
+                                    || self.type_parameter_has_callable_constraint(base)
+                                    || self.is_function_constraint(base)
+                                    || query::is_function_interface_structural(db, base);
+                                is_satisfied = is_fn_constraint && base_is_callable;
                             }
                             if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                                 if self.type_argument_is_narrowed_by_conditional_true_branch(
@@ -1518,10 +1529,23 @@ impl<'a> CheckerState<'a> {
                         if query::contains_type_parameters(self.ctx.types, inst_constraint) {
                             continue;
                         }
-                        if !self.is_assignable_to(base, inst_constraint)
-                            && !self.satisfies_array_like_constraint(base, inst_constraint)
-                            && let Some(&arg_idx) = type_args_list.nodes.get(i)
-                        {
+                        let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
+                            || self.satisfies_array_like_constraint(base, inst_constraint);
+                        if !is_satisfied {
+                            // When the constraint is a function type, accept callable bases.
+                            // The `Function` interface may be lowered as an Object type
+                            // (without call signatures), so also check for the structural
+                            // pattern (apply/call/bind properties).
+                            let db2 = self.ctx.types.as_type_database();
+                            let is_fn_constraint = self.is_function_constraint(inst_constraint)
+                                || query::is_callable_type(db2, inst_constraint);
+                            let base_is_callable = query::is_callable_type(db2, base)
+                                || self.type_parameter_has_callable_constraint(base)
+                                || self.is_function_constraint(base)
+                                || query::is_function_interface_structural(db2, base);
+                            is_satisfied = is_fn_constraint && base_is_callable;
+                        }
+                        if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                             if self.type_argument_is_narrowed_by_conditional_true_branch(
                                 arg_idx,
                                 inst_constraint,
@@ -1767,6 +1791,12 @@ impl<'a> CheckerState<'a> {
         if query::is_boxed_function_type(db, type_id) {
             return true;
         }
+        // A function signature type (e.g., `(...args: any) => any`) is also a
+        // function constraint. This handles cases like `Parameters<F>` where
+        // the constraint is `T extends (...args: any) => any` and F extends Function.
+        if query::is_callable_type(db, type_id) {
+            return true;
+        }
         // Cross-arena DefId equality alone is not strong enough here: imported
         // aliases can reuse a Lazy(DefId) shape that collides with boxed lib
         // DefIds, which falsely classifies constraints like `Key` as `Function`.
@@ -1777,6 +1807,20 @@ impl<'a> CheckerState<'a> {
         }
         // Check if the type is Lazy(DefId) with a known Function boxed DefId
         query::is_boxed_function_def(db, type_id)
+    }
+
+    /// Check if a type parameter has a callable constraint (e.g., `F extends Function`).
+    /// Used during constraint satisfaction to accept callable type parameters
+    /// against function signature constraints.
+    fn type_parameter_has_callable_constraint(&self, type_id: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        if let Some(tsz_solver::TypeData::TypeParameter(tp)) = db.lookup(type_id) {
+            if let Some(constraint) = tp.constraint {
+                return query::is_callable_type(db, constraint)
+                    || self.is_function_constraint(constraint);
+            }
+        }
+        false
     }
 
     /// Check if a type is a generic indexed access (`T[M]`) where the object
