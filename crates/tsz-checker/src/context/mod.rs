@@ -998,9 +998,9 @@ pub struct CheckerContext<'a> {
     pub inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph,
 
     /// Stack of nodes being resolved.
+    /// Also used for circular reference detection via linear scan (the stack is
+    /// typically 0-5 elements deep, where linear scan beats FxHashSet lookup).
     pub node_resolution_stack: Vec<NodeIndex>,
-    /// O(1) lookup set for node resolution stack.
-    pub node_resolution_set: FxHashSet<NodeIndex>,
 
     /// Closures where implicit any (TS7006/TS7031) checks have already been performed.
     /// Prevents duplicate diagnostics when `get_type_of_function` is called multiple

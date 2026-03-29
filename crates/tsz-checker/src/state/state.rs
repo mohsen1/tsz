@@ -944,7 +944,7 @@ impl<'a> CheckerState<'a> {
     /// - Fuel is reset between file check operations
     ///
     /// ## Circular Reference Detection:
-    /// - Tracks currently resolving nodes in `ctx.node_resolution_set`
+    /// - Tracks currently resolving nodes in `ctx.node_resolution_stack`
     /// - Returns ERROR if a circular reference is detected
     /// - Helps expose type resolution bugs early
     ///
@@ -1415,7 +1415,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for circular reference - return ERROR to expose resolution bugs
-        if self.ctx.node_resolution_set.contains(&idx) {
+        // PERF: Use linear scan of the stack (typically 0-5 elements) instead of
+        // FxHashSet lookup. For small N, a linear scan of a contiguous Vec is
+        // faster than hashing a NodeIndex through FxHash.
+        if self.ctx.node_resolution_stack.contains(&idx) {
             // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
             if use_node_cache {
                 self.ctx.node_types.insert(idx.0, TypeId::ERROR);
@@ -1427,7 +1430,6 @@ impl<'a> CheckerState<'a> {
 
         // Push onto resolution stack
         self.ctx.node_resolution_stack.push(idx);
-        self.ctx.node_resolution_set.insert(idx);
 
         // CRITICAL: Pre-cache ERROR placeholder to break deep recursion chains
         // This ensures that mid-resolution lookups get cached ERROR immediately
@@ -1449,7 +1451,6 @@ impl<'a> CheckerState<'a> {
 
         // Pop from resolution stack
         self.ctx.node_resolution_stack.pop();
-        self.ctx.node_resolution_set.remove(&idx);
 
         // Cache result - identifiers cache their DECLARED type,
         // but get_type_of_node applies flow narrowing when returning cached identifier types.

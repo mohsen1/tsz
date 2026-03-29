@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
                     }
                     if cached == TypeId::ERROR
                         && self.ctx.type_parameter_scope.is_empty()
-                        && !self.ctx.node_resolution_set.contains(&idx)
+                        && !self.ctx.node_resolution_stack.contains(&idx)
                         && !should_refresh_cached_defaulted_reference
                     {
                         return cached;
@@ -246,7 +246,7 @@ impl<'a> CheckerState<'a> {
                     }
                     if cached == TypeId::ERROR
                         && self.ctx.type_parameter_scope.is_empty()
-                        && !self.ctx.node_resolution_set.contains(&idx)
+                        && !self.ctx.node_resolution_stack.contains(&idx)
                     {
                         return cached;
                     }
@@ -265,7 +265,7 @@ impl<'a> CheckerState<'a> {
                     }
                     if cached == TypeId::ERROR
                         && self.ctx.type_parameter_scope.is_empty()
-                        && !self.ctx.node_resolution_set.contains(&idx)
+                        && !self.ctx.node_resolution_stack.contains(&idx)
                     {
                         return cached;
                     }
@@ -283,7 +283,7 @@ impl<'a> CheckerState<'a> {
                     }
                     if cached == TypeId::ERROR
                         && self.ctx.type_parameter_scope.is_empty()
-                        && !self.ctx.node_resolution_set.contains(&idx)
+                        && !self.ctx.node_resolution_stack.contains(&idx)
                     {
                         return cached;
                     }
