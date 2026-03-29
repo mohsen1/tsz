@@ -35,6 +35,11 @@ pub enum IRNode {
     /// String literal: `"hello"`, `'world'`
     StringLiteral(Cow<'static, str>),
 
+    /// Raw string literal: writes `"<content>"` without escape processing.
+    /// Used when the content already contains the intended escape sequences
+    /// (e.g., `\u2730`) that must be preserved verbatim in the output.
+    RawStringLiteral(Cow<'static, str>),
+
     /// Boolean literal: `true`, `false`
     BooleanLiteral(bool),
 

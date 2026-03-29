@@ -816,6 +816,24 @@ impl<'a> EnumES5Transformer<'a> {
             // BigInt literal names like `0n` are emitted as-is (no quotes)
             return IRNode::NumericLiteral(member_name.to_string().into());
         }
+        // For string literal member names, use source text to preserve Unicode escapes
+        // (e.g., "gold \u2730" must stay as-is, not be decoded to the literal char).
+        if node.kind == SyntaxKind::StringLiteral as u16 {
+            if let Some(source_text) = self.source_text {
+                let start = node.pos as usize;
+                let end = node.end as usize;
+                if end <= source_text.len() {
+                    let raw = &source_text[start..end];
+                    // Strip surrounding quotes from source text to get inner content
+                    let inner = raw
+                        .strip_prefix('"')
+                        .or_else(|| raw.strip_prefix('\''))
+                        .and_then(|s| s.strip_suffix('"').or_else(|| s.strip_suffix('\'')))
+                        .unwrap_or(raw);
+                    return IRNode::RawStringLiteral(inner.to_string().into());
+                }
+            }
+        }
         IRNode::StringLiteral(member_name.to_string().into())
     }
 

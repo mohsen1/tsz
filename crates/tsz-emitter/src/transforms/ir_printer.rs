@@ -380,6 +380,11 @@ impl<'a> IRPrinter<'a> {
                 self.write_escaped(s);
                 self.write("\"");
             }
+            IRNode::RawStringLiteral(s) => {
+                self.write("\"");
+                self.write(s);
+                self.write("\"");
+            }
             IRNode::BooleanLiteral(b) => {
                 self.write(if *b { "true" } else { "false" });
             }
