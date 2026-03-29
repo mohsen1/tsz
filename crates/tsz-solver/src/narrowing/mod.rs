@@ -45,11 +45,11 @@ pub use utils::{
 pub use self::compound::NullishFilter;
 
 // Re-export all public items from core implementation
-pub(crate) use self::core::union_or_single_preserve;
 pub use self::core::{
     DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext, NarrowingResult, TypeGuard,
     TypeofKind,
 };
+pub(crate) use self::core::{union_excluding_one, union_or_single_preserve};
 
 #[cfg(test)]
 use crate::types::*;
