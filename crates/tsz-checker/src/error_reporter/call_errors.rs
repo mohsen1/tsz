@@ -1931,6 +1931,21 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // When the element is an object literal and property-level elaboration
+                // found no issues (returned false above), the widened type (e.g.,
+                // `{ kind: string }`) fails assignability but the literal types of all
+                // properties actually match the target. This happens with discriminated
+                // unions where the literal property types are preserved contextually but
+                // the overall element type gets widened. Suppress the false TS2322.
+                if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && self.all_object_literal_properties_assignable_with_literals(
+                        elem_idx,
+                        target_element_type,
+                    )
+                {
+                    continue;
+                }
+
                 tracing::debug!(
                     "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
                     elem_type,
@@ -1947,6 +1962,88 @@ impl<'a> CheckerState<'a> {
         }
 
         elaborated
+    }
+
+    /// Check if all properties of an object literal are assignable to the
+    /// target type when using literal types from the initializers. This catches
+    /// cases where the widened object type (e.g., `{ kind: string }`) fails
+    /// assignability against a discriminated union, but the literal property
+    /// values (e.g., `"bluray"`) actually match a union member.
+    fn all_object_literal_properties_assignable_with_literals(
+        &mut self,
+        obj_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let obj_node = match self.ctx.arena.get(obj_idx) {
+            Some(node) if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => node,
+            _ => return false,
+        };
+
+        let obj = match self.ctx.arena.get_literal_expr(obj_node) {
+            Some(obj) => obj.clone(),
+            None => return false,
+        };
+
+        if obj.elements.nodes.is_empty() {
+            return false;
+        }
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_property_assignment(elem_node) {
+                        Some(prop) => (prop.name, prop.initializer),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_shorthand_property(elem_node) {
+                        Some(prop) => (prop.name, prop.name),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
+                continue;
+            };
+
+            let Some((target_prop_type, _)) =
+                self.object_literal_target_property_type(target_type, prop_name_idx, &prop_name)
+            else {
+                // Target doesn't have this property — can't confirm assignability
+                return false;
+            };
+
+            if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
+                continue;
+            }
+
+            // Try literal type first, then cached type
+            let source_prop_type =
+                if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
+                    literal_type
+                } else {
+                    self.get_type_of_node(prop_value_idx)
+                };
+
+            if source_prop_type == TypeId::ERROR || source_prop_type == TypeId::ANY {
+                continue;
+            }
+
+            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Elaborate object literal property mismatches for variable declarations.
