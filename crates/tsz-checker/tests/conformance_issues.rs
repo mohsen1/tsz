@@ -20851,7 +20851,6 @@ class Foo<T> {
     );
     assert!(
         has_error(&diagnostics, 2719),
-        "Expected TS2719 for identically named but different types, got: {:?}",
-        diagnostics
+        "Expected TS2719 for identically named but different types, got: {diagnostics:?}"
     );
 }

@@ -251,7 +251,7 @@ impl<'a> FlowAnalyzer<'a> {
         // and must be resolved to their underlying function type first.
         let resolved_type =
             if let Some(def_id) = flow_query::get_lazy_def_id(self.interner, callee_type) {
-                if let Some(ref env) = self.type_environment {
+                if let Some(env) = self.type_environment {
                     env.borrow().get_def(def_id).unwrap_or(callee_type)
                 } else {
                     callee_type

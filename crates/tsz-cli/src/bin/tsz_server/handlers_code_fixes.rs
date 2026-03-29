@@ -268,7 +268,6 @@ impl Server {
                 import_module_specifier_preference,
             );
             if !auto_import_file_exclude_patterns.is_empty() {
-                use std::io::Write;
                 let mut dbg = format!(
                     "file={file_path}\nexclude_patterns={auto_import_file_exclude_patterns:?}\nimport_candidates={}\ndiags={}\n",
                     import_candidates.len(),

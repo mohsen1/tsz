@@ -390,7 +390,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // (with optionality handled by the modifier, not by the type itself).
             // For non-optional properties in identity homomorphic types, the
             // evaluated T[K] equals the declared type, so we can also skip.
-            let mut property_type =
+            let property_type =
                 if is_identity_homomorphic && let Some(&(_, _, declared_type)) = source_info {
                     declared_type
                 } else {

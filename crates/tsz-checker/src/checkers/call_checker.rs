@@ -10,7 +10,6 @@ use crate::query_boundaries::checkers::call::{
     resolve_new, stable_call_recovery_return_type, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{

@@ -3315,7 +3315,7 @@ impl<'a> Printer<'a> {
         let qualified_key = if ns_prefix.is_empty() {
             simple_name
         } else {
-            format!("{}.{}", ns_prefix, simple_name)
+            format!("{ns_prefix}.{simple_name}")
         };
         let values = evaluator.evaluate_enum(enum_idx);
         if !values.is_empty() {
@@ -3342,7 +3342,7 @@ impl<'a> Printer<'a> {
         if current_prefix.is_empty() {
             name
         } else {
-            format!("{}.{}", current_prefix, name)
+            format!("{current_prefix}.{name}")
         }
     }
 
@@ -3424,7 +3424,7 @@ impl<'a> Printer<'a> {
                 if right.is_empty() {
                     return left;
                 }
-                return format!("{}.{}", left, right);
+                return format!("{left}.{right}");
             }
         }
         String::new()

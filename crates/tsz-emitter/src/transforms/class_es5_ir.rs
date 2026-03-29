@@ -356,7 +356,7 @@ impl<'a> ES5ClassTransformer<'a> {
         self.temp_var_counter.set(counter);
     }
 
-    pub fn temp_var_counter(&self) -> u32 {
+    pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
     }
 

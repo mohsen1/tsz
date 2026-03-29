@@ -4,7 +4,7 @@ use super::check_utils::*;
 use super::*;
 use tsz::checker::context::RequestCacheCounters;
 
-fn checker_resolution_mode_override(
+const fn checker_resolution_mode_override(
     mode: Option<tsz::module_resolver::ImportingModuleKind>,
 ) -> Option<tsz::checker::context::ResolutionModeOverride> {
     match mode {

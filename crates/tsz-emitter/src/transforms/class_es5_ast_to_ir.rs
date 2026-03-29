@@ -31,7 +31,7 @@ pub struct AstToIr<'a> {
 }
 
 impl<'a> AstToIr<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             this_captured: Cell::new(false),
@@ -83,7 +83,7 @@ impl<'a> AstToIr<'a> {
     }
 
     /// Get the current temp variable counter value (after conversion)
-    pub fn temp_var_counter(&self) -> u32 {
+    pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
     }
 
@@ -98,7 +98,7 @@ impl<'a> AstToIr<'a> {
         let name = if counter < 26 {
             format!("_{}", (b'a' + counter as u8) as char)
         } else {
-            format!("_{}", counter)
+            format!("_{counter}")
         };
         self.temp_var_counter.set(counter + 1);
         self.hoisted_temps.borrow_mut().push(name.clone());
