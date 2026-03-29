@@ -623,6 +623,11 @@ impl<'a> DeclarationEmitter<'a> {
         });
         self.method_names_with_overloads = rustc_hash::FxHashSet::default();
 
+        // Suppress method implementations that share a computed name with
+        // an accessor (tsc emits only the accessor in .d.ts).
+        let shadowed = self.computed_names_shadowed_by_accessors(&class.members);
+        self.method_names_with_overloads.extend(shadowed);
+
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
@@ -976,6 +981,11 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
+
+        // Suppress method implementations that share a computed name with
+        // an accessor (tsc emits only the accessor in .d.ts).
+        let shadowed = self.computed_names_shadowed_by_accessors(&class.members);
+        self.method_names_with_overloads.extend(shadowed);
 
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
