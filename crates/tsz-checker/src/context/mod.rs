@@ -301,6 +301,11 @@ impl NodeTypeCache {
         self.data.iter().filter(|t| **t != TypeId::NONE).count()
     }
 
+    /// Returns true if the cache has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.data.iter().all(|t| *t == TypeId::NONE)
+    }
+
     /// Convert to a `FxHashMap<u32, TypeId>` for interop with emitter.
     pub fn to_hash_map(&self) -> FxHashMap<u32, TypeId> {
         self.iter().collect()
@@ -459,6 +464,16 @@ impl SymbolTypeCache {
             self.data[idx] = value;
         }
         self.data[idx]
+    }
+
+    /// Number of cached entries (non-NONE slots).
+    pub fn len(&self) -> usize {
+        self.data.iter().filter(|t| **t != TypeId::NONE).count()
+    }
+
+    /// Returns true if the cache has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.data.iter().all(|t| *t == TypeId::NONE)
     }
 
     /// Iterate over all cached (SymbolId, TypeId) pairs.
@@ -824,7 +839,7 @@ pub struct CheckerContext<'a> {
     /// Cache for class chain summaries (class declaration `NodeIndex` -> summary).
     /// Avoids recomputing the full inheritance chain member walk on every property
     /// access and override check in class-heavy programs.
-    pub class_chain_summary_cache: RefCell<
+    pub(crate) class_chain_summary_cache: RefCell<
         FxHashMap<NodeIndex, std::rc::Rc<crate::classes_domain::class_summary::ClassChainSummary>>,
     >,
 

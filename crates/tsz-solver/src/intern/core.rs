@@ -37,10 +37,11 @@ use tsz_common::interner::{Atom, ShardedInterner};
 
 const LOOKUP_CACHE_BITS: u32 = 10;
 const LOOKUP_CACHE_SIZE: usize = 1 << LOOKUP_CACHE_BITS; // 1024
+#[allow(dead_code)]
 const LOOKUP_CACHE_MASK: u32 = (LOOKUP_CACHE_SIZE as u32) - 1;
 
 /// A single cache entry: (tag = TypeId raw value, cached TypeData).
-/// `tag == 0` means empty (TypeId::NONE is never looked up for user types).
+/// `tag == 0` means empty (`TypeId::NONE` is never looked up for user types).
 #[derive(Clone, Copy)]
 struct LookupCacheEntry {
     tag: u32,
@@ -58,11 +59,12 @@ struct LookupCacheEntry {
 
 const INTERN_CACHE_BITS: u32 = 9;
 const INTERN_CACHE_SIZE: usize = 1 << INTERN_CACHE_BITS; // 512
+#[allow(dead_code)]
 const INTERN_CACHE_MASK: u64 = (INTERN_CACHE_SIZE as u64) - 1;
 
 #[derive(Clone, Copy)]
 struct InternCacheEntry {
-    /// FxHash of the TypeData, used as tag
+    /// `FxHash` of the TypeData, used as tag
     hash: u64,
     /// The TypeData that was interned
     key: TypeData,
@@ -77,11 +79,14 @@ struct TypeInternerCache {
 }
 
 // SAFETY: Only accessed via thread_local!, so never shared across threads.
+#[allow(unsafe_code)]
 unsafe impl Send for TypeInternerCache {}
+#[allow(unsafe_code)]
 unsafe impl Sync for TypeInternerCache {}
 
+#[allow(dead_code, unsafe_code)]
 impl TypeInternerCache {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             lookup: UnsafeCell::new(
                 [LookupCacheEntry {
@@ -144,7 +149,7 @@ impl TypeInternerCache {
 }
 
 thread_local! {
-    static TL_CACHE: TypeInternerCache = TypeInternerCache::new();
+    static TL_CACHE: TypeInternerCache = const { TypeInternerCache::new() };
 }
 
 /// Clear the thread-local type interner cache.
@@ -154,6 +159,7 @@ thread_local! {
 /// from being returned for `TypeId` values that have been reused by a new interner.
 /// Without this, the lookup cache may return `TypeData` from a dropped interner,
 /// causing incorrect type resolution and panics.
+#[allow(unsafe_code)]
 pub fn clear_thread_local_cache() {
     TL_CACHE.with(|cache| {
         // Reset lookup cache entries
@@ -225,11 +231,11 @@ struct TypeShardInner {
     /// Map from `TypeData` to local index within this shard
     key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
     /// Flat array from local index to `TypeData`.
-    /// Sequential indices make a Vec far faster than DashMap for reverse lookup.
-    /// Protected by RwLock: reads are uncontended in single-threaded use (~1 cycle),
+    /// Sequential indices make a Vec far faster than `DashMap` for reverse lookup.
+    /// Protected by `RwLock`: reads are uncontended in single-threaded use (~1 cycle),
     /// writes only happen during intern (append-only).
     index_to_key: RwLock<Vec<TypeData>>,
-    /// Per-shard allocation order (parallel to index_to_key).
+    /// Per-shard allocation order (parallel to `index_to_key`).
     /// Stores the global monotonic order counter at time of interning.
     alloc_order: RwLock<Vec<u32>>,
 }
@@ -932,7 +938,7 @@ impl TypeInterner {
         self.intern_slow(key, hash)
     }
 
-    /// Slow path for `intern`: goes through DashMap and RwLock-protected storage.
+    /// Slow path for `intern`: goes through `DashMap` and RwLock-protected storage.
     #[inline(never)]
     fn intern_slow(&self, key: TypeData, hash: u64) -> TypeId {
         // Circuit breaker 1: type count limit.
