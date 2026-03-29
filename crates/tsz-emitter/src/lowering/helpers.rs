@@ -1464,11 +1464,13 @@ impl<'a> LoweringPass<'a> {
 
     pub(super) fn import_equals_has_external_module(&self, module_specifier: NodeIndex) -> bool {
         if module_specifier.is_none() {
-            return false;
+            // require(nonStringLiteral) — specifier failed to parse as string literal,
+            // but the `import = require(...)` form still indicates an external module
+            return true;
         }
 
         let Some(node) = self.arena.get(module_specifier) else {
-            return false;
+            return true;
         };
 
         node.kind == SyntaxKind::StringLiteral as u16

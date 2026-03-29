@@ -1427,14 +1427,22 @@ impl<'a> Printer<'a> {
                     {
                         return true;
                     }
-                    // import equals: only `import x = require("mod")` makes this a module,
-                    // NOT `import x = M.A` (namespace alias, not a module indicator)
+                    // import equals: `import x = require(...)` makes this a module
+                    // (even with non-string specifier), but NOT `import x = M.A`
+                    // (namespace alias, not a module indicator)
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                        if let Some(import_data) = self.arena.get_import_decl(node)
-                            && let Some(spec_node) = self.arena.get(import_data.module_specifier)
-                            && spec_node.kind == SyntaxKind::StringLiteral as u16
-                        {
-                            return true;
+                        if let Some(import_data) = self.arena.get_import_decl(node) {
+                            if import_data.module_specifier.is_none() {
+                                // require(nonStringLiteral) — specifier failed to parse
+                                // as string literal, but the `import` keyword still
+                                // makes this a module
+                                return true;
+                            }
+                            if let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                                && spec_node.kind == SyntaxKind::StringLiteral as u16
+                            {
+                                return true;
+                            }
                         }
                     }
                     _ => {
@@ -1644,13 +1652,19 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::IMPORT_DECLARATION => {
                         return true;
                     }
-                    // import equals: only `import x = require("mod")` is module syntax
+                    // import equals: `import x = require(...)` is module syntax
+                    // (even with non-string specifier), but NOT `import x = M.A`
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                        if let Some(import_data) = self.arena.get_import_decl(node)
-                            && let Some(spec_node) = self.arena.get(import_data.module_specifier)
-                            && spec_node.kind == SyntaxKind::StringLiteral as u16
-                        {
-                            return true;
+                        if let Some(import_data) = self.arena.get_import_decl(node) {
+                            if import_data.module_specifier.is_none() {
+                                // require(nonStringLiteral) — still a module
+                                return true;
+                            }
+                            if let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                                && spec_node.kind == SyntaxKind::StringLiteral as u16
+                            {
+                                return true;
+                            }
                         }
                     }
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
