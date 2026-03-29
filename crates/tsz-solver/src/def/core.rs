@@ -26,6 +26,7 @@ use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo
 use dashmap::DashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tracing::trace;
 use tsz_common::interner::Atom;
@@ -517,6 +518,15 @@ pub struct DefinitionStore {
     /// Multiple definitions may share the same name (e.g., interface merging,
     /// or same-named types in different files), so the value is a `Vec<DefId>`.
     name_to_defs: DashMap<Atom, Vec<DefId>>,
+
+    /// Thread-safe cache of resolved symbol types for cross-file delegation.
+    /// Key: `(SymbolId.0, file_idx)` -- Value: resolved `TypeId`.
+    /// Prevents duplicate cross-file delegation in parallel checking.
+    resolved_symbol_types: DashMap<(u32, u32), TypeId>,
+
+    /// Per-file mutual exclusion locks for cross-file type delegation.
+    /// Prevents concurrent delegation to the same target file.
+    file_delegation_locks: DashMap<usize, Arc<Mutex<()>>>,
 }
 
 // =============================================================================
@@ -673,6 +683,8 @@ impl DefinitionStore {
             file_to_defs: DashMap::new(),
             class_to_constructor: DashMap::new(),
             name_to_defs: DashMap::new(),
+            resolved_symbol_types: DashMap::new(),
+            file_delegation_locks: DashMap::new(),
         }
     }
 
@@ -825,6 +837,36 @@ impl DefinitionStore {
     /// Update the type parameters for a definition.
     ///
     /// Type parameters may be computed lazily after initial registration.
+    /// Initialize per-file delegation locks for parallel checking.
+    pub fn init_file_locks(&self, file_count: usize) {
+        for i in 0..file_count {
+            self.file_delegation_locks
+                .entry(i)
+                .or_insert_with(|| Arc::new(Mutex::new(())));
+        }
+    }
+
+    /// Get the delegation lock for a target file.
+    pub fn get_file_delegation_lock(&self, file_idx: usize) -> Option<Arc<Mutex<()>>> {
+        self.file_delegation_locks
+            .get(&file_idx)
+            .map(|r| Arc::clone(r.value()))
+    }
+
+    /// Look up a previously resolved cross-file symbol type.
+    pub fn get_resolved_symbol_type(&self, symbol_id: u32, file_idx: u32) -> Option<TypeId> {
+        self.resolved_symbol_types
+            .get(&(symbol_id, file_idx))
+            .map(|r| *r)
+    }
+
+    /// Cache a resolved cross-file symbol type (first-writer-wins).
+    pub fn cache_resolved_symbol_type(&self, symbol_id: u32, file_idx: u32, type_id: TypeId) {
+        self.resolved_symbol_types
+            .entry((symbol_id, file_idx))
+            .or_insert(type_id);
+    }
+
     /// This method synchronizes them into the `DefinitionInfo` so that
     /// the `TypeFormatter` can display generic types with their type
     /// parameter names (e.g., `MyClass<T>` instead of just `MyClass`).
