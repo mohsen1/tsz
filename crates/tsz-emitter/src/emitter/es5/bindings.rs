@@ -62,8 +62,8 @@ impl<'a> Printer<'a> {
                 }
                 self.emit_es5_destructuring(decl_idx, &mut first);
             } else if self.is_binding_pattern(decl.name) && !decl.initializer.is_some() {
-                // Binding pattern without initializer: `var {} ;` → `var _a = void 0;`
-                // tsc emits a temp var with void 0 to ensure the pattern is evaluated
+                // Binding pattern without initializer: `var [a, b];` -> `var _a = void 0, a = _a[0], b = _a[1];`
+                // tsc emits a temp var with void 0 then destructures the pattern bindings
                 let temp_name = self.get_temp_var_name();
                 if !first {
                     self.write(", ");
@@ -73,6 +73,10 @@ impl<'a> Printer<'a> {
                 first = false;
                 self.write(&temp_name);
                 self.write(" = void 0");
+                // Emit the destructured bindings (e.g., `, a = _a[0], b = _a[1]`)
+                if let Some(pattern_node) = self.arena.get(decl.name) {
+                    self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+                }
             } else {
                 if first {
                     self.write(" ");
