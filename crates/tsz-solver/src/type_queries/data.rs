@@ -2431,6 +2431,40 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
     }
 }
 
+/// Check if a type is a valid base type for a class `extends` clause.
+///
+/// In TypeScript, a valid base type must be:
+/// - An object type (with properties/signatures) that is not a generic mapped type
+/// - The `object` intrinsic (NonPrimitive)
+/// - `any`
+/// - An intersection where every member is a valid base type
+/// - A type parameter
+///
+/// Primitives, `never`, `void`, `undefined`, `null`, `unknown`, unions, and literals
+/// are NOT valid base types. Used for TS2509 checking.
+pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Intrinsic(IntrinsicKind::Any)) => true,
+        Some(TypeData::Intrinsic(IntrinsicKind::Object)) => true,
+        Some(TypeData::Intrinsic(_)) => false, // never, void, null, undefined, unknown, etc.
+        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
+        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
+        Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+        Some(TypeData::TypeParameter(_)) => true,
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().all(|&m| is_valid_base_type(db, m))
+        }
+        Some(TypeData::Lazy(_)) => true, // unresolved references are assumed valid
+        Some(TypeData::Application(_)) => true, // generic applications are object-like
+        Some(TypeData::Mapped(_)) => true, // mapped types are object-like
+        Some(TypeData::Literal(_)) => false,
+        Some(TypeData::Union(_)) => false,
+        None => false,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
