@@ -1843,6 +1843,7 @@ impl ParserState {
                     }
                     if was_dot && token_is_keyword(self.token()) {
                         use tsz_common::diagnostics::diagnostic_messages;
+                        let keyword = self.token();
                         let word = self.current_keyword_text();
                         let msg =
                             diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
@@ -1851,7 +1852,42 @@ impl ParserState {
                             &msg,
                             diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME,
                         );
+                        self.recover_reserved_word_variable_declaration_tail(keyword);
+                    } else if was_dot && self.is_identifier_or_keyword() && !self.is_reserved_word()
+                    {
+                        // `declare const x: "foo".charCodeAt(0);` is recovered by tsc as if
+                        // `charCodeAt` started a second declarator. Mirror that by surfacing
+                        // the follow-up TS1005 at `(` and then skipping the call tail.
                         self.next_token();
+                        if self.is_token(SyntaxKind::OpenParenToken) {
+                            self.parse_error_at_current_token(
+                                "',' expected.",
+                                diagnostic_codes::EXPECTED,
+                            );
+                            let mut paren_depth = 0u32;
+                            while !matches!(
+                                self.token(),
+                                SyntaxKind::SemicolonToken
+                                    | SyntaxKind::CloseBraceToken
+                                    | SyntaxKind::EndOfFileToken
+                            ) && !self.scanner.has_preceding_line_break()
+                            {
+                                match self.token() {
+                                    SyntaxKind::OpenParenToken => paren_depth += 1,
+                                    SyntaxKind::CloseParenToken => {
+                                        if paren_depth == 0 {
+                                            break;
+                                        }
+                                        paren_depth -= 1;
+                                    }
+                                    _ => {}
+                                }
+                                self.next_token();
+                                if paren_depth == 0 {
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 break;
