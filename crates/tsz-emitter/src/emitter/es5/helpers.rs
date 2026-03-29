@@ -188,12 +188,29 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write("}");
         } else {
-            self.write("{ ");
-            self.emit_object_literal_member_es5(elements[0]);
-            if has_trailing_comma {
-                self.write(",");
+            // For a single-element object literal, check if the source was multi-line.
+            // tsc preserves the source formatting: multi-line source → multi-line output.
+            // A single method with a multi-line body should be emitted multi-line.
+            let use_multiline = self.es5_single_element_needs_multiline(elements[0]);
+            if use_multiline {
+                self.write("{");
+                self.write_line();
+                self.increase_indent();
+                self.emit_object_literal_member_es5(elements[0]);
+                if has_trailing_comma {
+                    self.write(",");
+                }
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+            } else {
+                self.write("{ ");
+                self.emit_object_literal_member_es5(elements[0]);
+                if has_trailing_comma {
+                    self.write(",");
+                }
+                self.write(" }");
             }
-            self.write(" }");
         }
     }
 
@@ -219,6 +236,26 @@ impl<'a> Printer<'a> {
             }
             _ => self.emit(prop_idx),
         }
+    }
+
+    /// Check if a single-element ES5 object literal should use multi-line formatting.
+    /// tsc preserves the source layout: if the original method declaration spans multiple
+    /// lines, the lowered `name: function(…) { … }` form must also be multi-line.
+    fn es5_single_element_needs_multiline(&self, elem_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        // Only methods need this check — regular properties keep their original
+        // formatting through the default emit path.
+        if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return false;
+        }
+        // Check if the element node itself spans multiple lines in the source.
+        self.source_text.is_some_and(|text| {
+            let start = std::cmp::min(node.pos as usize, text.len());
+            let end = std::cmp::min(node.end as usize, text.len());
+            start < end && text[start..end].contains('\n')
+        })
     }
 
     pub(in crate::emitter) fn emit_object_literal_method_value_es5(
