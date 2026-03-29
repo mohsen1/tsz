@@ -1894,13 +1894,10 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
 
     fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
         // Bypass the cache and perform a one-off check with non-strict function variance.
-        // Also allow bivariant parameter count: when checking overload compatibility,
-        // an implementation with fewer params is still compatible (extra args are ignored in JS).
-        let prev = self.subtype.allow_bivariant_param_count;
-        self.subtype.allow_bivariant_param_count = true;
-        let result = self.is_assignable_impl(source, target, false);
-        self.subtype.allow_bivariant_param_count = prev;
-        result
+        // Bivariant callback checking disables strict_function_types for parameter TYPE
+        // bivariance, but the parameter COUNT check must still apply — a callback with
+        // more required params than the target accepts is always an error (TS2345).
+        self.is_assignable_impl(source, target, false)
     }
 
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {

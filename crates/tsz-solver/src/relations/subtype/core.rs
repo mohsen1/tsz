@@ -2086,12 +2086,13 @@ impl<'a, R: TypeResolver> AssignabilityChecker for SubtypeChecker<'a, R> {
     }
 
     fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Bivariant callback checking disables strict_function_types so parameter
+        // types are checked bivariantly (both directions). But the parameter COUNT
+        // check must still apply — a callback with more required params than the
+        // target accepts is always an error (TS2345), regardless of bivariance.
         let prev_strict = self.strict_function_types;
-        let prev_param_count = self.allow_bivariant_param_count;
         self.strict_function_types = false;
-        self.allow_bivariant_param_count = true;
         let result = SubtypeChecker::is_assignable_to(self, source, target);
-        self.allow_bivariant_param_count = prev_param_count;
         self.strict_function_types = prev_strict;
         result
     }
