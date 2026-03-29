@@ -944,6 +944,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.visit_type(self.db, TypeId(ref_id))
             }
 
+            fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+                // Resolve Lazy(DefId) types (interfaces, classes, type aliases)
+                // so that Application types with a Lazy base can extract their
+                // contextual signature for generic inference.
+                let resolved = crate::evaluation::evaluate::evaluate_type(self.db, TypeId(def_id));
+                if resolved != TypeId(def_id) {
+                    self.visit_type(self.db, resolved)
+                } else {
+                    None
+                }
+            }
+
             fn visit_function(&mut self, shape_id: u32) -> Self::Output {
                 // Direct match: return the function shape
                 let shape = self.db.function_shape(FunctionShapeId(shape_id));
