@@ -1080,7 +1080,7 @@ impl<'a> Printer<'a> {
                     // the alias creates a global variable that may be consumed
                     // externally, so tsc preserves it unconditionally.
                     if !is_external
-                        && !matches!(self.ctx.options.module, ModuleKind::None)
+                        && is_es_module_output
                         && !self.ctx.options.verbatim_module_syntax
                         && !self.source_is_js_file
                     {
