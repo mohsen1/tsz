@@ -495,7 +495,7 @@ fn test_union_ignores_deferred_any_fallback_when_other_member_has_property() {
 }
 
 #[test]
-fn test_unconstrained_type_parameter_has_object_prototype_methods() {
+fn test_unconstrained_type_parameter_has_no_properties() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
@@ -507,13 +507,10 @@ fn test_unconstrained_type_parameter_has_object_prototype_methods() {
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
 
-    // tsc: unconstrained T has Object prototype methods (toString, valueOf, etc.)
-    // because the implicit constraint is {} which includes Object methods.
-    assert!(matches!(
-        evaluator.resolve_property_access(t_param, "toString"),
-        PropertyAccessResult::Success { .. }
-    ));
-    // Non-Object properties should still be not found
+    // tsc 6.0: unconstrained T has NO properties. The implicit constraint is {}
+    // which does NOT include Object prototype methods. Accessing toString on
+    // bare T emits TS2339 "Property 'toString' does not exist on type 'T'".
+    assert_property_not_found(&evaluator.resolve_property_access(t_param, "toString"));
     assert_property_not_found(&evaluator.resolve_property_access(t_param, "nonExistentProp"));
 }
 
