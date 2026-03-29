@@ -534,9 +534,10 @@ run_benchmark() {
     echo -e "${GREEN}$name${NC} ($info)"
 
     # Run benchmark and capture JSON output.
-    # Wrap commands with perl alarm to kill runs that hit infinite loops (30s timeout).
+    # Wrap commands with perl alarm to kill runs that hit infinite loops.
+    # Normal single-file runs complete in <5s, so 15s is generous.
     # Use --ignore-failure so hyperfine continues even if a rare iteration is killed.
-    local run_timeout=30
+    local run_timeout=15
     local json_file=$(mktemp)
     if ! hyperfine \
         --warmup "$WARMUP" \
