@@ -1018,6 +1018,60 @@ let p = <Poisoned x />;
     // resolution which is a deeper issue. For now, verify module resolution works.
 }
 
+#[test]
+fn test_cross_file_react_component_override_emits_ts2416() {
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+}
+declare namespace __React {
+    class Component<P, S = {}> {
+        props: P & { children?: any };
+        state: S;
+        constructor(props?: P, context?: any);
+        render(): JSX.Element | null;
+    }
+}
+declare module "react" {
+    export = __React;
+}
+"#;
+
+    let main_source = r#"
+import React = require('react');
+
+class B1<T extends { x: string }> extends React.Component<T, {}> {
+    render() {
+        return <div>hi</div>;
+    }
+}
+class B<U> extends React.Component<U, {}> {
+    props: U;
+    render() {
+        return <B1 {...this.props} x="hi" />;
+    }
+}
+"#;
+
+    let diags = cross_file_jsx_diagnostics(lib_source, main_source);
+    assert!(
+        !has_code(&diags, 2307),
+        "Should resolve the ambient React module, got: {diags:?}"
+    );
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE
+        ),
+        "Expected TS2416 for incompatible inherited props override across the React module boundary, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // TS2698: JSX spread type validation
 // =============================================================================

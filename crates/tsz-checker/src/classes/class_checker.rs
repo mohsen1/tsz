@@ -239,6 +239,9 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::query_boundaries::class::build_own_member_summary;
 
+        let (_derived_type_params, derived_type_param_updates) =
+            self.push_type_parameters(&class_data.type_parameters);
+
         let own = build_own_member_summary(self, class_data);
         let all_members: Vec<_> = own
             .all_instance_members
@@ -381,6 +384,8 @@ impl<'a> CheckerState<'a> {
             base_member_names,
             no_implicit_override,
         );
+
+        self.pop_type_parameters(derived_type_param_updates);
     }
 
     /// Report errors for members with `override` in a class that has no base class.
@@ -1084,9 +1089,7 @@ impl<'a> CheckerState<'a> {
 
                     // Find the base class declaration via heritage symbol resolution
                     // This handles namespace scoping correctly
-                    if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    {
+                    if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx) {
                         // Track the base symbol for the namespace-merged static check (TS2417).
                         // Always store the base symbol here; the check at line ~1731 only
                         // fires when the *derived* class has a merged namespace (which is the
@@ -1096,12 +1099,12 @@ impl<'a> CheckerState<'a> {
                         // derived class's namespace introduces conflicting static members
                         // even if the base class has no namespace at all.
                         base_sym_for_ns_static_check = Some(sym_id);
-                        // Try value_declaration first, then declarations
-                        if symbol.value_declaration.is_some() {
-                            base_class_idx = Some(symbol.value_declaration);
-                        } else if let Some(&decl_idx) = symbol.declarations.first() {
-                            base_class_idx = Some(decl_idx);
-                        }
+                        // Resolve to an in-arena class declaration when possible.
+                        // Cross-file/module heritage often resolves to symbols whose
+                        // declaration nodes live in another arena; returning `None`
+                        // here is intentional so the type-level fallback path can
+                        // handle the base class structurally.
+                        base_class_idx = self.get_class_declaration_from_symbol(sym_id);
                     }
                 }
             }
