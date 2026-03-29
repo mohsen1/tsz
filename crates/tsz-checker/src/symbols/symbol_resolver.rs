@@ -661,15 +661,12 @@ impl<'a> CheckerState<'a> {
         // Check if this name exists in a local scope (namespace/module) that would shadow
         // the global lib symbol. If so, we skip the early lib_contexts check and let the
         // binder's scope-based resolution find the local symbol first.
+        // PERF: Use the cached resolve_identifier (which caches results per (arena, node_idx))
+        // instead of resolve_identifier_with_filter which is uncached.
         let name_in_local_scope = if !ignore_libs {
             self.ctx
                 .binder
-                .resolve_identifier_with_filter(
-                    self.ctx.arena,
-                    idx,
-                    &lib_binders,
-                    |_| true, // accept any symbol
-                )
+                .resolve_identifier(self.ctx.arena, idx)
                 .is_some_and(|found_sym_id| {
                     // Check if this symbol is different from the file_locals symbol.
                     // If it's different, it was found in a more local scope (namespace, etc.)
