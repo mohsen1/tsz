@@ -305,12 +305,14 @@ impl<'a> CheckerState<'a> {
                 members.iter().all(|&m| self.is_async_iterable_type(m))
             }
             AsyncIterableTypeKind::Object(shape_id) => {
-                // Check if object has a [Symbol.asyncIterator] method
+                // Check if object has a [Symbol.asyncIterator] method or callable property.
+                // Both `{ [Symbol.asyncIterator]() { ... } }` (method) and
+                // `{ [Symbol.asyncIterator]: generatorFn }` (callable value) are valid.
                 let shape = self.ctx.types.object_shape(shape_id);
                 for prop in &shape.properties {
                     let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
                     if prop_name.as_ref() == "[Symbol.asyncIterator]"
-                        && prop.is_method
+                        && !prop.optional
                         && self.is_callable_with_no_required_args(prop.type_id)
                     {
                         return true;
@@ -732,6 +734,14 @@ impl<'a> CheckerState<'a> {
         // individually — each member must be EITHER async iterable OR sync iterable.
         if is_async {
             if self.is_async_iterable_type(expr_type) || self.is_iterable_type(expr_type) {
+                // Check that undefined is assignable to the iterator's TNext (TS2763).
+                // for-await-of always sends undefined to next().
+                self.check_iterator_next_type_assignability(
+                    expr_type,
+                    TypeId::UNDEFINED,
+                    expr_idx,
+                    IterationUseKind::ForOf,
+                );
                 return true;
             }
             // For unions, check if each member is individually async- or sync-iterable
@@ -740,6 +750,13 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .all(|&m| self.is_async_iterable_type(m) || self.is_iterable_type(m))
             {
+                // Check next type assignability for each member
+                self.check_iterator_next_type_assignability(
+                    expr_type,
+                    TypeId::UNDEFINED,
+                    expr_idx,
+                    IterationUseKind::ForOf,
+                );
                 return true;
             }
             // Not async iterable - emit TS2504
@@ -787,6 +804,14 @@ impl<'a> CheckerState<'a> {
             }
             // Check that 'return' property (if present) is a method, not a non-callable value (TS2767).
             self.check_iterator_return_is_method(expr_type, expr_idx);
+            // Check that undefined is assignable to the iterator's TNext (TS2763).
+            // for-of always sends undefined to next(), so if TNext != undefined, that's an error.
+            self.check_iterator_next_type_assignability(
+                expr_type,
+                TypeId::UNDEFINED,
+                expr_idx,
+                IterationUseKind::ForOf,
+            );
             return true;
         }
 
@@ -829,6 +854,14 @@ impl<'a> CheckerState<'a> {
         let spread_type = self.resolve_lazy_type(spread_type);
 
         if self.is_iterable_type(spread_type) {
+            // Check that undefined is assignable to the iterator's TNext (TS2764).
+            // Array spread always sends undefined to next().
+            self.check_iterator_next_type_assignability(
+                spread_type,
+                TypeId::UNDEFINED,
+                expr_idx,
+                IterationUseKind::Spread,
+            );
             return true;
         }
 
@@ -938,6 +971,14 @@ impl<'a> CheckerState<'a> {
 
         // Check if the type is iterable (ES2015+)
         if self.is_iterable_type(resolved_type) {
+            // Check that undefined is assignable to the iterator's TNext (TS2765).
+            // Array destructuring always sends undefined to next().
+            self.check_iterator_next_type_assignability(
+                resolved_type,
+                TypeId::UNDEFINED,
+                pattern_idx,
+                IterationUseKind::Destructuring,
+            );
             return true;
         }
 
@@ -1353,4 +1394,102 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    // =========================================================================
+    // Iterator Next Type Compatibility Checking (TS2763-2766)
+    // =========================================================================
+
+    /// Check that the iterator's `next()` parameter type is compatible with what
+    /// will be sent to it during iteration.
+    ///
+    /// For for-of, spread, and destructuring, the sent type is always `undefined`.
+    /// For `yield*`, the sent type is the containing generator's TNext.
+    ///
+    /// If incompatible, emits:
+    /// - TS2763 for for-of
+    /// - TS2764 for array spread
+    /// - TS2765 for array destructuring
+    /// - TS2766 for yield* delegation
+    ///
+    /// Returns `true` if compatible or if we can't determine (to avoid false positives).
+    pub fn check_iterator_next_type_assignability(
+        &mut self,
+        iterable_type: TypeId,
+        sent_type: TypeId,
+        error_node: NodeIndex,
+        use_kind: IterationUseKind,
+    ) -> bool {
+        // Skip for types that can't have meaningful next type checks
+        if iterable_type == TypeId::ANY
+            || iterable_type == TypeId::UNKNOWN
+            || iterable_type == TypeId::ERROR
+            || iterable_type == TypeId::STRING
+        {
+            return true;
+        }
+
+        // Try to extract TNext from the Generator/AsyncGenerator/Iterator type directly
+        let next_type = self.get_generator_next_type_argument(iterable_type);
+
+        let next_type = match next_type {
+            Some(t) => t,
+            None => return true, // Can't determine - don't emit false positive
+        };
+
+        // If TNext is any, unknown, or undefined, the sent type is always compatible
+        if next_type == TypeId::ANY
+            || next_type == TypeId::UNKNOWN
+            || next_type == TypeId::UNDEFINED
+        {
+            return true;
+        }
+
+        // Check if the sent type is assignable to the iterator's next type
+        if self.is_assignable_to(sent_type, next_type) {
+            return true;
+        }
+
+        // Not assignable - emit the appropriate diagnostic
+        let sent_str = self.format_type(sent_type);
+        let next_str = self.format_type(next_type);
+
+        let (message_template, code) = match use_kind {
+            IterationUseKind::ForOf => (
+                diagnostic_messages::CANNOT_ITERATE_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPECTS_TYPE_BUT_FO,
+                diagnostic_codes::CANNOT_ITERATE_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPECTS_TYPE_BUT_FO,
+            ),
+            IterationUseKind::Spread => (
+                diagnostic_messages::CANNOT_ITERATE_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPECTS_TYPE_BUT_AR,
+                diagnostic_codes::CANNOT_ITERATE_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPECTS_TYPE_BUT_AR,
+            ),
+            IterationUseKind::Destructuring => (
+                diagnostic_messages::CANNOT_ITERATE_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPECTS_TYPE_BUT_AR_2,
+                diagnostic_codes::CANNOT_ITERATE_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPECTS_TYPE_BUT_AR_2,
+            ),
+            IterationUseKind::YieldStar => (
+                diagnostic_messages::CANNOT_DELEGATE_ITERATION_TO_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPEC,
+                diagnostic_codes::CANNOT_DELEGATE_ITERATION_TO_VALUE_BECAUSE_THE_NEXT_METHOD_OF_ITS_ITERATOR_EXPEC,
+            ),
+        };
+
+        let message = format_message(message_template, &[&sent_str, &next_str]);
+        if let Some((start, end)) = self.get_node_span(error_node) {
+            self.error(start, end.saturating_sub(start), message, code);
+        }
+
+        false
+    }
+}
+
+/// The kind of iteration use, determining which diagnostic to emit
+/// when the iterator's `next()` parameter type is incompatible.
+pub enum IterationUseKind {
+    /// `for (... of expr)` - emits TS2763
+    ForOf,
+    /// `[...expr]` - emits TS2764
+    Spread,
+    /// `let [x] = expr` or `[x] = expr` - emits TS2765
+    Destructuring,
+    /// `yield* expr` - emits TS2766
+    YieldStar,
 }
