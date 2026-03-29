@@ -4,6 +4,24 @@ use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+/// Built-in TypeScript type keywords that tsc registers as intrinsic types
+/// in the checker's globals. Used as candidates for spelling suggestions
+/// so that typos like "sting" → "string" produce TS2552.
+const BUILTIN_TYPE_KEYWORDS: &[&str] = &[
+    "string",
+    "number",
+    "boolean",
+    "symbol",
+    "bigint",
+    "void",
+    "never",
+    "any",
+    "unknown",
+    "undefined",
+    "null",
+    "object",
+];
+
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Property Suggestion Helpers
@@ -273,10 +291,35 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Also search lib globals (Array, Map, Set, Promise, etc.) for spelling
-        // suggestions. tsc searches the full scope chain including the global
-        // scope from lib.d.ts, so names like `array2` → `Array` are suggested.
-        for lib_ctx in &self.ctx.lib_contexts {
+        Self::search_global_candidates(
+            name,
+            name_len,
+            maximum_length_difference,
+            meaning_flags,
+            &self.ctx.lib_contexts,
+            &mut best_distance,
+            &mut best_candidate,
+        );
+
+        best_candidate.map(|c| vec![c])
+    }
+
+    /// Search lib globals and built-in type keywords for spelling suggestion
+    /// candidates. Extracted so both `find_similar_identifiers` (AST-based) and
+    /// `find_jsdoc_type_spelling_suggestion` (position-based) can share this.
+    fn search_global_candidates(
+        name: &str,
+        name_len: usize,
+        maximum_length_difference: usize,
+        meaning_flags: u32,
+        lib_contexts: &[crate::context::LibContext],
+        best_distance: &mut f64,
+        best_candidate: &mut Option<String>,
+    ) {
+        // Search lib globals (Array, Map, Set, Promise, etc.).
+        // tsc searches the full scope chain including the global scope from
+        // lib.d.ts, so names like `array2` → `Array` are suggested.
+        for lib_ctx in lib_contexts {
             for (symbol_name, sym_id) in lib_ctx.binder.file_locals.iter() {
                 // Apply the same meaning filter as the local search.
                 if meaning_flags != 0
@@ -290,13 +333,74 @@ impl<'a> CheckerState<'a> {
                     symbol_name,
                     name_len,
                     maximum_length_difference,
-                    &mut best_distance,
-                    &mut best_candidate,
+                    best_distance,
+                    best_candidate,
                 );
             }
         }
 
-        best_candidate.map(|c| vec![c])
+        // When searching for TYPE meanings, also include built-in type keywords.
+        // In tsc, intrinsic types (string, number, boolean, etc.) are registered
+        // in the checker's globals map. We include them here as candidates so
+        // that typos like "sting" → "string" are caught.
+        if meaning_flags == 0 || meaning_flags & tsz_binder::symbol_flags::TYPE != 0 {
+            for keyword in BUILTIN_TYPE_KEYWORDS {
+                Self::consider_identifier_suggestion(
+                    name,
+                    keyword,
+                    name_len,
+                    maximum_length_difference,
+                    best_distance,
+                    best_candidate,
+                );
+            }
+        }
+    }
+
+    /// Find a spelling suggestion for a JSDoc type name without an AST node.
+    ///
+    /// Used by `emit_jsdoc_cannot_find_name` where positions are computed from
+    /// comment text offsets and no `NodeIndex` is available. Searches file-level
+    /// scope symbols, lib globals, and built-in type keywords.
+    pub(crate) fn find_jsdoc_type_spelling_suggestion(&self, name: &str) -> Option<String> {
+        let name_len = name.len();
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
+        let mut best_candidate: Option<String> = None;
+
+        // Search file-level symbols (the binder's file_locals).
+        for (symbol_name, sym_id) in self.ctx.binder.file_locals.iter() {
+            if let Some(sym) = self.ctx.binder.get_symbol(*sym_id)
+                && sym.flags & tsz_binder::symbol_flags::TYPE == 0
+            {
+                continue;
+            }
+            Self::consider_identifier_suggestion(
+                name,
+                symbol_name,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
+
+        // Search lib globals and built-in type keywords.
+        Self::search_global_candidates(
+            name,
+            name_len,
+            maximum_length_difference,
+            tsz_binder::symbol_flags::TYPE,
+            &self.ctx.lib_contexts,
+            &mut best_distance,
+            &mut best_candidate,
+        );
+
+        best_candidate
     }
 
     // =========================================================================
