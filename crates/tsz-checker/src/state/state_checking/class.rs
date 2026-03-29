@@ -1454,6 +1454,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip for null — `class C extends null` is valid in TypeScript.
+            // tsc does not emit TS2509 for null base types; instead, it only
+            // checks for TS17005 (super call in null-extending class).
+            if base_type == TypeId::NULL {
+                continue;
+            }
+
+            // Skip union base types. When a constructor has multiple construct
+            // signatures (e.g., `Array` with `new(): any[]` and `new<T>(): T[]`),
+            // the resolved base instance type can be a union like `any[] | T[]`.
+            // tsc resolves these to the correct specific return type; our resolution
+            // currently produces the union. Since all constituent types in such
+            // unions are valid object types, suppress TS2509 for unions.
+            if let Some(tsz_solver::TypeData::Union(_)) = self.ctx.types.lookup(base_type) {
+                continue;
+            }
+
             // Check if the base type is a valid base type
             if !tsz_solver::type_queries::data::is_valid_base_type(self.ctx.types, base_type) {
                 let type_name = self.format_type(base_type);
