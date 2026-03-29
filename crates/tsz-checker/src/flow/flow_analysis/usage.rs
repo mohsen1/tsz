@@ -74,13 +74,21 @@ impl<'a> CheckerState<'a> {
                 if evolved_type != TypeId::NEVER && evolved_type != TypeId::ERROR {
                     narrowed_type = evolved_type;
                 }
-            } else {
+            } else if self.is_same_function_scope_as_declaration(idx, sym_id)
+                && !self.is_ambient_var_declaration(sym_id)
+                && !self.is_in_assignment_target_position(idx)
+            {
                 // For control-flow-typed `any` variables (e.g., `var p;`) that are
                 // NOT definitely assigned at the usage point, the runtime value is
                 // `undefined` (var hoisting initializes to undefined). tsc uses
                 // `undefined` as the initial type for such variables in its control
                 // flow analysis. This causes downstream diagnostics like TS18048
                 // ("'p' is possibly 'undefined'") when `p` is used in comparisons.
+                //
+                // Guards:
+                // - Same function scope: cross-scope captures get TS7005/TS7034 instead
+                // - Not ambient: `declare var` has no runtime initialization
+                // - Not assignment target: destructuring/for-of targets are written, not read
                 let evolved_type = self.apply_flow_narrowing_with_initial_type(
                     idx,
                     declared_type,
@@ -284,6 +292,75 @@ impl<'a> CheckerState<'a> {
             .get_identifier(node)
             .filter(|ident| ident.escaped_text == "undefined")
             .map(|_| TypeId::UNDEFINED)
+    }
+
+    /// Check if the symbol's declaration is ambient (e.g., `declare var Foo;`).
+    fn is_ambient_var_declaration(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let mut value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return false;
+        }
+        if let Some(node) = self.ctx.arena.get(value_decl)
+            && node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            value_decl = ext.parent;
+        }
+        self.ctx.is_ambient_declaration(value_decl)
+    }
+
+    /// Check if an identifier is in an assignment target position (LHS of `=`,
+    /// for-of/for-in initializer, or destructuring assignment target).
+    fn is_in_assignment_target_position(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::FOR_OF_STATEMENT | syntax_kind_ext::FOR_IN_STATEMENT => {
+                    if let Some(data) = self.ctx.arena.get_for_in_of(parent_node) {
+                        return current == data.initializer;
+                    }
+                    return false;
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    if let Some(data) = self.ctx.arena.get_binary_expr(parent_node) {
+                        if data.operator_token >= SyntaxKind::EqualsToken as u16
+                            && data.operator_token <= SyntaxKind::CaretEqualsToken as u16
+                        {
+                            return current == data.left;
+                        }
+                    }
+                    return false;
+                }
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                | syntax_kind_ext::SPREAD_ELEMENT
+                | syntax_kind_ext::SPREAD_ASSIGNMENT
+                | syntax_kind_ext::PROPERTY_ASSIGNMENT
+                | syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                | syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    current = parent_idx;
+                    continue;
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Emit TS2454 error for variable used before definite assignment.
