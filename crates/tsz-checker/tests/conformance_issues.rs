@@ -20979,7 +20979,10 @@ function f<T extends number>() {
 #[test]
 fn test_ts2413_unconstrained_type_param_vs_object_with_lib() {
     if !lib_files_available() {
-        eprintln!("Skipping: lib files not available");
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!("Skipping: lib files not available");
+        }
         return;
     }
     // TS2413: 'number' index type 'T' is not assignable to 'string' index type 'Object'.
