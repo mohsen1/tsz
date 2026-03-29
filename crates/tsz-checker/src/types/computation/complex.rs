@@ -243,40 +243,45 @@ impl<'a> CheckerState<'a> {
         let constructor_for_split = self.evaluate_type_with_env(constructor_type);
         let (non_nullish, nullish_cause) = self.split_nullish_type(constructor_for_split);
         if let Some(cause) = nullish_cause {
-            let (code, message) = if let Some(name) = self.expression_text(new_expr.expression) {
-                if cause == TypeId::NULL {
+            // Without strictNullChecks, null/undefined are in every type's domain,
+            // so "possibly null/undefined" diagnostics should not be emitted.
+            if self.ctx.compiler_options.strict_null_checks {
+                let (code, message) = if let Some(name) = self.expression_text(new_expr.expression)
+                {
+                    if cause == TypeId::NULL {
+                        (
+                            diagnostic_codes::IS_POSSIBLY_NULL,
+                            format!("'{name}' is possibly 'null'."),
+                        )
+                    } else if cause == TypeId::UNDEFINED {
+                        (
+                            diagnostic_codes::IS_POSSIBLY_UNDEFINED,
+                            format!("'{name}' is possibly 'undefined'."),
+                        )
+                    } else {
+                        (
+                            diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
+                            format!("'{name}' is possibly 'null' or 'undefined'."),
+                        )
+                    }
+                } else if cause == TypeId::NULL {
                     (
-                        diagnostic_codes::IS_POSSIBLY_NULL,
-                        format!("'{name}' is possibly 'null'."),
+                        diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
+                        "Object is possibly 'null'.".to_string(),
                     )
                 } else if cause == TypeId::UNDEFINED {
                     (
-                        diagnostic_codes::IS_POSSIBLY_UNDEFINED,
-                        format!("'{name}' is possibly 'undefined'."),
+                        diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
+                        "Object is possibly 'undefined'.".to_string(),
                     )
                 } else {
                     (
-                        diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
-                        format!("'{name}' is possibly 'null' or 'undefined'."),
+                        diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                        "Object is possibly 'null' or 'undefined'.".to_string(),
                     )
-                }
-            } else if cause == TypeId::NULL {
-                (
-                    diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
-                    "Object is possibly 'null'.".to_string(),
-                )
-            } else if cause == TypeId::UNDEFINED {
-                (
-                    diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
-                    "Object is possibly 'undefined'.".to_string(),
-                )
-            } else {
-                (
-                    diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
-                    "Object is possibly 'null' or 'undefined'.".to_string(),
-                )
-            };
-            self.error_at_node(new_expr.expression, &message, code);
+                };
+                self.error_at_node(new_expr.expression, &message, code);
+            }
 
             let Some(non_nullish) = non_nullish else {
                 return TypeId::ERROR;
