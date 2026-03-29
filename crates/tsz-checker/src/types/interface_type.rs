@@ -23,6 +23,41 @@ use tsz_solver::visitor::is_template_literal_type;
 // Interface Type Resolution
 // =============================================================================
 
+/// Deduplicate call signatures keeping the LAST occurrence of each unique
+/// signature. Two signatures are considered duplicates when they have identical
+/// parameter type lists and return types. This handles diamond inheritance:
+/// when `C extends C1, C2` and both C1/C2 inherit from B, shared signatures
+/// from B appear twice. By keeping the last occurrence, shared base signatures
+/// (like a catch-all `(x: string): void`) sort after all derived-specific
+/// overloads, ensuring correct overload resolution order.
+fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
+    if sigs.len() <= 1 {
+        return;
+    }
+    // Build a signature key from param types + return type for identity.
+    // Walk from the end and record the last index for each unique key.
+    // Then retain only those positions.
+    let key_of =
+        |sig: &tsz_solver::CallSignature| -> (Vec<tsz_solver::TypeId>, tsz_solver::TypeId) {
+            let param_types: Vec<_> = sig.params.iter().map(|p| p.type_id).collect();
+            (param_types, sig.return_type)
+        };
+
+    let mut seen: FxHashMap<(Vec<tsz_solver::TypeId>, tsz_solver::TypeId), usize> =
+        FxHashMap::default();
+    // Record the LAST index for each key
+    for (i, sig) in sigs.iter().enumerate() {
+        seen.insert(key_of(sig), i);
+    }
+    // Retain only signatures whose index matches their last occurrence
+    let mut i = 0;
+    sigs.retain(|sig| {
+        let idx = i;
+        i += 1;
+        seen.get(&key_of(sig)).copied() == Some(idx)
+    });
+}
+
 impl<'a> CheckerState<'a> {
     /// Get the type of an interface declaration.
     ///
@@ -834,8 +869,17 @@ impl<'a> CheckerState<'a> {
                 );
                 let mut call_signatures = derived_shape.call_signatures.clone();
                 call_signatures.extend(base_shape.call_signatures.iter().cloned());
+                // Deduplicate inherited call signatures from diamond inheritance.
+                // When C extends C1 and C2, and both inherit from B (which has a
+                // catch-all like `(x: string): void`), that catch-all appears in
+                // both C1's and C2's chains. Without deduplication, it appears
+                // before C2's specific overloads, causing wrong overload resolution.
+                // Keep the LAST occurrence so shared base signatures sort after
+                // all derived-specific overloads.
+                dedup_call_signatures_keep_last(&mut call_signatures);
                 let mut construct_signatures = derived_shape.construct_signatures.clone();
                 construct_signatures.extend(base_shape.construct_signatures.iter().cloned());
+                dedup_call_signatures_keep_last(&mut construct_signatures);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
                 factory.callable(CallableShape {
