@@ -424,8 +424,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 )
                 .is_some()
             {
+                // For Callable types with generic call signatures (e.g.,
+                // `declare function identity<T>(x: T): T`), convert to Function
+                // before instantiation so the generic type params are properly
+                // resolved against the target. `instantiate_generic_function_argument_against_target`
+                // bails out for Callable types (to preserve class constructor
+                // shapes), but for argument checking we need the instantiation.
+                let arg_for_instantiation =
+                    if let Some(crate::types::TypeData::Callable(shape_id)) =
+                        self.interner.lookup(expanded_arg_type)
+                    {
+                        let shape = self.interner.callable_shape(shape_id);
+                        if let Some(sig) = shape.call_signatures.first()
+                            && !sig.type_params.is_empty()
+                            && shape.call_signatures.len() == 1
+                        {
+                            self.interner.function(crate::types::FunctionShape {
+                                type_params: sig.type_params.clone(),
+                                params: sig.params.clone(),
+                                this_type: sig.this_type,
+                                return_type: sig.return_type,
+                                type_predicate: sig.type_predicate,
+                                is_constructor: false,
+                                is_method: sig.is_method,
+                            })
+                        } else {
+                            expanded_arg_type
+                        }
+                    } else {
+                        expanded_arg_type
+                    };
                 self.instantiate_generic_function_argument_against_target(
-                    expanded_arg_type,
+                    arg_for_instantiation,
                     effective_param_type,
                 )
             } else {

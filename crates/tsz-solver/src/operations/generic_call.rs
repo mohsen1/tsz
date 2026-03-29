@@ -3011,6 +3011,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }) {
             return source_ty;
         }
+
         let source_type_params_fully_determined_by_params =
             source_fn.type_params.iter().all(|tp| {
                 source_fn.params.iter().any(|param| {
@@ -3025,6 +3026,62 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     })
                 })
             });
+
+        // When any target parameter type is a type parameter (inference placeholder
+        // from an outer generic call), don't map the source's type params to those
+        // placeholders. Instead, erase them to their constraints (or `unknown`).
+        // This matches tsc's `getErasedSignature` behavior: during inference,
+        // a generic function argument like `identity<T>(v: T) => T` should not
+        // create false return-type constraints (e.g., `T_outer <: boolean`)
+        // that pollute the outer inference by conflating the inner T with the
+        // outer placeholder.
+        if source_type_params_fully_determined_by_params {
+            let any_target_param_is_type_param = target_param_types.iter().any(|&param_type| {
+                matches!(
+                    self.interner.lookup(param_type),
+                    Some(TypeData::TypeParameter(_))
+                )
+            });
+            if any_target_param_is_type_param {
+                let mut erasure_sub = TypeSubstitution::new();
+                for tp in &source_fn.type_params {
+                    erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                }
+                let erased = FunctionShape {
+                    params: source_fn
+                        .params
+                        .iter()
+                        .map(|p| ParamInfo {
+                            name: p.name,
+                            type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
+                            optional: p.optional,
+                            rest: p.rest,
+                        })
+                        .collect(),
+                    return_type: instantiate_type(
+                        self.interner,
+                        source_fn.return_type,
+                        &erasure_sub,
+                    ),
+                    this_type: source_fn
+                        .this_type
+                        .map(|t| instantiate_type(self.interner, t, &erasure_sub)),
+                    type_params: vec![],
+                    type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
+                        asserts: pred.asserts,
+                        target: pred.target,
+                        type_id: pred
+                            .type_id
+                            .map(|tid| instantiate_type(self.interner, tid, &erasure_sub)),
+                        parameter_index: pred.parameter_index,
+                    }),
+                    is_constructor: source_fn.is_constructor,
+                    is_method: source_fn.is_method,
+                };
+                return self.interner.function(erased);
+            }
+        }
+
         let prev_contextual_type = self.contextual_type;
         // Suppress contextual type when source type params are fully determined by params.
         // This prevents return type from incorrectly constraining T when T already comes

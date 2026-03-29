@@ -566,9 +566,13 @@ impl<'a> CheckerState<'a> {
                             TypeId::ERROR
                         };
                     }
-                    if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
-                        && !elaborated
-                    {
+                    let suppress_weak = self.should_suppress_weak_key_arg_mismatch(
+                        callee_expr,
+                        args,
+                        index,
+                        actual,
+                    );
+                    if !suppress_weak && !elaborated {
                         if prefer_argument_level_return_mismatch {
                             self.error_argument_not_assignable_at(
                                 reported_actual,
