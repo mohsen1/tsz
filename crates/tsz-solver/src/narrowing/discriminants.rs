@@ -377,19 +377,14 @@ impl<'a> NarrowingContext<'a> {
         literal_value: TypeId,
         keep_matching: bool,
     ) -> Option<TypeId> {
-        // PERF: Use discriminant index for O(1) lookup instead of O(N) member iteration.
-        // Works for both true branch (keep matching) and false branch (exclude matching).
-        if members.len() >= 8 {
-            if keep_matching {
-                if let Some(result) = self.fast_narrow_via_discriminant_index(
-                    original_union_type,
-                    members,
-                    property,
-                    literal_value,
-                ) {
-                    return Some(result);
-                }
-            } else if let Some(result) = self.fast_narrow_excluding_via_discriminant_index(
+        // PERF: Use discriminant index for O(1) lookup for the POSITIVE (keep_matching) case.
+        // The index is only beneficial when it can be reused across multiple narrows of the
+        // same union (e.g., switch cases narrowing the same discriminated union). For the
+        // EXCLUSION case in if-chains, each condition produces a new sub-union with a unique
+        // TypeId, so the index is never reused and building it is pure overhead.
+        // Use direct linear scan for exclusion -- O(N) per condition with no index overhead.
+        if keep_matching && members.len() >= 8 {
+            if let Some(result) = self.fast_narrow_via_discriminant_index(
                 original_union_type,
                 members,
                 property,
