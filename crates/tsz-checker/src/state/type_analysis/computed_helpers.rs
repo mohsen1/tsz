@@ -365,8 +365,21 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
 
             if is_in_resolution_chain && is_type_alias {
-                let is_direct =
-                    in_union_or_intersection || self.is_simple_type_reference(type_node);
+                let is_direct = if in_union_or_intersection {
+                    if target_sym_id == sym_id {
+                        true
+                    } else {
+                        let body = self.ctx.definition_store.get_body(def_id)
+                            .filter(|&b| lazy_def_id(self.ctx.types, b).is_none());
+                        if let Some(b) = body {
+                            !tsz_solver::is_structurally_deferred_type(self.ctx.types, b)
+                        } else {
+                            !self.alias_ast_is_deferred(target_sym_id)
+                        }
+                    }
+                } else {
+                    self.is_simple_type_reference(type_node)
+                };
 
                 if is_direct {
                     // Mark all aliases on stack between target and current as circular.
@@ -587,6 +600,35 @@ impl<'a> CheckerState<'a> {
     /// This covers patterns like:
     /// - `type Recurse = { [K in keyof Recurse]: Recurse[K] }` (self)
     /// - `type A = { [K in keyof B]: B[K] }; type B = { [K in keyof A]: A[K] }` (mutual)
+    fn alias_ast_is_deferred(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else { return false; };
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else { continue; };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION { continue; }
+            let Some(ta) = self.ctx.arena.get_type_alias(decl_node) else { continue; };
+            let Some(body_node) = self.ctx.arena.get(ta.type_node) else { continue; };
+            let k = body_node.kind;
+            if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE
+                || k == syntax_kind_ext::TYPE_LITERAL || k == syntax_kind_ext::MAPPED_TYPE
+                || k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+                || k == syntax_kind_ext::TYPE_OPERATOR
+            { return true; }
+            if k == syntax_kind_ext::UNION_TYPE {
+                let children = self.ctx.arena.get_children(ta.type_node);
+                if !children.is_empty() && children.iter().all(|&c| {
+                    self.ctx.arena.get(c).is_some_and(|cn| {
+                        let ck = cn.kind;
+                        ck == syntax_kind_ext::ARRAY_TYPE || ck == syntax_kind_ext::TUPLE_TYPE
+                            || ck == syntax_kind_ext::TYPE_LITERAL || ck == syntax_kind_ext::MAPPED_TYPE
+                            || ck == syntax_kind_ext::FUNCTION_TYPE || ck == syntax_kind_ext::CONSTRUCTOR_TYPE
+                            || ck == syntax_kind_ext::TYPE_OPERATOR
+                    })
+                }) { return true; }
+            }
+        }
+        false
+    }
+
     pub(crate) fn is_non_generic_mapped_type_circular(
         &mut self,
         sym_id: SymbolId,
@@ -599,9 +641,17 @@ impl<'a> CheckerState<'a> {
         if node.kind != syntax_kind_ext::MAPPED_TYPE {
             return false;
         }
-        // Walk the type body AST and check if any type reference resolves to
-        // a non-generic type alias that participates in a cycle with sym_id.
-        self.ast_contains_circular_type_ref(type_node, sym_id, &mut FxHashSet::default())
+        let Some(mapped) = self.ctx.arena.get_mapped_type(node) else { return false; };
+        let mut visited = FxHashSet::default();
+        if let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter)
+            && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node)
+            && tp.constraint != NodeIndex::NONE
+            && self.ast_contains_circular_type_ref(tp.constraint, sym_id, &mut visited)
+        { return true; }
+        if mapped.name_type != NodeIndex::NONE
+            && self.ast_contains_circular_type_ref(mapped.name_type, sym_id, &mut visited)
+        { return true; }
+        false
     }
 
     /// Recursive AST walk to find type references that close a cycle back to `target_sym`.

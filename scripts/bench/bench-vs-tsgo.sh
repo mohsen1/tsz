@@ -1248,7 +1248,7 @@ ensure_large_ts_repo_fixture() {
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2024"],
+    "lib": ["ES2024", "esnext.disposable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
