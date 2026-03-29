@@ -1313,14 +1313,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         match key {
-            // Function and callable types are contextually sensitive only when one of
-            // their parameter types still needs contextual typing or inference
-            // placeholder resolution. Fully annotated function arguments should
-            // participate in Round 1 generic inference.
+            // Function types are contextually sensitive only when one of their
+            // parameter types still needs contextual typing (has `any` type or
+            // inference placeholder). Fully annotated function arguments --
+            // including generic function references like `id<T>(x: T) => T` --
+            // should participate in Round 1 generic inference.
+            //
+            // In tsc, contextual sensitivity is an AST-level check
+            // (isContextSensitive) that looks at whether the expression is a
+            // function expression/arrow with unannotated parameters. A simple
+            // identifier referring to a generic function is NOT contextually
+            // sensitive. We approximate this by only checking parameter types
+            // for placeholder/any markers, not the presence of type_params.
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
-                !shape.type_params.is_empty()
-                    || self.function_signature_is_contextually_sensitive(&shape.params)
+                self.function_signature_is_contextually_sensitive(&shape.params)
             }
             // Union/Intersection: contextually sensitive if any member is
             TypeData::Union(members) | TypeData::Intersection(members) => {
