@@ -6,11 +6,47 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn collect_untyped_this_references_in_function_body(
+        &self,
+        node_idx: NodeIndex,
+        refs: &mut Vec<NodeIndex>,
+        is_root: bool,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if !is_root
+            && matches!(
+                node.kind,
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+            )
+        {
+            return;
+        }
+
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            refs.push(node_idx);
+            return;
+        }
+
+        for child in self.ctx.arena.get_children(node_idx) {
+            self.collect_untyped_this_references_in_function_body(child, refs, false);
+        }
+    }
+
     /// Comprehensive function declaration checking, used as the callback implementation
     /// for `StatementCheckCallbacks::check_function_declaration`.
     ///
@@ -462,6 +498,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let owns_untyped_this_binding = matches!(
+            _node.kind,
+            syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::FUNCTION_EXPRESSION
+        ) && !pushed_this_type
+            && !self.enclosing_function_has_contextual_this_type(func_idx)
+            && !self.is_js_file();
+        let masked_outer_this = if owns_untyped_this_binding && self.current_this_type().is_some() {
+            self.ctx.this_type_stack.pop()
+        } else {
+            None
+        };
+
         // Cache parameter types from annotations (so for-of binding uses correct types)
         // and then infer for any remaining unknown parameters using contextual information.
         // For closures (function expressions / arrow functions), parameter types are
@@ -597,6 +645,29 @@ impl<'a> CheckerState<'a> {
 
         self.check_statement_with_request(func.body, &TypingRequest::NONE);
 
+        if masked_outer_this.is_some() && self.ctx.no_implicit_this() {
+            let mut refs = Vec::new();
+            self.collect_untyped_this_references_in_function_body(func.body, &mut refs, true);
+            for this_idx in refs {
+                let already_reported = self.ctx.diagnostics.iter().any(|diag| {
+                    diag.code
+                        == crate::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION
+                        && self
+                            .ctx
+                            .arena
+                            .get(this_idx)
+                            .is_some_and(|node| diag.start == node.pos && diag.length == node.end - node.pos)
+                });
+                if !already_reported {
+                    self.error_at_node(
+                        this_idx,
+                        crate::diagnostics::diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                        crate::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                    );
+                }
+            }
+        }
+
         // For annotated generators, check that Generator<TYield, any, any>
         // is assignable to the declared return type.
         if is_generator && has_type_annotation {
@@ -645,6 +716,9 @@ impl<'a> CheckerState<'a> {
 
         if pushed_this_type {
             self.ctx.this_type_stack.pop();
+        }
+        if let Some(outer_this) = masked_outer_this {
+            self.ctx.this_type_stack.push(outer_this);
         }
     }
 
