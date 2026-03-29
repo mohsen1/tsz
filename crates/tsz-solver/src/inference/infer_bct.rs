@@ -404,22 +404,52 @@ impl<'a> InferenceContext<'a> {
         // This is the only time we generate a full hierarchy.
         let mut base_candidates = self.get_class_hierarchy(types[0])?;
 
-        // 2. For subsequent types, filter using is_subtype (cached and fast).
-        // No allocations, no hierarchy traversal - just subtype checks.
-        // This reduces complexity from O(N·Alloc(D)) to O(N·|Candidates|).
+        // 2. For subsequent types, filter using hierarchy-aware checks.
+        // PERF: Use extends_from() instead of is_subtype() to avoid redundant
+        // get_class_hierarchy allocations. Each is_subtype(Lazy, Lazy) internally
+        // calls get_class_hierarchy which allocates a Vec -- for N types that's
+        // N * |candidates| Vec allocations. extends_from walks the chain once.
         for &ty in types.iter().skip(1) {
             // Optimization: If we run out of candidates, stop immediately.
             if base_candidates.is_empty() {
                 return None;
             }
 
-            // Filter: Keep base if 'ty' is a subtype of 'base'
-            // This preserves semantic correctness while being much faster.
-            base_candidates.retain(|&base| self.is_subtype(ty, base));
+            // Filter: Keep base if 'ty' extends from 'base'.
+            base_candidates.retain(|&base| self.extends_from(ty, base));
         }
 
         // Return the most specific base (first remaining candidate after filtering)
         base_candidates.first().copied()
+    }
+
+    /// Check if `source` extends from `target` by walking up the class hierarchy.
+    /// Unlike `is_subtype`, this avoids allocating a Vec for the full hierarchy.
+    #[inline]
+    fn extends_from(&self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+        // Walk up the extends chain from source
+        let mut current = source;
+        let mut depth = 0;
+        while depth < 20 {
+            // guard against infinite loops
+            if let Some(base) = self.get_extends_clause(current) {
+                if base == target {
+                    return true;
+                }
+                current = base;
+                depth += 1;
+            } else {
+                break;
+            }
+        }
+        // Fall back to full is_subtype for non-Lazy types
+        if depth == 0 {
+            return self.is_subtype(source, target);
+        }
+        false
     }
 
     /// Get the class hierarchy for a type, from most derived to most base.
@@ -487,13 +517,26 @@ impl<'a> InferenceContext<'a> {
 
     /// Check if a candidate type is a suitable common type for all types.
     /// A suitable common type must be a supertype of all types in the list.
+    #[inline]
     fn is_suitable_common_type(&self, candidate: TypeId, types: &[TypeId]) -> bool {
-        types.iter().all(|&ty| self.is_subtype(ty, candidate))
+        types
+            .iter()
+            .all(|&ty| ty == candidate || self.is_subtype(ty, candidate))
     }
 
     /// Simple subtype check for bounds validation.
     /// Uses a simplified check - for full checking, use `SubtypeChecker`.
+    #[inline]
     pub(crate) fn is_subtype(&self, source: TypeId, target: TypeId) -> bool {
+        // PERF: Trivial identity/special-case checks BEFORE cache lookup.
+        // RefCell::borrow() has non-trivial overhead; avoid it for the common cases.
+        if source == target || source == TypeId::NEVER || target == TypeId::UNKNOWN {
+            return true;
+        }
+        if source == TypeId::ANY || target == TypeId::ANY {
+            return false; // source != target already checked above
+        }
+
         let key = (source, target);
         if let Some(&cached) = self.subtype_cache.borrow().get(&key) {
             return cached;
@@ -505,25 +548,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn is_subtype_uncached(&self, source: TypeId, target: TypeId) -> bool {
-        // Same type
-        if source == target {
-            return true;
-        }
-
-        // never <: T for all T
-        if source == TypeId::NEVER {
-            return true;
-        }
-
-        // T <: unknown for all T
-        if target == TypeId::UNKNOWN {
-            return true;
-        }
-
-        // any <: T and T <: any (only if both are any)
-        if source == TypeId::ANY || target == TypeId::ANY {
-            return source == target;
-        }
+        // NOTE: identity, NEVER, UNKNOWN, and ANY checks are done in is_subtype() before cache.
 
         // STRICT_ANY matches itself or unknown/any (only at top level)
         if source == TypeId::STRICT_ANY || target == TypeId::STRICT_ANY {
@@ -744,11 +769,11 @@ impl<'a> InferenceContext<'a> {
         // the class hierarchy. Without this, BCT inference cannot determine that
         // Derived <: Base and fails to find a common supertype, leading to false
         // positive union results or tournament failures.
+        // PERF: Use extends_from() instead of allocating a full hierarchy Vec.
         if matches!(source_key.as_ref(), Some(TypeData::Lazy(_)))
             && matches!(target_key.as_ref(), Some(TypeData::Lazy(_)))
-            && let Some(hierarchy) = self.get_class_hierarchy(source)
         {
-            return hierarchy.contains(&target);
+            return self.extends_from(source, target);
         }
 
         false
