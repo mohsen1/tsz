@@ -1321,6 +1321,11 @@ pub struct CheckerContext<'a> {
     /// Used as a fallback when resolving type references not found in the main file.
     pub lib_contexts: Vec<LibContext>,
 
+    /// Pre-computed lib binders extracted from `lib_contexts`.
+    /// Avoids repeated `Vec<Arc<BinderState>>` allocation + Arc cloning on every
+    /// symbol resolution call (called thousands of times per file).
+    pub lib_binders_cached: Vec<Arc<tsz_binder::BinderState>>,
+
     /// Number of actual lib files loaded (not including user files).
     /// Used by `has_lib_loaded()` to correctly determine if standard library is available.
     /// This is separate from `lib_contexts.len()` because `lib_contexts` may also include
