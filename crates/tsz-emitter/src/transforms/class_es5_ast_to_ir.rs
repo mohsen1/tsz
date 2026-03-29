@@ -24,10 +24,14 @@ pub struct AstToIr<'a> {
     has_super: bool,
     /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
     is_static: bool,
+    /// Counter for generating unique temp variable names (shared with caller)
+    temp_var_counter: Cell<u32>,
+    /// Temp variable names that need `var` declarations at an enclosing scope
+    hoisted_temps: RefCell<Vec<String>>,
 }
 
 impl<'a> AstToIr<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             this_captured: Cell::new(false),
@@ -35,6 +39,8 @@ impl<'a> AstToIr<'a> {
             current_this_substitution: Cell::new(None),
             has_super: false,
             is_static: false,
+            temp_var_counter: Cell::new(0),
+            hoisted_temps: RefCell::new(Vec::new()),
         }
     }
 
@@ -68,6 +74,35 @@ impl<'a> AstToIr<'a> {
         self.current_this_substitution
             .set(expr.map(ThisSubstitution::Raw));
         self
+    }
+
+    /// Set the starting temp variable counter (to avoid collisions)
+    pub fn with_temp_var_counter(self, counter: u32) -> Self {
+        self.temp_var_counter.set(counter);
+        self
+    }
+
+    /// Get the current temp variable counter value (after conversion)
+    pub fn temp_var_counter(&self) -> u32 {
+        self.temp_var_counter.get()
+    }
+
+    /// Take the list of hoisted temp variable names that need `var` declarations
+    pub fn take_hoisted_temps(&self) -> Vec<String> {
+        std::mem::take(&mut *self.hoisted_temps.borrow_mut())
+    }
+
+    /// Generate a unique temp variable name and register it for hoisting
+    fn generate_hoisted_temp(&self) -> String {
+        let counter = self.temp_var_counter.get();
+        let name = if counter < 26 {
+            format!("_{}", (b'a' + counter as u8) as char)
+        } else {
+            format!("_{}", counter)
+        };
+        self.temp_var_counter.set(counter + 1);
+        self.hoisted_temps.borrow_mut().push(name.clone());
+        name
     }
 
     /// Set whether `this` should be captured as `_this`
@@ -293,14 +328,6 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // VariableStatement uses VariableData which has declarations directly
         if let Some(var_data) = self.arena.get_variable(node) {
-            // Check if any declaration initializer is an object literal that needs
-            // ES5 computed property lowering (methods, accessors, spread, or computed
-            // property names). If so, fall back to ASTRef for the entire statement
-            // so the main printer's ES5 object literal transform handles hoisting.
-            if self.has_initializer_needing_es5_object_lowering(&var_data.declarations.nodes) {
-                return IRNode::ASTRef(idx);
-            }
-
             // Collect all declaration indices, handling the case where
             // VariableData.declarations may contain VARIABLE_DECLARATION_LIST nodes
             let mut decl_indices = Vec::new();
@@ -1013,6 +1040,20 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // Array and Object literals use LiteralExprData (elements = properties)
         if let Some(obj) = self.arena.get_literal_expr(node) {
+            // Check if ES5 computed property lowering is needed
+            let needs_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
+                crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
+                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
+                    || self.arena.get(elem_idx).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::METHOD_DECLARATION
+                            || n.kind == syntax_kind_ext::GET_ACCESSOR
+                            || n.kind == syntax_kind_ext::SET_ACCESSOR
+                    })
+            });
+            if needs_es5_lowering {
+                return self.lower_object_literal_es5(&obj.elements.nodes);
+            }
+
             let props: Vec<IRProperty> = obj
                 .elements
                 .nodes
@@ -1023,6 +1064,273 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    /// Convert a Block node's statements to a Vec of IR statements
+    fn convert_block_to_stmts(&self, block_idx: NodeIndex) -> Vec<IRNode> {
+        if let Some(block_node) = self.arena.get(block_idx)
+            && let Some(block) = self.arena.get_block(block_node)
+        {
+            block
+                .statements
+                .nodes
+                .iter()
+                .map(|&s| self.convert_statement(s))
+                .collect()
+        } else {
+            vec![IRNode::ASTRef(block_idx)]
+        }
+    }
+
+    /// Lower an object literal with computed properties to ES5 comma expression:
+    /// `{ [expr]: val, static: 1 }` -> `(_a = { static: 1 }, _a[expr] = val, _a)`
+    fn lower_object_literal_es5(&self, elements: &[NodeIndex]) -> IRNode {
+        let temp = self.generate_hoisted_temp();
+
+        // Split: static props go in the initial object, computed props become assignments
+        let first_computed_idx = elements
+            .iter()
+            .position(|&elem_idx| {
+                crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
+                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
+                    || self.arena.get(elem_idx).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::METHOD_DECLARATION
+                            || n.kind == syntax_kind_ext::GET_ACCESSOR
+                            || n.kind == syntax_kind_ext::SET_ACCESSOR
+                    })
+            })
+            .unwrap_or(elements.len());
+
+        let mut comma_parts = Vec::new();
+
+        // _a = {static_props...} or _a = {}
+        let initial_obj = if first_computed_idx > 0 {
+            let props: Vec<IRProperty> = elements[..first_computed_idx]
+                .iter()
+                .filter_map(|&p| self.convert_object_property(p))
+                .collect();
+            IRNode::object(props)
+        } else {
+            IRNode::ObjectLiteral {
+                properties: Vec::new(),
+                source_range: None,
+            }
+        };
+        comma_parts.push(IRNode::BinaryExpr {
+            left: Box::new(IRNode::id(temp.clone())),
+            operator: "=".into(),
+            right: Box::new(initial_obj),
+        });
+
+        // For each remaining element, emit assignment or Object.defineProperty
+        for &elem_idx in elements.iter().skip(first_computed_idx) {
+            if let Some(ir) = self.lower_object_property_es5(elem_idx, &temp) {
+                comma_parts.push(ir);
+            }
+        }
+
+        // Final reference to temp
+        comma_parts.push(IRNode::id(temp));
+
+        IRNode::CommaExprMultiline(comma_parts)
+    }
+
+    /// Lower a single object property to an ES5 assignment or Object.defineProperty call
+    fn lower_object_property_es5(&self, elem_idx: NodeIndex, temp: &str) -> Option<IRNode> {
+        let node = self.arena.get(elem_idx)?;
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_property_assignment(node)?;
+                let key = self.convert_property_key_to_element_access(prop.name, temp)?;
+                let value = self.convert_expression(prop.initializer);
+                Some(IRNode::BinaryExpr {
+                    left: Box::new(key),
+                    operator: "=".into(),
+                    right: Box::new(value),
+                })
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let shorthand = self.arena.get_shorthand_property(node)?;
+                let name = get_identifier_text(self.arena, shorthand.name)?;
+                Some(IRNode::BinaryExpr {
+                    left: Box::new(IRNode::prop(IRNode::id(temp.to_string()), name.clone())),
+                    operator: "=".into(),
+                    right: Box::new(IRNode::id(name)),
+                })
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let method = self.arena.get_method_decl(node)?;
+                let key = self.convert_property_key_to_element_access(method.name, temp)?;
+                let value = self.convert_method_to_function_expr(node)?;
+                Some(IRNode::BinaryExpr {
+                    left: Box::new(key),
+                    operator: "=".into(),
+                    right: Box::new(value),
+                })
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let accessor = self.arena.get_accessor(node)?;
+                let kind = if k == syntax_kind_ext::GET_ACCESSOR {
+                    "get"
+                } else {
+                    "set"
+                };
+                let key_expr = self.convert_property_key_to_string_expr(accessor.name)?;
+                let func = self.convert_accessor_to_function_expr(node)?;
+                // Object.defineProperty(_a, key, { get/set: function() {...}, enumerable: false, configurable: true })
+                let descriptor_props = vec![
+                    IRProperty {
+                        key: IRPropertyKey::Identifier(kind.into()),
+                        value: func,
+                        kind: IRPropertyKind::Init,
+                    },
+                    IRProperty {
+                        key: IRPropertyKey::Identifier("enumerable".into()),
+                        value: IRNode::BooleanLiteral(false),
+                        kind: IRPropertyKind::Init,
+                    },
+                    IRProperty {
+                        key: IRPropertyKey::Identifier("configurable".into()),
+                        value: IRNode::BooleanLiteral(true),
+                        kind: IRPropertyKind::Init,
+                    },
+                ];
+                Some(IRNode::CallExpr {
+                    callee: Box::new(IRNode::prop(
+                        IRNode::id("Object".to_string()),
+                        "defineProperty".to_string(),
+                    )),
+                    arguments: vec![
+                        IRNode::id(temp.to_string()),
+                        key_expr,
+                        IRNode::ObjectLiteral {
+                            properties: descriptor_props,
+                            source_range: None,
+                        },
+                    ],
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Convert a property name to an element access expression: _a[key] or _a.name
+    fn convert_property_key_to_element_access(
+        &self,
+        name_idx: NodeIndex,
+        temp: &str,
+    ) -> Option<IRNode> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(name_node)?;
+            let expr = self.convert_expression(computed.expression);
+            Some(IRNode::elem(IRNode::id(temp.to_string()), expr))
+        } else if name_node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.arena.get_identifier(name_node)?;
+            Some(IRNode::prop(
+                IRNode::id(temp.to_string()),
+                ident.escaped_text.clone(),
+            ))
+        } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            Some(IRNode::elem(
+                IRNode::id(temp.to_string()),
+                IRNode::string(lit.text.clone()),
+            ))
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            Some(IRNode::elem(
+                IRNode::id(temp.to_string()),
+                IRNode::number(lit.text.clone()),
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Convert a property name to a string expression for Object.defineProperty
+    fn convert_property_key_to_string_expr(&self, name_idx: NodeIndex) -> Option<IRNode> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(name_node)?;
+            Some(self.convert_expression(computed.expression))
+        } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            Some(IRNode::string(lit.text.clone()))
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            Some(IRNode::number(lit.text.clone()))
+        } else if name_node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.arena.get_identifier(name_node)?;
+            Some(IRNode::string(ident.escaped_text.clone()))
+        } else {
+            None
+        }
+    }
+
+    /// Convert a method declaration to a function expression IR node
+    fn convert_method_to_function_expr(&self, node: &Node) -> Option<IRNode> {
+        let method = self.arena.get_method_decl(node)?;
+        let params: Vec<IRParam> = method
+            .parameters
+            .nodes
+            .iter()
+            .filter_map(|&p_idx| {
+                let p_node = self.arena.get(p_idx)?;
+                let name = get_identifier_text(self.arena, self.arena.get_parameter(p_node)?.name)?;
+                Some(IRParam {
+                    name: name.into(),
+                    default_value: None,
+                    rest: false,
+                })
+            })
+            .collect();
+        let body = if method.body.is_some() {
+            self.convert_block_to_stmts(method.body)
+        } else {
+            Vec::new()
+        };
+        let body_source_range = self.arena.get(method.body).map(|n| (n.pos, n.end));
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: params,
+            body,
+            is_expression_body: false,
+            body_source_range,
+        })
+    }
+
+    /// Convert a getter/setter to a function expression IR node
+    fn convert_accessor_to_function_expr(&self, node: &Node) -> Option<IRNode> {
+        let accessor = self.arena.get_accessor(node)?;
+        let params: Vec<IRParam> = accessor
+            .parameters
+            .nodes
+            .iter()
+            .filter_map(|&p_idx| {
+                let p_node = self.arena.get(p_idx)?;
+                let name = get_identifier_text(self.arena, self.arena.get_parameter(p_node)?.name)?;
+                Some(IRParam {
+                    name: name.into(),
+                    default_value: None,
+                    rest: false,
+                })
+            })
+            .collect();
+        let body = if accessor.body.is_some() {
+            self.convert_block_to_stmts(accessor.body)
+        } else {
+            Vec::new()
+        };
+        let body_source_range = self.arena.get(accessor.body).map(|n| (n.pos, n.end));
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: params,
+            body,
+            is_expression_body: false,
+            body_source_range,
+        })
     }
 
     fn convert_object_property(&self, idx: NodeIndex) -> Option<IRProperty> {
@@ -1046,59 +1354,6 @@ impl<'a> AstToIr<'a> {
         } else {
             None
         }
-    }
-
-    /// Check if any variable declaration's initializer is an object literal
-    /// that needs ES5 computed property lowering (has methods, accessors,
-    /// spread, or computed property names that `convert_object_property`
-    /// cannot handle).
-    fn has_initializer_needing_es5_object_lowering(&self, decl_nodes: &[NodeIndex]) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        for &decl_idx in decl_nodes {
-            let Some(decl_node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            // Handle VARIABLE_DECLARATION_LIST intermediate nodes
-            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                && let Some(list_data) = self.arena.get_variable(decl_node)
-                && self.has_initializer_needing_es5_object_lowering(&list_data.declarations.nodes)
-            {
-                return true;
-            }
-            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                continue;
-            }
-            let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {
-                continue;
-            };
-            let Some(init_node) = self.arena.get(var_decl.initializer) else {
-                continue;
-            };
-            if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                continue;
-            }
-            let Some(obj) = self.arena.get_literal_expr(init_node) else {
-                continue;
-            };
-            for &elem_idx in &obj.elements.nodes {
-                let Some(elem) = self.arena.get(elem_idx) else {
-                    continue;
-                };
-                // Method declarations, get/set accessors, and spread assignments
-                // are not handled by convert_object_property and would be silently
-                // dropped. Fall back to ASTRef for the entire statement.
-                if elem.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || elem.kind == syntax_kind_ext::GET_ACCESSOR
-                    || elem.kind == syntax_kind_ext::SET_ACCESSOR
-                    || elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
-                    || elem.kind == syntax_kind_ext::SPREAD_ELEMENT
-                {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     fn get_property_key(&self, idx: NodeIndex) -> Option<IRPropertyKey> {

@@ -113,6 +113,14 @@ pub enum IRNode {
     /// Comma expression: `(a, b, c)`
     CommaExpr(Vec<Self>),
 
+    /// Multiline comma expression (used for ES5 computed property lowering):
+    /// ```text
+    /// (_a = {},
+    ///     _a[key] = value,
+    ///     _a)
+    /// ```
+    CommaExprMultiline(Vec<Self>),
+
     /// Array literal: `[a, b, c]`
     ArrayLiteral(Vec<Self>),
 

@@ -485,6 +485,24 @@ impl<'a> IRPrinter<'a> {
                 self.emit_comma_separated(exprs);
                 self.write(")");
             }
+            IRNode::CommaExprMultiline(exprs) => {
+                // Multiline comma expression for ES5 computed property lowering:
+                // (_a = {},
+                //     _a[key] = value,
+                //     _a)
+                self.write("(");
+                self.indent_level += 1;
+                for (i, expr) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        self.write(",");
+                        self.write_line();
+                        self.write_indent();
+                    }
+                    self.emit_node(expr);
+                }
+                self.indent_level -= 1;
+                self.write(")");
+            }
             IRNode::ArrayLiteral(elements) => {
                 self.write("[");
                 self.emit_comma_separated(elements);
