@@ -224,18 +224,28 @@ all_diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code && a.file
 
 **Verification**: Compare diagnostic output of parallel vs sequential runs on test projects.
 
-### Step 7: Cross-file delegation under parallelism
+### Step 7: Cross-file delegation under parallelism — PARTIAL (type_env merge-back eliminated)
 
 **File**: `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
 
 **Current**: `delegate_cross_arena_symbol_resolution()` creates a child `CheckerState` pointing at the target file's arena, runs type resolution, and merges results back to parent.
 
-**Change for parallel mode**:
-1. When file B needs a type from file A, B's checker calls `delegate_cross_arena_symbol_resolution()` as before
-2. The child checker uses file A's arena and binder (accessed via `all_arenas[file_idx]` and `all_binders[file_idx]`)
-3. Results are written to `DefinitionStore` (thread-safe) instead of merged back to parent's RefCell
-4. B's checker reads from `DefinitionStore` to get the resolved type
-5. No merge-back of `def_to_symbol`, `symbol_to_def`, `type_env` — all go through the shared store
+**Changes completed**:
+1. `TypeEnvironment::insert_def()` and `insert_def_with_params()` now write through to `DefinitionStore.set_body()` when available
+2. `TypeEnvironment::get_def()` and `contains_def()` fall back to `DefinitionStore.get_body()` on local cache miss
+3. The `child_type_env.merge_defs_into(parent_env)` call in `delegate_cross_arena_symbol_resolution()` has been removed — DefId->TypeId mappings flow through the shared DefinitionStore
+4. `lib_contexts` and `lib_binders_cached` wrapped in `Arc` for O(1) sharing between parent/child checkers and parallel per-file checkers (~30 clone sites eliminated)
+5. Skeleton `build_declared_module_sets()` hoisted out of per-file closure (computed once, shared via Arc)
+
+**Remaining merge-back items** (performance caches, not correctness blockers):
+- `child_symbol_types` — SymbolId->TypeId cache merged back to avoid re-resolution
+- `child_namespace_names` — namespace module names
+- `child_lib_delegation_cache` — lib symbol delegation results
+- `child_lib_type_cache` — lib type resolution results
+- `child_circular_aliases` — circular type alias markers
+- `child_instance_types` — class instance types
+
+These run on the same thread as the parent (no cross-thread sharing), so they are not parallelism blockers. They prevent redundant work within a single file's checking.
 
 **Thread safety of delegation**: The child checker runs on the same thread as the parent (not spawned to another thread). This means:
 - The child's arena/binder reads are safe (immutable data via Arc)
