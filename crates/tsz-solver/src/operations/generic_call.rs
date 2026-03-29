@@ -1116,10 +1116,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Direct placeholders (inference variables) are validated by final
             // constraint resolution below. Skipping eager checks here avoids
             // duplicate expensive assignability work on hot generic-call paths.
-            let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
-                && i >= instantiated_params.len().saturating_sub(1);
-            let track_direct_placeholder_vars =
-                !is_rest_param_arg && !self.type_evaluates_to_function(target_type);
+            // Track rest parameter args for direct placeholder vars too.
+            // In tsc, `foo<T>(...s: T[])` called with `foo(1, "hello")` uses
+            // first-wins logic: T = 1, and "hello" fails with TS2345.
+            // This also covers iterable spreads: `foo(...symbolIter, ...stringIter)`.
+            let track_direct_placeholder_vars = !self.type_evaluates_to_function(target_type);
 
             if !var_map.contains_key(&target_type) {
                 placeholder_visited.clear();
@@ -1207,13 +1208,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                 }
-            } else if !is_rest_param_arg {
-                // Only add to direct_param_vars when the type parameter appears
+            } else {
+                // Add to direct_param_vars when the type parameter appears
                 // as a naked (top-level) parameter type, NOT inside a union/intersection.
                 // When T appears in `T | string`, inference candidates come from union
                 // decomposition and should merge into a union (tsc's getCommonSupertype).
                 // When T appears as a naked `T` in multiple parameters (e.g., `x: T, y: T`),
                 // first-wins behavior applies for incompatible candidates.
+                // This also applies to rest parameters: `foo<T>(...s: T[])` with
+                // heterogeneous args uses first-wins to match tsc behavior.
                 let is_union_or_intersection = matches!(
                     self.interner.lookup(target_type),
                     Some(TypeData::Union(_) | TypeData::Intersection(_))
@@ -1494,7 +1497,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .and_then(|params| self.param_type_for_arg_index(params, i, arg_types.len()));
 
                 if original_has_placeholders
-                    && !is_rest_param_arg
                     && !matches!(
                         self.interner.lookup(target_type),
                         Some(TypeData::Union(_) | TypeData::Intersection(_))
