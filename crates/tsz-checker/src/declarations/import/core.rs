@@ -71,37 +71,41 @@ impl<'a> CheckerState<'a> {
     /// the effective module resolution (considering both `module` and `moduleResolution`
     /// options), matching tsc's `getEmitModuleResolutionKind()`.
     pub(crate) fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
+        self.module_not_found_diagnostic_with_context(module_name, false)
+    }
+
+    /// Like `module_not_found_diagnostic`, but preserves require-like contexts for
+    /// Node built-in module specifiers.
+    pub(crate) fn module_not_found_diagnostic_with_context(
+        &self,
+        module_name: &str,
+        require_like: bool,
+    ) -> (String, u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::query_boundaries::capabilities::is_known_node_module;
 
-        // tsc emits TS2591 instead of TS2307 when the unresolved module specifier
-        // is a known Node.js built-in module, suggesting @types/node installation.
+        // Known Node.js built-ins use the "cannot find name" family instead of TS2307,
+        // but the exact code depends on the import context:
+        // - TS2580 for regular TypeScript import/export sites
+        // - TS2591 for require-like sites, JavaScript files, and noTypesAndSymbols runs
+        //
         // This takes priority over any resolution error from the driver.
         if is_known_node_module(module_name) {
-            return (
-                format_message(
+            let use_types_field_hint = require_like
+                || self.ctx.compiler_options.no_types_and_symbols
+                || self.ctx.is_js_file();
+            let (message_template, code) = if use_types_field_hint {
+                (
                     diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                    &[module_name],
-                ),
-                diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-            );
-        }
-
-        // When the module specifier is a known Node.js built-in module name,
-        // tsc emits TS2591 ("Cannot find name 'X'. Do you need to install type
-        // definitions for node?") instead of TS2307. This check must come before
-        // the driver resolution error check, because the driver always produces
-        // TS2307 for unresolved modules — but for Node built-ins, tsc uses TS2591.
-        // In Node16/NodeNext mode, the error is suppressed entirely upstream;
-        // in CommonJS/other modes, this substitution produces the correct diagnostic.
-        if super::declaration::is_node_builtin_module(module_name) {
-            return (
-                format_message(
-                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                    &[module_name],
-                ),
-                diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-            );
+                    diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                )
+            } else {
+                (
+                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                    diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                )
+            };
+            return (format_message(message_template, &[module_name]), code);
         }
 
         if let Some(error) = self.ctx.get_resolution_error(module_name) {

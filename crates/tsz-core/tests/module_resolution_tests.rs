@@ -301,6 +301,76 @@ fn check_with_resolved_modules_opts(
         .collect()
 }
 
+/// Like `check_with_resolved_modules_opts`, but unresolved modules surface as TS2307.
+///
+/// This exercises the checker-side fallback that rewrites unresolved Node built-ins
+/// into the TS2580/TS2591 family.
+fn check_with_module_not_found_errors(
+    source: &str,
+    file_name: &str,
+    resolved_modules: Vec<&str>,
+    unresolved_modules: Vec<&str>,
+    opts: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors in {}: {:?}",
+        file_name,
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        opts,
+    );
+    setup_lib_contexts(&mut checker);
+
+    checker.ctx.report_unresolved_imports = true;
+    let modules: rustc_hash::FxHashSet<String> = resolved_modules
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+    checker.ctx.set_resolved_modules(modules);
+
+    let mut errors: rustc_hash::FxHashMap<
+        (usize, String),
+        crate::checker::context::ResolutionError,
+    > = rustc_hash::FxHashMap::default();
+    for module_name in unresolved_modules {
+        errors.insert(
+            (0, module_name.to_string()),
+            crate::checker::context::ResolutionError {
+                code: TS2307,
+                message: format!(
+                    "Cannot find module '{module_name}' or its corresponding type declarations."
+                ),
+            },
+        );
+    }
+    checker
+        .ctx
+        .set_resolved_module_errors(std::sync::Arc::new(errors));
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 #[test]
 fn module_specifier_candidates_alias_directory_dot_chains() {
     use crate::checker::module_resolution::module_specifier_candidates;
@@ -402,6 +472,10 @@ fn no_error_code(diagnostics: &[(u32, String)], code: u32) -> bool {
 
 // TS2307: Cannot find module
 const TS2307: u32 = 2307;
+// TS2580: Cannot find name ... install @types/node
+const TS2580: u32 = 2580;
+// TS2591: Cannot find name ... install @types/node and add node to types
+const TS2591: u32 = 2591;
 // TS2305: Module has no exported member
 const TS2305: u32 = 2305;
 // TS1202: Import assignment cannot be used when targeting ECMAScript modules
@@ -430,6 +504,71 @@ fn test_es_named_import_unresolved_module() {
     assert!(
         has_error_code(&diags, TS2307),
         "Should emit TS2307 for unresolved module, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts_import_of_node_builtin_uses_ts2580() {
+    let diags = check_with_module_not_found_errors(
+        r#"import { parse } from "url";
+export const thing = () => parse();
+"#,
+        "usage.ts",
+        vec![],
+        vec!["url"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2580),
+        "TypeScript import of unresolved Node builtin should emit TS2580, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2591),
+        "TypeScript import of unresolved Node builtin should not emit TS2591, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_require_like_import_of_node_builtin_uses_ts2591() {
+    let diags = check_with_module_not_found_errors(
+        r#"import fs = require("fs");
+void fs;
+"#,
+        "test.ts",
+        vec![],
+        vec!["fs"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2591),
+        "Require-like unresolved Node builtin should emit TS2591, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_no_types_and_symbols_keeps_ts2591_for_node_builtin_imports() {
+    let diags = check_with_module_not_found_errors(
+        r#"import { parse } from "url";
+export const thing = () => parse();
+"#,
+        "usage.ts",
+        vec![],
+        vec!["url"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::CommonJS,
+            no_types_and_symbols: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2591),
+        "noTypesAndSymbols should keep TS2591 for unresolved Node builtins, got: {diags:?}"
     );
 }
 

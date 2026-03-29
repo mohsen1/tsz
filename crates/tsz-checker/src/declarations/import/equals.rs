@@ -711,7 +711,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if force_module_not_found {
-            let (message, code) = self.module_not_found_diagnostic(module_name);
+            let (message, code) = self.module_not_found_diagnostic_with_context(module_name, true);
             let (message, code) = if force_module_not_found_as_2307 {
                 (
                     crate::diagnostics::format_message(
@@ -759,7 +759,8 @@ impl<'a> CheckerState<'a> {
             if error_code
                 == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
             {
-                let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
+                let (fallback_message, fallback_code) =
+                    self.module_not_found_diagnostic_with_context(module_name, true);
                 error_code = fallback_code;
                 error_message = fallback_message;
             }
@@ -779,7 +780,7 @@ impl<'a> CheckerState<'a> {
 
         // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
         // suggesting the user switch to nodenext or configure paths.
-        let (message, code) = self.module_not_found_diagnostic(module_name);
+        let (message, code) = self.module_not_found_diagnostic_with_context(module_name, true);
         self.ctx.modules_with_ts2307_emitted.insert(module_key);
         self.error_at_position(spec_start, spec_length, &message, code);
     }
