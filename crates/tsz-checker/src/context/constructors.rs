@@ -158,7 +158,6 @@ impl<'a> CheckerContext<'a> {
             reported_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
-            node_resolution_set: FxHashSet::default(),
             implicit_any_checked_closures: FxHashSet::default(),
             implicit_any_contextual_closures: FxHashSet::default(),
             deferred_implicit_any_closures: Vec::new(),
