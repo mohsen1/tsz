@@ -80,12 +80,58 @@ pub(crate) fn emit_outputs(
         .map(|file| file.file_name.clone())
         .collect();
 
+    // Build the set of JS output paths produced by TypeScript source files
+    // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
+    // a.js) would produce the same output path as a TS file (e.g. a.ts -> a.js),
+    // tsc blocks the JS file's emit. We replicate that by collecting TS output
+    // paths first and skipping JS inputs that collide.
+    let ts_output_paths: FxHashSet<PathBuf> = context
+        .program
+        .files
+        .iter()
+        .filter_map(|file| {
+            let input_path = PathBuf::from(&file.file_name);
+            let ext = input_path.extension().and_then(|e| e.to_str())?;
+            if matches!(ext, "ts" | "tsx" | "mts" | "cts") && !is_declaration_file(&input_path) {
+                js_output_path(
+                    context.base_dir,
+                    context.root_dir,
+                    context.out_dir,
+                    context.options.jsx,
+                    &input_path,
+                )
+            } else {
+                None
+            }
+        })
+        .collect();
+
     for (file_idx, file) in context.program.files.iter().enumerate() {
         let input_path = PathBuf::from(&file.file_name);
         if let Some(dirty_paths) = context.dirty_paths
             && !dirty_paths.contains(&input_path)
         {
             continue;
+        }
+
+        // Skip JS input files whose output path would collide with a TS file's
+        // output (tsc's "emit blocked" behavior for --allowJs).
+        let is_js_input = input_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map_or(false, |ext| matches!(ext, "js" | "jsx" | "mjs" | "cjs"));
+        if is_js_input {
+            if let Some(js_path) = js_output_path(
+                context.base_dir,
+                context.root_dir,
+                context.out_dir,
+                context.options.jsx,
+                &input_path,
+            ) {
+                if ts_output_paths.contains(&js_path) {
+                    continue;
+                }
+            }
         }
 
         if let Some(js_path) = js_output_path(
