@@ -59,7 +59,7 @@ FAIL TypeScript/tests/cases/compiler/duplicateIdentifierInCatchBlock.ts | expect
 FAIL TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans1.ts | expected:[TS2300,TS2451] actual:[TS2300,TS2451]
 FAIL TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans_moduleAugmentation.ts | expected:[TS2451] actual:[TS2451]
 FAIL TypeScript/tests/cases/compiler/duplicateObjectLiteralProperty_computedName3.ts | expected:[TS1117] actual:[TS1117]
-FAIL TypeScript/tests/cases/compiler/duplicatePackage_globalMerge.ts | expected:[TS2306,TS2669] actual:[TS2306]
+FAIL TypeScript/tests/cases/compiler/duplicatePackage_globalMerge.ts | expected:[TS2306,TS2669] actual:[TS2306,TS2669]
 FAIL TypeScript/tests/cases/compiler/elidedJSImport1.ts | expected:[TS2591,TS2708,TS18042] actual:[TS2591]
 FAIL TypeScript/tests/cases/compiler/emitCapturingThisInTupleDestructuring1.ts | expected:[TS2493,TS7010,TS7017,TS7041] actual:[TS2493,TS7010,TS7017,TS7041]
 FAIL TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile2.ts | expected:[TS4094] actual:[TS4094]
@@ -131,7 +131,6 @@ FAIL TypeScript/tests/cases/compiler/genericRecursiveImplicitConstructorErrors3.
 FAIL TypeScript/tests/cases/compiler/genericRestArgs.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/genericTypeArgumentInference1.ts | expected:[TS2345] actual:[]
 FAIL TypeScript/tests/cases/compiler/genericTypeWithNonGenericBaseMisMatch.ts | expected:[TS2322,TS2416] actual:[TS2322,TS2416]
-FAIL TypeScript/tests/cases/compiler/genericUnboundedTypeParamAssignability.ts | expected:[TS2339,TS2345] actual:[TS2345,TS2349]
 FAIL TypeScript/tests/cases/compiler/genericWithNoConstraintComparableWithCurlyCurly.ts | expected:[TS2352] actual:[TS2352]
 FAIL TypeScript/tests/cases/compiler/genericWithOpenTypeParameters1.ts | expected:[TS2322,TS2345,TS2558] actual:[TS2322,TS2345,TS2558]
 FAIL TypeScript/tests/cases/compiler/genericsWithoutTypeParameters1.ts | expected:[TS2314,TS2322] actual:[TS2314,TS2322]
@@ -193,6 +192,7 @@ FAIL TypeScript/tests/cases/compiler/isolatedModulesExportDeclarationType.ts | e
 FAIL TypeScript/tests/cases/compiler/isolatedModulesGlobalNamespacesAndEnums.ts | expected:[TS1280,TS1281,TS18055] actual:[TS2304,TS18055]
 FAIL TypeScript/tests/cases/compiler/iterableTReturnTNext.ts | expected:[TS2322,TS2416,TS5024] actual:[TS2416,TS5024]
 FAIL TypeScript/tests/cases/compiler/jsElementAccessNoContextualTypeCrash.ts | expected:[TS2741] actual:[TS2741]
+FAIL TypeScript/tests/cases/compiler/jsEnumTagOnObjectFrozen.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation2.ts | expected:[TS2300,TS2551] actual:[]
 FAIL TypeScript/tests/cases/compiler/jsFileClassPropertyType2.ts | expected:[TS2345] actual:[]
 FAIL TypeScript/tests/cases/compiler/jsFileCompilationBindReachabilityErrors.ts | expected:[TS1344,TS5024,TS7027,TS7028,TS7029] actual:[TS1344,TS5024,TS7028]
@@ -392,7 +392,6 @@ FAIL TypeScript/tests/cases/compiler/specialIntersectionsInMappedTypes.ts | expe
 FAIL TypeScript/tests/cases/compiler/spellingSuggestionJSXAttribute.tsx | expected:[TS2322,TS2769] actual:[TS2322,TS2786]
 FAIL TypeScript/tests/cases/compiler/spliceTuples.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/spreadInvalidArgumentType.ts | expected:[TS2698] actual:[TS2698]
-FAIL TypeScript/tests/cases/compiler/staticAnonymousTypeNotReferencingTypeParameter.ts | expected:[TS2322,TS2339,TS2454] actual:[TS2322,TS2349,TS2454]
 FAIL TypeScript/tests/cases/compiler/staticMemberExportAccess.ts | expected:[TS2339,TS2351,TS2576] actual:[TS2339,TS2351]
 FAIL TypeScript/tests/cases/compiler/staticVisibility.ts | expected:[TS2304,TS2339,TS2662] actual:[TS2304,TS2339,TS2662]
 FAIL TypeScript/tests/cases/compiler/strictFunctionTypesErrors.ts | expected:[TS2322,TS2328] actual:[TS2322]
@@ -442,7 +441,6 @@ FAIL TypeScript/tests/cases/compiler/typeParameterDiamond4.ts | expected:[TS2322
 FAIL TypeScript/tests/cases/compiler/typeParametersAndParametersInComputedNames.ts | expected:[TS2304,TS2552] actual:[]
 FAIL TypeScript/tests/cases/compiler/typeParametersShouldNotBeEqual.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/typePredicateInherit.ts | expected:[TS2416] actual:[TS2416]
-FAIL TypeScript/tests/cases/compiler/typePredicateStructuralMatch.ts | expected:[TS2339] actual:[TS2349]
 FAIL TypeScript/tests/cases/compiler/typePredicatesInUnion3.ts | expected:[TS2345] actual:[]
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectiveScopedPackageCustomTypeRoot.ts | expected:[TS2688] actual:[TS2688]
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectiveWithFailedFromTypeRoot.ts | expected:[TS2688] actual:[]
@@ -903,7 +901,6 @@ FAIL TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotatedFunction/partiallyAnnotatedFunctionInferenceWithTypeParameter.ts | expected:[TS2345,TS2564] actual:[TS2345,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.2.ts | expected:[TS2322,TS2488,TS2504] actual:[TS2322,TS2488,TS2504]
 FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.3.ts | expected:[TS2318,TS2495] actual:[TS2318,TS2504]
-FAIL TypeScript/tests/cases/conformance/types/import/importTypeGenericTypes.ts | expected:[TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/import/importTypeLocalMissing.ts | expected:[TS2307,TS2564,TS2694] actual:[TS2307,TS2564,TS2694]
 FAIL TypeScript/tests/cases/conformance/types/intersection/commonTypeIntersection.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAndUnionTypes.ts | expected:[TS2322,TS2454] actual:[TS2322,TS2454]
@@ -3906,6 +3903,7 @@ PASS TypeScript/tests/cases/compiler/genericTypeWithCallableMembers2.ts
 PASS TypeScript/tests/cases/compiler/genericTypeWithMultipleBases1.ts
 PASS TypeScript/tests/cases/compiler/genericTypeWithMultipleBases2.ts
 PASS TypeScript/tests/cases/compiler/genericTypeWithMultipleBases3.ts
+PASS TypeScript/tests/cases/compiler/genericUnboundedTypeParamAssignability.ts
 PASS TypeScript/tests/cases/compiler/genericWithCallSignatureReturningSpecialization.ts
 PASS TypeScript/tests/cases/compiler/genericWithCallSignatures1.ts
 PASS TypeScript/tests/cases/compiler/genericWithIndexerOfTypeParameterType1.ts
@@ -4521,7 +4519,6 @@ PASS TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPa
 PASS TypeScript/tests/cases/compiler/jsEmitIntersectionProperty.ts
 PASS TypeScript/tests/cases/compiler/jsEnumCrossFileExport.ts
 PASS TypeScript/tests/cases/compiler/jsEnumFunctionLocalNoCrash.ts
-PASS TypeScript/tests/cases/compiler/jsEnumTagOnObjectFrozen.ts
 PASS TypeScript/tests/cases/compiler/jsExpandoObjectDefineProperty.ts
 PASS TypeScript/tests/cases/compiler/jsExportAssignmentNonMutableLocation.ts
 PASS TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation.ts
@@ -6236,6 +6233,7 @@ PASS TypeScript/tests/cases/compiler/stableTypeOrdering.ts
 PASS TypeScript/tests/cases/compiler/stackDepthLimitCastingType.ts
 PASS TypeScript/tests/cases/compiler/standaloneBreak.ts
 PASS TypeScript/tests/cases/compiler/staticAndMemberFunctions.ts
+PASS TypeScript/tests/cases/compiler/staticAnonymousTypeNotReferencingTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/staticAsIdentifier.ts
 PASS TypeScript/tests/cases/compiler/staticClassMemberError.ts
 PASS TypeScript/tests/cases/compiler/staticClassProps.ts
@@ -6674,6 +6672,7 @@ PASS TypeScript/tests/cases/compiler/typePartameterConstraintInstantiatedWithDef
 PASS TypeScript/tests/cases/compiler/typePredicateAcceptingPartialOfRefinedType.ts
 PASS TypeScript/tests/cases/compiler/typePredicateFreshLiteralWidening.ts
 PASS TypeScript/tests/cases/compiler/typePredicateInLoop.ts
+PASS TypeScript/tests/cases/compiler/typePredicateStructuralMatch.ts
 PASS TypeScript/tests/cases/compiler/typePredicateTopLevelTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/typePredicateWithThisParameter.ts
 PASS TypeScript/tests/cases/compiler/typePredicatesCanNarrowByDiscriminant.ts
@@ -11624,6 +11623,7 @@ PASS TypeScript/tests/cases/conformance/types/import/importTypeAmbient.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeAmbientMissing.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeAmdBundleRewrite.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeGeneric.ts
+PASS TypeScript/tests/cases/conformance/types/import/importTypeGenericTypes.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeInJSDoc.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeLocal.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeNested.ts
