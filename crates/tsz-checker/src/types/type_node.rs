@@ -770,7 +770,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         };
 
-        let predicate_type = self.check(pred_data.type_node);
+        let mut predicate_type = self.check(pred_data.type_node);
+
+        // When the predicate type was parsed from `?T` (prefix ?), the parser recovers
+        // just `T` but tsc semantically treats it as `T | null | undefined`. Detect this
+        // by checking if the type node's position matches a parse error position (TS17020).
+        if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
+            let type_pos = type_node.pos;
+            if self.ctx.all_parse_error_positions.contains(&type_pos) {
+                // Widen predicate type to T | null | undefined to match tsc behavior
+                predicate_type = self.ctx.types.factory().union(vec![
+                    predicate_type,
+                    TypeId::NULL,
+                    TypeId::UNDEFINED,
+                ]);
+            }
+        }
+
         let mut param_type = None;
 
         if let Some(function_node) = self.ctx.arena.get(function_type_idx)
