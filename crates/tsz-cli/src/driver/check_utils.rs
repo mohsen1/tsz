@@ -1920,6 +1920,8 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
         | 1214 // Identifier expected (strict mode reserved word)
         | 1262 // 'await' at top level
         | 1359 // 'await' in async context
+        | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
+        | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
     )
 }
 

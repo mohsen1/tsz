@@ -652,6 +652,9 @@ impl<'a> Printer<'a> {
             }
             first = false;
 
+            // Emit leading comments before the parameter.
+            self.emit_comments_before_pos(param_node.pos);
+
             if self.is_binding_pattern(param.name) {
                 let temp_name = self.get_temp_var_name();
                 self.write(&temp_name);
