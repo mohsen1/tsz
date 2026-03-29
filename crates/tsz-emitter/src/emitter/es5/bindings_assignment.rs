@@ -668,6 +668,17 @@ impl<'a> Printer<'a> {
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
             self.write("var ");
             if let Some(decl_list) = self.arena.get_variable(init_node) {
+                // Empty declaration list (e.g. `for (var of X)` where `of` is parsed
+                // as the keyword, leaving zero declarators).  tsc still emits a temp
+                // variable assignment inside the loop body, so we do the same.
+                if decl_list.declarations.nodes.is_empty() {
+                    let temp = self.get_temp_var_name();
+                    self.write(&temp);
+                    self.write(" = ");
+                    self.write(&element_expr);
+                    self.write_semicolon();
+                    return;
+                }
                 let mut first = true;
                 // `for...of` allows only a single declaration. If the source
                 // has multiple (`for (var a, b of X)`), that is a syntax error
