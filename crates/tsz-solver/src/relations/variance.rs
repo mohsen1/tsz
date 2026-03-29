@@ -199,6 +199,9 @@ struct VarianceVisitor<'a, 'b> {
     /// Whether the target parameter was seen as the object of an indexed access.
     /// Used to detect when indexed access can normalize away type argument differences.
     seen_target_in_index_access: bool,
+    /// Depth counter for mapped type nesting. When > 0, occurrences of the target
+    /// parameter are inside a mapped type and should not set DIRECT_USAGE.
+    inside_mapped_depth: u32,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -214,6 +217,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             polarity_stack: vec![true], // Start with positive (covariant) polarity
             bound_type_params: smallvec::SmallVec::new(),
             seen_target_in_index_access: false,
+            inside_mapped_depth: 0,
         }
     }
 
@@ -265,6 +269,12 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             self.result |= Variance::COVARIANT;
         } else {
             self.result |= Variance::CONTRAVARIANT;
+        }
+        // Mark as direct usage when outside mapped type contexts.
+        // Direct usage (function params, return types, properties) provides
+        // reliable variance signal, unlike mapped type keyof/template positions.
+        if self.inside_mapped_depth == 0 {
+            self.result |= Variance::DIRECT_USAGE;
         }
     }
 
@@ -687,6 +697,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             // It's a binder, not a usage of T
         }
 
+        // Track that we're inside a mapped type so occurrences are not
+        // marked as DIRECT_USAGE. Mapped type positions (keyof constraint,
+        // template) can give unreliable variance signals.
+        self.inside_mapped_depth += 1;
+
         // Constraint (K in keyof T) is CONTRAVARIANT with respect to T
         self.visit_with_polarity(mapped.constraint, !current_polarity);
 
@@ -709,6 +724,8 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
         // Remove the bound variable
         self.bound_type_params.pop();
+
+        self.inside_mapped_depth -= 1;
     }
 
     /// Index access: both object and key are at current polarity.

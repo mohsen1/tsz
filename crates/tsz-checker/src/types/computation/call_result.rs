@@ -707,6 +707,20 @@ impl<'a> CheckerState<'a> {
         if self.call_target_generic_rest_requires_fixed_arity_error(actual, expected) {
             return false;
         }
+        // When both types are Applications of the same base (e.g., F<CP> vs F<unknown>),
+        // the mismatch comes from variance checking, not from contextual typing.
+        // Don't defer — the variance rejection is definitive. This matches tsc which
+        // reports TS2345 immediately for same-generic-type argument mismatches.
+        if let Some(tsz_solver::TypeData::Application(s_app_id)) = self.ctx.types.lookup(actual)
+            && let Some(tsz_solver::TypeData::Application(t_app_id)) =
+                self.ctx.types.lookup(expected)
+        {
+            let s_app = self.ctx.types.type_application(s_app_id);
+            let t_app = self.ctx.types.type_application(t_app_id);
+            if s_app.base == t_app.base {
+                return false;
+            }
+        }
         let has_callable_shape = |this: &mut Self, ty: TypeId| {
             if tsz_solver::type_queries::get_function_shape(this.ctx.types, ty).is_some() {
                 return true;
