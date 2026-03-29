@@ -1397,6 +1397,31 @@ impl<'a> CheckerState<'a> {
             return Some(instantiated);
         }
 
+        // Handle import type base names: import('./module').Foo
+        if base_name.starts_with("import(") {
+            if let Some((module_specifier, Some(member_name))) =
+                Self::parse_jsdoc_import_type(base_name)
+            {
+                let sym_id = self.resolve_jsdoc_import_member(&module_specifier, &member_name)?;
+                let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                if resolved == TypeId::ERROR || resolved == TypeId::UNKNOWN {
+                    return None;
+                }
+                let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+                if body_type == TypeId::ERROR {
+                    return None;
+                }
+                if type_params.is_empty() || type_args.is_empty() {
+                    return Some(body_type);
+                }
+
+                use tsz_solver::instantiate_generic;
+                let instantiated =
+                    instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+                return Some(instantiated);
+            }
+        }
+
         // Look up the base type in file_locals (includes merged lib types like Partial, Record)
         let sym_id = if let Some(sym_id) = self.ctx.binder.file_locals.get(base_name) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;

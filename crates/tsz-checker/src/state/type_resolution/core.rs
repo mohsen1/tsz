@@ -53,6 +53,14 @@ impl<'a> CheckerState<'a> {
                 // assignability checks fail with false TS2322 errors.
                 if has_type_args && resolved != TypeId::ERROR {
                     if let Some(args) = &type_ref.type_arguments {
+                        // Validate type arguments against constraints (TS2344)
+                        if !self.is_inside_type_parameter_declaration(idx) {
+                            if let Some(sym_id) =
+                                self.resolve_import_type_target_symbol(call_idx, type_name_idx)
+                            {
+                                self.validate_type_reference_type_arguments(sym_id, args, idx);
+                            }
+                        }
                         let type_args: Vec<TypeId> = args
                             .nodes
                             .iter()

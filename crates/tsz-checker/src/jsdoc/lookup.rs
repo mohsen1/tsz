@@ -315,6 +315,17 @@ impl<'a> CheckerState<'a> {
                 type_params
             } else if !symbol_constraints.is_empty() {
                 symbol_constraints
+            } else if base_name.starts_with("import(") {
+                // Handle import type base names: import('./module').Foo
+                if let Some((module_specifier, Some(member_name))) =
+                    Self::parse_jsdoc_import_type(base_name)
+                {
+                    self.resolve_jsdoc_import_member(&module_specifier, &member_name)
+                        .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                }
             } else {
                 Vec::new()
             };

@@ -63,17 +63,32 @@ impl<'a> CheckerState<'a> {
         // x has a definite value — TS2454 should not fire in narrowed branches.
         trace!("Applying flow narrowing");
         let mut narrowed_type = self.apply_flow_narrowing(idx, declared_type);
-        if declared_type == TypeId::ANY
-            && self.is_control_flow_typed_any_symbol(sym_id)
-            && self.is_definitely_assigned_at_with_symbol(idx, Some(sym_id))
-        {
-            let evolved_type = self.apply_flow_narrowing_with_initial_type(
-                idx,
-                declared_type,
-                Some(TypeId::NEVER),
-            );
-            if evolved_type != TypeId::NEVER && evolved_type != TypeId::ERROR {
-                narrowed_type = evolved_type;
+        if declared_type == TypeId::ANY && self.is_control_flow_typed_any_symbol(sym_id) {
+            let is_assigned = self.is_definitely_assigned_at_with_symbol(idx, Some(sym_id));
+            if is_assigned {
+                let evolved_type = self.apply_flow_narrowing_with_initial_type(
+                    idx,
+                    declared_type,
+                    Some(TypeId::NEVER),
+                );
+                if evolved_type != TypeId::NEVER && evolved_type != TypeId::ERROR {
+                    narrowed_type = evolved_type;
+                }
+            } else {
+                // For control-flow-typed `any` variables (e.g., `var p;`) that are
+                // NOT definitely assigned at the usage point, the runtime value is
+                // `undefined` (var hoisting initializes to undefined). tsc uses
+                // `undefined` as the initial type for such variables in its control
+                // flow analysis. This causes downstream diagnostics like TS18048
+                // ("'p' is possibly 'undefined'") when `p` is used in comparisons.
+                let evolved_type = self.apply_flow_narrowing_with_initial_type(
+                    idx,
+                    declared_type,
+                    Some(TypeId::UNDEFINED),
+                );
+                if evolved_type != TypeId::ERROR && evolved_type != TypeId::ANY {
+                    narrowed_type = evolved_type;
+                }
             }
         }
         trace!(?narrowed_type, "flow narrowing result");

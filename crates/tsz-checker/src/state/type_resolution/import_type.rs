@@ -673,6 +673,53 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
+    /// Resolve the symbol ID of an import type member reference for TS2344 checking.
+    /// Given `import("./module").Foo`, resolves to the SymbolId of `Foo` in the target module.
+    pub(crate) fn resolve_import_type_target_symbol(
+        &mut self,
+        call_idx: NodeIndex,
+        type_name_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let (module_name, _) = self.get_import_type_module_specifier(call_idx)?;
+        let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
+        let segments = self.import_type_member_segments(type_name_idx)?;
+        if segments.is_empty() {
+            return None;
+        }
+        let mut current_sym = self.resolve_ts_import_type_member_symbol(
+            &module_name,
+            &segments[0],
+            resolution_mode_override,
+        )?;
+        for segment in segments.iter().skip(1) {
+            let symbol = self
+                .get_cross_file_symbol(current_sym)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+        }
+        let sym_flags = self
+            .get_cross_file_symbol(current_sym)
+            .or_else(|| self.ctx.binder.get_symbol(current_sym))
+            .map(|s| s.flags)?;
+        let is_type = (sym_flags
+            & (symbol_flags::TYPE_ALIAS
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::ENUM
+                | symbol_flags::TYPE_PARAMETER))
+            != 0;
+        is_type.then_some(current_sym)
+    }
+
     /// TS2880: Check for deprecated `assert` keyword in import type options.
     ///
     /// For `import("./module", { assert: { ... } })` type expressions, the second
