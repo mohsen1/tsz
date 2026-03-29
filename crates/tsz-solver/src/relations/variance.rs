@@ -200,7 +200,7 @@ struct VarianceVisitor<'a, 'b> {
     /// Used to detect when indexed access can normalize away type argument differences.
     seen_target_in_index_access: bool,
     /// Depth counter for mapped type nesting. When > 0, occurrences of the target
-    /// parameter are inside a mapped type and should not set DIRECT_USAGE.
+    /// parameter are inside a mapped type and should not set `DIRECT_USAGE`.
     inside_mapped_depth: u32,
 }
 

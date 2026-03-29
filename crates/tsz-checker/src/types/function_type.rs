@@ -569,7 +569,7 @@ impl<'a> CheckerState<'a> {
         // "contextually checked". We cannot unconditionally mark based on
         // ctx_helper.is_some() because the expected type may be a bare type parameter
         // or non-callable type that provides no parameter types.
-        let mut any_param_contextually_typed = false;
+        let mut _any_param_contextually_typed = false;
 
         let mut contextual_index = 0;
         for &param_idx in &parameters.nodes {
@@ -716,7 +716,7 @@ impl<'a> CheckerState<'a> {
                     has_contextual_type && !has_never_expected_context;
                 if is_closure && suppresses_implicit_any_context {
                     self.ctx.implicit_any_contextual_closures.insert(idx);
-                    any_param_contextually_typed = true;
+                    _any_param_contextually_typed = true;
                 }
                 // Use type annotation if present, otherwise infer from context
                 let (type_id, has_external_binding_context) = if param.type_annotation.is_some() {
