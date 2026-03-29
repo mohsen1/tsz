@@ -8,7 +8,6 @@ use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
-use std::rc::Rc;
 use tsz_binder::{SymbolId, flow_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -221,7 +220,7 @@ impl<'a> CheckerState<'a> {
         .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
         .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_type_environment(&self.ctx.type_environment)
         .with_narrowing_cache(&self.ctx.narrowing_cache)
         .with_call_type_predicates(&self.ctx.call_type_predicates)
         .with_flow_buffers(

@@ -676,7 +676,8 @@ pub struct CheckerContext<'a> {
     pub request_cache_counters: RequestCacheCounters,
 
     /// Cached type environment for resolving Ref types during assignability checks.
-    pub type_environment: Rc<RefCell<TypeEnvironment>>,
+    /// Used by FlowAnalyzer (via borrowed reference) for type narrowing during control flow analysis.
+    pub type_environment: RefCell<TypeEnvironment>,
 
     /// Recursion guard for application evaluation.
     pub application_eval_set: FxHashSet<TypeId>,
