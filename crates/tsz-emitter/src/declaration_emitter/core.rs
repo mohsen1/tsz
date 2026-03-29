@@ -3168,17 +3168,22 @@ impl<'a> DeclarationEmitter<'a> {
                 // `using` and `await using` declarations emit as `const` in .d.ts
                 let flags = decl_list_node.flags as u32;
                 // USING(4) and AWAIT_USING(6) both have the USING bit set
+                let js_var_promoted_to_const;
                 let keyword = if flags
                     & (tsz_parser::parser::node_flags::USING
                         | tsz_parser::parser::node_flags::CONST)
                     != 0
                 {
+                    js_var_promoted_to_const = false;
                     "const"
                 } else if flags & tsz_parser::parser::node_flags::LET != 0 {
+                    js_var_promoted_to_const = false;
                     "let"
                 } else if self.source_is_js_file {
+                    js_var_promoted_to_const = true;
                     "const"
                 } else {
+                    js_var_promoted_to_const = false;
                     "var"
                 };
 
@@ -3270,7 +3275,20 @@ impl<'a> DeclarationEmitter<'a> {
                     if self.should_emit_declare_keyword(is_exported) {
                         self.write("declare ");
                     }
-                    self.write(keyword);
+                    let effective_keyword = if js_var_promoted_to_const {
+                        let has_jsdoc = regular_decls[group_start..group_end].iter().any(
+                            |(_, decl_idx, _, decl)| {
+                                self.jsdoc_name_like_type_expr_for_node(*decl_idx).is_some()
+                                    || self.jsdoc_name_like_type_expr_for_node(decl.name).is_some()
+                            },
+                        ) || self
+                            .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
+                            .is_some();
+                        if has_jsdoc { "var" } else { keyword }
+                    } else {
+                        keyword
+                    };
+                    self.write(effective_keyword);
                     self.write(" ");
 
                     let mut i = group_start;

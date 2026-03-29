@@ -761,7 +761,7 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    fn leading_jsdoc_type_expr_for_pos(&self, pos: u32) -> Option<String> {
+    pub(crate) fn leading_jsdoc_type_expr_for_pos(&self, pos: u32) -> Option<String> {
         let text = self.source_file_text.as_deref()?;
         let bytes = text.as_bytes();
         let mut actual_start = pos as usize;
@@ -906,7 +906,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
     }
 
-    fn jsdoc_name_like_type_expr_for_pos(&self, pos: u32) -> Option<String> {
+    pub(crate) fn jsdoc_name_like_type_expr_for_pos(&self, pos: u32) -> Option<String> {
         let expr = self.leading_jsdoc_type_expr_for_pos(pos)?;
         if Self::jsdoc_name_like_type_reference(&expr) {
             Some(expr)
@@ -915,7 +915,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn jsdoc_name_like_type_expr_for_node(&self, idx: NodeIndex) -> Option<String> {
+    pub(crate) fn jsdoc_name_like_type_expr_for_node(&self, idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(idx)?;
         self.jsdoc_name_like_type_expr_for_pos(node.pos)
     }
@@ -7151,12 +7151,20 @@ impl<'a> DeclarationEmitter<'a> {
         let widened_enum_type = (has_initializer && keyword != "const")
             .then(|| self.simple_enum_access_base_name_text(initializer))
             .flatten();
+        // For JS files with JSDoc @type, named type takes precedence over literal narrowing.
+        let js_has_jsdoc_type = self.source_is_js_file
+            && self
+                .jsdoc_name_like_type_expr_for_pos(stmt_pos)
+                .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
+                .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
+                .is_some();
         let literal_initializer_text = (keyword == "const"
             && !has_type_annotation
             && has_initializer
-            && const_asserted_enum_member.is_none())
-        .then(|| self.const_literal_initializer_text_deep(initializer))
-        .flatten();
+            && const_asserted_enum_member.is_none()
+            && !js_has_jsdoc_type)
+            .then(|| self.const_literal_initializer_text_deep(initializer))
+            .flatten();
 
         // Determine if we should emit a literal initializer for const
         if let Some(literal_initializer_text) = literal_initializer_text {
