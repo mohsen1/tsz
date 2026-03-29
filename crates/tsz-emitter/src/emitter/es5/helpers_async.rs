@@ -123,7 +123,7 @@ impl<'a> Printer<'a> {
         func_name: &str,
         this_expr: &str,
     ) {
-        self.emit_async_function_es5_body(func_name, &func.parameters.nodes, func.body, this_expr);
+        self.emit_async_function_es5_body(func_name, &func.parameters.nodes, func.body, this_expr, func.type_annotation);
     }
 
     pub(in crate::emitter) fn emit_async_function_es5_body(
@@ -132,10 +132,19 @@ impl<'a> Printer<'a> {
         params: &[NodeIndex],
         body: NodeIndex,
         this_expr: &str,
+        type_annotation: NodeIndex,
     ) {
         // For ES2015/ES2016 targets, use function* + yield pattern
         // For ES5, use function + __generator state machine pattern
         let use_native_generators = !self.ctx.target_es5;
+
+        // Extract qualified promise constructor from return type annotation.
+        // Only used for ES5 target; ES2015+ targets always emit `void 0`.
+        let promise_ctor = if !use_native_generators {
+            self.extract_awaiter_promise_constructor(type_annotation)
+        } else {
+            None
+        };
         let params_have_top_level_await = params
             .iter()
             .copied()
@@ -195,7 +204,7 @@ impl<'a> Printer<'a> {
                 self.write_helper("__awaiter");
                 self.write("(");
                 self.write(this_expr);
-                self.write(", arguments, void 0, function (");
+                self.write(", arguments, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function (");
                 self.emit_function_parameter_names_only(params);
                 self.write(") {");
                 self.write_line();
@@ -275,7 +284,7 @@ impl<'a> Printer<'a> {
                 self.write_helper("__awaiter");
                 self.write("(");
                 self.write(this_expr);
-                self.write(", void 0, void 0, function () {");
+                self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
 
@@ -346,7 +355,7 @@ impl<'a> Printer<'a> {
                 //         ...
                 //     });
                 // });
-                self.write(", void 0, void 0, function () {");
+                self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
@@ -364,7 +373,7 @@ impl<'a> Printer<'a> {
                 self.write("});");
             } else {
                 // Multi-line format with hoisted vars
-                self.write(", void 0, void 0, function () {");
+                self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
                 self.write("var ");
@@ -434,7 +443,7 @@ impl<'a> Printer<'a> {
         self.write("(");
         self.write(this_expr);
         if move_params_to_generator {
-            self.write(", arguments, void 0, function* (");
+            self.write(", arguments, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function* (");
             let saved = self.ctx.emit_await_as_yield;
             self.ctx.emit_await_as_yield = true;
             self.emit_function_parameters_js(params);
@@ -445,9 +454,9 @@ impl<'a> Printer<'a> {
                 self.write(") {");
             }
         } else if body_is_empty_single_line {
-            self.write(", void 0, void 0, function* () { });");
+            self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function* () { });");
         } else {
-            self.write(", void 0, void 0, function* () {");
+            self.write(", void 0, "); self.write_awaiter_promise_arg(&promise_ctor); self.write(", function* () {");
         }
 
         if body_is_empty_single_line {
@@ -514,8 +523,50 @@ impl<'a> Printer<'a> {
         emit_utils::param_initializer_has_top_level_await(self.arena, param_idx)
     }
 
+
     fn first_await_default_param_name(&self, params: &[NodeIndex]) -> Option<String> {
         emit_utils::first_await_default_param_name(self.arena, params)
+    }
+
+    /// Extract a qualified promise constructor from a function's return type annotation.
+    fn extract_awaiter_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.arena.get_type_ref(type_node)?;
+        let type_name_node = self.arena.get(type_ref.type_name)?;
+        if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            Some(self.qualified_name_to_expr(type_ref.type_name))
+        } else {
+            None
+        }
+    }
+
+    /// Convert a qualified name or identifier AST node to a dotted JS expression string.
+    fn qualified_name_to_expr(&self, idx: NodeIndex) -> String {
+        let Some(node) = self.arena.get(idx) else {
+            return String::new();
+        };
+        if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+            if let Some(qn) = self.arena.get_qualified_name(node) {
+                let left = self.qualified_name_to_expr(qn.left);
+                let right = emit_utils::identifier_text_or_empty(self.arena, qn.right);
+                return format!("{left}.{right}");
+            }
+        }
+        emit_utils::identifier_text_or_empty(self.arena, idx)
+    }
+
+    /// Write the third argument for `__awaiter`: either the qualified promise constructor
+    /// or `void 0` (default).
+    fn write_awaiter_promise_arg(&mut self, promise_ctor: &Option<String>) {
+        if let Some(ctor) = promise_ctor {
+            self.write(ctor);
+        } else {
+            self.write("void 0");
+        }
     }
 
     pub(in crate::emitter) fn emit_function_parameter_names_only(&mut self, params: &[NodeIndex]) {

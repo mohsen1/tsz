@@ -1120,10 +1120,17 @@ impl<'a> IRPrinter<'a> {
                 this_arg,
                 generator_body,
                 hoisted_vars,
+                promise_constructor,
             } => {
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
-                self.write(", void 0, void 0, function () {");
+                if let Some(ctor) = promise_constructor {
+                    self.write(", void 0, ");
+                    self.write(ctor);
+                    self.write(", function () {");
+                } else {
+                    self.write(", void 0, void 0, function () {");
+                }
                 if hoisted_vars.is_empty() {
                     // Multi-line format (matches tsc):
                     // return __awaiter(this, void 0, void 0, function () {
