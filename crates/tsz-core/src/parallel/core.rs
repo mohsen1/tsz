@@ -3302,14 +3302,21 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             .map(|file| Arc::clone(&file.arena))
             .collect::<Vec<_>>(),
     );
+    // PERF: Build arena-pointer -> file-index reverse lookup map first (O(F)),
+    // then map each symbol to its file index in O(1) per symbol.
+    // Total: O(S + F) instead of the previous O(S * F) nested iteration.
+    let arena_to_file_idx: FxHashMap<usize, usize> = all_arenas
+        .iter()
+        .enumerate()
+        .map(|(idx, arena)| (Arc::as_ptr(arena) as usize, idx))
+        .collect();
     let symbol_file_targets: Vec<(tsz_binder::SymbolId, usize)> = program
         .symbol_arenas
         .iter()
         .filter_map(|(sym_id, arena)| {
-            all_arenas
-                .iter()
-                .position(|file_arena| Arc::ptr_eq(file_arena, arena))
-                .map(|file_idx| (*sym_id, file_idx))
+            arena_to_file_idx
+                .get(&(Arc::as_ptr(arena) as usize))
+                .map(|&file_idx| (*sym_id, file_idx))
         })
         .collect();
 
@@ -3445,14 +3452,21 @@ pub fn check_files_parallel(
             .map(|file| Arc::clone(&file.arena))
             .collect::<Vec<_>>(),
     );
+    // PERF: Build arena-pointer -> file-index reverse lookup map first (O(F)),
+    // then map each symbol to its file index in O(1) per symbol.
+    // Total: O(S + F) instead of the previous O(S * F) nested iteration.
+    let arena_to_file_idx: FxHashMap<usize, usize> = all_arenas
+        .iter()
+        .enumerate()
+        .map(|(idx, arena)| (Arc::as_ptr(arena) as usize, idx))
+        .collect();
     let symbol_file_targets: Vec<(tsz_binder::SymbolId, usize)> = program
         .symbol_arenas
         .iter()
         .filter_map(|(sym_id, arena)| {
-            all_arenas
-                .iter()
-                .position(|file_arena| Arc::ptr_eq(file_arena, arena))
-                .map(|file_idx| (*sym_id, file_idx))
+            arena_to_file_idx
+                .get(&(Arc::as_ptr(arena) as usize))
+                .map(|&file_idx| (*sym_id, file_idx))
         })
         .collect();
 

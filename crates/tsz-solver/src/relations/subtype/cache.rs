@@ -25,17 +25,36 @@ use crate::visitor::{application_id, enum_components, lazy_def_id, union_list_id
 //
 // The depth counter tracks nesting level (incremented on enter, decremented on leave)
 // to detect when we're back at the outermost call and can reset the fuel.
+//
+// PERF: Depth and fuel are packed into a single u64 to halve the TLS access count
+// (2 per check_subtype call instead of 4). Layout: high 32 bits = fuel, low 32 bits = depth.
 thread_local! {
-    static GLOBAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    static GLOBAL_SUBTYPE_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static GLOBAL_SUBTYPE_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Pack depth (low 32) and fuel (high 32) into a single u64.
+#[inline(always)]
+const fn pack_depth_fuel(depth: u32, fuel: u32) -> u64 {
+    (fuel as u64) << 32 | depth as u64
+}
+
+/// Extract depth from packed state.
+#[inline(always)]
+const fn unpack_depth(state: u64) -> u32 {
+    state as u32
+}
+
+/// Extract fuel from packed state.
+#[inline(always)]
+const fn unpack_fuel(state: u64) -> u32 {
+    (state >> 32) as u32
 }
 
 /// Reset subtype depth and fuel counters.
 /// Called between compilation sessions to prevent stale state from a previous
 /// compilation (e.g., if it panicked and left counters dirty).
 pub fn reset_subtype_thread_local_state() {
-    GLOBAL_SUBTYPE_DEPTH.with(|d| d.set(0));
-    GLOBAL_SUBTYPE_FUEL.with(|f| f.set(0));
+    GLOBAL_SUBTYPE_STATE.with(|s| s.set(0));
 }
 
 // Maximum number of non-trivial subtype checks per top-level call chain.
@@ -211,15 +230,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && let Some(members) = union_list_id(self.interner, target)
         {
             let member_list = self.interner.type_list(members);
-            let empty_obj = self.interner.object(vec![]);
-            let parts = [TypeId::NULL, TypeId::UNDEFINED, empty_obj];
-            let all_ok = parts.iter().all(|&part| {
-                member_list
+            // PERF: Check null and undefined first (O(1) identity checks).
+            // Only intern the empty object if the nullish members are present,
+            // avoiding a Vec allocation + hash lookup on the common non-matching path.
+            let has_null = member_list.iter().any(|&m| m == TypeId::NULL);
+            let has_undef = member_list.iter().any(|&m| m == TypeId::UNDEFINED);
+            if has_null && has_undef {
+                let empty_obj = self.interner.object(vec![]);
+                let has_empty_obj = member_list
                     .iter()
-                    .any(|&member| part == member || self.check_subtype(part, member).is_true())
-            });
-            if all_ok {
-                return SubtypeResult::True;
+                    .any(|&m| m == empty_obj || self.check_subtype(empty_obj, m).is_true());
+                if has_empty_obj {
+                    return SubtypeResult::True;
+                }
             }
         }
 
@@ -291,24 +314,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
         // Track nesting depth and consume fuel for every non-trivial check.
         // Fuel is monotonically consumed; depth tracks when we're back at root.
-        let global_depth = GLOBAL_SUBTYPE_DEPTH.with(|d| {
-            let v = d.get();
-            d.set(v + 1);
-            v
-        });
-        let fuel = GLOBAL_SUBTYPE_FUEL.with(|f| {
-            let v = f.get();
-            f.set(v + 1);
-            v
+        // PERF: Single TLS access reads both depth and fuel; single access writes both.
+        let (global_depth, fuel) = GLOBAL_SUBTYPE_STATE.with(|s| {
+            let prev = s.get();
+            let depth = unpack_depth(prev);
+            let fuel = unpack_fuel(prev);
+            s.set(pack_depth_fuel(depth + 1, fuel + 1));
+            (depth, fuel)
         });
 
         // Helper macro to decrement global depth and optionally reset fuel on early returns.
         macro_rules! leave_global {
             () => {
-                GLOBAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                if global_depth == 0 {
-                    GLOBAL_SUBTYPE_FUEL.with(|f| f.set(0));
-                }
+                GLOBAL_SUBTYPE_STATE.with(|s| {
+                    let prev = s.get();
+                    let depth = unpack_depth(prev).saturating_sub(1);
+                    if global_depth == 0 {
+                        // Outermost call completed — reset fuel
+                        s.set(pack_depth_fuel(depth, 0));
+                    } else {
+                        s.set(pack_depth_fuel(depth, unpack_fuel(prev)));
+                    }
+                });
             };
         }
 
@@ -672,10 +699,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Decrement global depth; reset fuel when outermost call completes.
-        GLOBAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-        if global_depth == 0 {
-            GLOBAL_SUBTYPE_FUEL.with(|f| f.set(0));
-        }
+        // PERF: Single TLS access for both depth and fuel.
+        GLOBAL_SUBTYPE_STATE.with(|s| {
+            let prev = s.get();
+            let depth = unpack_depth(prev).saturating_sub(1);
+            if global_depth == 0 {
+                s.set(pack_depth_fuel(depth, 0));
+            } else {
+                s.set(pack_depth_fuel(depth, unpack_fuel(prev)));
+            }
+        });
 
         result
     }
