@@ -160,6 +160,40 @@ file_info() {
     echo "${lines} lines, ${kb}KB"
 }
 
+# Run a command with a timeout (in seconds). Returns the command's exit code,
+# or 124 if it was killed due to timeout (matching GNU timeout convention).
+# Usage: run_with_timeout <seconds> <command...>
+run_with_timeout() {
+    local timeout_secs="$1"
+    shift
+
+    # Run the command in a background subshell
+    "$@" &
+    local pid=$!
+
+    # Watchdog: SIGKILL directly after timeout (SIGTERM can be ignored by Rust binaries)
+    ( sleep "$timeout_secs" && kill -KILL "$pid" 2>/dev/null || true ) &
+    local watchdog_pid=$!
+
+    # Wait for the main process (|| true for set -e safety)
+    local exit_code=0
+    wait "$pid" 2>/dev/null || exit_code=$?
+
+    # Clean up watchdog (|| true since it may have already exited)
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+
+    # SIGKILL exit code is 137 (128+9)
+    if [ "$exit_code" -eq 137 ]; then
+        return 124
+    fi
+    return "$exit_code"
+}
+
+# Timeout for pre-validation checks (seconds). Generous enough for heavy
+# type-level libraries but catches infinite loops.
+BENCH_TIMEOUT="${BENCH_TIMEOUT:-60}"
+
 ensure_tsgo() {
     # Honor explicit TSGO override when provided by caller.
     if [ -n "$TSGO" ]; then
@@ -438,18 +472,25 @@ run_benchmark() {
     local info="${lines} lines, ${kb}KB"
 
     # Benchmark fixtures must be valid TypeScript for the reference compiler.
-    # If tsc fails, treat the fixture as invalid benchmark input and skip it.
-    local tsc_check=$($TSC --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+    # If tsc fails or times out, treat the fixture as invalid benchmark input and skip it.
+    local tsc_check=0
+    run_with_timeout "$BENCH_TIMEOUT" $TSC --noEmit $extra_args "$file" >/dev/null 2>&1 || tsc_check=$?
     if [ "$tsc_check" -ne 0 ]; then
-        local tsc_error=$($TSC --noEmit $extra_args "$file" 2>&1 | head -1)
-        echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
-        echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+        if [ "$tsc_check" -eq 124 ]; then
+            echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${BENCH_TIMEOUT}s)"
+        else
+            local tsc_error=$($TSC --noEmit $extra_args "$file" 2>&1 | head -1)
+            echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
+            echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+        fi
         return
     fi
 
-    # Pre-validate: record errors in summary table instead of skipping
-    local tsz_check=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
-    local tsgo_check=$($TSGO --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+    # Pre-validate with timeout: record errors/timeouts in summary table
+    local tsz_check=0
+    run_with_timeout "$BENCH_TIMEOUT" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1 || tsz_check=$?
+    local tsgo_check=0
+    run_with_timeout "$BENCH_TIMEOUT" $TSGO --noEmit $extra_args "$file" >/dev/null 2>&1 || tsgo_check=$?
 
     if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
         local status=""
@@ -462,14 +503,22 @@ run_benchmark() {
 
         echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
 
-        if [ "$tsz_check" -ne 0 ]; then
+        if [ "$tsz_check" -eq 124 ]; then
+            status="tsz timeout"
+            tsz_ms="TIMEOUT"
+            echo -e "  ${CYAN}tsz:${NC} timed out after ${BENCH_TIMEOUT}s" >&2
+        elif [ "$tsz_check" -ne 0 ]; then
             status="tsz error"
             tsz_ms="ERR"
-            local tsz_error=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
+            local tsz_error=$(run_with_timeout "$BENCH_TIMEOUT" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
-        if [ "$tsgo_check" -ne 0 ]; then
+        if [ "$tsgo_check" -eq 124 ]; then
+            status="${status:+${status}; }tsgo timeout"
+            tsgo_ms="TIMEOUT"
+            echo -e "  ${CYAN}tsgo:${NC} timed out after ${BENCH_TIMEOUT}s" >&2
+        elif [ "$tsgo_check" -ne 0 ]; then
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
             local tsgo_error=$($TSGO --noEmit $extra_args "$file" 2>&1 | head -1)
@@ -484,16 +533,20 @@ run_benchmark() {
 
     echo -e "${GREEN}$name${NC} ($info)"
 
-    # Run benchmark and capture JSON output
+    # Run benchmark and capture JSON output.
+    # Wrap commands with perl alarm to kill runs that hit infinite loops (30s timeout).
+    # Use --ignore-failure so hyperfine continues even if a rare iteration is killed.
+    local run_timeout=30
     local json_file=$(mktemp)
     if ! hyperfine \
         --warmup "$WARMUP" \
         --min-runs "$MIN_RUNS" \
         --max-runs "$MAX_RUNS" \
         --style full \
+        --ignore-failure \
         --export-json "$json_file" \
-        -n "tsz" "${TSZ_LIB_DIR:+TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit $extra_args $file 2>/dev/null" \
-        -n "tsgo" "$TSGO --noEmit $extra_args $file 2>/dev/null"; then
+        -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit $extra_args $file 2>/dev/null" \
+        -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit $extra_args $file 2>/dev/null"; then
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
@@ -551,18 +604,28 @@ run_project_benchmark() {
     # For project fixtures (except nextjs, which is currently tsgo-only), require
     # a clean tsc pass before benchmarking.
     if [ "$name" != "nextjs" ]; then
-        local tsc_check=$($TSC --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+        local project_tsc_timeout=$((BENCH_TIMEOUT * 2))
+        local tsc_check=0
+        run_with_timeout "$project_tsc_timeout" $TSC --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
         if [ "$tsc_check" -ne 0 ]; then
-            local tsc_error=$($TSC --noEmit -p "$tsconfig" 2>&1 | head -1)
-            echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
-            echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+            if [ "$tsc_check" -eq 124 ]; then
+                echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
+            else
+                local tsc_error=$($TSC --noEmit -p "$tsconfig" 2>&1 | head -1)
+                echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
+                echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+            fi
             return
         fi
     fi
 
-    # Pre-validate: record errors in summary table instead of skipping
-    local tsz_check=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
-    local tsgo_check=$($TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+    # Pre-validate with timeout: record errors/timeouts in summary table
+    # Project-level benchmarks get a longer timeout since they check many files
+    local project_timeout=$((BENCH_TIMEOUT * 2))
+    local tsz_check=0
+    run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+    local tsgo_check=0
+    run_with_timeout "$project_timeout" $TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
 
     if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
         local status=""
@@ -575,14 +638,22 @@ run_project_benchmark() {
 
         echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
 
-        if [ "$tsz_check" -ne 0 ]; then
+        if [ "$tsz_check" -eq 124 ]; then
+            status="tsz timeout"
+            tsz_ms="TIMEOUT"
+            echo -e "  ${CYAN}tsz:${NC} timed out after ${project_timeout}s" >&2
+        elif [ "$tsz_check" -ne 0 ]; then
             status="tsz error"
             tsz_ms="ERR"
-            local tsz_error=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
+            local tsz_error=$(run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
-        if [ "$tsgo_check" -ne 0 ]; then
+        if [ "$tsgo_check" -eq 124 ]; then
+            status="${status:+${status}; }tsgo timeout"
+            tsgo_ms="TIMEOUT"
+            echo -e "  ${CYAN}tsgo:${NC} timed out after ${project_timeout}s" >&2
+        elif [ "$tsgo_check" -ne 0 ]; then
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
             local tsgo_error=$($TSGO --noEmit -p "$tsconfig" 2>&1 | head -1)
@@ -599,16 +670,19 @@ run_project_benchmark() {
 
     echo -e "${GREEN}$name${NC} ($info)"
 
-    # Run benchmark with -p (project mode)
+    # Run benchmark with -p (project mode).
+    # Use longer per-run timeout (120s) for project benchmarks.
+    local run_timeout=120
     local json_file=$(mktemp)
     if ! hyperfine \
         --warmup "$WARMUP" \
         --min-runs "$MIN_RUNS" \
         --max-runs "$MAX_RUNS" \
         --style full \
+        --ignore-failure \
         --export-json "$json_file" \
-        -n "tsz" "${TSZ_LIB_DIR:+TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit -p $tsconfig 2>/dev/null" \
-        -n "tsgo" "$TSGO --noEmit -p $tsconfig 2>/dev/null"; then
+        -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit -p $tsconfig 2>/dev/null" \
+        -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null"; then
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
@@ -980,8 +1054,9 @@ run_ts_toolbelt_benchmarks() {
     ensure_ts_toolbelt_fixture
     echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
 
-    # Run as isolated file probes using compiler defaults.
-    local lib_args=""
+    # ts-toolbelt needs esnext+dom libs (per its tsconfig), otherwise tsc can't
+    # resolve Symbol/Map/Promise etc.
+    local lib_args="--lib esnext,dom"
 
     local files
     if [ "$QUICK_MODE" = true ]; then
@@ -1030,8 +1105,8 @@ run_ts_essentials_benchmarks() {
     ensure_ts_essentials_fixture
     echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
 
-    # Run as isolated file probes using compiler defaults.
-    local lib_args=""
+    # ts-essentials needs es2018 libs (per its tsconfig) for Map, Symbol, etc.
+    local lib_args="--lib es2018"
 
     local files
     if [ "$QUICK_MODE" = true ]; then
