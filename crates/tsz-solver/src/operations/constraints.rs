@@ -1915,7 +1915,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if is_iterable_like {
                         match self.interner.lookup(source) {
                             Some(TypeData::Array(s_elem)) => {
-                                self.constrain_types(ctx, var_map, s_elem, t_app_args[0], priority);
+                                // Widen the array element type before constraining.
+                                // Array literals like [0, 2, 8] have fresh element type
+                                // Union(0|2|8), but for iterable inference the type should
+                                // be widened to `number` to match tsc's behavior. Without
+                                // this, Iterable<T> matched against (0|2|8)[] would infer
+                                // T = 0|2|8 instead of T = number, causing false TS2345.
+                                let widened_elem = crate::operations::widening::widen_literal_type(
+                                    self.interner,
+                                    s_elem,
+                                );
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    widened_elem,
+                                    t_app_args[0],
+                                    priority,
+                                );
                                 return;
                             }
                             Some(TypeData::Tuple(s_elems)) => {

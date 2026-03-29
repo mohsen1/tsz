@@ -473,6 +473,44 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    /// Check whether an evaluated type is iterable-like (has a `[Symbol.iterator]`
+    /// property or a number index signature). Used to detect `Iterable<T>`,
+    /// `ArrayLike<T>`, etc. during contextual substitution so that when matching
+    /// against an Array target, we extract the element type rather than using the
+    /// full array type.
+    fn is_iterable_like_for_substitution(&self, type_id: TypeId) -> bool {
+        use tsz_solver::TypeData;
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                if shape.number_index.is_some() {
+                    return true;
+                }
+                for prop in &shape.properties {
+                    let name = self.ctx.types.resolve_atom(prop.name);
+                    if name == "__@iterator" || name == "[Symbol.iterator]" {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                if shape.number_index.is_some() {
+                    return true;
+                }
+                for prop in &shape.properties {
+                    let name = self.ctx.types.resolve_atom(prop.name);
+                    if name == "__@iterator" || name == "[Symbol.iterator]" {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn collect_return_context_substitution(
         &mut self,
         source: TypeId,
@@ -600,17 +638,53 @@ impl<'a> CheckerState<'a> {
             let target_same_base = common::application_info(self.ctx.types, target)
                 .is_some_and(|(tb, ta)| tb == _source_base && ta.len() == source_args.len());
             if !target_same_base {
-                for &source_arg in &source_args {
-                    self.collect_return_context_substitution(
-                        source_arg,
-                        target,
-                        tracked_type_params,
-                        substitution,
-                        visited,
-                    );
-                }
-                if !substitution.is_empty() {
-                    return;
+                // Special case: when the source Application evaluates to an
+                // iterable-like interface (e.g., Iterable<T>) and the target
+                // is an Array or Tuple, skip the naive decomposition that would
+                // map T to the full array type. The solver's constraint
+                // collection has proper iterable matching that extracts the
+                // element type correctly. Without this guard, `Iterable<T>`
+                // matched against `number[]` infers T = number[] instead of
+                // letting the solver infer T = number.
+                let target_is_array_like =
+                    common::array_element_type(self.ctx.types, target).is_some();
+                let source_is_iterable_like = target_is_array_like && !source_args.is_empty() && {
+                    let evaluated = self.evaluate_type_with_env(source);
+                    self.is_iterable_like_for_substitution(evaluated)
+                };
+                if source_is_iterable_like {
+                    // Extract the array element type and widen it (e.g., 0|2|8 → number)
+                    // before mapping against the source type args. This prevents the
+                    // contextual substitution from using unwidened literal types that
+                    // would cause false TS2345 mismatches.
+                    let elem = common::array_element_type(self.ctx.types, target).unwrap();
+                    let widened_elem =
+                        tsz_solver::operations::widening::widen_literal_type(self.ctx.types, elem);
+                    for &source_arg in &source_args {
+                        self.collect_return_context_substitution(
+                            source_arg,
+                            widened_elem,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                    }
+                    if !substitution.is_empty() {
+                        return;
+                    }
+                } else {
+                    for &source_arg in &source_args {
+                        self.collect_return_context_substitution(
+                            source_arg,
+                            target,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                    }
+                    if !substitution.is_empty() {
+                        return;
+                    }
                 }
             }
         }
