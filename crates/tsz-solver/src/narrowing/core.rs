@@ -216,6 +216,36 @@ pub(crate) fn union_or_single_preserve(db: &dyn TypeDatabase, types: Vec<TypeId>
     }
 }
 
+/// Create a union from an already-sorted slice, excluding a single member.
+///
+/// This avoids allocating a Vec when removing one member from an existing union.
+/// For the common case of discriminant exclusion in if-chains (where one member
+/// is removed at a time), this eliminates an O(N) Vec allocation per branch.
+pub(crate) fn union_excluding_one(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+    excluded_idx: usize,
+) -> TypeId {
+    debug_assert!(excluded_idx < members.len());
+    let new_len = members.len() - 1;
+    if new_len == 0 {
+        return TypeId::NEVER;
+    }
+    if new_len == 1 {
+        // Return the single remaining member
+        return if excluded_idx == 0 {
+            members[1]
+        } else {
+            members[0]
+        };
+    }
+    // Build the result without the excluded member
+    let mut result = Vec::with_capacity(new_len);
+    result.extend_from_slice(&members[..excluded_idx]);
+    result.extend_from_slice(&members[excluded_idx + 1..]);
+    db.union_from_sorted_vec(result)
+}
+
 /// Result of a narrowing operation.
 ///
 /// Represents the types in both branches of a condition.

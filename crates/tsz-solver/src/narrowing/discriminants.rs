@@ -394,6 +394,44 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
+        // PERF: For the EXCLUSION case on discriminated unions, find the single member
+        // to exclude and use union_excluding_one to avoid a full Vec allocation.
+        // This is the common case in if-chains like:
+        //   if (e.kind === 'type0') ... if (e.kind === 'type1') ...
+        // where each branch excludes exactly one member from the union.
+        if !keep_matching && members.len() >= 3 {
+            let mut excluded_idx = None;
+            let mut multiple_excluded = false;
+            for (i, &member) in members.iter().enumerate() {
+                if member.is_any_or_unknown() {
+                    continue;
+                }
+                let prop_type = self.get_top_level_property_type_fast(member, property)?;
+                let is_excluded = if prop_type == literal_value {
+                    true
+                } else {
+                    self.literal_subtype_fast(prop_type, literal_value)
+                        .unwrap_or_else(|| is_subtype_of(self.db, prop_type, literal_value))
+                };
+                if is_excluded {
+                    if excluded_idx.is_some() {
+                        multiple_excluded = true;
+                        break;
+                    }
+                    excluded_idx = Some(i);
+                }
+            }
+            if !multiple_excluded {
+                if let Some(idx) = excluded_idx {
+                    return Some(super::union_excluding_one(self.db, members, idx));
+                } else {
+                    // Nothing excluded — return original
+                    return Some(original_union_type);
+                }
+            }
+            // Multiple members excluded — fall through to general path
+        }
+
         let mut kept = Vec::with_capacity(members.len());
 
         for &member in members {
