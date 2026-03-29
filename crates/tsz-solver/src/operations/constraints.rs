@@ -1221,7 +1221,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let var = ctx.fresh_var();
                         use std::fmt::Write;
                         src_placeholder_buf.clear();
-                        write!(src_placeholder_buf, "__infer_src_{}", var.0)
+                        let global_id = super::generic_call::PLACEHOLDER_COUNTER
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        write!(src_placeholder_buf, "__infer_src_{global_id}")
                             .expect("write to String is infallible");
                         let placeholder_atom = self.interner.intern_string(&src_placeholder_buf);
                         ctx.register_type_param(placeholder_atom, var, tp.is_const);
