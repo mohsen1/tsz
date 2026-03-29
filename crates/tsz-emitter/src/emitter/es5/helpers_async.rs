@@ -791,38 +791,55 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn tagged_template_var_name(&self, idx: NodeIndex) -> String {
-        format!("__templateObject_{}", idx.0)
+        if let Some(name) = self.tagged_template_var_map.get(&idx) {
+            name.clone()
+        } else {
+            format!("templateObject_{}", idx.0)
+        }
+    }
+
+    /// Build the sequential mapping from tagged template node indices to variable names.
+    pub(in crate::emitter) fn build_tagged_template_var_map(&mut self) {
+        let mut indices: Vec<NodeIndex> = if self.transforms.helpers_populated() {
+            self.transforms
+                .iter()
+                .filter_map(|(&idx, directive)| {
+                    if !matches!(directive, TransformDirective::ES5TemplateLiteral { .. }) {
+                        return None;
+                    }
+                    let node = self.arena.get(idx)?;
+                    if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            self.arena
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, node)| {
+                    if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+                        Some(NodeIndex(i as u32))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        indices.sort_by_key(|idx| idx.0);
+        for (seq, idx) in indices.iter().enumerate() {
+            self.tagged_template_var_map
+                .insert(*idx, format!("templateObject_{}", seq + 1));
+        }
     }
 
     pub(in crate::emitter) fn collect_tagged_template_vars(&self) -> Vec<String> {
-        if self.transforms.helpers_populated() {
-            return self.collect_tagged_template_vars_from_transforms();
-        }
-
-        let mut vars = Vec::new();
-        for (idx, node) in self.arena.nodes.iter().enumerate() {
-            if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
-                vars.push(self.tagged_template_var_name(NodeIndex(idx as u32)));
-            }
-        }
-        vars
-    }
-
-    pub(in crate::emitter) fn collect_tagged_template_vars_from_transforms(&self) -> Vec<String> {
-        let mut vars = Vec::new();
-        for (&idx, directive) in self.transforms.iter() {
-            if !matches!(directive, TransformDirective::ES5TemplateLiteral { .. }) {
-                continue;
-            }
-
-            let Some(node) = self.arena.get(idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
-                vars.push(self.tagged_template_var_name(idx));
-            }
-        }
-        vars
+        let mut entries: Vec<(&NodeIndex, &String)> = self.tagged_template_var_map.iter().collect();
+        entries.sort_by_key(|(idx, _)| idx.0);
+        entries.into_iter().map(|(_, name)| name.clone()).collect()
     }
 
     /// Emit a call expression with spread arguments transformed for ES5
