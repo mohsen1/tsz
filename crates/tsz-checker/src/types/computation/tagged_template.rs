@@ -181,6 +181,121 @@ impl<'a> CheckerState<'a> {
                 .collect();
             let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
 
+            if !needs_two_pass {
+                // === Single-pass inference: no contextually-sensitive args ===
+                // All arguments are concrete, so we can infer type parameters directly.
+                let template_strings_type = TypeId::ANY;
+                let total_args = 1 + substitution_exprs.len();
+                let mut arg_types: Vec<TypeId> = Vec::with_capacity(total_args);
+                arg_types.push(template_strings_type);
+
+                for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+                    let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
+                    let arg_request = request.read().contextual_opt(ctx_type);
+                    let arg_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
+                    arg_types.push(arg_type);
+                }
+
+                // Perform inference
+                let evaluated_shape = {
+                    let new_params: Vec<_> = shape
+                        .params
+                        .iter()
+                        .map(|p| tsz_solver::ParamInfo {
+                            name: p.name,
+                            type_id: self.evaluate_type_with_env(p.type_id),
+                            optional: p.optional,
+                            rest: p.rest,
+                        })
+                        .collect();
+                    tsz_solver::FunctionShape {
+                        params: new_params,
+                        return_type: shape.return_type,
+                        this_type: shape.this_type,
+                        type_params: shape.type_params.clone(),
+                        type_predicate: shape.type_predicate,
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    }
+                };
+                let mut substitution = {
+                    let env = self.ctx.type_env.borrow();
+                    call_checker::compute_contextual_types_with_context(
+                        self.ctx.types,
+                        &self.ctx,
+                        &env,
+                        &evaluated_shape,
+                        &arg_types,
+                        request.contextual_type,
+                    )
+                };
+
+                // Post-process: replace __infer_N placeholders with their constraint
+                // or `unknown`. compute_contextual_types uses placeholders for
+                // unresolved type params (designed for two-pass contextual typing),
+                // but in the single-pass case we need concrete types for argument
+                // checking—matching resolve_generic_call_inner which defaults to
+                // `unknown` for unconstrained, uninferred type params.
+                for tp in &shape.type_params {
+                    if let Some(resolved) = substitution.get(tp.name) {
+                        if let Some(tsz_solver::TypeData::TypeParameter(info)) =
+                            self.ctx.types.lookup(resolved)
+                        {
+                            let name_str = self.ctx.types.resolve_atom(info.name);
+                            if name_str.as_str().starts_with("__infer_") {
+                                let fallback = if let Some(constraint) = tp.constraint {
+                                    let inst =
+                                        instantiate_type(self.ctx.types, constraint, &substitution);
+                                    if !contains_type_parameters(self.ctx.types, inst) {
+                                        inst
+                                    } else {
+                                        TypeId::UNKNOWN
+                                    }
+                                } else {
+                                    TypeId::UNKNOWN
+                                };
+                                substitution.insert(tp.name, fallback);
+                            }
+                        }
+                    }
+                }
+
+                // Check argument assignability with instantiated parameter types
+                let mut reported_arg_error = false;
+                for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+                    let ctx_type = ctx_helper
+                        .get_parameter_type_for_call(i + 1, total_args)
+                        .map(|pt| {
+                            let instantiated = instantiate_type(self.ctx.types, pt, &substitution);
+                            self.evaluate_type_with_env(instantiated)
+                        });
+                    let actual_type = arg_types[i + 1]; // already computed above
+
+                    if should_check_args
+                        && !reported_arg_error
+                        && let Some(expected) = ctx_type
+                        && actual_type != TypeId::ERROR
+                        && actual_type != TypeId::UNKNOWN
+                        && expected != TypeId::ERROR
+                        && expected != TypeId::UNKNOWN
+                        && !contains_type_parameters(self.ctx.types, expected)
+                        && !self.should_defer_contextual_argument_mismatch(actual_type, expected)
+                        && !self.check_argument_assignable_or_report(
+                            actual_type,
+                            expected,
+                            expr_idx,
+                        )
+                    {
+                        reported_arg_error = true;
+                    }
+                }
+
+                // Return instantiated return type
+                let return_type =
+                    instantiate_type(self.ctx.types, shape.return_type, &substitution);
+                return self.evaluate_type_with_env(return_type);
+            }
+
             if needs_two_pass {
                 // === Round 1: Collect non-contextual substitution types ===
                 let factory = self.ctx.types.factory();
