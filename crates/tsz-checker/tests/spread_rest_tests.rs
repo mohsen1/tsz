@@ -1200,3 +1200,42 @@ for ([{ ...y }] of [[{ abc: 1 }]]) ;
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// Regression: implicit-any variables (var x;) in destructuring rest must
+/// also not trigger TS2698. Matches the original nestedObjectRest.ts test.
+#[test]
+fn test_object_rest_in_destructuring_implicit_any_no_ts2698() {
+    let source = r#"
+var x, y;
+[{ ...x }] = [{ abc: 1 }];
+for ([{ ...y }] of [[{ abc: 1 }]]) ;
+"#;
+    let diagnostics = check_source(source);
+    let ts2698_count = diagnostics.iter().filter(|d| d.code == 2698).count();
+    assert_eq!(
+        ts2698_count,
+        0,
+        "Expected no TS2698 for object rest in destructuring with implicit any, got {ts2698_count}. \
+         Errors: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2698)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Confirm TS2698 still fires in expression context (spreading a non-object).
+#[test]
+fn test_object_spread_of_non_object_in_expression_emits_ts2698() {
+    let source = r#"
+var x: undefined;
+var z = { ...x };
+"#;
+    let diagnostics = check_source(source);
+    let ts2698_count = diagnostics.iter().filter(|d| d.code == 2698).count();
+    assert!(
+        ts2698_count >= 1,
+        "Expected TS2698 for spreading undefined in expression context, got {ts2698_count}"
+    );
+}
