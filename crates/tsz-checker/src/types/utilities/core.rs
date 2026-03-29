@@ -34,10 +34,14 @@ impl<'a> CheckerState<'a> {
             expected,
         )?;
         let rest_param = shape.params.last().filter(|param| param.rest)?;
-        let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
         if is_rest {
-            return Some(rest_param_type);
+            // For rest parameters in function expressions, preserve the original
+            // type (including type parameters like `Args extends any[]`). The
+            // constraint-resolved type would lose the generic identity, causing
+            // the rest param to be typed as `any[]` instead of `Args`.
+            return Some(rest_param.type_id);
         }
+        let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
 
         if let Some(tuple_elements) =
             tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rest_param_type)
