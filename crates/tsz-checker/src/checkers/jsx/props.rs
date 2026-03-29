@@ -478,24 +478,38 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn is_jsx_class_like_component_type(&mut self, component_type: TypeId) -> bool {
+    fn jsx_component_member_signature_kinds(&mut self, component_type: TypeId) -> (bool, bool) {
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         let component_type = self.evaluate_type_with_env(component_type);
+        let members =
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
+                .unwrap_or_else(|| vec![component_type]);
 
-        if tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
-            .is_some_and(|sigs| !sigs.is_empty())
-        {
-            return true;
+        let mut has_construct = false;
+        let mut has_call = false;
+
+        for member in members {
+            let member = self.resolve_type_for_property_access(member);
+            let member = self.evaluate_type_with_env(member);
+
+            has_construct |=
+                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
+                    .is_some_and(|sigs| !sigs.is_empty());
+            has_call |= tsz_solver::type_queries::get_function_shape(self.ctx.types, member)
+                .is_some_and(|shape| !shape.is_constructor)
+                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, member)
+                    .is_some_and(|sigs| !sigs.is_empty());
         }
 
-        crate::query_boundaries::common::union_members(self.ctx.types, component_type).is_some_and(
-            |members| {
-                members.iter().any(|&member| {
-                    tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
-                        .is_some_and(|sigs| !sigs.is_empty())
-                })
-            },
-        )
+        (has_construct, has_call)
+    }
+
+    fn should_report_jsx_class_missing_props_via_assignability(
+        &mut self,
+        component_type: TypeId,
+    ) -> bool {
+        let (has_construct, has_call) = self.jsx_component_member_signature_kinds(component_type);
+        has_construct && !has_call
     }
 
     fn get_normalized_jsx_required_props_shape(
@@ -1767,7 +1781,9 @@ impl<'a> CheckerState<'a> {
             && !skip_prop_checks
             && !display_target.is_empty()
             && !has_prop_type_error
-            && component_type.is_some_and(|comp| self.is_jsx_class_like_component_type(comp))
+            && component_type.is_some_and(|comp| {
+                self.should_report_jsx_class_missing_props_via_assignability(comp)
+            })
             && self.jsx_has_missing_required_props(props_type, &provided_attrs)
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);

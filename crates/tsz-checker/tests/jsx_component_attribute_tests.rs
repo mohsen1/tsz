@@ -2021,6 +2021,46 @@ const ExplicitChild = (
 }
 
 #[test]
+fn test_react_component_type_missing_required_prop_emits_ts2741() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface Component<P, S = {{}}> {{
+        props: P;
+        state: S;
+        render(): JSX.Element;
+    }}
+    interface ComponentClass<P = {{}}> {{
+        new(props: P, context?: any): Component<P, any>;
+    }}
+    interface FunctionComponent<P = {{}}> {{
+        (props: P, context?: any): JSX.Element | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | FunctionComponent<P>;
+}}
+declare const Elem: React.ComponentType<{{ someKey: string }}>;
+
+const bad = <Elem />;
+const good = <Elem someKey="ok" />;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "React.ComponentType wrappers should report missing props via TS2741, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "React.ComponentType missing props should not fall back to TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_children_presence_narrows_namespace_merged_component_type_wrappers() {
     let source = format!(
         r#"
