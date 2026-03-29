@@ -236,7 +236,10 @@ pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) 
         Some(TypeData::ReadonlyType(inner)) => is_structurally_deferred_type(types, inner),
         Some(TypeData::Union(list_id)) => {
             let members = types.type_list(list_id);
-            !members.is_empty() && members.iter().all(|&m| is_structurally_deferred_type(types, m))
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&m| is_structurally_deferred_type(types, m))
         }
         _ => false,
     }
