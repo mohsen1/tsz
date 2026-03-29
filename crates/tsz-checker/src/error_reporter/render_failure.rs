@@ -475,6 +475,80 @@ impl<'a> CheckerState<'a> {
                 )
             }
 
+            SubtypeFailureReason::ParameterTypeMismatch {
+                param_index,
+                source_param,
+                target_param,
+            } => {
+                // Emit the primary TS2322 diagnostic for the outer type mismatch.
+                let source_str =
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                let target_str = self.format_assignability_type_for_message(target, source);
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                let primary = Diagnostic::error(
+                    file_name.clone(),
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+
+                // Emit TS2328 only when the mismatched parameter types are themselves
+                // callable (function/callback types). tsc emits TS2328 as a separate
+                // elaboration diagnostic in this case to explain why callback parameters
+                // are incompatible.
+                let source_param_is_callable =
+                    tsz_solver::type_queries::is_callable_type(self.ctx.types, *source_param);
+                let target_param_is_callable =
+                    tsz_solver::type_queries::is_callable_type(self.ctx.types, *target_param);
+
+                if depth == 0 && source_param_is_callable && target_param_is_callable {
+                    let source_name = tsz_solver::type_queries::get_callable_shape_for_type(
+                        self.ctx.types,
+                        source,
+                    )
+                    .and_then(|shape| {
+                        shape
+                            .call_signatures
+                            .first()
+                            .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
+                    })
+                    .map(|a| self.ctx.types.resolve_atom(a).to_string())
+                    .unwrap_or_else(|| format!("arg{}", param_index));
+
+                    let target_name = tsz_solver::type_queries::get_callable_shape_for_type(
+                        self.ctx.types,
+                        target,
+                    )
+                    .and_then(|shape| {
+                        shape
+                            .call_signatures
+                            .first()
+                            .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
+                    })
+                    .map(|a| self.ctx.types.resolve_atom(a).to_string())
+                    .unwrap_or_else(|| format!("arg{}", param_index));
+
+                    let ts2328_message = format_message(
+                        diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+                        &[&source_name, &target_name],
+                    );
+                    let ts2328_diag = Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        ts2328_message,
+                        diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+                    );
+                    self.ctx.push_diagnostic(ts2328_diag);
+                }
+
+                primary
+            }
+
             _ => {
                 let source_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, idx);
