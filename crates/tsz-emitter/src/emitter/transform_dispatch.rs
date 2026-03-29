@@ -830,6 +830,9 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_source_text(text);
             }
         }
+        if !self.commonjs_named_import_substitutions.is_empty() {
+            es5_emitter.set_commonjs_import_substitutions(self.commonjs_named_import_substitutions.clone());
+        }
 
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
         if self.ctx.options.legacy_decorators

@@ -71,6 +71,7 @@ pub struct IRPrinter<'a> {
     remove_comments: bool,
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
+    commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -216,6 +217,7 @@ impl<'a> IRPrinter<'a> {
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -235,6 +237,7 @@ impl<'a> IRPrinter<'a> {
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -254,6 +257,7 @@ impl<'a> IRPrinter<'a> {
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -265,6 +269,10 @@ impl<'a> IRPrinter<'a> {
     /// Enable `tslib_1.` prefix for runtime helper calls (importHelpers + CJS).
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
         self.tslib_prefix = enable;
+    }
+
+    pub fn set_commonjs_import_substitutions(&mut self, subs: rustc_hash::FxHashMap<String, String>) {
+        self.commonjs_import_substitutions = subs;
     }
 
     /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
@@ -392,7 +400,14 @@ impl<'a> IRPrinter<'a> {
             IRNode::Undefined => self.write("void 0"),
 
             // Identifiers
-            IRNode::Identifier(name) => self.write(name),
+            IRNode::Identifier(name) => {
+                if let Some(subst) = self.commonjs_import_substitutions.get(name.as_ref()) {
+                    let subst = subst.clone();
+                    self.write(&subst);
+                } else {
+                    self.write(name);
+                }
+            }
             IRNode::This { captured } => {
                 self.write(if *captured { "_this" } else { "this" });
             }
