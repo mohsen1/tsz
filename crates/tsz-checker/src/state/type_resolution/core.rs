@@ -47,7 +47,23 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(call_idx) = import_call_idx {
-                return self.check_import_type_and_resolve(call_idx, type_name_idx, idx);
+                let resolved = self.check_import_type_and_resolve(call_idx, type_name_idx, idx);
+                // Apply type arguments to import types: import("./foo").Bar<{x: number}>
+                // Without this, the type parameter T remains uninstantiated and
+                // assignability checks fail with false TS2322 errors.
+                if has_type_args && resolved != TypeId::ERROR {
+                    if let Some(args) = &type_ref.type_arguments {
+                        let type_args: Vec<TypeId> = args
+                            .nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect();
+                        if !type_args.is_empty() {
+                            return self.ctx.types.application(resolved, type_args);
+                        }
+                    }
+                }
+                return resolved;
             }
         }
 
