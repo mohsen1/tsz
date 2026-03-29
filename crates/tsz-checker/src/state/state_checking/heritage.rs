@@ -316,18 +316,10 @@ impl<'a> CheckerState<'a> {
 
                         // Guard against infinite recursion: if this symbol is already being resolved
                         // as a class instance type, skip the type resolution to prevent stack overflow.
-                        // This can happen with circular class inheritance across multiple files.
                         let is_being_resolved = self
                             .ctx
                             .class_instance_resolution_set
                             .contains(&sym_to_check);
-
-                        // Note: `is_being_resolved` is a recursion guard, NOT a cycle
-                        // detector. A symbol being in `class_instance_resolution_set`
-                        // means its type is currently being computed somewhere in the
-                        // call stack — it does NOT prove a circular base expression.
-                        // True TS2506 cycle detection is handled by dedicated
-                        // inheritance cycle checks, not by this resolution guard.
 
                         if let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
                             let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
@@ -434,37 +426,24 @@ impl<'a> CheckerState<'a> {
                                     (s.flags & symbol_flags::CLASS) != 0
                                         && (s.flags & symbol_flags::VARIABLE) == 0
                                 });
-                            if !skip_constructor_check {
-                                let symbol_type = if is_being_resolved {
-                                    // Skip type resolution for symbols already being resolved to prevent infinite recursion
-                                    TypeId::ERROR
-                                } else {
-                                    self.get_type_of_symbol(sym_to_check)
-                                };
-                                if symbol_type != TypeId::ERROR
-                                    && !self.is_constructor_type(symbol_type)
-                                    && !self.symbol_has_js_constructor_evidence(sym_to_check)
-                                    // Skip TS2507 for symbols with both INTERFACE and VARIABLE flags
-                                    // (built-in types like Array, Object, Promise) — the variable
-                                    // side provides the constructor even though the interface type
-                                    // doesn't have construct signatures.
-                                    && self
-                                        .get_cross_file_symbol(sym_to_check)
-                                        .is_none_or(|s| {
-                                            !((s.flags & symbol_flags::INTERFACE) != 0
-                                                && (s.flags & symbol_flags::VARIABLE) != 0)
-                                        })
+
+                            // When a user class shadows a lib variable of the same name
+                            // (e.g., `class Symbol` shadowing `declare var Symbol: SymbolConstructor`),
+                            // the class itself is constructable but tsc uses the lib variable's
+                            // annotated type. Check if the shadowed lib type is non-constructable.
+                            if skip_constructor_check {
+                                if let Some((lib_type, lib_type_name)) =
+                                    self.shadowed_lib_variable_type(sym_to_check)
                                 {
-                                    // For classes extending non-interfaces: emit TS2507 if not a constructor type
-                                    // Use the resolved value type (not the variable name) to match tsc behavior.
+                                    if lib_type != TypeId::ERROR
+                                        && !self.is_constructor_type(lib_type)
                                     {
                                         use crate::diagnostics::{
                                             diagnostic_codes, diagnostic_messages, format_message,
                                         };
-                                        let type_name = self.format_type(symbol_type);
                                         let message = format_message(
                                             diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-                                            &[&type_name],
+                                            &[&lib_type_name],
                                         );
                                         self.error_at_node(
                                             expr_idx,
@@ -472,6 +451,80 @@ impl<'a> CheckerState<'a> {
                                             diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
                                         );
                                     }
+                                }
+                            }
+
+                            if !skip_constructor_check {
+                                let symbol_type = if is_being_resolved {
+                                    TypeId::ERROR
+                                } else {
+                                    self.get_type_of_symbol(sym_to_check)
+                                };
+
+                                // For merged CLASS+VARIABLE symbols, get the lib variable's
+                                // annotated type. Used both as a type override (when class
+                                // constructor is constructable but lib type isn't) and for
+                                // the error message (when symbol_type is UNKNOWN/unhelpful).
+                                let lib_var_info = self.shadowed_lib_variable_type(sym_to_check);
+
+                                let lib_var_override = if symbol_type != TypeId::ERROR
+                                    && self.is_constructor_type(symbol_type)
+                                {
+                                    lib_var_info
+                                        .as_ref()
+                                        .filter(|(t, _)| {
+                                            *t != TypeId::ERROR && !self.is_constructor_type(*t)
+                                        })
+                                        .map(|(t, _)| *t)
+                                } else {
+                                    None
+                                };
+
+                                let emit_ts2507 = if lib_var_override.is_some() {
+                                    lib_var_override
+                                } else if symbol_type != TypeId::ERROR
+                                    && !self.is_constructor_type(symbol_type)
+                                    && !self.symbol_has_js_constructor_evidence(sym_to_check)
+                                    // Skip TS2507 for symbols with INTERFACE+VARIABLE but NOT CLASS
+                                    // (built-in types like Array, Object, Promise) — the variable
+                                    // side provides the constructor even though the interface type
+                                    // doesn't have construct signatures.
+                                    // When CLASS is also present (user class merged with lib
+                                    // interface+variable, e.g., user `class Symbol` with lib
+                                    // `declare var Symbol: SymbolConstructor`), DO emit TS2507
+                                    // because the lib variable's type may not be constructable.
+                                    && self
+                                        .get_cross_file_symbol(sym_to_check)
+                                        .is_none_or(|s| {
+                                            !((s.flags & symbol_flags::INTERFACE) != 0
+                                                && (s.flags & symbol_flags::VARIABLE) != 0
+                                                && (s.flags & symbol_flags::CLASS) == 0)
+                                        })
+                                {
+                                    Some(symbol_type)
+                                } else {
+                                    None
+                                };
+
+                                if emit_ts2507.is_some() {
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    // Use the lib variable's type name (e.g., "SymbolConstructor")
+                                    // for the error message when available, instead of the
+                                    // structural expansion of the type.
+                                    let type_name = lib_var_info
+                                        .map(|(_, name)| name)
+                                        .unwrap_or_else(|| self.format_type(emit_ts2507.unwrap()));
+                                    let message = format_message(
+                                        diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                        &[&type_name],
+                                    );
+                                    self.error_at_node(
+                                        expr_idx,
+                                        &message,
+                                        diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                    );
                                 }
                             }
                         } else if !is_class_declaration {
@@ -868,6 +921,110 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// When a user class merges with or shadows a lib variable of the same name
+    /// (e.g., user `class Symbol` + lib `declare var Symbol: SymbolConstructor`),
+    /// resolve the lib variable's annotated type and its name.
+    ///
+    /// Returns `Some((type_id, type_name))` if found, `None` otherwise.
+    fn shadowed_lib_variable_type(
+        &mut self,
+        heritage_sym: tsz_binder::SymbolId,
+    ) -> Option<(TypeId, String)> {
+        use tsz_binder::symbol_flags;
+
+        // Get the heritage symbol's name
+        let symbol = self.get_symbol_globally(heritage_sym)?;
+        let name = symbol.escaped_name.clone();
+
+        // The heritage symbol must have a CLASS flag (from user code)
+        if (symbol.flags & symbol_flags::CLASS) == 0 {
+            return None;
+        }
+
+        // Case A: Heritage symbol itself has VARIABLE (all merged into one symbol:
+        // CLASS|INTERFACE|VARIABLE). Use itself as the lib variable symbol.
+        // Case B: Heritage symbol lacks VARIABLE. Search lib_symbol_ids for a
+        // DIFFERENT lib symbol with the same name and VARIABLE flag.
+        let shadowed_lib_id = if (symbol.flags & symbol_flags::VARIABLE) != 0
+            && self.ctx.binder.lib_symbol_ids.contains(&heritage_sym)
+        {
+            Some(heritage_sym)
+        } else {
+            self.ctx.binder.lib_symbol_ids.iter().find_map(|&lib_id| {
+                if lib_id == heritage_sym {
+                    return None;
+                }
+                self.ctx.binder.get_symbol(lib_id).and_then(|s| {
+                    if s.escaped_name == name && (s.flags & symbol_flags::VARIABLE) != 0 {
+                        Some(lib_id)
+                    } else {
+                        None
+                    }
+                })
+            })
+        };
+
+        let shadowed_lib_id = shadowed_lib_id?;
+        let lib_sym = self.ctx.binder.get_symbol(shadowed_lib_id)?;
+        let declarations = lib_sym.declarations.clone();
+
+        // Iterate ALL declarations to find a variable declaration in a lib arena.
+        for decl_idx in declarations {
+            let lib_arena = self
+                .ctx
+                .binder
+                .declaration_arenas
+                .get(&(shadowed_lib_id, decl_idx))
+                .and_then(|v| v.first())
+                .filter(|da| !std::ptr::eq(da.as_ref(), self.ctx.arena))
+                .map(std::sync::Arc::clone)
+                .or_else(|| {
+                    // Fallback: check symbol_arenas for any lib arena
+                    if self.ctx.arena.get(decl_idx).is_none() {
+                        self.ctx.binder.symbol_arenas.get(&shadowed_lib_id).cloned()
+                    } else {
+                        None
+                    }
+                });
+            let Some(lib_arena) = lib_arena else {
+                continue;
+            };
+
+            let Some(node) = lib_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = lib_arena.get_variable_declaration(node) else {
+                continue;
+            };
+            if var_decl.type_annotation.is_none() {
+                continue;
+            }
+
+            // Resolve the type annotation name from a simple type reference
+            let Some(type_annotation_node) = lib_arena.get(var_decl.type_annotation) else {
+                continue;
+            };
+            let Some(type_ref) = lib_arena.get_type_ref(type_annotation_node) else {
+                continue;
+            };
+            let Some(type_name_node) = lib_arena.get(type_ref.type_name) else {
+                continue;
+            };
+            let Some(ident) = lib_arena.get_identifier(type_name_node) else {
+                continue;
+            };
+            let type_name = ident.escaped_text.as_str().to_string();
+
+            if let Some(lib_type) = self.resolve_lib_type_by_name(&type_name) {
+                if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR {
+                    return Some((self.resolve_ref_type(lib_type), type_name));
+                }
+            }
+        }
+
+        None
     }
 
     /// Check heritage clauses for primitive type keywords only (TS2863/TS2864).

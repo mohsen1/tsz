@@ -139,7 +139,7 @@ class Test {
 }
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered class extends diagnostic behavior"]
+#[ignore = "requires lib.es2015.symbol.d.ts to be loaded; passes in conformance runner"]
 fn test_recursive_complicated_classes_emits_ts2507_for_symbol_extends() {
     if load_lib_files_for_test().is_empty() {
         return;
