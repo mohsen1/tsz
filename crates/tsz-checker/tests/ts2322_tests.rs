@@ -2693,3 +2693,53 @@ fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined
         "Expected TS2322 to preserve the differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+#[ignore = "Requires deferred indexed access evaluation for intersections with type parameters - see conformance test compiler/indexedAccessRelation.ts"]
+fn indexed_access_on_intersection_preserves_deferred_constraints() {
+    // Repro from TypeScript#14723 / conformance test indexedAccessRelation.ts.
+    //
+    // Root cause: when evaluating (S & State<T>)["a"] in the mapped type
+    // template for Pick<S & State<T>, K>, the solver distributes the indexed
+    // access over the intersection and drops the deferred S["a"] result,
+    // producing just T | undefined. This makes T trivially assignable and
+    // TS2322 is missed.
+    //
+    // tsc keeps (S & State<T>)["a"] as a deferred indexed access type,
+    // which correctly rejects T as not assignable to the full expression.
+    //
+    // Fix requires changes to either:
+    // 1. Mapped type evaluation to preserve deferred indexed access for
+    //    non-homomorphic mapped types (but Application eval caching
+    //    prevents the fix from taking effect), OR
+    // 2. The indexed access intersection distribution to include deferred
+    //    results (but this causes false positives in homomorphic mapped
+    //    types like Readonly<TType & { name: string }>).
+    let source = r#"
+class Component<S> {
+    setState<K extends keyof S>(state: Pick<S, K>) {}
+}
+
+export interface State<T> {
+    a?: T;
+}
+
+class Foo {}
+
+class Comp<T extends Foo, S> extends Component<S & State<T>>
+{
+    foo(a: T) {
+        this.setState({ a: a });
+    }
+}
+"#;
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect::<Vec<_>>();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for indexed access on intersection with unconstrained type parameter. Actual diagnostics: {diagnostics:?}"
+    );
+}
