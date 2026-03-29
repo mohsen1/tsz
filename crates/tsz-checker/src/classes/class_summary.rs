@@ -448,7 +448,17 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
+            // Push the class's type parameters into scope so that type annotations
+            // referencing them (e.g., `props: P & { children?: ReactNode }`) resolve
+            // to proper TypeParameter types instead of falling back to `any`.
+            // Without this, the substitution in check_property_inheritance_compatibility
+            // cannot replace the type parameters, causing base member types to remain
+            // as `any` and skipping TS2416 checks entirely.
+            let (_, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+
             let own_summary = self.collect_class_members_for_chain(class);
+
+            self.pop_type_parameters(type_param_updates);
 
             // Merge own instance members into chain summary (first insertion wins)
             for (name, entry) in own_summary.instance_members {
