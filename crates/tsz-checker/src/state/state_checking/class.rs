@@ -1448,8 +1448,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Skip for any/error — these are permissive
-            if base_type == TypeId::ANY || base_type == TypeId::ERROR {
+            // Skip for any/error/null — these are permissive.
+            // TypeScript explicitly allows `class extends null` (TS does not emit TS2509 for null).
+            if base_type == TypeId::ANY || base_type == TypeId::ERROR || base_type == TypeId::NULL {
                 continue;
             }
 

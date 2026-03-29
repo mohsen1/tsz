@@ -2456,7 +2456,8 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             members.iter().all(|&m| is_valid_base_type(db, m))
         }
         Some(TypeData::Union(list_id)) => {
-            // Union of construct return types from overloaded constructors is valid
+            // Union can arise from construct-signature return-type merging
+            // (get_construct_return_type_union). All members must be valid base types.
             let members = db.type_list(list_id);
             members.iter().all(|&m| is_valid_base_type(db, m))
         }
