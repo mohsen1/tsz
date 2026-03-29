@@ -563,15 +563,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // (A & B)[K] = A[K] & B[K] — index access distributes over intersections.
         // Members that don't have the property (returning UNDEFINED) are excluded.
         //
-        // When some members produce deferred IndexAccess types (e.g., T["name"] where T
-        // is an unconstrained type parameter) and others produce concrete types (e.g., string),
-        // prefer the concrete results. The deferred types represent unknown contributions
-        // from generic type parameters; intersecting with them creates overly specific types
-        // like `T["name"] & string` that hinder assignability checking. tsc effectively
-        // resolves to just the concrete type in these cases.
+        // Both concrete and deferred IndexAccess results are included in the intersection.
+        // Deferred types (e.g., S["a"] where S is an unconstrained type parameter) represent
+        // unknown constraints that must be preserved for correct assignability checking.
+        // For example, (S & State<T>)["a"] must produce S["a"] & (T | undefined), not
+        // just T | undefined — otherwise T would incorrectly be assignable to the result.
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
-        let mut concrete_results = Vec::new();
-        let mut deferred_results = Vec::new();
+        let mut results = Vec::new();
         for &member in members.iter() {
             let result = self.evaluator.recurse_index_access(member, self.index_type);
             if result == TypeId::ERROR {
@@ -580,27 +578,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             if result == TypeId::UNDEFINED {
                 continue;
             }
-            if crate::type_queries::is_index_access_type(self.evaluator.interner(), result) {
-                deferred_results.push(result);
-            } else {
-                concrete_results.push(result);
-            }
+            results.push(result);
         }
-        if concrete_results.is_empty() && deferred_results.is_empty() {
+        if results.is_empty() {
             Some(TypeId::UNDEFINED)
-        } else if !concrete_results.is_empty() {
-            // When concrete results exist, use them (intersected).
-            // Deferred IndexAccess types from unconstrained type parameters
-            // are dropped — the concrete members already define the property type.
-            Some(crate::utils::intersection_or_single(
-                self.evaluator.interner(),
-                concrete_results,
-            ))
         } else {
-            // Only deferred results — intersect them.
             Some(crate::utils::intersection_or_single(
                 self.evaluator.interner(),
-                deferred_results,
+                results,
             ))
         }
     }

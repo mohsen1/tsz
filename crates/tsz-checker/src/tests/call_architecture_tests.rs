@@ -1691,3 +1691,43 @@ _.map(c2, rf1);
         "Expected no TS2769 for fewer-parameter block-body callback, got: {diags:?}"
     );
 }
+
+/// Verify that TS2322 is emitted when indexing an intersection type with an
+/// unconstrained type parameter (e.g., `(S & State<T>)["a"]`). Previously,
+/// the checker incorrectly deferred the argument mismatch because both
+/// actual and expected types contained type parameters.
+///
+/// Regression test for indexedAccessRelation.ts conformance failure.
+#[test]
+fn indexed_access_intersection_generic_call_emits_ts2322() {
+    let diags = check_source_diagnostics(
+        r#"
+class Component<S> {
+    setState<K extends keyof S>(state: Pick<S, K>) {}
+}
+
+export interface State<T> {
+    a?: T;
+}
+
+class Foo {}
+
+class Comp<T extends Foo, S> extends Component<S & State<T>>
+{
+    foo(a: T) {
+        this.setState({ a: a });
+    }
+}
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for indexed access on intersection with unconstrained type param, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
