@@ -1063,8 +1063,11 @@ impl<'a> CheckerState<'a> {
             }
             // Object/array literals need TS9013 (expression type can't be inferred)
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                let error_target = self
+                    .find_first_non_inferrable_expr(expr_idx)
+                    .unwrap_or(expr_idx);
                 self.error_at_node(
-                    expr_idx,
+                    error_target,
                     diagnostic_messages::EXPRESSION_TYPE_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
                     diagnostic_codes::EXPRESSION_TYPE_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
                 );
@@ -1090,8 +1093,11 @@ impl<'a> CheckerState<'a> {
                     {
                         // Check if inner elements contain non-inferrable expressions
                         if self.has_non_inferrable_elements(assertion.expression) {
+                            let error_target = self
+                                .find_first_non_inferrable_expr(assertion.expression)
+                                .unwrap_or(assertion.expression);
                             self.error_at_node(
-                                    assertion.expression,
+                                    error_target,
                                     diagnostic_messages::EXPRESSION_TYPE_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
                                     diagnostic_codes::EXPRESSION_TYPE_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
                                 );
@@ -1109,6 +1115,48 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::DEFAULT_EXPORTS_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
             diagnostic_codes::DEFAULT_EXPORTS_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
         );
+    }
+
+    /// Find the first non-inferrable expression in an object/array literal.
+    /// TSC points the TS9013 error at the first non-simple property value or element,
+    /// recursing into nested object/array literals.
+    fn find_first_non_inferrable_expr(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            if let Some(obj) = self.ctx.arena.get_literal_expr(expr_node) {
+                for &elem_idx in &obj.elements.nodes {
+                    if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                        && let Some(prop_assign) = self.ctx.arena.get_property_assignment(elem_node)
+                        && !self.is_isolated_decl_simple_value(prop_assign.initializer)
+                    {
+                        // Recurse into nested object/array literals
+                        if let Some(val_node) = self.ctx.arena.get(prop_assign.initializer)
+                            && (val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || val_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                        {
+                            return self.find_first_non_inferrable_expr(prop_assign.initializer);
+                        }
+                        return Some(prop_assign.initializer);
+                    }
+                }
+            }
+        } else if expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            if let Some(arr) = self.ctx.arena.get_literal_expr(expr_node) {
+                for &elem_idx in &arr.elements.nodes {
+                    if !self.is_isolated_decl_simple_value(elem_idx) {
+                        // Recurse into nested object/array literals
+                        if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                            && (elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                        {
+                            return self.find_first_non_inferrable_expr(elem_idx);
+                        }
+                        return Some(elem_idx);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Check if an array/object literal contains non-inferrable elements.
