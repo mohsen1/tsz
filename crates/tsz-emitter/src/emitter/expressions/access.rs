@@ -562,7 +562,7 @@ impl<'a> Printer<'a> {
             let first = &enum_path[..dot_pos];
             let rest = &enum_path[dot_pos + 1..];
             if let Some(target) = self.const_enum_import_aliases.get(first) {
-                let resolved = format!("{}.{}", target, rest);
+                let resolved = format!("{target}.{rest}");
                 if let Some(r) = self.lookup_scoped_const_enum_values_direct(&resolved, access_pos)
                 {
                     return Some(r);

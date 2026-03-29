@@ -1672,7 +1672,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// environment is unavailable / doesn't contain the DefId.
     pub(super) fn resolve_lazy_via_env(&self, type_id: TypeId) -> TypeId {
         if let Some(def_id) = get_lazy_def_id(self.interner, type_id) {
-            if let Some(ref env) = self.type_environment {
+            if let Some(env) = self.type_environment {
                 env.borrow().get_def(def_id).unwrap_or(type_id)
             } else {
                 type_id

@@ -3,14 +3,15 @@
 //! Generated automatically from comment-stripped lib files.
 //! Comments are removed at build time to reduce parse work by ~58%.
 //!
-//! Uses a match statement instead of a HashMap for zero-cost initialization
-//! (no Lazy, no heap allocation, no once_cell synchronization).
+//! Uses a match statement instead of a `HashMap` for zero-cost initialization
+//! (no Lazy, no heap allocation, no `once_cell` synchronization).
 
 pub const LIB_FILE_COUNT: usize = 103;
 
 /// Look up embedded lib content by filename (e.g., "dom.d.ts", "es5.d.ts").
 /// Returns None for unknown filenames.
 #[inline]
+#[allow(clippy::match_same_arms)]
 pub fn get_lib_content(filename: &str) -> Option<&'static str> {
     match filename {
         "decorators.d.ts" => Some(include_str!("lib-assets-stripped/decorators.d.ts")),

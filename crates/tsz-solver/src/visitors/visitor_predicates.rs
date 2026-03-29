@@ -348,9 +348,9 @@ pub fn contains_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 /// Check if a type contains any "free" `infer` types — inference placeholders
-/// that are NOT buried inside a TypeParameter's constraint or default.
+/// that are NOT buried inside a `TypeParameter`'s constraint or default.
 ///
-/// TypeParameter constraints/defaults are definitional (e.g., `T extends Foo`
+/// `TypeParameter` constraints/defaults are definitional (e.g., `T extends Foo`
 /// where `Foo = X extends Bar<infer V> ? V : never`). The `infer V` there is
 /// structural and already resolved at the definition site. Walking into it
 /// produces false positives when used to decide whether to suppress diagnostics.
@@ -720,12 +720,13 @@ impl<'a> FreeInferChecker<'a> {
             | TypeData::Recursive(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => false,
+            | TypeData::ModuleNamespace(_)
             // TypeParameter/Infer: do NOT walk into constraints/defaults.
             // Structural `infer` patterns in constraints (e.g., from type alias
             // definitions like `type Foo = X extends Bar<infer V> ? V : never`)
             // are definitional, not live inference variables.
-            TypeData::TypeParameter(_) | TypeData::Infer(_) => false,
+            | TypeData::TypeParameter(_)
+            | TypeData::Infer(_) => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))

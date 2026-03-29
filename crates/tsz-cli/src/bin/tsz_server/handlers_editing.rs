@@ -155,7 +155,7 @@ impl Server {
                         }
 
                         // Don't auto-close if the closing tag already follows the cursor
-                        let expected_close = format!("</{}>", tag_name);
+                        let expected_close = format!("</{tag_name}>");
                         if source_text[byte_offset..].starts_with(&expected_close) {
                             return None;
                         }

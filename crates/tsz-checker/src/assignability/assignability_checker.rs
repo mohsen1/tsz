@@ -4,10 +4,9 @@
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     check_application_variance_assignability, classify_for_assignability_eval,
-    contains_free_infer_types, contains_infer_types, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
-    is_assignable_with_overrides, is_relation_cacheable, keyof_object_properties,
-    map_compound_members,
+    contains_free_infer_types, get_allowed_keys, get_keyof_type, get_string_literal_value,
+    get_union_members, is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
+    is_relation_cacheable, keyof_object_properties, map_compound_members,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;

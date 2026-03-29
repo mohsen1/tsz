@@ -1722,7 +1722,7 @@ pub(super) fn no_input_diagnostics_for_config(
     tsconfig_path: Option<&Path>,
     include: Option<&[String]>,
     exclude: Option<&[String]>,
-    allow_js: bool,
+    _allow_js: bool,
 ) -> Vec<Diagnostic> {
     // Emit TS18003: No inputs were found in config file.
     // Match tsc: use the resolved config path shown to the compiler.

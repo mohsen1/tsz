@@ -122,7 +122,7 @@ impl ModuleLookupResult {
         }
     }
 
-    /// Resolved to a JS file in node_modules (external) with TS7016 error.
+    /// Resolved to a JS file in `node_modules` (external) with TS7016 error.
     /// Unlike `untyped_js`, this preserves the resolved path so the import still works.
     pub fn resolved_untyped_js(
         resolved_path: PathBuf,

@@ -41,7 +41,7 @@ pub fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
 
 /// Returns true if `ch` preceding an identifier means it is NOT a standalone
 /// variable reference. Includes identifier chars and `.` (property access).
-fn is_ident_or_member_access_char(ch: char) -> bool {
+const fn is_ident_or_member_access_char(ch: char) -> bool {
     ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric()
 }
 

@@ -106,7 +106,7 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_temp_var_counter(counter);
     }
 
-    pub fn temp_var_counter(&self) -> u32 {
+    pub const fn temp_var_counter(&self) -> u32 {
         self.transformer.temp_var_counter()
     }
 

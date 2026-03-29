@@ -1396,8 +1396,7 @@ impl<'a> TypePrinter<'a> {
         if let Some(list_id) = visitor::union_list_id(self.interner, type_id) {
             self.interner
                 .type_list(list_id)
-                .iter()
-                .any(|&t| t == TypeId::UNDEFINED)
+                .contains(&TypeId::UNDEFINED)
         } else {
             type_id == TypeId::UNDEFINED
         }
