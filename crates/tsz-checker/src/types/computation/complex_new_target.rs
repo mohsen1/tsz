@@ -475,4 +475,74 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Check whether a `new` expression target is a class whose `extends` clause
+    /// has a TS2314 error (wrong number of type arguments on the base class).
+    ///
+    /// In tsc, when `class C extends Base` omits required type arguments for a
+    /// generic `Base<T>`, `typeof C` has no construct signatures, so `new C()`
+    /// produces TS2351. Our constructor builder still generates a default
+    /// constructor in this case; this helper detects the condition so the caller
+    /// can override to TS2351 + return `any`.
+    pub(crate) fn class_has_invalid_base_type_args(&self, expr_idx: NodeIndex) -> bool {
+        self.class_has_invalid_base_type_args_inner(expr_idx)
+            .unwrap_or(false)
+    }
+
+    fn class_has_invalid_base_type_args_inner(&self, expr_idx: NodeIndex) -> Option<bool> {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Resolve to symbol
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::CLASS == 0 {
+            return Some(false);
+        }
+
+        // Find class declaration
+        let decl_idx = symbol
+            .declarations
+            .iter()
+            .copied()
+            .find(|&idx| {
+                self.ctx
+                    .arena
+                    .get(idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+            })
+            .unwrap_or(symbol.value_declaration);
+
+        let class_node = self.ctx.arena.get(decl_idx)?;
+        let class = self.ctx.arena.get_class(class_node)?;
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+
+        // Check if any extends clause type reference has a TS2314 diagnostic
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                continue;
+            };
+            if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                if let Some(node) = self.ctx.arena.get(type_idx) {
+                    let start = node.pos;
+                    let end = node.end;
+                    if self.has_diagnostic_code_within_span(
+                        start,
+                        end,
+                        crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                    ) {
+                        return Some(true);
+                    }
+                }
+            }
+        }
+        Some(false)
+    }
 }
