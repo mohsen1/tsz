@@ -168,7 +168,10 @@ $.each(lines, function(dit) {
         .iter()
         .filter(|(code, _)| *code != 2318)
         .collect();
-    let ts2454_count = semantic_errors.iter().filter(|(code, _)| *code == 2454).count();
+    let ts2454_count = semantic_errors
+        .iter()
+        .filter(|(code, _)| *code == 2454)
+        .count();
 
     assert_eq!(
         ts2454_count, 2,
@@ -21580,7 +21583,9 @@ const cfg = pluginImportX.configs["stage-0"];
     );
 
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2339 || *code == 2551),
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2339 || *code == 2551),
         "Namespace import should expose `configs` from `export = typeof import(...)`; got: {diagnostics:#?}"
     );
 }
