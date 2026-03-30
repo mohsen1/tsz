@@ -210,7 +210,7 @@ struct VarianceVisitor<'a, 'b> {
     /// record all target param occurrences as COVARIANT when inside method
     /// params, regardless of actual nesting depth/polarity.
     method_bivariant_depth: u32,
-    /// When true, suppress method_bivariant_depth from being set. This is
+    /// When true, suppress `method_bivariant_depth` from being set. This is
     /// used inside indexed access types where `{ m(x: T): any }['m']`
     /// extracts the method as a plain function, stripping method-ness.
     suppress_method_bivariance: bool,
