@@ -446,6 +446,37 @@ impl<'a> CheckerState<'a> {
         // Use the authoritative resolution kernel — no fallback chain needed.
         self.resolve_jsdoc_reference(type_expr)
     }
+    /// Like `jsdoc_type_annotation_for_node_direct`, but resolves JSDoc `@type`
+    /// annotations even when `checkJs` is not set. This is needed for type inference
+    /// of JS class properties (`this.p = value` in constructors) when `allowJs` is
+    /// enabled: tsc always reads `@type` annotations for inference even without `checkJs`.
+    pub(crate) fn jsdoc_type_annotation_for_node_inference(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        // Only applicable to JS files with allowJs
+        if !self.ctx.is_js_file() || !self.ctx.compiler_options.allow_js {
+            return None;
+        }
+        let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let jsdoc = self.try_leading_jsdoc(
+            &comments,
+            self.effective_jsdoc_pos_for_node(idx, &comments, &source_text)?,
+            &source_text,
+        )?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let type_expr = type_expr.trim();
+        self.resolve_jsdoc_reference(type_expr)
+    }
+
     /// Extract `@satisfies` annotation and its keyword position.
     pub(crate) fn jsdoc_satisfies_annotation_with_pos(
         &mut self,
