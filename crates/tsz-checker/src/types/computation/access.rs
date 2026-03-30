@@ -1095,6 +1095,27 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
+                if self.generic_index_mentions_transformed_current_type_param(
+                    index_type,
+                    pre_resolution_object_type,
+                ) {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let index_type_str = self.format_type(index_type);
+                    let object_type_str = self.format_type(pre_resolution_object_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                        &[&index_type_str, &object_type_str],
+                    );
+                    self.error_at_node(
+                        access.expression,
+                        &message,
+                        diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                    );
+                    return TypeId::ERROR;
+                }
+
                 // Case 1: U resolved to a DIFFERENT type parameter T (its constraint).
                 // Produce a deferred IndexAccess(U, index) to preserve the distinction
                 // between U[K] and T[K] for assignability.

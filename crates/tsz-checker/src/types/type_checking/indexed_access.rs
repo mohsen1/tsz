@@ -664,6 +664,23 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
+            && self.generic_index_mentions_transformed_current_type_param(index_type, object_type)
+        {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+
         // Fast path: when the index is a type parameter and the object type node
         // is a type literal, compute keyof from AST property names only (no
         // value-type evaluation needed). This avoids eagerly resolving complex

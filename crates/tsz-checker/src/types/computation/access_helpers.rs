@@ -263,6 +263,119 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn same_type_param_identity(&self, left: TypeId, right: TypeId) -> bool {
+        use tsz_solver::visitor;
+
+        left == right
+            || visitor::type_param_info(self.ctx.types, left)
+                .zip(visitor::type_param_info(self.ctx.types, right))
+                .is_some_and(|(l, r)| l.name == r.name)
+    }
+
+    fn type_contains_same_type_param_identity(&mut self, ty: TypeId, type_param: TypeId) -> bool {
+        use tsz_solver::visitor;
+
+        if self.same_type_param_identity(ty, type_param) {
+            return true;
+        }
+
+        if let Some(inner) = visitor::keyof_inner_type(self.ctx.types, ty)
+            && self.type_contains_same_type_param_identity(inner, type_param)
+        {
+            return true;
+        }
+
+        if let Some((object_type, index_type)) =
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, ty)
+            && (self.type_contains_same_type_param_identity(object_type, type_param)
+                || self.type_contains_same_type_param_identity(index_type, type_param))
+        {
+            return true;
+        }
+
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty)
+            && members
+                .iter()
+                .any(|&member| self.type_contains_same_type_param_identity(member, type_param))
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
+            && members
+                .iter()
+                .any(|&member| self.type_contains_same_type_param_identity(member, type_param))
+        {
+            return true;
+        }
+
+        if let Some(param_info) = visitor::type_param_info(self.ctx.types, ty)
+            && let Some(constraint) = param_info.constraint
+            && self.type_contains_same_type_param_identity(constraint, type_param)
+        {
+            return true;
+        }
+
+        if tsz_solver::is_generic_application(self.ctx.types, ty) {
+            let evaluated = self.evaluate_type_with_env(ty);
+            if evaluated != ty
+                && evaluated != TypeId::ERROR
+                && self.type_contains_same_type_param_identity(evaluated, type_param)
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn generic_index_mentions_transformed_current_type_param(
+        &mut self,
+        index_type: TypeId,
+        type_param: TypeId,
+    ) -> bool {
+        use tsz_solver::visitor;
+
+        if let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, index_type) {
+            return !self.same_type_param_identity(keyof_inner, type_param)
+                && self.type_contains_same_type_param_identity(keyof_inner, type_param);
+        }
+
+        if let Some(param_info) = visitor::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+        {
+            return self
+                .generic_index_mentions_transformed_current_type_param(constraint, type_param);
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
+        {
+            return members.iter().any(|&member| {
+                self.generic_index_mentions_transformed_current_type_param(member, type_param)
+            });
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+        {
+            return members.iter().any(|&member| {
+                self.generic_index_mentions_transformed_current_type_param(member, type_param)
+            });
+        }
+
+        if tsz_solver::is_generic_application(self.ctx.types, index_type) {
+            let evaluated = self.evaluate_type_with_env(index_type);
+            if evaluated != index_type && evaluated != TypeId::ERROR {
+                return self
+                    .generic_index_mentions_transformed_current_type_param(evaluated, type_param);
+            }
+        }
+
+        false
+    }
+
     /// Return the type parameter source when `index_type` is `keyof S` or `K extends keyof S`
     /// for a type parameter `S` different from `type_param`.
     ///

@@ -20097,6 +20097,43 @@ type X<T> = T[keyof T]["foo"];
 }
 
 #[test]
+fn test_unknown_control_flow_generic_keyspace_and_overlap_regression() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function ff3<T>(t: T, k: keyof (T & {})) {
+    t[k];
+}
+function ff4<T>(t: T & {}, k: keyof (T & {})) {
+    t[k];
+}
+function fx2<T extends {}>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+function fx4<T extends {} | null>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2536_count = relevant.iter().filter(|(code, _)| *code == 2536).count();
+    let ts2367_count = relevant.iter().filter(|(code, _)| *code == 2367).count();
+
+    assert_eq!(
+        ts2536_count, 1,
+        "Expected exactly one TS2536 for indexing raw T with keyof (T & {{}}), got: {relevant:#?}"
+    );
+    assert_eq!(
+        ts2367_count, 2,
+        "Expected TS2367 for the constrained generic comparisons only, got: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_infinite_constraints_ts2536_keyof_indexed_access_literal() {
     // From infiniteConstraints.ts line 39:
     // declare function function1<T extends {[K in keyof T]: Cond<T[K]>}>(): T[keyof T]["foo"];
