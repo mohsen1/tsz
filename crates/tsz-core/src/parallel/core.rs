@@ -3737,12 +3737,18 @@ pub fn create_binder_from_bound_file(
     // Compose semantic_defs: start with the global map (cross-file + lib entries)
     // then overlay the file's own entries. Per-file entries take precedence for
     // symbols declared in this file, ensuring file-scoped identity is authoritative.
-    // This replaces the previous blind clone of the entire global map.
-    let mut composed_semantic_defs = program.semantic_defs.clone();
-    for (sym_id, entry) in &file.semantic_defs {
-        composed_semantic_defs.insert(*sym_id, entry.clone());
+    //
+    // PERF: When the shared DefinitionStore is fully populated (parallel path),
+    // semantic_defs are never read by the checker (warm_local_caches_from_shared_store
+    // and resolve_cross_batch_heritage both skip when fully_populated=true).
+    // Skip the expensive clone+overlay to avoid O(files * total_defs) work.
+    if !program.definition_store.is_fully_populated() {
+        let mut composed_semantic_defs = program.semantic_defs.clone();
+        for (sym_id, entry) in &file.semantic_defs {
+            composed_semantic_defs.insert(*sym_id, entry.clone());
+        }
+        binder.semantic_defs = composed_semantic_defs;
     }
-    binder.semantic_defs = composed_semantic_defs;
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = crate::binder::ScopeId(0);
