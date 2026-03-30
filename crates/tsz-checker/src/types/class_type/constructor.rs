@@ -1280,6 +1280,22 @@ impl<'a> CheckerState<'a> {
                 let base_sym_id = match self.resolve_heritage_symbol(expr_idx) {
                     Some(base_sym_id) => base_sym_id,
                     None => {
+                        // Circular heritage detection for mixin-style calls:
+                        // When `class B extends mixin(A)` and `A extends Doc<typeof B>`,
+                        // tsc detects that evaluating `typeof A`'s construct signatures
+                        // triggers circular resolution through `typeof B`. In tsc,
+                        // `resolveStructuredTypeMembers(typeof A)` returns empty members
+                        // during this circular evaluation, so `typeof A` has no construct
+                        // signatures, and TS2345 is emitted on the `A` argument.
+                        //
+                        // In tsz, A's type is eagerly computed and cached (with construct
+                        // signatures) before B's resolution starts. To match tsc, we
+                        // check post-hoc: if the call argument is a class whose heritage
+                        // type arguments reference the current class (B), emit TS2345.
+                        if let Some(current_sym_id) = current_sym {
+                            self.check_circular_heritage_call_args(expr_idx, current_sym_id);
+                        }
+
                         if let Some(base_constructor_type) =
                             self.base_constructor_type_from_expression(expr_idx, type_arguments)
                         {
@@ -2026,5 +2042,158 @@ impl<'a> CheckerState<'a> {
             return Some(self.get_type_from_type_node(var_decl.type_annotation));
         }
         None
+    }
+
+    /// Check if a call expression in a heritage clause has arguments with
+    /// circular heritage dependencies back to `current_class_sym`.
+    ///
+    /// This detects patterns like:
+    /// ```text
+    /// declare class A extends Doc<typeof B> {}
+    /// declare class B extends mixin(A) {}
+    /// ```
+    /// When building B's constructor type, the call `mixin(A)` is evaluated.
+    /// A's type is already computed (eagerly), so its construct signatures exist.
+    /// But A's heritage uses `typeof B`, creating a circular dependency.
+    /// In tsc, this circularity causes `typeof A` to have no construct signatures
+    /// during B's evaluation, producing TS2345. We detect this pattern and emit
+    /// the same error.
+    fn check_circular_heritage_call_args(
+        &mut self,
+        call_expr_idx: NodeIndex,
+        current_class_sym: tsz_binder::SymbolId,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext as sk;
+
+        let Some(call_node) = self.ctx.arena.get(call_expr_idx) else {
+            return;
+        };
+        if call_node.kind != sk::CALL_EXPRESSION {
+            return;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(call_node) else {
+            return;
+        };
+        let Some(ref args) = call.arguments else {
+            return;
+        };
+
+        for &arg_idx in &args.nodes {
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                continue;
+            };
+            if arg_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            // Get the argument's symbol
+            let Some(arg_sym) = self.resolve_identifier_symbol(arg_idx) else {
+                continue;
+            };
+            let Some(arg_symbol) = self.ctx.binder.get_symbol(arg_sym) else {
+                continue;
+            };
+            // Only check class arguments
+            if arg_symbol.flags & tsz_binder::symbol_flags::CLASS == 0 {
+                continue;
+            }
+
+            // Check if this class's heritage type arguments reference the current class
+            if self.class_heritage_references_symbol(arg_sym, current_class_sym) {
+                // Circular dependency detected — emit TS2345
+                // Use "typeof ClassName" format to match tsc's message
+                let class_name = arg_symbol.escaped_name.clone();
+                let msg = format!(
+                    "Argument of type 'typeof {}' is not assignable to parameter of type 'new (...args: any[]) => any'.",
+                    class_name
+                );
+                use crate::diagnostics::diagnostic_codes;
+                self.ctx.error(
+                    arg_node.pos,
+                    arg_node.end - arg_node.pos,
+                    msg,
+                    diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                );
+            }
+        }
+    }
+
+    /// Check if a class's heritage clause type arguments reference a specific symbol.
+    fn class_heritage_references_symbol(
+        &self,
+        class_sym: tsz_binder::SymbolId,
+        target_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext as sk;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(class_sym) else {
+            return false;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind != sk::CLASS_DECLARATION {
+                continue;
+            }
+            let Some(class) = self.ctx.arena.get_class(node) else {
+                continue;
+            };
+            let Some(ref heritage_clauses) = class.heritage_clauses else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+                    let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) else {
+                        continue;
+                    };
+                    let Some(ref type_args) = expr_type_args.type_arguments else {
+                        continue;
+                    };
+                    for &arg_idx in &type_args.nodes {
+                        // Check if this type argument is `typeof target_sym`
+                        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                            continue;
+                        };
+                        let Some(type_query) = self.ctx.arena.get_type_query(arg_node) else {
+                            continue;
+                        };
+                        let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) else {
+                            continue;
+                        };
+                        if expr_node.kind != SyntaxKind::Identifier as u16 {
+                            continue;
+                        }
+                        // Resolve the identifier to a symbol
+                        if let Some(ref_sym) = self
+                            .ctx
+                            .binder
+                            .node_symbols
+                            .get(&type_query.expr_name.0)
+                            .copied()
+                            .or_else(|| {
+                                let ident = self.ctx.arena.get_identifier(expr_node)?;
+                                self.ctx.binder.file_locals.get(&ident.escaped_text)
+                            })
+                        {
+                            if ref_sym == target_sym {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 }
