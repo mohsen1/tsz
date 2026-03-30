@@ -1614,15 +1614,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // When the constraint is an object type with ONLY optional properties
-                // (a "weak type" like `{t?: string}`), any concrete type satisfies it
-                // in tsc. This is because all-optional means no required properties,
-                // so structurally it's equivalent to `{}` for constraint purposes.
-                // Skip the full assignability check in this case to avoid false TS2344
-                // for primitives like `bigint` and `number`.
-                // When the constraint is an object type with ONLY optional properties
                 // (a "weak type" like `{t?: string}`), primitive types always satisfy
                 // it in tsc (e.g., `bigint extends {t?: string}` is valid). However,
-                // non-primitive types that share no common properties should still fail
+                // non-primitive types that share no common properties should fail
                 // with TS2559 ("Type has no properties in common").
                 let constraint_is_all_optional = {
                     let db = self.ctx.types.as_type_database();
@@ -1644,6 +1638,22 @@ impl<'a> CheckerState<'a> {
                     && query::is_primitive_type(self.ctx.types.as_type_database(), type_arg);
                 let mut is_satisfied = primitive_satisfies_weak
                     || self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint);
+
+                // When the constraint is all-optional and the structural check
+                // passed (because all-optional types have no required properties),
+                // separately check for weak type violation (TS2559).
+                // Non-primitive type arguments with NO common properties should
+                // fail, e.g., MyObjA {x: string} vs ObjA {y?: string}.
+                if is_satisfied && constraint_is_all_optional && !primitive_satisfies_weak {
+                    let analysis =
+                        self.analyze_assignability_failure(type_arg, instantiated_constraint);
+                    if matches!(
+                        analysis.failure_reason,
+                        Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+                    ) {
+                        is_satisfied = false;
+                    }
+                }
 
                 // Fallback for recursive generic constraints (coinductive semantics).
                 //
