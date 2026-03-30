@@ -1288,36 +1288,10 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // Also skip for types that extend a generator-like interface (e.g., `I1 extends Iterator<0, 1, 2>`)
-        // BUT only when the interface has no own declared members in its body. If the interface
-        // adds its own properties (e.g., `WeirdIter extends IterableIterator<number> { hello: string }`),
-        // Generator<> may not satisfy it, so we must still perform the assignability check.
-        if self
-            .get_generator_return_type_argument(declared_return_type)
-            .is_some()
-        {
-            // Check the AST declarations to see if the interface has own body members.
-            // Use the same resolution path as resolve_generator_arg_from_heritage:
-            // TypeId -> DefId -> SymbolId -> Symbol -> declarations -> interface body members.
-            let def_id = query::lazy_def_id(self.ctx.types, declared_return_type);
-            let sym_id = def_id.and_then(|d| self.ctx.def_to_symbol_id(d));
-            let has_own_body_members = sym_id
-                .and_then(|s| {
-                    let symbol = self.get_symbol_globally(s)?;
-                    let declarations = symbol.declarations.clone();
-                    Some(declarations.iter().any(|decl_idx| {
-                        self.ctx
-                            .arena
-                            .get(*decl_idx)
-                            .and_then(|node| self.ctx.arena.get_interface(node))
-                            .is_some_and(|iface| !iface.members.nodes.is_empty())
-                    }))
-                })
-                .unwrap_or(false);
-            if !has_own_body_members {
-                return;
-            }
-        }
+        // Always perform the assignability check for custom types that extend
+        // generator-like interfaces. Even interfaces with no own body members
+        // can be incompatible with Generator<> when they have conflicting
+        // heritage clauses (e.g., `BadGenerator extends Iterator<number>, Iterable<string> {}`).
         let gen_name = if is_async {
             "AsyncGenerator"
         } else {
