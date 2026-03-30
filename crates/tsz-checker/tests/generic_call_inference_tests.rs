@@ -1214,3 +1214,44 @@ let x = chunk.guard() ? chunk.c : chunk.d;
         "Should NOT emit TS2339 - chunk.c should be accessible after guard(). Got: {diags:#?}"
     );
 }
+
+// ─── Empty object type ({}) in BCT inference ────────────────────────
+
+#[test]
+fn bct_inference_recognizes_empty_object_as_supertype_of_primitives() {
+    // When inference candidates include primitives and `{}`, the BCT tournament
+    // must recognize `{}` as a supertype of non-nullable primitives. This ensures
+    // `{}` is not dropped from inference results due to first-wins tournament logic.
+    // Repro: ReadonlyArray<T> inference from union arrays containing `{}[]`.
+    let source = r#"
+declare function foo<T>(x: ReadonlyArray<T>): T;
+declare const a: (string | number)[] | null[] | {}[];
+let x = foo(a);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "ReadonlyArray<T> inference from union of arrays with {{}} should work. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn bivariant_inference_this_parameter_union_of_arrays() {
+    // Repro from TypeScript #27337: calling a method with a generic `this`
+    // parameter on a union of arrays should infer T from all union members.
+    // The empty object type `{}` must be recognized as a supertype of
+    // primitives in the BCT tournament to avoid false TS2684.
+    let source = r#"
+interface Array<T> {
+    equalsShallow<T>(this: ReadonlyArray<T>, other: ReadonlyArray<T>): boolean;
+}
+declare const a: (string | number)[] | null[] | undefined[] | {}[];
+declare const b: (string | number)[] | null[] | undefined[] | {}[];
+let x = a.equalsShallow(b);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2684),
+        "Method with generic this on union of arrays should not emit TS2684. Got: {diags:#?}"
+    );
+}
