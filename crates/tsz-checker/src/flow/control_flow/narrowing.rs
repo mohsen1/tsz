@@ -277,6 +277,10 @@ impl<'a> FlowAnalyzer<'a> {
                 // A member returning general `boolean` (or any non-false truthy type) makes
                 // the overall union guard unsound, regardless of predicate target.
                 // If multiple predicate members exist, their predicates must match.
+<<<<<<< Updated upstream
+=======
+                //
+>>>>>>> Stashed changes
                 let mut common_sig: Option<PredicateSignature> = None;
                 let mut has_non_predicate_boolean = false;
 
@@ -298,9 +302,15 @@ impl<'a> FlowAnalyzer<'a> {
                         }
                     }
                 }
+<<<<<<< Updated upstream
                 // If any non-predicate member returns something other than `false`/`never`,
                 // the union is NOT a type predicate — regardless of whether the predicate
                 // targets `this` or a parameter.  This matches tsc behavior.
+=======
+                // When any non-predicate member returns general `boolean`, the
+                // union is not a valid type predicate — the true branch could
+                // come from a non-predicate member, so narrowing is unsound.
+>>>>>>> Stashed changes
                 if has_non_predicate_boolean {
                     return None;
                 }
