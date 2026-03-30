@@ -528,19 +528,45 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         if let Some(((source_base, source_args), (target_base, target_args))) = app_info
-            && source_base == target_base
             && source_args.len() == target_args.len()
         {
-            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                self.collect_return_context_substitution(
-                    *source_arg,
-                    *target_arg,
-                    tracked_type_params,
-                    substitution,
-                    visited,
-                );
+            if source_base == target_base {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                return;
             }
-            return;
+            // When bases differ (e.g., AssignAction<TActor> vs ActionFunction<ConcreteType>),
+            // match type arguments positionally if any source arg is a tracked type parameter.
+            // This handles branded-property patterns where different interfaces share
+            // structural positions for their type parameters (e.g., _out_TActor?: TActor).
+            let has_tracked_source_arg = source_args.iter().any(|&arg| {
+                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(arg) {
+                    tracked_type_params.contains(&tp.name)
+                } else {
+                    false
+                }
+            });
+            if has_tracked_source_arg {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
+            }
         }
 
         // Fallback: when source is an Application wrapping a single tracked type
