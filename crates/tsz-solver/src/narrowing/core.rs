@@ -812,11 +812,14 @@ impl<'a> NarrowingContext<'a> {
             return TypeId::ANY;
         }
 
-        // Note: IndexAccess resolution is handled in narrow_type() before
-        // dispatching here, not inside narrow_excluding_type. Resolving here
-        // would re-introduce excluded types from nested IndexAccess resolution
-        // (e.g., `null | MappedType[K]` after excluding null would resolve
-        // `MappedType[K]` to `null | {x: string}`, re-introducing null).
+        // Note: Do NOT resolve Lazy/Application types here. This function is called
+        // recursively from narrow_type_param_excluding, which relies on TypeId identity
+        // comparisons (narrowed_constraint == constraint). Resolving Lazy types changes
+        // the TypeId, breaking those comparisons and producing incorrect intersections
+        // (e.g., T & Date instead of excluding T from T | number).
+        //
+        // Lazy type resolution for the top-level source is handled in narrow_type()
+        // before dispatching to this function.
 
         if let Some(members) = intersection_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
@@ -1590,8 +1593,25 @@ impl<'a> NarrowingContext<'a> {
                     // Equality: narrow to the literal type
                     self.narrow_to_type(source_type, *literal_type)
                 } else {
-                    // Inequality: exclude the literal type
-                    self.narrow_excluding_type(source_type, *literal_type)
+                    // Inequality: exclude the literal type.
+                    // Resolve Lazy/Application types first so narrow_excluding_type
+                    // can see the union structure (e.g., type aliases like
+                    // `type Variants = "a" | "b" | "c" | "d"` need to be unwrapped
+                    // for individual members to be excluded).
+                    let resolved_source = if matches!(
+                        self.db.lookup(source_type),
+                        Some(TypeData::Lazy(_) | TypeData::Application(_))
+                    ) {
+                        let r = self.resolve_type(source_type);
+                        if r == TypeId::ERROR && source_type != TypeId::ERROR {
+                            source_type
+                        } else {
+                            r
+                        }
+                    } else {
+                        source_type
+                    };
+                    self.narrow_excluding_type(resolved_source, *literal_type)
                 }
             }
 
