@@ -72,7 +72,17 @@ impl<'a> CheckerState<'a> {
                 self.ctx.leave_recursion();
                 return lazy_type;
             }
-            if flags & symbol_flags::INTERFACE != 0 {
+            let has_interface_decl = declarations.iter().copied().any(|decl_idx| {
+                let arena = self
+                    .ctx
+                    .binder
+                    .get_arena_for_declaration(sym_id, decl_idx)
+                    .map_or(self.ctx.arena, |arena| arena.as_ref());
+                arena.get(decl_idx).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                })
+            });
+            if flags & symbol_flags::INTERFACE != 0 || has_interface_decl {
                 if !declarations.is_empty() {
                     // Return Lazy(DefId) for interface type references to preserve
                     // interface names in error messages. Compute and cache the structural
@@ -83,8 +93,11 @@ impl<'a> CheckerState<'a> {
                     // the interface declarations.
                     let is_merged_with_namespace =
                         flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
+                    let should_force_interface_decl_path =
+                        has_interface_decl && (flags & symbol_flags::INTERFACE) == 0;
 
-                    let mut structural_type = if is_merged_with_namespace {
+                    let mut structural_type =
+                        if is_merged_with_namespace || should_force_interface_decl_path {
                         // Compute the interface type directly, bypassing get_type_of_symbol
                         // which would return the namespace type for merged symbols.
                         self.compute_interface_type_from_declarations(sym_id)
@@ -178,6 +191,7 @@ impl<'a> CheckerState<'a> {
                     // Also return Unknown directly when cross-file interface resolution
                     // fails — wrapping in Lazy(DefId) would create an unresolvable ref.
                     if is_merged_with_namespace
+                        || should_force_interface_decl_path
                         || query::is_object_with_index_type(self.ctx.types, structural_type)
                         || structural_type == TypeId::UNKNOWN
                     {
@@ -200,25 +214,32 @@ impl<'a> CheckerState<'a> {
             // For type aliases, resolve the body type using the correct arena.
             // Search declarations[] for the actual type alias decl (merged symbols
             // may have value_declaration pointing to a var decl, not the type alias).
-            if flags & symbol_flags::TYPE_ALIAS != 0 {
-                let has_type_alias_decl = declarations.iter().any(|&d| {
-                    self.ctx
-                        .arena
-                        .get(d)
-                        .and_then(|n| {
-                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                                // Verify name matches to prevent NodeIndex collisions
-                                let type_alias = self.ctx.arena.get_type_alias(n)?;
-                                let name = self.ctx.arena.get_identifier_text(type_alias.name)?;
-                                Some(name == escaped_name.as_str())
-                            } else {
-                                Some(false)
-                            }
-                        })
-                        .unwrap_or(false)
-                }) || value_declaration.is_some()
-                    || !declarations.is_empty();
-                if has_type_alias_decl {
+            let has_type_alias_decl = declarations.iter().any(|&d| {
+                let arena = self
+                    .ctx
+                    .binder
+                    .get_arena_for_declaration(sym_id, d)
+                    .map_or(self.ctx.arena, |arena| arena.as_ref());
+                arena
+                    .get(d)
+                    .and_then(|n| {
+                        if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                            // Verify name matches to prevent NodeIndex collisions
+                            let type_alias = arena.get_type_alias(n)?;
+                            let name = arena.get_identifier_text(type_alias.name)?;
+                            Some(name == escaped_name.as_str())
+                        } else {
+                            Some(false)
+                        }
+                    })
+                    .unwrap_or(false)
+            });
+            let should_attempt_type_alias_resolution =
+                has_type_alias_decl
+                    || ((flags & symbol_flags::TYPE_ALIAS) != 0
+                        && (value_declaration.is_some() || !declarations.is_empty()));
+            if should_attempt_type_alias_resolution {
+                if has_type_alias_decl || (flags & symbol_flags::TYPE_ALIAS) != 0 {
                     // Return structural type directly for type aliases (not Lazy) so
                     // conditional types are fully resolved during assignability checking.
                     let mut structural_type = self.get_type_of_symbol(sym_id);
