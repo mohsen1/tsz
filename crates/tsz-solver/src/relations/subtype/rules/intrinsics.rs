@@ -494,10 +494,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .resolver
                     .get_boxed_type(source_kind)
                     .or_else(|| self.interner.get_boxed_type(source_kind));
-                if let Some(boxed_type) = boxed_type {
-                    if self.check_subtype(boxed_type, target).is_true() {
-                        return true;
-                    }
+                if let Some(boxed_type) = boxed_type
+                    && self.check_subtype(boxed_type, target).is_true()
+                {
+                    return true;
                 }
                 // Boxed type doesn't satisfy all target properties. Check if
                 // the target only has iterable-related properties (no extras).

@@ -47,7 +47,7 @@ impl<'a> CheckerState<'a> {
                 shape.return_type,
             )
             .unwrap_or(shape.return_type),
-            type_predicate: shape.type_predicate.clone(),
+            type_predicate: shape.type_predicate,
             is_constructor: shape.is_constructor,
             is_method: shape.is_method,
         };

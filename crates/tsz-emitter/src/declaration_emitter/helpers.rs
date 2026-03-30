@@ -83,7 +83,7 @@ pub(crate) struct JsStaticMethodAugmentations {
 /// e.g. `let A; A.prototype.b = {};` → variable `A` becomes `declare class A { ... }`.
 #[derive(Default)]
 pub(crate) struct JsClassLikePrototypeMembers {
-    /// Maps variable name → list of (member_name_idx, initializer_idx) pairs.
+    /// Maps variable name → list of (`member_name_idx`, `initializer_idx`) pairs.
     pub(crate) members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Statement indices consumed by the class-like heuristic (to skip during normal emit).
     pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
