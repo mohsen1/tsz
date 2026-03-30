@@ -317,6 +317,36 @@ impl<'a> CheckerState<'a> {
             if let Some(imported_module) = require_module_specifier.as_deref() {
                 self.check_export_target_is_module(import.module_specifier, imported_module, None);
             }
+
+            // TS2876: rewriteRelativeImportExtensions — specifier looks like a
+            // file name but actually resolves to a directory index file.
+            if let Some(module_name) = require_module_specifier.as_deref() {
+                if self.ctx.compiler_options.rewrite_relative_import_extensions
+                    && !import.is_type_only
+                    && !self.ctx.is_declaration_file()
+                    && super::declaration::should_rewrite_module_specifier(module_name)
+                    && self.resolved_via_directory_index(module_name)
+                {
+                    let resolved_display = self.resolved_file_display_path(module_name);
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let message = format_message(
+                        diagnostic_messages::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+                        &[&resolved_display],
+                    );
+                    // Emit on the string literal (import.module_specifier
+                    // is the StringLiteral for require() imports).
+                    if let Some(node) = self.ctx.arena.get(import.module_specifier) {
+                        self.error_at_position(
+                            node.pos,
+                            node.end.saturating_sub(node.pos),
+                            &message,
+                            diagnostic_codes::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+                        );
+                    }
+                }
+            }
         }
 
         // Get the import alias name (e.g., 'a' in 'import a = M')

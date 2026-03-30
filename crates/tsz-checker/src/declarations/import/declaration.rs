@@ -12,6 +12,17 @@ use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Returns `true` if the module specifier looks like it should be rewritten
+/// by `rewriteRelativeImportExtensions`.
+///
+/// Mirrors tsc's `shouldRewriteModuleSpecifier`: the specifier must be a
+/// relative path with a TypeScript file extension (.ts/.tsx/.mts/.cts) that
+/// is NOT a declaration file (.d.ts/.d.mts/.d.cts).
+pub(crate) fn should_rewrite_module_specifier(specifier: &str) -> bool {
+    (specifier.starts_with("./") || specifier.starts_with("../"))
+        && ts_extension_suffix(specifier).is_some()
+}
+
 /// Returns the TypeScript extension suffix (e.g. `".ts"`, `".tsx"`) if the module path
 /// ends with a TS-specific extension that requires `allowImportingTsExtensions`.
 /// Returns `None` for `.d.ts`/`.d.mts`/`.d.cts` (handled separately by TS2846) and
@@ -706,6 +717,32 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
                 );
+            emitted_extension_diagnostic = true;
+        }
+
+        // TS2876: rewriteRelativeImportExtensions — specifier looks like a file name
+        // (e.g. `./foo.ts`) but actually resolves to a directory index file
+        // (e.g. `./foo.ts/index.ts`), making extension rewriting unsafe.
+        // tsc checks `!resolvedModule.resolvedUsingTsExtension && shouldRewrite`.
+        if !emitted_extension_diagnostic
+            && self.ctx.compiler_options.rewrite_relative_import_extensions
+            && !is_type_only_import
+            && !self.ctx.is_declaration_file()
+            && should_rewrite_module_specifier(module_name)
+            && self.resolved_via_directory_index(module_name)
+        {
+            let resolved_display = self.resolved_file_display_path(module_name);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+                &[&resolved_display],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+            );
             emitted_extension_diagnostic = true;
         }
 
@@ -1811,6 +1848,64 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Returns `true` if `specifier` resolves via directory-index probing rather
+    /// than direct TS-extension file matching.
+    ///
+    /// This mirrors tsc's `!resolvedModule.resolvedUsingTsExtension`:
+    /// if the specifier is `./foo.ts` but the resolved file is
+    /// `foo.ts/index.ts`, the TS extension in the specifier was NOT used to
+    /// find the file — directory probing found it instead.
+    pub(crate) fn resolved_via_directory_index(&self, specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return false;
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return false;
+        };
+        let Some(sf) = target_arena.source_files.first() else {
+            return false;
+        };
+        // Extract the filename portion from the specifier (e.g., "foo.ts" from "./foo.ts").
+        let spec_file = specifier
+            .rsplit_once('/')
+            .map_or(specifier, |(_, file)| file);
+        // Extract the filename portion from the resolved path.
+        let resolved_file = sf
+            .file_name
+            .rsplit_once('/')
+            .map_or(sf.file_name.as_str(), |(_, file)| file);
+        // If the resolved file's basename differs from the specifier's basename,
+        // the resolution went through directory probing (e.g., resolved to index.ts).
+        resolved_file != spec_file
+    }
+
+    /// Returns a relative display path for the resolved target of `specifier`,
+    /// suitable for the TS2876 diagnostic message argument.
+    pub(crate) fn resolved_file_display_path(&self, specifier: &str) -> String {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return specifier.to_string();
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return specifier.to_string();
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return specifier.to_string();
+        };
+        let Some(sf) = target_arena.source_files.first() else {
+            return specifier.to_string();
+        };
+        // Return a relative path with "./" prefix, matching tsc's output format.
+        let resolved = &sf.file_name;
+        if resolved.starts_with("./") || resolved.starts_with("../") {
+            resolved.clone()
+        } else {
+            format!("./{resolved}")
         }
     }
 }
