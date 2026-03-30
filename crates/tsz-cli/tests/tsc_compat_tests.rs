@@ -326,6 +326,69 @@ fn tsc_compat_multiple_cannot_find_name_plain() {
 }
 
 #[test]
+fn unresolved_callee_callback_still_reports_implicit_any() {
+    let temp = TempDir::new("unresolved_callee_callback_implicit_any").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "// @noImplicitAny: true\nconst result = fooBarBaz([], error => error);\nresult;\n",
+    );
+
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
+
+    assert!(
+        tsz_out.contains("TS2304"),
+        "expected unresolved callee diagnostic, got:\n{tsz_out}"
+    );
+    assert!(
+        tsz_out.contains("TS7006"),
+        "expected callback implicit-any diagnostic to survive unresolved callee fallback, got:\n{tsz_out}"
+    );
+}
+
+#[test]
+fn errored_initializer_receiver_call_still_reports_implicit_any() {
+    let temp = TempDir::new("errored_initializer_receiver_call_implicit_any").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "// @noImplicitAny: true\nconst children = foo.bar();\nchildren.foreach((item) => item);\n",
+    );
+
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
+
+    assert!(
+        tsz_out.contains("TS2304"),
+        "expected unresolved receiver diagnostic, got:\n{tsz_out}"
+    );
+    assert!(
+        tsz_out.contains("TS7006"),
+        "expected callback implicit-any diagnostic to survive errored initializer flow, got:\n{tsz_out}"
+    );
+}
+
+#[test]
+fn definite_assignment_error_keeps_callback_context() {
+    let temp = TempDir::new("definite_assignment_keeps_callback_context").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "class Observable<T> { map<U>(proj: (e: T) => U): Observable<U> { return null as any; } }\nlet x: Observable<number>;\nlet y = x.map(x => x + 1);\n",
+    );
+
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
+
+    assert!(
+        tsz_out.contains("TS2454"),
+        "expected definite-assignment diagnostic, got:\n{tsz_out}"
+    );
+    assert!(
+        !tsz_out.contains("TS7006"),
+        "did not expect callback implicit-any diagnostic when contextual type is still known, got:\n{tsz_out}"
+    );
+}
+
+#[test]
 fn tsc_compat_multiple_cannot_find_name_pretty() {
     if !tsc_available() {
         return;

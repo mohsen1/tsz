@@ -3381,6 +3381,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn emit_js_class_like_heuristic_if_needed(
+        &mut self,
+        _decl_name: NodeIndex,
+        _is_exported: bool,
+    ) -> bool {
+        // Keep the new call site from breaking builds while preserving the
+        // existing declaration-emission fallback path.
+        false
+    }
+
     fn emit_js_object_literal_namespace_if_possible(
         &mut self,
         decl_name: NodeIndex,
