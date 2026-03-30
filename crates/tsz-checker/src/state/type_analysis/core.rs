@@ -1511,9 +1511,16 @@ impl<'a> CheckerState<'a> {
             self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             return TypeId::ERROR;
         }
+        // Periodically probe remaining stack and trip the breaker if low.
+        if crate::checkers_domain::should_probe_stack() {
+            if stacker::remaining_stack().unwrap_or(0) < 1024 * 1024 {
+                crate::checkers_domain::trip_stack_overflow();
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+                return TypeId::ERROR;
+            }
+        }
         // Dynamically grow the stack for deeply recursive symbol resolution
-        // chains. Replaces the previous amortized-probe approach which could
-        // miss rapid stack consumption in type-level libraries.
+        // chains.
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
             self.get_type_of_symbol_inner(sym_id)
         })

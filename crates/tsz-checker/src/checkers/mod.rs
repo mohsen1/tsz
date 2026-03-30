@@ -33,7 +33,7 @@ thread_local! {
 }
 
 const STACK_TRIPPED_BIT: u16 = 0x8000;
-const STACK_COUNTER_MASK: u16 = 0x3F; // 64-element cycle
+const STACK_COUNTER_MASK: u16 = 0x0F; // 16-element cycle (probe every 16th call)
 
 /// Returns `true` if the stack overflow breaker has been tripped.
 #[inline]
