@@ -122,6 +122,7 @@ pub(crate) struct JsdocParamDecl {
 }
 
 /// Lightweight `TypeResolver` backed by `TypeCacheView` data for DTS emit.
+#[allow(dead_code)]
 pub(crate) struct DtsCacheResolver<'a> {
     pub(crate) cache: &'a crate::type_cache_view::TypeCacheView,
 }
