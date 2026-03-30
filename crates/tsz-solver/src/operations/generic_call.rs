@@ -1292,13 +1292,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         };
                     }
                     if track_direct_placeholder_vars
-                        && !matches!(
-                            self.interner.lookup(target_type),
-                            Some(TypeData::Union(_) | TypeData::Intersection(_))
-                        )
+                        && let Some(direct_target) =
+                            self.direct_inference_tracking_target(target_type)
                     {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                            target_type,
+                            direct_target,
                             &var_map,
                             &mut placeholder_probe_map,
                             &mut placeholder_visited,
@@ -1315,13 +1313,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // T appears bare in multiple parameters (e.g., `f<T>(a: T, b: T)`) and
                     // heterogeneous arguments produce conflicting candidates.
                     if track_direct_placeholder_vars
-                        && !matches!(
-                            self.interner.lookup(contextual_target_type),
-                            Some(TypeData::Union(_) | TypeData::Intersection(_))
-                        )
+                        && let Some(direct_target) =
+                            self.direct_inference_tracking_target(contextual_target_type)
                     {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                            target_type,
+                            direct_target,
                             &var_map,
                             &mut placeholder_probe_map,
                             &mut placeholder_visited,
@@ -1368,13 +1364,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // first-wins behavior applies for incompatible candidates.
                 // This also applies to rest parameters: `foo<T>(...s: T[])` with
                 // heterogeneous args uses first-wins to match tsc behavior.
-                let is_union_or_intersection = matches!(
-                    self.interner.lookup(target_type),
-                    Some(TypeData::Union(_) | TypeData::Intersection(_))
-                );
-                if !is_union_or_intersection {
+                if let Some(direct_target) = self.direct_inference_tracking_target(target_type) {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                        target_type,
+                        direct_target,
                         &var_map,
                         &mut placeholder_probe_map,
                         &mut placeholder_visited,
@@ -1649,13 +1641,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .and_then(|params| self.param_type_for_arg_index(params, i, arg_types.len()));
 
                 if original_has_placeholders
-                    && !matches!(
-                        self.interner.lookup(target_type),
-                        Some(TypeData::Union(_) | TypeData::Intersection(_))
-                    )
+                    && let Some(direct_target) = self.direct_inference_tracking_target(target_type)
                 {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                        target_type,
+                        direct_target,
                         &var_map,
                         &mut placeholder_probe_map,
                         &mut placeholder_visited,
@@ -2804,6 +2793,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         result
+    }
+
+    fn direct_inference_tracking_target(&self, ty: TypeId) -> Option<TypeId> {
+        match self.interner.lookup(ty) {
+            Some(TypeData::Union(members)) => {
+                let non_nullish: Vec<TypeId> = self
+                    .interner
+                    .type_list(members)
+                    .iter()
+                    .copied()
+                    .filter(|member| !member.is_nullable())
+                    .collect();
+                if non_nullish.len() == 1 {
+                    self.direct_inference_tracking_target(non_nullish[0])
+                } else {
+                    None
+                }
+            }
+            Some(TypeData::Intersection(_)) => None,
+            _ => Some(ty),
+        }
     }
 
     fn should_skip_contextual_arg_in_round1(&self, arg_type: TypeId) -> bool {

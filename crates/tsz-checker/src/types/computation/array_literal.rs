@@ -695,6 +695,7 @@ impl<'a> CheckerState<'a> {
         if let Some(context_element_type) = context_element_type
             && context_element_type != TypeId::UNKNOWN
             && context_element_type != TypeId::NEVER
+            && !self.ctx.preserve_literal_types
         {
             let context_requires_assignability_overrides = {
                 let resolved = self.resolve_ref_type(context_element_type);
@@ -732,6 +733,12 @@ impl<'a> CheckerState<'a> {
                 // Check excess properties on each element before collapsing to contextual type.
                 // Fresh object literal types would be lost after returning Array<ContextualType>,
                 // so we must check excess properties here while the fresh types are still available.
+                //
+                // Skip this collapse while generic call/new inference is preserving literals.
+                // In those paths, the actual element tuple types are evidence for overload
+                // selection and type parameter inference. Normalizing `[["", true], ["", 0]]`
+                // to `Array<readonly [K, V]>` too early hides the heterogeneous entry types
+                // that tsc uses to reject `new Map(...)` with TS2769.
                 for (elem_type, elem_node) in element_types.iter().zip(element_nodes.iter()) {
                     self.check_object_literal_excess_properties(
                         *elem_type,
