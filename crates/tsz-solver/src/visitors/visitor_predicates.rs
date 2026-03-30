@@ -521,6 +521,54 @@ pub fn contains_type_parameter_named(
     )
 }
 
+/// Check if a type contains a type parameter with the given name, WITHOUT
+/// walking into other type parameters' constraints.
+///
+/// Unlike `contains_type_parameter_named`, this does not descend into
+/// `TypeParameter.constraint` or `TypeParameter.default`. This is important
+/// for mapped type circular-constraint detection: in `{ [K in keyof T]: T[K] }`,
+/// `K`'s constraint is `keyof T`. The deep check would walk into `T`'s own
+/// constraint (which may contain `K`), falsely reporting a cycle.
+pub fn contains_type_parameter_named_shallow(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: Atom,
+) -> bool {
+    use rustc_hash::FxHashSet;
+
+    let mut visited = FxHashSet::default();
+    let mut stack = vec![type_id];
+
+    while let Some(current) = stack.pop() {
+        if current.is_intrinsic() || !visited.insert(current) {
+            continue;
+        }
+
+        let Some(data) = types.lookup(current) else {
+            continue;
+        };
+
+        // Check predicate
+        if matches!(&data, TypeData::TypeParameter(info) if info.name == name) {
+            return true;
+        }
+
+        // Visit children but skip TypeParameter/Infer constraints/defaults.
+        // For TypeParameter/Infer, we only care about identity (name match),
+        // not what their constraints contain.
+        if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+            continue;
+        }
+        // For all other types, use the generic child visitor.
+        super::visitor::for_each_child_by_id(types, current, |child| {
+            if !visited.contains(&child) {
+                stack.push(child);
+            }
+        });
+    }
+    false
+}
+
 /// Check if a type transitively references any type parameter whose name
 /// is in the given set.
 ///
