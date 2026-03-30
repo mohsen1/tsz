@@ -2774,3 +2774,39 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
         "Expected TS2322 for indexed access on intersection with unconstrained type parameter. Actual diagnostics: {diagnostics:?}"
     );
 }
+
+/// Regression test: arrays should NOT be assignable to interfaces that extend
+/// ReadonlyArray/Array but have additional required properties.
+///
+/// In TypeScript, `TemplateStringsArray` extends `ReadonlyArray<string>` with
+/// `readonly raw: readonly string[]`. An empty array `[]` (type `never[]`) lacks
+/// the `raw` property, so `var x: TemplateStringsArray = []` should produce TS2322.
+///
+/// This was previously incorrectly accepted because the array-to-interface subtype
+/// shortcut (`check_array_interface_subtype`) checked only `Array<T> <: target`
+/// without verifying the target's extra declared properties.
+#[test]
+fn test_ts2322_array_not_assignable_to_interface_extending_array_with_extra_props() {
+    let source = r#"
+        interface ArrayWithExtra extends ReadonlyArray<string> {
+            readonly raw: readonly string[];
+        }
+        var x: string[] = [];
+        var y: ArrayWithExtra = x;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let assignability_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE  // TS2322
+                || d.code == 2741  // TS2741: Property 'X' is missing
+                || d.code == 2739 // TS2739: Type 'X' is missing properties
+        })
+        .collect();
+    assert!(
+        !assignability_errors.is_empty(),
+        "Expected TS2322/TS2741/TS2739 when assigning string[] to interface extending ReadonlyArray with extra properties. All diagnostics: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
