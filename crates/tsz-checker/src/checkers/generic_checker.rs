@@ -1619,6 +1619,11 @@ impl<'a> CheckerState<'a> {
                 // so structurally it's equivalent to `{}` for constraint purposes.
                 // Skip the full assignability check in this case to avoid false TS2344
                 // for primitives like `bigint` and `number`.
+                // When the constraint is an object type with ONLY optional properties
+                // (a "weak type" like `{t?: string}`), primitive types always satisfy
+                // it in tsc (e.g., `bigint extends {t?: string}` is valid). However,
+                // non-primitive types that share no common properties should still fail
+                // with TS2559 ("Type has no properties in common").
                 let constraint_is_all_optional = {
                     let db = self.ctx.types.as_type_database();
                     if let Some(shape_id) = tsz_solver::object_shape_id(db, instantiated_constraint)
@@ -1632,7 +1637,12 @@ impl<'a> CheckerState<'a> {
                         false
                     }
                 };
-                let mut is_satisfied = constraint_is_all_optional
+                // Only skip for primitives: they always satisfy weak type constraints.
+                // Non-primitive types must still go through assignability to detect
+                // TS2559 (no common properties).
+                let primitive_satisfies_weak = constraint_is_all_optional
+                    && query::is_primitive_type(self.ctx.types.as_type_database(), type_arg);
+                let mut is_satisfied = primitive_satisfies_weak
                     || self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint);
 
                 // Fallback for recursive generic constraints (coinductive semantics).
