@@ -3235,14 +3235,6 @@ impl<'a> DeclarationEmitter<'a> {
 
                 if regular_decls.len() == 1 {
                     let (is_exported, decl_idx, _decl_node, decl) = regular_decls[0];
-                    if self.emit_js_class_like_heuristic_if_needed(decl.name, is_exported) {
-                        if let Some(dn) = self.arena.get(decl_idx) {
-                            let skip_end =
-                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
-                            self.skip_comments_in_node(dn.pos, skip_end);
-                        }
-                        continue;
-                    }
                     if self.emit_js_object_literal_namespace_if_possible(
                         decl.name,
                         decl.initializer,
