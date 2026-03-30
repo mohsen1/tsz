@@ -6319,6 +6319,26 @@ impl<'a> DeclarationEmitter<'a> {
                 let callee_type = self
                     .get_node_type_or_names(&[call.expression])
                     .or_else(|| self.get_type_via_symbol(call.expression))?;
+                // Guard: do not use the un-instantiated return type of a
+                // generic function/callable.  Free type variables cannot be
+                // resolved without inference from the checker.
+                match interner.lookup(callee_type) {
+                    Some(tsz_solver::types::TypeData::Function(sid))
+                        if !interner.function_shape(sid).type_params.is_empty() =>
+                    {
+                        return None;
+                    }
+                    Some(tsz_solver::types::TypeData::Callable(sid))
+                        if interner
+                            .callable_shape(sid)
+                            .call_signatures
+                            .iter()
+                            .any(|s| !s.type_params.is_empty()) =>
+                    {
+                        return None;
+                    }
+                    _ => {}
+                }
                 tsz_solver::type_queries::get_return_type(interner, callee_type)
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
