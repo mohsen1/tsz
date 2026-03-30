@@ -230,6 +230,13 @@ impl<'a> CheckerState<'a> {
                     });
                 if let Some(sym_id) = fast_symbol {
                     self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+                    // The fast path bypasses get_type_of_identifier which
+                    // normally performs TDZ checking. We must check here so
+                    // that `new C()` before `class C {}` still emits TS2449.
+                    if self.check_tdz_violation(sym_id, new_expr.expression, identifier_text, false)
+                    {
+                        return TypeId::ERROR;
+                    }
                     self.get_type_of_symbol(sym_id)
                 } else {
                     self.get_type_of_node_with_request(new_expr.expression, &read_request)
