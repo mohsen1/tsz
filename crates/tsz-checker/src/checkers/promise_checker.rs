@@ -1288,10 +1288,61 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // Always perform the assignability check for custom types that extend
-        // generator-like interfaces. Even interfaces with no own body members
-        // can be incompatible with Generator<> when they have conflicting
-        // heritage clauses (e.g., `BadGenerator extends Iterator<number>, Iterable<string> {}`).
+        // Skip the check for interfaces that extend a single generator-like type
+        // and have no own body members. Such interfaces are trivially satisfied by
+        // Generator<>. But when the interface has MULTIPLE heritage clauses that
+        // could conflict (e.g., `BadGenerator extends Iterator<number>, Iterable<string> {}`),
+        // we must still check because Generator<> may not satisfy the combined requirements.
+        if self
+            .get_generator_return_type_argument(declared_return_type)
+            .is_some()
+        {
+            let def_id =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, declared_return_type);
+            let sym_id = def_id.and_then(|d| self.ctx.def_to_symbol_id(d));
+            let should_skip = sym_id
+                .and_then(|s| {
+                    let symbol = self.get_symbol_globally(s)?;
+                    let declarations = symbol.declarations.clone();
+                    Some(declarations.iter().all(|decl_idx| {
+                        self.ctx
+                            .arena
+                            .get(*decl_idx)
+                            .and_then(|node| self.ctx.arena.get_interface(node))
+                            .is_some_and(|iface| {
+                                // Skip only if the interface has no own body members AND
+                                // extends at most one type (no conflicting heritage).
+                                // E.g., `extends Iterator<0, 1, 2>` (1 type) is safe to skip,
+                                // but `extends Iterator<number>, Iterable<string>` (2 types) is not.
+                                let has_own_members = !iface.members.nodes.is_empty();
+                                let extends_type_count: usize = iface
+                                    .heritage_clauses
+                                    .as_ref()
+                                    .map(|clauses| {
+                                        clauses
+                                            .nodes
+                                            .iter()
+                                            .filter_map(|&clause_idx| {
+                                                self.ctx
+                                                    .arena
+                                                    .get(clause_idx)
+                                                    .and_then(|n| {
+                                                        self.ctx.arena.get_heritage_clause(n)
+                                                    })
+                                                    .map(|h| h.types.nodes.len())
+                                            })
+                                            .sum()
+                                    })
+                                    .unwrap_or(0);
+                                !has_own_members && extends_type_count <= 1
+                            })
+                    }))
+                })
+                .unwrap_or(false);
+            if should_skip {
+                return;
+            }
+        }
         let gen_name = if is_async {
             "AsyncGenerator"
         } else {
