@@ -904,10 +904,9 @@ impl DefinitionStore {
             if entry.kind == DefKind::TypeAlias
                 && entry.type_params.is_empty()
                 && !params.is_empty()
+                && let Some(body) = entry.body
             {
-                if let Some(body) = entry.body {
-                    self.body_to_alias.remove(&body);
-                }
+                self.body_to_alias.remove(&body);
             }
             entry.type_params = params;
         }

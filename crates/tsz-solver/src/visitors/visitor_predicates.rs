@@ -891,6 +891,7 @@ impl<'a> FreeInferChecker<'a> {
 // into type parameter constraints/defaults (prevents false circularity detection)
 // =============================================================================
 
+#[allow(dead_code)]
 struct ShallowContainsTypeChecker<'a> {
     types: &'a dyn TypeDatabase,
     name: Atom,
@@ -898,6 +899,7 @@ struct ShallowContainsTypeChecker<'a> {
     guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
+#[allow(dead_code)]
 impl<'a> ShallowContainsTypeChecker<'a> {
     fn check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {

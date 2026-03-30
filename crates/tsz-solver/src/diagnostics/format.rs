@@ -1085,7 +1085,9 @@ impl<'a> TypeFormatter<'a> {
                         && !rendered.starts_with("new ")
                         && !rendered.starts_with("abstract new ")
                 }),
-            Some(TypeData::Lazy(_)) => Some(self.format(type_id).into_owned()),
+            Some(TypeData::Lazy(_) | TypeData::TypeQuery(_)) => {
+                Some(self.format(type_id).into_owned())
+            }
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 match self.interner.lookup(app.base) {
@@ -1095,7 +1097,6 @@ impl<'a> TypeFormatter<'a> {
                     _ => None,
                 }
             }
-            Some(TypeData::TypeQuery(_)) => Some(self.format(type_id).into_owned()),
             _ => None,
         }
     }
