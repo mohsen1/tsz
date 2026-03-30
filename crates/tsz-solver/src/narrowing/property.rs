@@ -187,8 +187,16 @@ impl<'a> NarrowingContext<'a> {
                 .collect();
 
             if matching_non_never.is_empty() {
-                trace!("All members were NEVER, returning NEVER");
-                return TypeId::NEVER;
+                // When NO union member has the property, TypeScript narrows to
+                // `Union & Record<prop, unknown>` instead of `never`.
+                // This matches TSC behavior: if the type could structurally have the
+                // property at runtime (it passed the `in` operator check), we create
+                // an intersection rather than discarding the type entirely.
+                trace!(
+                    "No members have property, creating intersection with Record<prop, unknown>"
+                );
+                let record_type = self.make_record_type(property_name);
+                return self.db.intersection2(source_type, record_type);
             } else if matching_non_never.len() == 1 {
                 trace!(
                     "Found single member after filtering, returning {}",
@@ -225,10 +233,15 @@ impl<'a> NarrowingContext<'a> {
                 let filter_obj = self.db.object(vec![required_prop]);
                 self.db.intersection2(source_type, filter_obj)
             } else {
-                // Property not found: Narrow to never
-                // Per TypeScript: "prop in x" being true means x MUST have the property
-                // If x doesn't have it (and no index signature), narrow to never
-                TypeId::NEVER
+                // Property not found on a non-union type.
+                // TypeScript narrows to `source_type & Record<prop, unknown>` for
+                // object-like types (which is any type that can be a valid RHS of `in`).
+                // This handles cases like `"a" in x` where `x: object` or `x: { b: string }`.
+                trace!(
+                    "Property not found on non-union type, creating intersection with Record<prop, unknown>"
+                );
+                let record_type = self.make_record_type(property_name);
+                self.db.intersection2(source_type, record_type)
             }
         } else {
             // Negative: !("prop" in x)
@@ -239,6 +252,27 @@ impl<'a> NarrowingContext<'a> {
             // Keep source_type (no required property found, or property is optional)
             source_type
         }
+    }
+
+    /// Create a `Record<prop, unknown>` type: `{ [prop]: unknown }`.
+    ///
+    /// Used for `in` operator narrowing when the property doesn't exist on the
+    /// source type. TypeScript narrows to `source & Record<prop, unknown>` to
+    /// indicate the type must have the property after the check.
+    fn make_record_type(&self, property_name: Atom) -> TypeId {
+        let required_prop = PropertyInfo {
+            name: property_name,
+            type_id: TypeId::UNKNOWN,
+            write_type: TypeId::UNKNOWN,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        };
+        self.db.object(vec![required_prop])
     }
 
     /// Check if a type has a specific property.
