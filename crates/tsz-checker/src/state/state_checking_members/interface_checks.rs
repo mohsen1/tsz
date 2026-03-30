@@ -115,10 +115,38 @@ impl<'a> CheckerState<'a> {
             // TS1268: Check index signature parameter types
             self.check_index_signature_parameter_type(member_idx);
             // TS1169: Computed property in interface must have literal/unique symbol type
-            if let Some(member_node) = self.ctx.arena.get(member_idx)
-                && let Some(sig) = self.ctx.arena.get_signature(member_node)
-            {
-                self.check_interface_computed_property_name(sig.name);
+            if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    self.check_interface_computed_property_name(sig.name);
+                }
+                // TS2344: Eagerly resolve set accessor parameter type annotations.
+                // tsc checks all type annotations during declaration checking, even
+                // when the setter is never observed. Without this, type references
+                // like `Fail<string>` in `set x(value: Fail<string>)` (where
+                // `type Fail<T extends never> = T`) would never trigger constraint
+                // validation because the getter returns early in type computation
+                // and the setter parameter type is never resolved.
+                if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                        for &param_idx in &accessor.parameters.nodes {
+                            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                                && param.type_annotation.is_some()
+                            {
+                                self.get_type_from_type_node(param.type_annotation);
+                            }
+                        }
+                    }
+                }
+                // Also resolve get accessor return type annotations for the same
+                // reason: constraint validation on type references in return types.
+                if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                        && accessor.type_annotation.is_some()
+                    {
+                        self.get_type_from_type_node(accessor.type_annotation);
+                    }
+                }
             }
             // TS2502 + TS2615: Check if property type annotation circularly
             // references itself through a mapped type applied to the enclosing interface.
