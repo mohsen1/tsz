@@ -1622,17 +1622,20 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Fallback: if assignability failed but the constraint is the Function
-                // interface and the type argument is callable, accept it. This handles
-                // the case where Function has multiple TypeIds that aren't recognized
-                // as equivalent during assignability checking (RefCell borrow conflict
-                // prevents boxed type lookup during type evaluation).
+                // interface and the type argument has call signatures, accept it.
+                // This handles the case where Function has multiple TypeIds that
+                // aren't recognized as equivalent during assignability checking.
+                // IMPORTANT: Use has_call_signatures (not is_callable_type) to reject
+                // class constructor types that only have construct signatures.
+                // E.g., `Parameters<typeof MyClass>` should emit TS2344 because
+                // `typeof MyClass` has construct signatures but no call signatures.
                 if !is_satisfied {
                     // Check original (pre-resolution) constraint which may still be
                     // Lazy(DefId), making it easier to identify via boxed DefId lookup.
                     let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
                     let db = self.ctx.types.as_type_database();
                     is_satisfied = self.is_function_constraint(original_constraint)
-                        && query::is_callable_type(db, type_arg);
+                        && query::has_call_signatures(db, type_arg);
                 }
                 if !is_satisfied {
                     is_satisfied =

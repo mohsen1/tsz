@@ -1288,3 +1288,45 @@ var r = null + 1;
         "Expected TS18050 for literal `null` in binary op, got {ts18050_count}"
     );
 }
+
+#[test]
+fn test_parameters_of_class_constructor_emits_ts2344() {
+    // `MyParams<typeof C>` should emit TS2344 because class constructor types
+    // have construct signatures (new ...) but not call signatures (...args => ...).
+    // The constraint `T extends (...args: any) => any` only accepts types with
+    // call signatures, not construct-only types.
+    let source = r#"
+type MyParams<T extends (...args: any) => any> = T extends (...args: infer P) => any ? P : never;
+class C {
+    constructor(a: number, b: string) {}
+}
+type Cps = MyParams<typeof C>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2344_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2344)
+        .count();
+    assert!(
+        ts2344_count >= 1,
+        "Expected TS2344 for MyParams<typeof C> (class has no call signatures), got {ts2344_count}. Diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
