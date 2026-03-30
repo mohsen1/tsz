@@ -25,6 +25,78 @@ use super::call_result::CallResultContext;
 use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
+    fn callee_suppresses_contextual_any(
+        &self,
+        callee_idx: NodeIndex,
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let callee_idx = self.ctx.arena.skip_parenthesized_and_assertions(callee_idx);
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return false;
+        };
+
+        let is_simple_error_path = matches!(
+            callee_node.kind,
+            k if k == tsz_scanner::SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        );
+        if !is_simple_error_path {
+            return false;
+        }
+
+        let has_callee_side_failure =
+            self.ctx.speculative_diagnostics_since(snap).iter().any(|diag| {
+                diag.start >= callee_node.pos
+                    && diag.start < callee_node.end
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::CANNOT_FIND_NAME
+                            | diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+                            | diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER
+                            | diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
+                            | diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                            | diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN
+                            | diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE
+                            | diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
+                            | diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE
+                            | diagnostic_codes::TYPE_HAS_NO_CALL_SIGNATURES
+                    )
+            });
+
+        has_callee_side_failure || self.property_access_base_is_error_symbol(callee_idx)
+    }
+
+    fn property_access_base_is_error_symbol(&self, callee_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let callee_idx = self.ctx.arena.skip_parenthesized_and_assertions(callee_idx);
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && callee_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let base_expr = self.ctx.arena.skip_parenthesized_and_assertions(access.expression);
+        let Some(base_node) = self.ctx.arena.get(base_expr) else {
+            return false;
+        };
+        if base_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        self.resolve_identifier_symbol(base_expr)
+            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            == Some(TypeId::ERROR)
+    }
+
     fn reemit_namespace_value_error_for_call_callee(&mut self, callee_idx: NodeIndex) {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -138,6 +210,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the callee
+        let callee_diag_snap = self.ctx.snapshot_diagnostics();
         let mut callee_type = if let Some(callee_node) = self.ctx.arena.get(call.expression) {
             if callee_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                 let identifier_text = self
@@ -227,6 +300,8 @@ impl<'a> CheckerState<'a> {
             callee_expr = ?call.expression,
             "Call expression callee type resolved"
         );
+        let callee_missing_value = callee_type == TypeId::ERROR
+            && self.callee_suppresses_contextual_any(call.expression, &callee_diag_snap);
 
         // Check for dynamic import module resolution (TS2307)
         if self.is_dynamic_import(call) {
@@ -349,13 +424,24 @@ impl<'a> CheckerState<'a> {
                     self.get_type_from_type_node(arg_idx);
                 }
             }
-            // Still need to check arguments for definite assignment (TS2454) and other errors.
-            // Return Some(ANY) for every index so spread arguments are accepted (avoids
-            // false TS2556 when the callee couldn't be resolved).
+            // Still need to check arguments for definite assignment (TS2454) and other
+            // errors. When the callee itself failed name/value resolution, avoid
+            // fabricating contextual `any` for callback arguments because that would
+            // suppress real TS7006 diagnostics. Other callee errors still preserve the
+            // historical `any` fallback to avoid broader conformance regressions.
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
-                |_i, _arg_count| Some(TypeId::ANY),
+                |i, _arg_count| {
+                    if !callee_missing_value {
+                        return Some(TypeId::ANY);
+                    }
+                    args.get(i)
+                        .copied()
+                        .and_then(|arg_idx| self.ctx.arena.get(arg_idx))
+                        .filter(|arg_node| arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                        .map(|_| TypeId::ANY)
+                },
                 check_excess_properties,
                 None, // No skipping needed
                 CallableContext::none(),
