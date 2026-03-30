@@ -2071,6 +2071,168 @@ const q: PromiseLike<number> = p;
     }
 
     #[test]
+    fn test_compile_inner_program_reports_ts2851_for_async_iterator_await_using() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"
+declare const ai: AsyncIterator<string, undefined>;
+declare const aio: AsyncIteratorObject<string, undefined, unknown>;
+declare const ag: AsyncGenerator<string, void>;
+
+async function f() {
+    await using it0 = aio;
+    await using it1 = ag;
+    await using it2 = ai;
+}
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_esnext_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        let ts2851_count = diagnostics.iter().filter(|diag| diag.code == 2851).count();
+        assert_eq!(
+            ts2851_count, 1,
+            "Expected one TS2851 for await using AsyncIterator, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_compile_inner_program_reports_ts2456_for_recursive_mapped_type_aliases() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"
+type Recurse = {
+    [K in keyof Recurse]: Recurse[K]
+}
+
+type Recurse1 = {
+    [K in keyof Recurse2]: Recurse2[K]
+}
+
+type Recurse2 = {
+    [K in keyof Recurse1]: Recurse1[K]
+}
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        let ts2456_count = diagnostics.iter().filter(|diag| diag.code == 2456).count();
+        assert_eq!(
+            ts2456_count, 3,
+            "Expected TS2456 for the recursive mapped aliases, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     #[ignore = "pre-existing: remote merge regression"]
     fn test_collect_diagnostics_preserves_invariant_generic_error_elaboration_ts2322() {
         let dir = tempfile::TempDir::new().expect("temp dir");

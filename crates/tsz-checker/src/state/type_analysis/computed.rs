@@ -934,6 +934,8 @@ impl<'a> CheckerState<'a> {
                 // goes through instantiation, so it is structurally wrapped.
                 let generic_self_ref =
                     !params.is_empty() && self.is_simple_type_reference(type_alias.type_node);
+                let is_non_generic_mapped_cycle = params.is_empty()
+                    && self.is_non_generic_mapped_type_circular(sym_id, type_alias.type_node);
                 let is_circular = circularity_eligible
                     && !generic_self_ref
                     && (self.is_direct_circular_reference(
@@ -944,11 +946,7 @@ impl<'a> CheckerState<'a> {
                     ) || self.ctx.circular_type_aliases.contains(&sym_id)
                         || (self.is_simple_type_reference(type_alias.type_node)
                             && self.is_cross_file_circular_alias(sym_id, alias_type))
-                        || (params.is_empty()
-                            && self.is_non_generic_mapped_type_circular(
-                                sym_id,
-                                type_alias.type_node,
-                            )));
+                        || is_non_generic_mapped_cycle);
                 if is_circular && !self.has_parse_errors() {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
@@ -984,14 +982,14 @@ impl<'a> CheckerState<'a> {
                         self.has_parse_errors() || !self.ctx.all_parse_error_positions.is_empty();
                     // Suppress TS2456 when the type alias body provides
                     // structural wrapping (array, tuple, object literal,
-                    // mapped type, function).  Cross-file recursive type
-                    // aliases that go through such wrapping (e.g.,
-                    // `type JsonArray = JsonValue[]`) are valid in TypeScript
-                    // -- the structural wrapper breaks the direct circularity.
-                    // We check the LOCAL type_node AST (which is always in the
-                    // current arena) rather than the resolved type or
-                    // cross-file AST to avoid SymbolId/arena collisions.
-                    let body_is_deferred = self.alias_ast_is_deferred(sym_id);
+                    // function, etc.). That suppression must NOT apply to the
+                    // mapped-type cycle form `type T = { [K in keyof T]: ... }`:
+                    // TypeScript treats the alias reference in the mapped key
+                    // space as a direct circularity and still emits TS2456.
+                    // We check the local AST rather than a resolved type to
+                    // avoid SymbolId/arena collisions during driver-mode runs.
+                    let body_is_deferred =
+                        self.alias_ast_is_deferred(sym_id) && !is_non_generic_mapped_cycle;
                     if !file_has_any_parse_diag && !has_import_partner && !body_is_deferred {
                         let name = escaped_name;
                         let message = format_message(

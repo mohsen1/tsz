@@ -926,8 +926,11 @@ impl<'a> CheckerState<'a> {
                             let generic_self_ref = ta.type_parameters.is_some()
                                 && self.is_simple_type_reference(ta.type_node);
                             // Suppress TS2456 when the type alias body provides
-                            // structural wrapping (cross-file deferred cycles).
-                            let body_is_deferred = self.alias_ast_is_deferred(sym_id);
+                            // structural wrapping (cross-file deferred cycles),
+                            // but keep TS2456 for non-generic mapped-type key
+                            // cycles like `type T = { [K in keyof T]: ... }`.
+                            let body_is_deferred = self.alias_ast_is_deferred(sym_id)
+                                && !self.is_non_generic_mapped_type_circular(sym_id, ta.type_node);
                             if name_matches
                                 && !has_parse_error_tp
                                 && !has_import_partner

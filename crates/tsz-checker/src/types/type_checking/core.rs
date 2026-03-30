@@ -1521,6 +1521,23 @@ impl<'a> CheckerState<'a> {
     /// For `using`: checks for `[Symbol.dispose]()`
     /// For `await using`: checks for `[Symbol.asyncDispose]()` or `[Symbol.dispose]()`
     fn type_has_disposable_method(&mut self, type_id: TypeId, is_await_using: bool) -> bool {
+        fn has_property(
+            state: &mut CheckerState<'_>,
+            type_id: TypeId,
+            property_names: &[&str],
+        ) -> bool {
+            property_names.iter().any(|property_name| {
+                matches!(
+                    state.resolve_property_access_with_env(type_id, property_name),
+                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                        | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: Some(_),
+                            ..
+                        }
+                )
+            })
+        }
+
         // Check intrinsic types
         if type_id == TypeId::ANY
             || type_id == TypeId::UNKNOWN
@@ -1537,19 +1554,11 @@ impl<'a> CheckerState<'a> {
 
         // Only check for dispose methods if Symbol.dispose is available in the current environment
         // Check by looking for the dispose property on SymbolConstructor
-        let symbol_type = if let Some(sym_id) = self.ctx.binder.file_locals.get("Symbol") {
-            self.get_type_of_symbol(sym_id)
-        } else {
-            TypeId::ERROR
-        };
+        let symbol_type = self.type_of_value_symbol_by_name("Symbol");
 
-        let symbol_has_dispose = self.object_has_property(symbol_type, "dispose")
-            || self.object_has_property(symbol_type, "[Symbol.dispose]")
-            || self.object_has_property(symbol_type, "Symbol.dispose");
+        let symbol_has_dispose = has_property(self, symbol_type, &["dispose"]);
 
-        let symbol_has_async_dispose = self.object_has_property(symbol_type, "asyncDispose")
-            || self.object_has_property(symbol_type, "[Symbol.asyncDispose]")
-            || self.object_has_property(symbol_type, "Symbol.asyncDispose");
+        let symbol_has_async_dispose = has_property(self, symbol_type, &["asyncDispose"]);
 
         // For await using, we need either Symbol.asyncDispose or Symbol.dispose
         if is_await_using && !symbol_has_async_dispose && !symbol_has_dispose {
@@ -1566,15 +1575,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for the dispose method on the object type
-        // Try both "[Symbol.dispose]" and "Symbol.dispose" formats
-        let has_dispose = self.object_has_property(type_id, "[Symbol.dispose]")
-            || self.object_has_property(type_id, "Symbol.dispose");
+        let has_dispose = has_property(self, type_id, &["[Symbol.dispose]", "Symbol.dispose"]);
 
         if is_await_using {
             // await using accepts either Symbol.asyncDispose or Symbol.dispose
             return has_dispose
-                || self.object_has_property(type_id, "[Symbol.asyncDispose]")
-                || self.object_has_property(type_id, "Symbol.asyncDispose");
+                || has_property(self, type_id, &["[Symbol.asyncDispose]", "Symbol.asyncDispose"]);
         }
 
         has_dispose
