@@ -2188,6 +2188,7 @@ impl<'a> CheckerState<'a> {
             let mut has_class = false;
             let mut has_function = false;
             let mut value_count = 0;
+            let mut function_value_count = 0;
             let mut function_name: Option<String> = None;
 
             for &export_idx in &export_default_indices {
@@ -2216,12 +2217,14 @@ impl<'a> CheckerState<'a> {
                             (None, Some(n)) if !n.is_empty() => {
                                 function_name = Some(n);
                                 value_count += 1;
+                                function_value_count += 1;
                             }
                             (Some(existing), Some(n)) if !n.is_empty() && *existing == n => {
                                 // Same non-empty function name: overload, don't count again
                             }
                             _ => {
                                 value_count += 1;
+                                function_value_count += 1;
                             }
                         }
                     }
@@ -2359,13 +2362,18 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                } else if has_interface && has_function && value_count <= 1 {
-                    // Interface + multiple conflicting function default exports (no other values):
+                } else if has_interface
+                    && has_function
+                    && !has_class
+                    && value_count == function_value_count
+                {
+                    // Interface + function default exports (all values are functions):
                     // TS2323 for all declarations. Note: a single function + interface
                     // is allowed (declaration merging), but that case is excluded by
                     // is_conflict requiring value_count > 1.
-                    // When additional value exports exist (e.g., identifier references to
-                    // classes), tsc uses TS2528 instead, so we fall through to the else.
+                    // When additional non-function value exports exist (e.g., identifier
+                    // references to classes), tsc uses TS2528 instead, so we fall through
+                    // to the else.
                     for &export_idx in &export_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
