@@ -384,7 +384,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Routes through the environment capability boundary (`check_feature_gate`)
     /// to determine whether a diagnostic should be emitted.
-    pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
+    pub(crate) fn check_import_attributes_module_option(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
         if attributes_idx.is_none() {
             return;
         }
@@ -395,6 +399,7 @@ impl<'a> CheckerState<'a> {
             .capabilities
             .check_feature_gate(FeatureGate::ImportAttributes)
             .is_some()
+            && !self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only)
             && let Some(attr_node) = self.ctx.arena.get(attributes_idx)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -523,6 +528,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let is_type_only_import = self
+            .ctx
+            .arena
+            .get(import.import_clause)
+            .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
+            .is_some_and(|clause| clause.is_type_only);
+
         // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
         // statement has parse errors. Matches TSC: syntax errors take priority.
         use tsz_parser::parser::node_flags;
@@ -554,7 +566,7 @@ impl<'a> CheckerState<'a> {
 
         if !has_parse_errors {
             // TS2823: Import attributes require specific module options
-            self.check_import_attributes_module_option(import.attributes);
+            self.check_import_attributes_module_option(import.attributes, is_type_only_import);
 
             // TS2322: Check import attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(import.attributes);
@@ -601,13 +613,6 @@ impl<'a> CheckerState<'a> {
         let is_side_effect_import = !has_import_clause;
         // Note: side-effect imports may return early in the resolution error check below
         // when no_unchecked_side_effect_imports=false (silently ignoring unresolved modules).
-        let is_type_only_import = self
-            .ctx
-            .arena
-            .get(import_clause_idx)
-            .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
-            .is_some_and(|clause| clause.is_type_only);
-
         if !is_type_only_import && let Some(suggested) = imported_types_package_target(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -1157,8 +1162,18 @@ impl<'a> CheckerState<'a> {
         &self,
         module_name: &str,
         import_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> bool {
-        if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+        let target_idx = if let Some(mode) = resolution_mode {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                Some(mode),
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+        if let Some(target_idx) = target_idx {
             let mut visited = rustc_hash::FxHashSet::default();
             return self.resolve_import_in_file(target_idx, import_name, &mut visited);
         }

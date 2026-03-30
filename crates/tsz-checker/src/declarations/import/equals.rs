@@ -289,7 +289,7 @@ impl<'a> CheckerState<'a> {
             // correctly handles both same-file and cross-file cycles with
             // proper deduplication. Only check_export_target_is_module here.
             if let Some(imported_module) = require_module_specifier.as_deref() {
-                self.check_export_target_is_module(import.module_specifier, imported_module);
+                self.check_export_target_is_module(import.module_specifier, imported_module, None);
             }
         }
 
