@@ -689,7 +689,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
 }
 
 #[test]
-fn test_prepare_test_dir_implicit_include_excludes_module_js_entry_extensions() {
+fn test_prepare_test_dir_implicit_include_includes_module_extensions() {
     let filenames = vec![
         ("/index.js".to_string(), "export {};".to_string()),
         ("/index.mjs".to_string(), "export {};".to_string()),
@@ -707,24 +707,21 @@ fn test_prepare_test_dir_implicit_include_excludes_module_js_entry_extensions() 
     let include = parsed["include"].as_array().expect("include array");
     let include_values: Vec<_> = include.iter().filter_map(|v| v.as_str()).collect();
 
-    // Match TSC's default include patterns: *.ts, *.tsx, *.js, *.jsx
-    // TSC does NOT include .mjs/.cjs/.mts/.cts — those are discovered through
-    // import-following, not include patterns.
+    // tsc's default include is `["**/*"]` which matches all supported extensions.
+    // Our explicit patterns must cover .mts/.cts/.mjs/.cjs to match tsc behavior.
     assert!(include_values.contains(&"*.ts"));
     assert!(include_values.contains(&"*.tsx"));
+    assert!(include_values.contains(&"*.mts"));
+    assert!(include_values.contains(&"*.cts"));
     assert!(include_values.contains(&"*.js"));
     assert!(include_values.contains(&"*.jsx"));
-    assert!(!include_values.contains(&"*.mjs"));
-    assert!(!include_values.contains(&"*.cjs"));
-    assert!(!include_values.contains(&"**/*.mjs"));
-    assert!(!include_values.contains(&"**/*.cjs"));
-    assert!(!include_values.contains(&"*.mts"));
-    assert!(!include_values.contains(&"*.cts"));
+    assert!(include_values.contains(&"*.mjs"));
+    assert!(include_values.contains(&"*.cjs"));
 }
 
 #[test]
 #[ignore = "requires tsz binary: cargo build --profile dist-fast -p tsz-cli"]
-fn test_compile_prepared_dir_emits_ts18003_for_only_mts_input() {
+fn test_compile_prepared_dir_finds_mts_input() {
     let content = r#"
 // @target: es2015
 // @module: esnext
@@ -747,14 +744,11 @@ export const x = 1;
     let tsz = find_tsz_binary();
     let result = compile_test(content, &filenames, &options, &tsz).unwrap();
 
+    // With .mts in default include patterns, the file should be found.
+    // TS18003 should NOT be emitted (matching tsc behavior).
     assert!(
-        result.error_codes.contains(&5110),
-        "got: {:?}",
-        result.error_codes
-    );
-    assert!(
-        result.error_codes.contains(&18003),
-        "got: {:?}",
+        !result.error_codes.contains(&18003),
+        "mts input should be found, got: {:?}",
         result.error_codes
     );
 }
