@@ -19,6 +19,7 @@ use crate::types::{
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
     TypeData, TypeId, TypeListId, TypeParamInfo, Variance, Visibility,
 };
+use dashmap::DashMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -29,6 +30,49 @@ type EvalCacheKey = (TypeId, bool);
 type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool);
+
+/// Thread-safe shared query cache for cross-file type checking.
+///
+/// In multi-file projects (e.g., ts-toolbelt with 242 files), each file checker
+/// gets its own `QueryCache` with `RefCell`-based local caches. Without sharing,
+/// the same type evaluations, subtype checks, and assignability checks are
+/// recomputed independently by every file checker.
+///
+/// `SharedQueryCache` uses `DashMap` for concurrent read/write access across
+/// Rayon worker threads. Each per-file `QueryCache` checks its local cache first
+/// (zero overhead), then falls back to the shared cache on miss. Results are
+/// written to both local and shared caches.
+///
+/// Only the highest-impact caches are shared:
+/// - `eval_cache`: type evaluation (conditional types, mapped types, etc.)
+/// - `subtype_cache`: subtype relation results
+/// - `assignability_cache`: assignability relation results
+pub struct SharedQueryCache {
+    eval_cache: DashMap<EvalCacheKey, TypeId>,
+    subtype_cache: DashMap<RelationCacheKey, bool>,
+    assignability_cache: DashMap<RelationCacheKey, bool>,
+}
+
+impl SharedQueryCache {
+    pub fn new() -> Self {
+        SharedQueryCache {
+            eval_cache: DashMap::new(),
+            subtype_cache: DashMap::new(),
+            assignability_cache: DashMap::new(),
+        }
+    }
+
+    /// Number of entries across all shared caches.
+    pub fn total_entries(&self) -> usize {
+        self.eval_cache.len() + self.subtype_cache.len() + self.assignability_cache.len()
+    }
+}
+
+impl Default for SharedQueryCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationCacheProbe {
@@ -227,6 +271,10 @@ pub struct QueryCache<'a> {
     assignability_cache_hits: Cell<u64>,
     assignability_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
+    /// Optional shared cross-file cache for multi-file project checking.
+    /// When present, local cache misses fall through to the shared DashMap cache,
+    /// and local cache inserts are also written to the shared cache.
+    shared: Option<&'a SharedQueryCache>,
 }
 
 impl<'a> QueryCache<'a> {
@@ -248,6 +296,34 @@ impl<'a> QueryCache<'a> {
             assignability_cache_hits: Cell::new(0),
             assignability_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
+            shared: None,
+        }
+    }
+
+    /// Create a `QueryCache` backed by a shared cross-file cache.
+    ///
+    /// Local `RefCell`-based caches provide zero-overhead single-threaded access.
+    /// On local miss, the shared `DashMap` cache is consulted. Results are written
+    /// to both local and shared caches for cross-file benefit.
+    pub fn new_with_shared(interner: &'a TypeInterner, shared: &'a SharedQueryCache) -> Self {
+        QueryCache {
+            interner,
+            eval_cache: RefCell::new(FxHashMap::default()),
+            application_eval_cache: RefCell::new(FxHashMap::default()),
+            element_access_cache: RefCell::new(FxHashMap::default()),
+            object_spread_properties_cache: RefCell::new(FxHashMap::default()),
+            subtype_cache: RefCell::new(FxHashMap::default()),
+            assignability_cache: RefCell::new(FxHashMap::default()),
+            property_cache: RefCell::new(FxHashMap::default()),
+            variance_cache: RefCell::new(FxHashMap::default()),
+            canonical_cache: RefCell::new(FxHashMap::default()),
+            intersection_merge_cache: RefCell::new(FxHashMap::default()),
+            subtype_cache_hits: Cell::new(0),
+            subtype_cache_misses: Cell::new(0),
+            assignability_cache_hits: Cell::new(0),
+            assignability_cache_misses: Cell::new(0),
+            no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
+            shared: Some(shared),
         }
     }
 
@@ -976,6 +1052,14 @@ impl QueryDatabase for QueryCache<'_> {
             return result;
         }
 
+        // L2: Check shared cross-file cache before doing expensive evaluation.
+        if let Some(shared) = self.shared {
+            if let Some(result) = shared.eval_cache.get(&key).map(|r| *r) {
+                self.eval_cache.borrow_mut().insert(key, result);
+                return result;
+            }
+        }
+
         // Fast path: leaf types that never change during evaluation.
         // Skip TypeEvaluator creation for types where visit_type_key returns type_id unchanged.
         if let Some(
@@ -1028,11 +1112,17 @@ impl QueryDatabase for QueryCache<'_> {
         {
             let mut cache = self.eval_cache.borrow_mut();
             cache.insert(key, result);
+            // Also write to shared cache for cross-file benefit.
+            if let Some(shared) = self.shared {
+                shared.eval_cache.insert(key, result);
+            }
             for (intermediate_id, intermediate_result) in evaluator.drain_cache() {
                 if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
-                    cache
-                        .entry((intermediate_id, no_unchecked_indexed_access))
-                        .or_insert(intermediate_result);
+                    let ikey = (intermediate_id, no_unchecked_indexed_access);
+                    cache.entry(ikey).or_insert(intermediate_result);
+                    if let Some(shared) = self.shared {
+                        shared.eval_cache.entry(ikey).or_insert(intermediate_result);
+                    }
                 }
             }
         }
@@ -1117,6 +1207,20 @@ impl QueryDatabase for QueryCache<'_> {
             }
             return result;
         }
+
+        // L2: Check shared cross-file cache.
+        if let Some(shared) = self.shared {
+            if let Some(result) = shared.subtype_cache.get(&key).map(|r| *r) {
+                self.subtype_cache.borrow_mut().insert(key, result);
+                self.subtype_cache_hits
+                    .set(self.subtype_cache_hits.get() + 1);
+                if let Some(query_id) = trace_query_id {
+                    query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
+                }
+                return result;
+            }
+        }
+
         self.subtype_cache_misses
             .set(self.subtype_cache_misses.get() + 1);
 
@@ -1127,6 +1231,10 @@ impl QueryDatabase for QueryCache<'_> {
             flags,
         );
         self.subtype_cache.borrow_mut().insert(key, result);
+        // Write to shared cache for cross-file benefit.
+        if let Some(shared) = self.shared {
+            shared.subtype_cache.insert(key, result);
+        }
         if let Some(query_id) = trace_query_id {
             query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, false);
         }
@@ -1177,6 +1285,25 @@ impl QueryDatabase for QueryCache<'_> {
             }
             return result;
         }
+
+        // L2: Check shared cross-file cache.
+        if let Some(shared) = self.shared {
+            if let Some(result) = shared.assignability_cache.get(&key).map(|r| *r) {
+                self.assignability_cache.borrow_mut().insert(key, result);
+                self.assignability_cache_hits
+                    .set(self.assignability_cache_hits.get() + 1);
+                if let Some(query_id) = trace_query_id {
+                    query_trace::relation_end(
+                        query_id,
+                        "is_assignable_to_with_flags",
+                        result,
+                        true,
+                    );
+                }
+                return result;
+            }
+        }
+
         self.assignability_cache_misses
             .set(self.assignability_cache_misses.get() + 1);
 
@@ -1191,6 +1318,10 @@ impl QueryDatabase for QueryCache<'_> {
         let result = checker.is_assignable(source, target);
 
         self.insert_cache(&self.assignability_cache, key, result);
+        // Write to shared cache for cross-file benefit.
+        if let Some(shared) = self.shared {
+            shared.assignability_cache.insert(key, result);
+        }
         if let Some(query_id) = trace_query_id {
             query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, false);
         }

@@ -3499,6 +3499,17 @@ pub fn check_files_parallel(
         .definition_store
         .init_file_locks(program.files.len());
 
+    // Create a shared cross-file query cache for multi-file projects.
+    // In projects like ts-toolbelt (242 files), the same type evaluations and
+    // subtype checks are performed across many files. The shared cache uses
+    // DashMap for thread-safe concurrent access and eliminates redundant
+    // computation across parallel file checkers.
+    let shared_query_cache = if program.files.len() > 1 {
+        Some(tsz_solver::SharedQueryCache::new())
+    } else {
+        None
+    };
+
     // Closure that checks a single file and returns its result.
     // Extracted so both sequential and parallel paths use identical logic.
     let check_one_file = |file_idx: usize, file: &BoundFile| -> FileCheckResult {
@@ -3506,7 +3517,12 @@ pub fn check_files_parallel(
 
         // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
         // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
-        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        // For multi-file projects, the shared cache provides L2 cross-file caching.
+        let query_cache = if let Some(ref shared) = shared_query_cache {
+            tsz_solver::QueryCache::new_with_shared(&program.type_interner, shared)
+        } else {
+            tsz_solver::QueryCache::new(&program.type_interner)
+        };
 
         let mut checker = CheckerState::with_options_and_shared_def_store(
             &file.arena,

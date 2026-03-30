@@ -194,7 +194,7 @@ pub use visitors::visitor::{
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{
-    QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats,
+    QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
 };
 pub use canonicalize::*;
 pub use classes::inheritance::*;
