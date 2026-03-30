@@ -51,7 +51,11 @@ fn arrow_captures_global_this_message() {
 #[test]
 fn nested_arrow_captures_global_this() {
     // Nested arrows still capture global this
-    assert!(has_error_with_code("var f = () => () => { this; }", 7041));
+    let diags = get_diagnostics("var f = () => () => { this; }");
+    assert!(
+        diags.iter().any(|d| d.0 == 7041),
+        "Expected TS7041, got diagnostics: {diags:?}"
+    );
 }
 
 #[test]
@@ -97,4 +101,25 @@ fn arrow_in_class_property_this_is_not_any_for_assignment() {
         "class A { x = 1; f = () => { let n: number = this; }; }",
         2322
     ));
+}
+
+#[test]
+fn arrow_property_initializer_in_contextual_object_still_captures_global_this() {
+    let src = r#"
+interface Options<Context, Data> {
+    context: Context;
+    produce(this: Context): Data;
+}
+
+declare function defineOptions<Context, Data>(options: Options<Context, Data>): [Context, Data];
+
+defineOptions({
+    context: { value: 8 },
+    produce: () => {
+        return this;
+    },
+});
+"#;
+
+    assert!(has_error_with_code(src, 7041));
 }
