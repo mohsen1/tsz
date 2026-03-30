@@ -680,9 +680,10 @@ impl ParserState {
             | SyntaxKind::ObjectKeyword
             | SyntaxKind::AwaitKeyword
             | SyntaxKind::AssertsKeyword
-            | SyntaxKind::ConstKeyword => self.parse_keyword_as_identifier_with_check(false),
-            // `yield` is reserved in generator contexts — emit TS1212 in type position too.
-            SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier_with_check(true),
+            | SyntaxKind::ConstKeyword
+            // `yield` in type position is always a valid identifier reference, even
+            // inside generators.  tsc does not emit TS1212 for `let x: yield;`.
+            | SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier_with_check(false),
             SyntaxKind::PrivateIdentifier => self.parse_private_identifier(),
             _ if self.is_identifier_or_keyword() => self.parse_identifier_name(),
             _ => self.parse_identifier(),

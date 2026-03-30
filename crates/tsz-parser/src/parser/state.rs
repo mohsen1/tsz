@@ -714,13 +714,16 @@ impl ParserState {
             }
         }
 
-        // Check if current token is 'yield' (either as keyword or identifier)
-        // TS1359: 'yield' is a reserved word in generator functions
+        // Check if current token is 'yield' (either as keyword or identifier).
+        // `yield` is only a reserved identifier in strict mode.  In non-strict
+        // generator functions, `yield` is a keyword for yield-expressions but
+        // may still appear as a binding identifier (tsc does not emit TS1212
+        // for e.g. `function* f(yield){}` in non-strict, non-module code).
         let is_yield = self.is_token(SyntaxKind::YieldKeyword)
             || (self.is_token(SyntaxKind::Identifier)
                 && self.scanner.get_token_value_ref() == "yield");
 
-        if is_yield && self.in_generator_context() {
+        if is_yield && self.in_generator_context() && self.in_strict_mode_context() {
             self.report_yield_reserved_word_error();
             return true;
         }
