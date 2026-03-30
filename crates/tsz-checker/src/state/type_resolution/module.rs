@@ -835,9 +835,9 @@ impl<'a> CheckerState<'a> {
         if !type_idx.is_some() {
             return;
         }
-        let Some(module_specifier) = self.import_type_module_specifier_from_type_node(
-            arena, type_idx,
-        ) else {
+        let Some(module_specifier) =
+            self.import_type_module_specifier_from_type_node(arena, type_idx)
+        else {
             return;
         };
 

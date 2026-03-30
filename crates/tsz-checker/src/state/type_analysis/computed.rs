@@ -1572,8 +1572,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             let mut props: Vec<PropertyInfo> = Vec::new();
                             for (name, &sym_id) in exports_table.iter() {
-                                if self.should_skip_namespace_export_name(&exports_table, name, sym_id)
-                                {
+                                if self.should_skip_namespace_export_name(
+                                    &exports_table,
+                                    name,
+                                    sym_id,
+                                ) {
                                     continue;
                                 }
                                 // Skip type-only, wildcard-type-only, value-less, and
