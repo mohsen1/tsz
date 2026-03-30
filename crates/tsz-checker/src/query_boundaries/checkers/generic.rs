@@ -84,6 +84,16 @@ pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::is_this_type(db, type_id)
 }
 
+/// Check if a type is an `Infer` type variable (from conditional `infer X`).
+///
+/// Used for TS2344 constraint checking: when a conditional type's true branch
+/// is an `Infer` variable (e.g., `F extends (...args: infer L) => any ? L : never`),
+/// the result is structurally extracted from the extends type, not bounded by it.
+/// The extends type is NOT a reliable constraint proxy for infer-extraction patterns.
+pub(crate) fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_infer_type(db, type_id)
+}
+
 /// Check if a type is a primitive (string, number, boolean, bigint, etc.).
 pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::is_primitive_type(db, type_id)
