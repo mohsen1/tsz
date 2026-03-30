@@ -625,8 +625,27 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        !shape.type_params.is_empty()
-            && self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args)
+        if shape.type_params.is_empty() {
+            return false;
+        }
+        // When the return type is a bare type parameter that also appears in
+        // parameter position, suppressing the contextual type loses the upper
+        // bound that prevents literal widening. For `identity<T>(x: T): T`
+        // called as `let v: DooDad = identity('ELSE')`, the contextual type
+        // `DooDad` is needed so the solver preserves `"ELSE"` instead of
+        // widening to `string`. The solver's `return_type_bare_var` logic
+        // already handles priority correctly — it only adds the contextual type
+        // as a candidate when no direct argument candidates exist.
+        let return_is_bare_type_param = shape.type_params.iter().any(|tp| {
+            matches!(
+                self.ctx.types.lookup(shape.return_type),
+                Some(tsz_solver::TypeData::TypeParameter(info)) if info.name == tp.name
+            )
+        });
+        if return_is_bare_type_param {
+            return false;
+        }
+        self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args)
     }
 
     /// Whether an argument node needs contextual typing from the callee signature.

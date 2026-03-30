@@ -3455,6 +3455,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else {
                         widened
                     }
+                } else if let Some(ctx_type) = self.contextual_type
+                    && ctx_type != TypeId::ANY
+                    && ctx_type != TypeId::UNKNOWN
+                    && widened != arg_ty
+                    && !self.checker.is_assignable_to(widened, ctx_type)
+                    && self.checker.is_assignable_to(arg_ty, ctx_type)
+                {
+                    // When a contextual return type exists (e.g., from a variable
+                    // declaration like `let v: DooDad = identity('ELSE')`), and
+                    // widening the argument type breaks assignability to the
+                    // contextual type, preserve the literal. This matches tsc's
+                    // behavior where contextual return types inform inference and
+                    // prevent unnecessary widening of literals.
+                    arg_ty
                 } else {
                     widened
                 }
