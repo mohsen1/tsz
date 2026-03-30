@@ -1070,7 +1070,9 @@ impl Runner {
                         .unwrap_or("ts")
                         .to_string();
                     let prepared = tokio::task::spawn_blocking({
-                        let bytes = original_bytes.clone();
+                        // Write decoded UTF-8 text, not original UTF-16 bytes.
+                        // Our compiler assumes UTF-8 input; tsc also decodes internally.
+                        let bytes = decoded_text.as_bytes().to_vec();
                         let ext = ext.clone();
                         let options = options.clone();
                         move || tsz_wrapper::prepare_binary_test_dir(&bytes, &ext, &options)
