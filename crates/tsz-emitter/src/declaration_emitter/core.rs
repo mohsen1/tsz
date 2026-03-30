@@ -3381,6 +3381,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Stub: Check if a JS variable declaration looks like a class-like pattern
+    /// and emit an appropriate declaration. Returns true if handled.
+    fn emit_js_class_like_heuristic_if_needed(
+        &mut self,
+        _decl_name: NodeIndex,
+        _is_exported: bool,
+    ) -> bool {
+        // TODO: implement JS class-like heuristic detection for .d.ts emit
+        false
+    }
+
     fn emit_js_object_literal_namespace_if_possible(
         &mut self,
         decl_name: NodeIndex,
