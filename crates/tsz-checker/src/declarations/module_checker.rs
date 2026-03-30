@@ -157,6 +157,99 @@ impl<'a> CheckerState<'a> {
         self.ctx.import_resolution_stack.pop();
     }
 
+    /// TS2498: Module '{0}' uses 'export =' and cannot be used with 'export *'.
+    ///
+    /// When a module uses `export = <expr>` (CommonJS-style), wildcard re-exports
+    /// (`export * from './module'` or `export * as ns from './module'`) are invalid
+    /// because ES module namespace objects cannot be constructed from a CommonJS
+    /// single-value export.
+    pub(crate) fn check_export_star_of_export_equals_module(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(export_decl) = self.ctx.arena.get_export_decl(node) else {
+            return;
+        };
+
+        // Only applies to re-exports with a module specifier (... from 'module')
+        if export_decl.module_specifier.is_none() {
+            return;
+        }
+
+        // Only applies to wildcard re-exports:
+        //   export * from './module'           → export_clause is NONE
+        //   export * as ns from './module'     → export_clause is Identifier/StringLiteral
+        // Named exports (export { foo } from) use NAMED_EXPORTS and are not affected.
+        if export_decl.export_clause.is_some() {
+            if let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) {
+                if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
+                    return;
+                }
+            }
+        }
+
+        // Get module specifier text
+        let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier) else {
+            return;
+        };
+        let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
+            return;
+        };
+        let module_name = literal.text.clone();
+
+        // Check if the target module uses `export =`.
+        // First check module_exports (covers identifier-based export assignments like
+        // `export = React`). Fall back to checking the target file's AST for
+        // EXPORT_ASSIGNMENT nodes (covers non-identifier forms like `export = {}`).
+        let has_export_equals = self
+            .resolve_effective_module_exports(&module_name)
+            .is_some_and(|exports| exports.has("export="))
+            || self.target_file_has_export_assignment(&module_name);
+
+        if has_export_equals {
+            // TSC quotes the module specifier in the diagnostic
+            let quoted = format!("\"{}\"", module_name);
+            self.error_at_node_msg(
+                export_decl.module_specifier,
+                diagnostic_codes::MODULE_USES_EXPORT_AND_CANNOT_BE_USED_WITH_EXPORT,
+                &[&quoted],
+            );
+        }
+    }
+
+    /// Check if the target module file has an `export =` assignment in its AST.
+    ///
+    /// This covers non-identifier export assignments (e.g., `export = {}`) where
+    /// the binder doesn't create an `"export="` entry in `module_exports`.
+    fn target_file_has_export_assignment(&self, module_name: &str) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(target_idx) = self.ctx.resolve_import_target(module_name) else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+        // Scan top-level statements for EXPORT_ASSIGNMENT
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = target_arena.get(stmt_idx) {
+                if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                    // Verify it's `export =` (not `export default`)
+                    if let Some(assign) = target_arena.get_export_assignment(stmt_node) {
+                        if assign.is_export_equals {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub(crate) fn check_export_target_is_module(
         &mut self,
         module_specifier_idx: NodeIndex,
