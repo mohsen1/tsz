@@ -208,6 +208,10 @@ name = "js_container_merge_ts2339_tests"
 path = "tests/js_container_merge_ts2339_tests.rs"
 
 [[test]]
+name = "js_class_constructor_merge_tests"
+path = "tests/js_class_constructor_merge_tests.rs"
+
+[[test]]
 name = "ts2344_typeof_merged_tests"
 path = "tests/ts2344_typeof_merged_tests.rs"
 
