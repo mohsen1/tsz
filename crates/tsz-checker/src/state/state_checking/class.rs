@@ -236,6 +236,19 @@ impl<'a> CheckerState<'a> {
         // This allows heritage clauses and member checks to reference the class's type parameters
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
+        self.check_duplicate_type_parameters(&class.type_parameters);
+        let class_name_str = self
+            .ctx
+            .arena
+            .get(class.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|id| id.escaped_text.to_string());
+        if let Some(ref name) = class_name_str {
+            self.check_type_parameters_for_missing_names_with_enclosing(&class.type_parameters, name);
+        } else {
+            self.check_type_parameters_for_missing_names(&class.type_parameters);
+        }
+
         // Collect class type parameter names for TS2302 checking in static members
         let class_type_param_names: Vec<String> = type_param_updates
             .iter()
@@ -754,6 +767,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+
+        self.check_duplicate_type_parameters(&class.type_parameters);
+        let class_name = self.get_class_name_from_decl(class_idx);
+        if class.name != NodeIndex::NONE && !class_name.is_empty() {
+            self.check_type_parameters_for_missing_names_with_enclosing(
+                &class.type_parameters,
+                &class_name,
+            );
+        } else {
+            self.check_type_parameters_for_missing_names(&class.type_parameters);
+        }
 
         let class_type_param_names: Vec<String> = type_param_updates
             .iter()

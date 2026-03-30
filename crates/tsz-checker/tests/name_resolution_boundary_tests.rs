@@ -209,6 +209,39 @@ let x: myVal;
     );
 }
 
+fn assert_missing_name_positions(source: &str, starts: &[u32]) {
+    let diags = check(source);
+    let actual: Vec<u32> = diags
+        .iter()
+        .filter(|d| d.code == 2304)
+        .map(|d| d.start)
+        .collect();
+    assert_eq!(
+        actual, starts,
+        "Expected TS2304 anchors {starts:?}, got {diags:?}"
+    );
+}
+
+#[test]
+fn ts2304_class_generic_constraint_reports_nested_type_args() {
+    assert_missing_name_positions("class C<T extends List<List>> {}", &[18, 23]);
+}
+
+#[test]
+fn ts2304_function_generic_constraint_reports_nested_type_args() {
+    assert_missing_name_positions("function f<T extends List<List>>() {}", &[21, 26]);
+}
+
+#[test]
+fn ts2304_class_expression_generic_constraint_reports_nested_type_args() {
+    assert_missing_name_positions("const C = class<T extends List<List>> {};", &[26, 31]);
+}
+
+#[test]
+fn ts2304_function_expression_generic_constraint_reports_nested_type_args() {
+    assert_missing_name_positions("const f = function<T extends List<List>>() {};", &[29, 34]);
+}
+
 // =========================================================================
 // TS2694: Namespace has no exported member (routed through boundary)
 // =========================================================================

@@ -284,6 +284,11 @@ impl<'a> CheckerState<'a> {
 
         let (mut type_params, type_param_updates) = self.push_type_parameters(type_parameters);
 
+        if !is_function_declaration && !is_method_or_constructor {
+            self.check_duplicate_type_parameters(type_parameters);
+            self.check_type_parameters_for_missing_names(type_parameters);
+        }
+
         // Check for unused type parameters (TS6133) in function expressions and arrows
         if !is_function_declaration && !is_method_or_constructor {
             self.check_unused_type_params(type_parameters, idx);
