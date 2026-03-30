@@ -691,7 +691,14 @@ impl<'a> CheckerState<'a> {
                         )
                     })
                 });
-        if tsz_solver::contains_type_parameter_named(self.ctx.types, constraint_type, atom) {
+        // Check if the constraint contains a self-reference to the mapped type parameter.
+        // Use a shallow check that does NOT walk into other type parameters' constraints,
+        // because those constraints are separate scopes. For example, in
+        // `T extends { [K in keyof T]: T[K] }`, `K`'s constraint is `keyof T`.
+        // Although `T`'s own constraint contains `K`, that doesn't make `K`'s constraint
+        // circular — `keyof T` itself doesn't contain `K` at the surface level.
+        if tsz_solver::contains_type_parameter_named_shallow(self.ctx.types, constraint_type, atom)
+        {
             let message = format!("Type parameter '{name}' has a circular constraint.");
             self.ctx.error(
                 constraint_pos,
