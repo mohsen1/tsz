@@ -491,6 +491,25 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     .generator_yield_operand_types
                     .push(yielded_type);
             }
+            // When the yield operand is an explicit type assertion (`<any>expr`
+            // or `expr as any`) that produces `any`, the resulting yield type is
+            // explicit — not implicit. Suppress TS7055 so we don't report an
+            // implicit-any warning for user-written type assertions (matches tsc).
+            if yielded_type == TypeId::ANY {
+                let operand_is_type_assertion = yield_expr.expression.is_some()
+                    && self
+                        .checker
+                        .ctx
+                        .arena
+                        .get(yield_expr.expression)
+                        .is_some_and(|n| {
+                            n.kind == syntax_kind_ext::TYPE_ASSERTION
+                                || n.kind == syntax_kind_ext::AS_EXPRESSION
+                        });
+                if operand_is_type_assertion {
+                    self.checker.ctx.generator_had_ts7057 = true;
+                }
+            }
         }
         if let Some(expected_yield_type) = self.get_expected_yield_type(idx) {
             let error_node = if yield_expr.expression.is_none() {
