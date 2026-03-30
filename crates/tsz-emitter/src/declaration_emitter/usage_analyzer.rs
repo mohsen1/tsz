@@ -885,6 +885,22 @@ impl<'a> UsageAnalyzer<'a> {
                 self.analyze_local_import_equals_dependency(decl.initializer);
             }
         }
+
+        // Even when an inferred type IS available, import-equals aliases
+        // referenced by the initializer must still be marked as used.
+        // The emitter may produce `typeof b` references that require the
+        // alias to survive elision, but `walk_inferred_type_or_related`
+        // only walks TypeIds and doesn't discover import-equals AST
+        // dependencies.  `analyze_local_import_equals_dependency` is
+        // safe to call unconditionally — it only marks symbols whose
+        // declarations are ImportEqualsDeclaration nodes.
+        if decl.type_annotation.is_none() && decl.initializer.is_some() && has_inferred_type {
+            let callee = self.unwrap_export_default_expression(decl.initializer);
+            self.analyze_local_import_equals_dependency(callee);
+            if callee != decl.initializer {
+                self.analyze_local_import_equals_dependency(decl.initializer);
+            }
+        }
     }
 
     /// Analyze heritage clauses (extends/implements).
