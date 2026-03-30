@@ -2254,7 +2254,39 @@ impl ParserState {
                 self.error_expression_expected();
                 NodeIndex::NONE
             }
-            SyntaxKind::LessThanToken => self.parse_jsx_element_or_type_assertion(),
+            SyntaxKind::LessThanToken => {
+                if self.is_jsx_file() {
+                    if self.look_ahead_next_is_identifier_or_keyword_or_greater_than() {
+                        self.parse_jsx_element_or_self_closing_or_fragment(true)
+                    } else {
+                        self.error_expression_expected();
+                        // Match tsc's `"<:a ...>"` TSX recovery: `<` is not a JSX
+                        // opener unless the lookahead token is identifier/keyword
+                        // or `>`. Consume the invalid namespace head and let the
+                        // following identifier surface as the missing-comma site.
+                        self.next_token();
+                        if self.is_token(SyntaxKind::ColonToken) {
+                            self.parse_error_at_current_token(
+                                "Expression expected.",
+                                diagnostic_codes::EXPRESSION_EXPECTED,
+                            );
+                            self.next_token();
+                            if self.is_identifier_or_keyword() {
+                                self.parse_identifier_name();
+                            }
+                            if self.is_identifier_or_keyword() {
+                                self.parse_error_at_current_token(
+                                    "',' expected.",
+                                    diagnostic_codes::EXPECTED,
+                                );
+                            }
+                        }
+                        NodeIndex::NONE
+                    }
+                } else {
+                    self.parse_jsx_element_or_type_assertion()
+                }
+            }
             SyntaxKind::NoSubstitutionTemplateLiteral => {
                 self.parse_no_substitution_template_literal()
             }
