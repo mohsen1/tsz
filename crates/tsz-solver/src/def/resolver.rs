@@ -589,8 +589,26 @@ impl TypeEnvironment {
     }
 
     /// Get a `DefId`'s type parameters.
+    ///
+    /// Checks local `def_type_params` first, then falls back to `DefinitionStore`
+    /// for cross-file visibility (analogous to `get_def` for type bodies).
     pub fn get_def_params(&self, def_id: DefId) -> Option<&[TypeParamInfo]> {
         self.def_type_params.get(&def_id.0).map(|v| v.as_slice())
+    }
+
+    /// Get a `DefId`'s type parameters, including from the `DefinitionStore`.
+    ///
+    /// This is the owned version that checks both local cache and the shared
+    /// `DefinitionStore`, mirroring how `get_def` falls back to the store for
+    /// type bodies. This ensures lib types like `Readonly<T>` whose params were
+    /// registered in the `DefinitionStore` (but not in the local cache) are found.
+    pub fn get_def_params_owned(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        if let Some(local) = self.def_type_params.get(&def_id.0) {
+            return Some(local.clone());
+        }
+        self.definition_store
+            .as_ref()
+            .and_then(|s| s.get_type_params(def_id))
     }
 
     /// Check if the environment contains a `DefId`.
@@ -756,10 +774,13 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
-        self.get_def_params(def_id).map(|s| s.to_vec()).or_else(|| {
+        // Use get_def_params_owned which includes DefinitionStore fallback,
+        // ensuring lib types like Readonly<T> whose params were registered
+        // in the shared store (not the local cache) are found.
+        self.get_def_params_owned(def_id).or_else(|| {
             // Fallback: resolve raw SymbolId-based DefIds to real DefIds
             let real_def = self.symbol_to_def.get(&def_id.0)?;
-            self.get_def_params(*real_def).map(|s| s.to_vec())
+            self.get_def_params_owned(*real_def)
         })
     }
 
