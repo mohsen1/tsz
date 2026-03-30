@@ -77,7 +77,11 @@ impl<'a> CheckerState<'a> {
             // Phase 1c: resolve cross-batch heritage. Now that all DefIds from both
             // the primary binder and lib binders are registered, resolve heritage_names
             // (e.g., `class MyError extends Error`) to DefId-level extends/implements.
-            self.ctx.resolve_cross_batch_heritage();
+            // Skip when the DefinitionStore was fully populated at merge time
+            // (heritage already resolved in from_semantic_defs).
+            if !self.ctx.definition_store.is_fully_populated() {
+                self.ctx.resolve_cross_batch_heritage();
+            }
 
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution

@@ -943,6 +943,12 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Returns the number of mappings warmed.
     pub fn warm_local_caches_from_shared_store(&self) -> usize {
+        // Fast path: skip if already warmed (avoids iterating all mappings a
+        // second time when the constructor already called this method).
+        if self.local_caches_warmed.get() {
+            return 0;
+        }
+
         if self.definition_store.is_empty() {
             return 0;
         }
@@ -985,6 +991,7 @@ impl<'a> CheckerContext<'a> {
             "Warmed local caches from shared DefinitionStore"
         );
 
+        self.local_caches_warmed.set(true);
         count
     }
 
