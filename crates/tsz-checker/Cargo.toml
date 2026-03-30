@@ -227,5 +227,9 @@ path = "tests/promise_constructor_capability_tests.rs"
 name = "import_attributes_resolution_mode_tests"
 path = "tests/import_attributes_resolution_mode_tests.rs"
 
+[[test]]
+name = "contextual_typing_tests"
+path = "tests/contextual_typing_tests.rs"
+
 [lints]
 workspace = true
