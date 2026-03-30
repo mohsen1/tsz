@@ -1371,6 +1371,7 @@ impl<'a> CheckerState<'a> {
         let mut pushed_this_type_early = false;
         if let Some(tt) = implicit_this {
             self.ctx.this_type_stack.push(tt);
+            self.ctx.function_owned_this_stack.push(idx);
             pushed_this_type_early = true;
         }
 
@@ -2265,6 +2266,7 @@ impl<'a> CheckerState<'a> {
         // Pop this_type that was pushed before parameter initializer checks
         if pushed_this_type_early {
             self.ctx.this_type_stack.pop();
+            self.ctx.function_owned_this_stack.pop();
         }
 
         // In JS files, functions that reference `arguments` in their body should accept

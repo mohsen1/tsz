@@ -1163,8 +1163,13 @@ pub struct CheckerContext<'a> {
     /// Whether TS7057 was emitted for any yield in the current generator.
     /// When true, TS7055 is suppressed (tsc emits one or the other, not both).
     pub generator_had_ts7057: bool,
-    /// Stack of current `this` types for class member bodies.
+    /// Stack of current `this` types for the active traversal path.
     pub this_type_stack: Vec<TypeId>,
+    /// Functions whose own explicit/contextual `this` pushed the active `this` type.
+    ///
+    /// This lets `this` resolution distinguish a function-owned binding from an
+    /// ambient outer `this` such as a containing class method.
+    pub function_owned_this_stack: Vec<NodeIndex>,
 
     /// Current enclosing class info.
     pub enclosing_class: Option<EnclosingClassInfo>,

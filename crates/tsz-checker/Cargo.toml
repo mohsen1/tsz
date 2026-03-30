@@ -108,6 +108,10 @@ name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 
 [[test]]
+name = "ts2683_tests"
+path = "tests/ts2683_tests.rs"
+
+[[test]]
 name = "jsdoc_type_expression_tests"
 path = "tests/jsdoc_type_expression_tests.rs"
 
