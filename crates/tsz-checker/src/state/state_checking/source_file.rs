@@ -199,6 +199,12 @@ impl<'a> CheckerState<'a> {
             // Check for circular import aliases (2303)
             self.check_circular_import_aliases();
 
+            // Check for circular CommonJS export aliases (2303)
+            // e.g., `exports.blah = exports.someProp` in JS files
+            if self.ctx.is_js_file() {
+                self.check_commonjs_circular_aliases(&sf.statements.nodes);
+            }
+
             // Check for cross-file circular type aliases (TS2456).
             // This runs AFTER all statements have been checked so that
             // cross-file symbol delegations have populated the DefinitionStore
