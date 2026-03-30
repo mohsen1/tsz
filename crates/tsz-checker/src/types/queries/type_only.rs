@@ -666,11 +666,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if (symbol.flags & symbol_flags::METHOD) != 0
-            && (symbol.flags & symbol_flags::FUNCTION) == 0
-        {
-            return true;
-        }
+        // Note: We intentionally do NOT early-return for METHOD-flagged symbols
+        // here. The METHOD flag is set for both interface method signatures
+        // (type-only) and class method declarations (not type-only). The
+        // declaration-based check below correctly distinguishes between these
+        // cases by examining the parent node kind.
 
         let mut saw_declaration = false;
         let mut all_type_only = true;
