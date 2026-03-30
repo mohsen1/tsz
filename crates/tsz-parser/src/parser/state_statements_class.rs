@@ -216,6 +216,9 @@ impl ParserState {
                 // `async function f(a = await => await) {}`
                 // treat `=>` as a missing comma boundary to continue parsing.
                 if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    if (self.context_flags & CONTEXT_FLAG_ARROW_PARAMETERS) != 0 {
+                        self.saw_arrow_parameter_recovery = true;
+                    }
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
                     self.next_token(); // consume =>
