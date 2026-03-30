@@ -58,6 +58,15 @@ impl<'a> CheckerContext<'a> {
         false
     }
 
+    /// Check whether Promise-constructor-based features should report missing-runtime diagnostics.
+    ///
+    /// This is intentionally based on the loaded libs / declarations, not on the
+    /// `target` alone. Conformance cases like `@target: es2015` with `@lib: es5`
+    /// still need TS2468/TS2705/TS2712 because the Promise value is absent.
+    pub fn promise_constructor_diagnostics_required(&self) -> bool {
+        !self.has_promise_constructor_in_scope()
+    }
+
     /// Check if Symbol is available in lib files or global scope.
     /// Returns true if Symbol is declared in lib contexts, globals, or type declarations.
     pub fn has_symbol_in_lib(&self) -> bool {

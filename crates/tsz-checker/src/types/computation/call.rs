@@ -279,12 +279,10 @@ impl<'a> CheckerState<'a> {
             self.check_dynamic_import_options_type(call);
             self.check_dynamic_import_module_specifier(call);
 
-            // TS2712: Dynamic import requires Promise constructor.
-            // Only emit when targeting pre-ES2015, where Promise is not a native
-            // global. For ES2015+ targets, dynamic import() works natively.
-            if !self.ctx.compiler_options.target.supports_es2015()
-                && !self.ctx.has_promise_constructor_in_scope()
-            {
+            // TS2712: Dynamic import requires Promise constructor support from the
+            // active libs / declarations. This is lib-driven, not target-driven:
+            // `@target: es2015` with `@lib: es5` still needs the diagnostic.
+            if self.ctx.promise_constructor_diagnostics_required() {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     idx,
