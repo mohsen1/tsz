@@ -1003,6 +1003,15 @@ impl<'a> CheckerState<'a> {
 
         match result {
             CallResult::Success(return_type) => {
+                // TS2351: when a class extends a generic base without required type
+                // arguments (TS2314 on the extends clause), tsc considers `typeof C`
+                // to have no construct signatures. Our constructor builder still
+                // generates a default constructor; detect the condition here and
+                // emit TS2351 + return `any` to match tsc.
+                if self.class_has_invalid_base_type_args(new_expr.expression) {
+                    self.error_not_constructable_at(constructor_type, new_expr.expression);
+                    return TypeId::ANY;
+                }
                 // For circular classes (TS2506), when `new` is called without
                 // explicit type arguments, the solver may return the raw instance
                 // type with unresolved type parameters (e.g. `M<T>` instead of
