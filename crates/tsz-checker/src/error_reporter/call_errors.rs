@@ -128,7 +128,25 @@ impl<'a> CheckerState<'a> {
                     .properties
                     .iter()
                     .find(|p| p.name == prop_atom && p.optional)
-                    .map(|p| p.type_id)
+                    .map(|p| {
+                        // tsc displays optional property types with `| undefined`
+                        // in error messages (e.g., `IFoo[] | undefined` not just `IFoo[]`).
+                        // Create a union with undefined if not already present.
+                        if p.type_id == TypeId::UNDEFINED {
+                            p.type_id
+                        } else if let Some(tsz_solver::types::TypeData::Union(list_id)) =
+                            self.ctx.types.lookup(p.type_id)
+                        {
+                            let members = self.ctx.types.type_list(list_id);
+                            if members.contains(&TypeId::UNDEFINED) {
+                                p.type_id
+                            } else {
+                                self.ctx.types.union2(p.type_id, TypeId::UNDEFINED)
+                            }
+                        } else {
+                            self.ctx.types.union2(p.type_id, TypeId::UNDEFINED)
+                        }
+                    })
             });
 
             let effective_type =
