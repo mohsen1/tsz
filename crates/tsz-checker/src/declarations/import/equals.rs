@@ -152,16 +152,29 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1294: erasableSyntaxOnly — import equals declarations are not erasable.
+        // Exception: `import x = require("y")` is allowed in .cts/.cjs files because
+        // it's the standard CJS import syntax and compiles to `const x = require("y")`.
         if self.ctx.compiler_options.erasable_syntax_only
             && !self.ctx.is_ambient_declaration(stmt_idx)
         {
-            self.ctx.error(
-                node.pos,
-                node.end - node.pos,
-                diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
-                    .to_string(),
-                diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
-            );
+            // `import x = require("y")` has a string literal as module_specifier.
+            // `import x = NS.Member` has a qualified name / identifier.
+            let is_external_module_import = self
+                .ctx
+                .arena
+                .get(import.module_specifier)
+                .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16);
+            let is_cts_file =
+                self.ctx.file_name.ends_with(".cts") || self.ctx.file_name.ends_with(".cjs");
+            if !(is_external_module_import && is_cts_file) {
+                self.ctx.error(
+                    node.pos,
+                    node.end - node.pos,
+                    diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                        .to_string(),
+                    diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                );
+            }
         }
 
         if let Some(name_node) = self.ctx.arena.get(import.import_clause)
