@@ -358,8 +358,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
-                    self.checker
-                        .check_class_expression_with_request(idx, &class, request);
+                    // Skip member checking if the class constructor type is already
+                    // being resolved. This prevents false diagnostics (e.g., TS2339
+                    // with type 'object') when a self-referencing static method like
+                    // `static getInstance() { return new C(); }` triggers re-entrant
+                    // class expression evaluation during type building. The members
+                    // will be properly checked during the statement checking phase.
+                    let is_reentrant =
+                        self.checker
+                            .ctx
+                            .binder
+                            .get_node_symbol(idx)
+                            .is_some_and(|sym_id| {
+                                self.checker
+                                    .ctx
+                                    .class_constructor_resolution_set
+                                    .contains(&sym_id)
+                            });
+                    if !is_reentrant {
+                        self.checker
+                            .check_class_expression_with_request(idx, &class, request);
+                    }
 
                     // When a class extends a type parameter and adds no new instance members,
                     // type it as the type parameter to maintain generic compatibility

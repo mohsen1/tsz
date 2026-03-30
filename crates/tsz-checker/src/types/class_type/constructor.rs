@@ -348,7 +348,17 @@ impl<'a> CheckerState<'a> {
         // instance properties. Used as the return type of rough construct signatures so
         // that type inference for generic functions can extract type arguments from
         // construct-signature constraints (e.g., `make<P>(x: { new(): { props: P } })`).
-        let rough_instance_return_type = {
+        //
+        // If the instance type has already been built (e.g., because
+        // compute_class_symbol_type built it before the constructor type), prefer
+        // the cached instance type over the rough approximation. This ensures that
+        // `new C()` inside static methods infers the correct return type.
+        let rough_instance_return_type = if let Some(&cached) =
+            self.ctx.class_instance_type_cache.get(&class_idx)
+            && cached != TypeId::ERROR
+        {
+            cached
+        } else {
             let mut inst_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
