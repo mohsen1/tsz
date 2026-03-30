@@ -1037,7 +1037,7 @@ impl<'a> CheckerState<'a> {
         // cross-file type aliases are resolved independently by each file. This
         // seeding step lets files skip expensive re-resolution by reusing bodies
         // already computed and cached in the shared DefinitionStore.
-        if self.ctx.definition_store.len() > 0 {
+        if !self.ctx.definition_store.is_empty() {
             for &(sym_id, flags) in &symbols_with_flags {
                 // Only seed type-defining symbols that would go through the
                 // expensive compute_type_of_symbol path below.
