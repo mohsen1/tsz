@@ -596,6 +596,12 @@ impl<'a> CheckerState<'a> {
         arg_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
+        if let Some(display) =
+            self.expanded_rest_tuple_parameter_display_for_call(param_type, arg_idx)
+        {
+            return display;
+        }
+
         if let Some(display) = self.contextual_generic_call_parameter_display(param_type, arg_idx) {
             return display;
         }
@@ -619,6 +625,81 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_type_for_assignability_message(param_type)
+    }
+
+    fn expanded_rest_tuple_parameter_display_for_call(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        let call_idx = if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            || node.kind == syntax_kind_ext::NEW_EXPRESSION
+        {
+            arg_idx
+        } else {
+            let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
+            let parent = self.ctx.arena.get(parent_idx)?;
+            let is_call_like = parent.kind == syntax_kind_ext::CALL_EXPRESSION
+                || parent.kind == syntax_kind_ext::NEW_EXPRESSION;
+            let call = is_call_like
+                .then(|| self.ctx.arena.get_call_expr(parent))
+                .flatten()?;
+            (call.expression == arg_idx).then_some(parent_idx)?
+        };
+        let call_node = self.ctx.arena.get(call_idx)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && call_node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return None;
+        }
+
+        self.format_variadic_tuple_display_without_alias(param_type)
+    }
+
+    fn format_variadic_tuple_display_without_alias(&mut self, type_id: TypeId) -> Option<String> {
+        let mut resolved = self.evaluate_type_with_env(type_id);
+        resolved = self.resolve_type_for_property_access(resolved);
+        resolved = self.resolve_lazy_type(resolved);
+        resolved = self.evaluate_application_type(resolved);
+        let readonly = tsz_solver::readonly_inner_type(self.ctx.types, resolved).is_some();
+        resolved = query_common::unwrap_readonly(self.ctx.types, resolved);
+        let elements = query_common::tuple_elements(self.ctx.types, resolved)?;
+        if !elements.iter().any(|element| element.rest) {
+            return None;
+        }
+
+        let parts: Vec<String> = elements
+            .iter()
+            .map(|element| {
+                let normalized = self.normalize_assignability_display_type(element.type_id);
+                let display = self.format_type_diagnostic(normalized);
+                match (element.rest, element.name, element.optional) {
+                    (true, Some(name), _) => {
+                        let name = self.ctx.types.resolve_atom_ref(name);
+                        format!("...{name}: {display}")
+                    }
+                    (true, None, _) => format!("...{display}"),
+                    (false, Some(name), true) => {
+                        let name = self.ctx.types.resolve_atom_ref(name);
+                        format!("{name}?: {display}")
+                    }
+                    (false, Some(name), false) => {
+                        let name = self.ctx.types.resolve_atom_ref(name);
+                        format!("{name}: {display}")
+                    }
+                    (false, None, true) => format!("{display}?"),
+                    (false, None, false) => display,
+                }
+            })
+            .collect();
+        let tuple_display = format!("[{}]", parts.join(", "));
+
+        Some(if readonly {
+            format!("readonly {tuple_display}")
+        } else {
+            tuple_display
+        })
     }
 
     fn contextual_generic_call_parameter_display(
