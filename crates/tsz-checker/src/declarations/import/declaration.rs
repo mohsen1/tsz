@@ -934,11 +934,13 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // TS1479: Check if CommonJS file is importing an ES module.
-                    // TSC only emits TS1479 for Node16/NodeNext module kinds where the
-                    // CJS/ESM distinction is enforced at runtime. For ESNext, Preserve,
-                    // bundler, and other module kinds, the import interop is handled
-                    // by the bundler/runtime and TS1479 doesn't apply.
-                    let is_node_module_kind = self.ctx.compiler_options.module.is_node_module();
+                    // In TypeScript 6.0+, TSC only emits TS1479 for Node16/Node18
+                    // module kinds. Node20 and NodeNext (targeting Node 22+) support
+                    // `require()` of ESM modules, so the diagnostic is suppressed.
+                    // For ESNext, Preserve, bundler, and other module kinds, the
+                    // import interop is handled by the bundler/runtime.
+                    let is_node_module_kind =
+                        self.ctx.compiler_options.module.is_node16_or_node18();
                     let current_is_commonjs = is_node_module_kind && {
                         let current_file = &self.ctx.file_name;
                         // .cts/.cjs are always CommonJS
@@ -972,11 +974,12 @@ impl<'a> CheckerState<'a> {
                         module_name.starts_with("./") || module_name.starts_with("../");
                     let suppress_for_cjs_relative = is_explicit_cjs_file && is_relative_import;
 
-                    // TS1479 only applies under Node16/NodeNext module kinds where
-                    // CJS/ESM interop boundaries exist at runtime. Bundler resolution
-                    // and pure ESM module kinds handle interop transparently.
+                    // TS1479 only applies under Node16/Node18 module kinds where
+                    // CJS/ESM interop boundaries exist at runtime. Node20/NodeNext,
+                    // bundler resolution, and pure ESM module kinds handle interop
+                    // transparently.
                     let module_has_cjs_esm_boundary =
-                        self.ctx.compiler_options.module.is_node_module();
+                        self.ctx.compiler_options.module.is_node16_or_node18();
 
                     // TSC suppresses TS1479 when:
                     // - Target is a declaration file (.d.mts) AND importer is TypeScript (.cts):

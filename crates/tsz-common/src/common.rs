@@ -215,6 +215,16 @@ impl ModuleKind {
         )
     }
 
+    /// Check if this is Node16 or Node18 specifically.
+    ///
+    /// In TypeScript 6.0+, TS1479 (CJS importing ESM) is only emitted for
+    /// these pinned versions. Node20 and NodeNext (which map to Node 22+)
+    /// support `require()` of ESM modules, so the diagnostic is suppressed.
+    #[must_use]
+    pub const fn is_node16_or_node18(self) -> bool {
+        matches!(self, Self::Node16 | Self::Node18)
+    }
+
     /// Check if this uses ES modules (import/export)
     ///
     /// Returns true only for pure ES module systems where `export =` is forbidden.
