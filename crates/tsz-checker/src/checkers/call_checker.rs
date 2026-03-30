@@ -2346,13 +2346,22 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        // When no overload matched, use the last overload's return type as the
+        // fallback (matching tsc behavior). tsc always uses the last signature's
+        // return type for error recovery so that downstream code sees the expected
+        // shape rather than `never`. For example, `[].concat(...)` on `never[]`
+        // should still produce `never[]`, not `never`.
+        let fallback_return = signatures
+            .last()
+            .map(|s| s.return_type)
+            .unwrap_or(TypeId::NEVER);
         Some(OverloadResolution {
             arg_types: arg_types.clone(),
             result: CallResult::NoOverloadMatch {
                 func_type: TypeId::ANY,
                 arg_types,
                 failures,
-                fallback_return: TypeId::NEVER,
+                fallback_return,
             },
         })
     }
