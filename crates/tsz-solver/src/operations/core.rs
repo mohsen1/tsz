@@ -2324,16 +2324,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
-        // If we got here, no signature matched
+        // If we got here, no signature matched.
+        // Use the last overload signature's return type as the fallback (matching
+        // tsc behavior). tsc uses the last declaration's return type for error
+        // recovery, allowing downstream code to see the expected shape. For
+        // example, `[].concat(...)` on `never[]` should still produce `never[]`,
+        // not `never`, so that chained `.map()` resolves correctly.
+        let fallback_return = callable
+            .call_signatures
+            .last()
+            .map(|s| s.return_type)
+            .unwrap_or(TypeId::NEVER);
         CallResult::NoOverloadMatch {
             func_type: self.interner.callable(callable.clone()),
             arg_types: arg_types.to_vec(),
             failures,
-            // Preserve the semantic fact that a failed overload call has no
-            // usable result type. Returning `never` lets downstream property
-            // access and control-flow consumers observe the failed call as
-            // bottom instead of pretending the first overload succeeded.
-            fallback_return: TypeId::NEVER,
+            fallback_return,
         }
     }
 }
