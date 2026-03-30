@@ -2402,9 +2402,15 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         let message = format!("Expected at least {expected_min} arguments, but got {got}.");
+        // For `new` expressions, TSC uses the full `new X(...)` span.
+        let anchor_kind = if self.is_new_expression(idx) {
+            DiagnosticAnchorKind::Exact
+        } else {
+            DiagnosticAnchorKind::CallPrimary
+        };
         self.error_at_anchor(
             idx,
-            DiagnosticAnchorKind::CallPrimary,
+            anchor_kind,
             &message,
             diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
         );
