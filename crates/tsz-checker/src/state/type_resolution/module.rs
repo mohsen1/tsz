@@ -601,6 +601,7 @@ impl<'a> CheckerState<'a> {
     fn resolve_cross_file_namespace_exports_for_file(
         &self,
         target_file_idx: usize,
+        module_specifier: Option<&str>,
     ) -> Option<tsz_binder::SymbolTable> {
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
@@ -613,7 +614,11 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let direct_exports = self.module_exports_for_file(target_binder, &target_file_name);
+        let direct_exports = self
+            .module_exports_for_file(target_binder, &target_file_name)
+            .or_else(|| {
+                module_specifier.and_then(|specifier| target_binder.module_exports.get(specifier))
+            });
 
         if let Some(exports) = direct_exports {
             let mut combined = exports.clone();
@@ -668,10 +673,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx.current_file_idx,
                 module_specifier,
                 Some(mode),
-            ) && let Some(exports) =
-                self.resolve_cross_file_namespace_exports_for_file(target_idx)
-            {
-                return Some(exports);
+            ) {
+                if let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(
+                    target_idx,
+                    Some(module_specifier),
+                ) {
+                    return Some(exports);
+                }
+                return Some(tsz_binder::SymbolTable::new());
             }
         }
         self.resolve_effective_module_exports(module_specifier)
@@ -690,13 +699,15 @@ impl<'a> CheckerState<'a> {
             && let Some(target_idx) = self
                 .ctx
                 .resolve_import_target_from_file(source_idx, module_specifier)
-            && let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(target_idx)
+            && let Some(exports) = self
+                .resolve_cross_file_namespace_exports_for_file(target_idx, Some(module_specifier))
         {
             return Some(exports);
         }
 
         if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
-            && let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(target_idx)
+            && let Some(exports) = self
+                .resolve_cross_file_namespace_exports_for_file(target_idx, Some(module_specifier))
         {
             return Some(exports);
         }
@@ -709,7 +720,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .resolve_import_target_from_file(source_idx, &candidate)
                 && let Some(exports) =
-                    self.resolve_cross_file_namespace_exports_for_file(target_idx)
+                    self.resolve_cross_file_namespace_exports_for_file(target_idx, Some(&candidate))
             {
                 return Some(exports);
             }

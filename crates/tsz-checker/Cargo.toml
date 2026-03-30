@@ -215,5 +215,9 @@ path = "tests/ts2344_class_constructor_constraint.rs"
 name = "promise_constructor_capability_tests"
 path = "tests/promise_constructor_capability_tests.rs"
 
+[[test]]
+name = "import_attributes_resolution_mode_tests"
+path = "tests/import_attributes_resolution_mode_tests.rs"
+
 [lints]
 workspace = true

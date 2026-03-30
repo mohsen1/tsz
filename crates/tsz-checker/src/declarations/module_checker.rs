@@ -42,6 +42,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let resolution_mode =
+            self.requested_resolution_mode(export_decl.attributes, export_decl.is_type_only);
+
         // Get module specifier string
         let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier) else {
             return;
@@ -85,7 +88,11 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
-            self.check_export_target_is_module(export_decl.module_specifier, module_name);
+            self.check_export_target_is_module(
+                export_decl.module_specifier,
+                module_name,
+                resolution_mode,
+            );
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
@@ -94,14 +101,18 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
-            self.validate_reexported_members(export_decl, module_name);
+            self.validate_reexported_members(export_decl, module_name, resolution_mode);
             self.ctx.import_resolution_stack.pop();
             return;
         }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
-            self.check_export_target_is_module(export_decl.module_specifier, module_name);
+            self.check_export_target_is_module(
+                export_decl.module_specifier,
+                module_name,
+                resolution_mode,
+            );
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
@@ -110,7 +121,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
-            self.validate_reexported_members(export_decl, module_name);
+            self.validate_reexported_members(export_decl, module_name, resolution_mode);
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -140,7 +151,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.get_resolution_error(module_name).is_some() {
+        if self
+            .ctx
+            .get_resolution_error_with_mode(module_name, resolution_mode)
+            .is_some()
+        {
             let (message, code) = self.module_not_found_diagnostic(module_name);
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx.modules_with_ts2307_emitted.insert(module_key);
@@ -266,10 +281,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_specifier_idx: NodeIndex,
         module_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        let Some(target_idx) = self.ctx.resolve_import_target(module_name) else {
+        let target_idx = if let Some(mode) = resolution_mode {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                Some(mode),
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+        let Some(target_idx) = target_idx else {
             return;
         };
         let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
@@ -352,6 +377,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
         module_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_parser::parser::syntax_kind_ext;
@@ -375,7 +401,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the module's canonical export surface.
-        let module_exports = self.resolve_effective_module_exports(module_name);
+        let module_exports =
+            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
         // TSC includes source-level quotes in module diagnostic messages
         let quoted_module = format!("\"{module_name}\"");
 
