@@ -266,7 +266,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     fn weak_type_source_properties(&self, source: TypeId) -> Option<(Vec<PropertyInfo>, bool)> {
         if source == TypeId::FUNCTION {
-            return Some((self.function_like_weak_type_properties(Vec::new(), true, false), false));
+            return Some((
+                self.function_like_weak_type_properties(Vec::new(), true, false),
+                false,
+            ));
         }
 
         match self.interner.lookup(source) {
@@ -277,7 +280,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     !shape.call_signatures.is_empty(),
                     !shape.construct_signatures.is_empty(),
                 );
-                Some((props, shape.string_index.is_some() || shape.number_index.is_some()))
+                Some((
+                    props,
+                    shape.string_index.is_some() || shape.number_index.is_some(),
+                ))
             }
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
@@ -1779,7 +1785,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if member_shape.string_index.is_some() || member_shape.number_index.is_some() {
                 return false;
             }
-            if self.has_common_property(source_props.as_slice(), member_shape.properties.as_slice()) {
+            if self.has_common_property(source_props.as_slice(), member_shape.properties.as_slice())
+            {
                 has_common = true;
                 break;
             }
