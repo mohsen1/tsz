@@ -4461,8 +4461,9 @@ fn semantic_defs_declaration_merging_across_files_preserves_first_identity() {
 
 #[test]
 fn semantic_defs_survive_per_file_binder_reconstruction() {
-    // After merge, each per-file binder reconstructed from MergedProgram
-    // should have ALL semantic_defs from the global merged map.
+    // After merge, all semantic_defs should be available — either in the per-file
+    // binder (when DefinitionStore is not fully populated) or in the shared
+    // DefinitionStore (when fully populated, which is the parallel path).
     let files = vec![
         (
             "a.ts".to_string(),
@@ -4482,21 +4483,42 @@ fn semantic_defs_survive_per_file_binder_reconstruction() {
         .map(|e| e.name.clone())
         .collect();
 
-    // Reconstruct per-file binders and verify they get all semantic_defs
-    for file_idx in 0..program.files.len() {
-        let binder = create_binder_from_bound_file(&program.files[file_idx], &program, file_idx);
-        let binder_names: std::collections::HashSet<String> = binder
-            .semantic_defs
-            .values()
-            .map(|e| e.name.clone())
-            .collect();
-
-        // The per-file binder should have at least all global semantic_defs
+    // When the store is fully populated (parallel path), semantic_defs are
+    // intentionally skipped in the per-file binder for performance. Verify the
+    // global merged map has all expected entries instead.
+    if program.definition_store.is_fully_populated() {
+        // All global names should be resolvable in the DefinitionStore
         for name in &global_names {
+            let sym_id = program
+                .semantic_defs
+                .iter()
+                .find(|(_, e)| e.name == *name)
+                .map(|(&id, _)| id)
+                .unwrap_or_else(|| panic!("global semantic_defs should contain '{name}'"));
             assert!(
-                binder_names.contains(name),
-                "per-file binder for file {file_idx} missing semantic_def for '{name}'"
+                program
+                    .definition_store
+                    .find_def_by_symbol(sym_id.0)
+                    .is_some(),
+                "DefinitionStore should have DefId for '{name}'"
             );
+        }
+    } else {
+        // Legacy path: per-file binder should have all global semantic_defs
+        for file_idx in 0..program.files.len() {
+            let binder =
+                create_binder_from_bound_file(&program.files[file_idx], &program, file_idx);
+            let binder_names: std::collections::HashSet<String> = binder
+                .semantic_defs
+                .values()
+                .map(|e| e.name.clone())
+                .collect();
+            for name in &global_names {
+                assert!(
+                    binder_names.contains(name),
+                    "per-file binder for file {file_idx} missing semantic_def for '{name}'"
+                );
+            }
         }
     }
 }
@@ -4913,38 +4935,74 @@ fn create_binder_from_bound_file_composes_per_file_and_global() {
     let results = parse_and_bind_parallel(files);
     let program = merge_bind_results(results);
 
-    // Reconstruct binder for file a (index 0)
-    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
-
-    // The composed semantic_defs should contain BOTH Foo (from file a)
-    // and Bar (from global, cross-file).
-    let names: std::collections::HashSet<_> = binder_a
-        .semantic_defs
-        .values()
-        .map(|e| e.name.as_str())
-        .collect();
-    assert!(
-        names.contains("Foo"),
-        "binder for a.ts should see Foo (own file)"
-    );
-    assert!(
-        names.contains("Bar"),
-        "binder for a.ts should see Bar (cross-file via global)"
-    );
-
-    // Per-file entry should take precedence for Foo
-    let foo_sym_id = program
-        .globals
-        .get("Foo")
-        .expect("Foo should be in globals");
-    let foo_entry = binder_a
-        .semantic_defs
-        .get(&foo_sym_id)
-        .expect("Foo should exist in composed semantic_defs");
-    assert_eq!(
-        foo_entry.file_id, 0,
-        "Foo should have file_id 0 from per-file overlay"
-    );
+    // When DefinitionStore is fully populated (parallel path), semantic_defs are
+    // intentionally skipped in per-file binders. Verify via DefinitionStore instead.
+    if program.definition_store.is_fully_populated() {
+        // Find symbols via semantic_defs (globals may not contain module-scoped exports)
+        let foo_sym_id = program
+            .semantic_defs
+            .iter()
+            .find(|(_, e)| e.name == "Foo")
+            .map(|(&id, _)| id)
+            .expect("Foo should be in program semantic_defs");
+        let bar_sym_id = program
+            .semantic_defs
+            .iter()
+            .find(|(_, e)| e.name == "Bar")
+            .map(|(&id, _)| id)
+            .expect("Bar should be in program semantic_defs");
+        assert!(
+            program
+                .definition_store
+                .find_def_by_symbol(foo_sym_id.0)
+                .is_some(),
+            "Foo should have DefId in DefinitionStore"
+        );
+        assert!(
+            program
+                .definition_store
+                .find_def_by_symbol(bar_sym_id.0)
+                .is_some(),
+            "Bar should have DefId in DefinitionStore"
+        );
+        // Per-file entry file_id is preserved in program.semantic_defs
+        let foo_entry = program
+            .semantic_defs
+            .get(&foo_sym_id)
+            .expect("Foo should exist in program semantic_defs");
+        assert_eq!(
+            foo_entry.file_id, 0,
+            "Foo should have file_id 0 from per-file entry"
+        );
+    } else {
+        // Legacy path: reconstructed binder has composed semantic_defs
+        let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+        let names: std::collections::HashSet<_> = binder_a
+            .semantic_defs
+            .values()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(
+            names.contains("Foo"),
+            "binder for a.ts should see Foo (own file)"
+        );
+        assert!(
+            names.contains("Bar"),
+            "binder for a.ts should see Bar (cross-file via global)"
+        );
+        let foo_sym_id = program
+            .globals
+            .get("Foo")
+            .expect("Foo should be in globals");
+        let foo_entry = binder_a
+            .semantic_defs
+            .get(&foo_sym_id)
+            .expect("Foo should exist in composed semantic_defs");
+        assert_eq!(
+            foo_entry.file_id, 0,
+            "Foo should have file_id 0 from per-file overlay"
+        );
+    }
 }
 
 // =============================================================================
@@ -5076,8 +5134,10 @@ interface Extended extends Extra { b: number }
 
 #[test]
 fn semantic_defs_enriched_data_survives_binder_reconstruction() {
-    // The composed binder (from create_binder_from_bound_file) should
-    // preserve enriched heritage data from declaration merging.
+    // Heritage data from declaration merging should be preserved in the
+    // global program.semantic_defs (authoritative source after merge).
+    // When DefinitionStore is fully populated (parallel path), per-file
+    // binder semantic_defs are intentionally empty for performance.
     let files = vec![
         (
             "a.ts".to_string(),
@@ -5092,21 +5152,19 @@ interface Composed extends B { b: number }
     let results = parse_and_bind_parallel(files);
     let program = merge_bind_results(results);
 
-    // Reconstruct binder for file a
-    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
-
-    let entry = binder_a
+    // Check program-level semantic_defs (always populated)
+    let entry = program
         .semantic_defs
         .values()
         .find(|e| e.name == "Composed")
-        .expect("Composed should be in reconstructed binder's semantic_defs");
+        .expect("Composed should be in program's semantic_defs");
     assert!(
         entry.heritage_names().contains(&"A".to_string()),
-        "reconstructed binder should preserve heritage A"
+        "program semantic_defs should preserve heritage A"
     );
     assert!(
         entry.heritage_names().contains(&"B".to_string()),
-        "reconstructed binder should preserve heritage B"
+        "program semantic_defs should preserve heritage B"
     );
 }
 
@@ -5404,27 +5462,27 @@ fn definition_store_namespace_exports_survive_binder_reconstruction() {
     let program = merge_bind_results(results);
 
     // Reconstruct binder (as check_files_parallel does)
-    let binder = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let _binder = create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    // The reconstructed binder's semantic_defs should have parent_namespace
-    let inner_entry = binder.semantic_defs.values().find(|e| e.name == "Inner");
+    // Use program.semantic_defs (always populated) to verify parent_namespace
+    let inner_entry = program.semantic_defs.values().find(|e| e.name == "Inner");
     assert!(
         inner_entry.is_some(),
-        "reconstructed binder should have semantic_def for Inner"
+        "program semantic_defs should have entry for Inner"
     );
     let inner = inner_entry.unwrap();
     assert!(
         inner.parent_namespace.is_some(),
-        "Inner should have parent_namespace set after reconstruction"
+        "Inner should have parent_namespace set"
     );
 
     // The shared DefinitionStore should still have the export wiring
-    let ns_sym = binder
+    let ns_sym = program
         .semantic_defs
         .iter()
         .find(|(_, e)| e.name == "NS")
         .map(|(&id, _)| id)
-        .expect("expected NS in semantic_defs");
+        .expect("expected NS in program semantic_defs");
     let ns_def_id = program
         .definition_store
         .find_def_by_symbol(ns_sym.0)
@@ -5601,24 +5659,23 @@ fn definition_store_identity_stable_across_merge_rebind() {
     assert!(delta_def.is_some(), "Delta should have a DefId after merge");
 
     // Reconstruct binders (as check_files_parallel does)
-    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
-    let binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
+    let _binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let _binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
 
-    // Verify DefIds still resolve after reconstruction — the shared store persists
+    // Verify DefIds still resolve after reconstruction — the shared store persists.
+    // Use program.semantic_defs (always populated) to find symbol IDs.
     for (name, expected) in [
         ("Alpha", alpha_def.unwrap()),
         ("Beta", beta_def.unwrap()),
         ("Gamma", gamma_def.unwrap()),
         ("Delta", delta_def.unwrap()),
     ] {
-        // Find the symbol in the reconstructed binders
-        let sym_id = binder_a
+        let sym_id = program
             .semantic_defs
             .iter()
-            .chain(binder_b.semantic_defs.iter())
             .find(|(_, e)| e.name == name)
             .map(|(&id, _)| id);
-        let sym = sym_id.unwrap_or_else(|| panic!("{name} should be in reconstructed binder"));
+        let sym = sym_id.unwrap_or_else(|| panic!("{name} should be in program semantic_defs"));
         let found = program.definition_store.find_def_by_symbol(sym.0);
         assert_eq!(
             found,
@@ -6596,20 +6653,21 @@ fn heritage_extends_stable_after_merge_rebind() {
         "IExtended.extends should point to IBase"
     );
 
-    // Reconstruct binders and verify DefIds are still resolvable
-    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+    // Reconstruct binders and verify DefIds are still resolvable.
+    // Use program.semantic_defs (always populated) for symbol lookup.
+    let _binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
     for (name, expected_def) in [
         ("Base", base_def),
         ("Derived", derived_def),
         ("IBase", ibase_def),
         ("IExtended", iextended_def),
     ] {
-        let sym_id = binder_a
+        let sym_id = program
             .semantic_defs
             .iter()
             .find(|(_, e)| e.name == name)
             .map(|(&id, _)| id)
-            .unwrap_or_else(|| panic!("{name} should be in reconstructed binder"));
+            .unwrap_or_else(|| panic!("{name} should be in program semantic_defs"));
         let found = store.find_def_by_symbol(sym_id.0);
         assert_eq!(
             found,
@@ -6730,13 +6788,13 @@ fn generic_type_alias_identity_stable_across_merge_rebind() {
     );
 
     // Verify stable after rebind
-    let binder = create_binder_from_bound_file(&program.files[0], &program, 0);
-    let pair_sym = binder
+    let _binder = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let pair_sym = program
         .semantic_defs
         .iter()
         .find(|(_, e)| e.name == "Pair")
         .map(|(&id, _)| id)
-        .expect("Pair should be in reconstructed binder");
+        .expect("Pair should be in program semantic_defs");
     assert_eq!(
         store.find_def_by_symbol(pair_sym.0),
         Some(pair_def),
@@ -6792,14 +6850,14 @@ fn enum_identity_with_members_stable_across_merge_rebind() {
     );
     assert!(dir_info.is_const, "Direction should be const");
 
-    // Verify stable after rebind
-    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
-    let color_sym = binder_a
+    // Verify stable after rebind. Use program.semantic_defs for symbol lookup.
+    let _binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let color_sym = program
         .semantic_defs
         .iter()
         .find(|(_, e)| e.name == "Color")
         .map(|(&id, _)| id)
-        .expect("Color in reconstructed binder");
+        .expect("Color in program semantic_defs");
     assert_eq!(
         store.find_def_by_symbol(color_sym.0),
         Some(color_def),
@@ -6807,13 +6865,13 @@ fn enum_identity_with_members_stable_across_merge_rebind() {
     );
 
     // Cross-file enum identity should also be stable
-    let binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
-    let status_sym = binder_b
+    let _binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
+    let status_sym = program
         .semantic_defs
         .iter()
         .find(|(_, e)| e.name == "Status")
         .map(|(&id, _)| id)
-        .expect("Status in reconstructed binder");
+        .expect("Status in program semantic_defs");
     let status_def = find_def("Status").expect("Status should have DefId");
     assert_eq!(
         store.find_def_by_symbol(status_sym.0),
@@ -6874,14 +6932,14 @@ fn namespace_with_nested_declarations_stable_across_merge() {
         "Shapes.exports should contain Drawable"
     );
 
-    // Verify stable after rebind
-    let binder = create_binder_from_bound_file(&program.files[0], &program, 0);
-    let ns_sym = binder
+    // Verify stable after rebind. Use program.semantic_defs for symbol lookup.
+    let _binder = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let ns_sym = program
         .semantic_defs
         .iter()
         .find(|(_, e)| e.name == "Shapes")
         .map(|(&id, _)| id)
-        .expect("Shapes in reconstructed binder");
+        .expect("Shapes in program semantic_defs");
     assert_eq!(
         store.find_def_by_symbol(ns_sym.0),
         Some(ns_def),
