@@ -673,14 +673,27 @@ impl<'a> CheckerState<'a> {
     fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
         // Only check composite types — tsc does NOT preserve alias names for
         // primitive types (number, string, etc.), literal types, or simple unions
-        // of primitives.  Restricting to function/callable/object types avoids
+        // of primitives.  Restricting to object/function/callable types avoids
         // regressions like `number` → `TypeOfInfinity`.
-        // Only check object types — tsc does NOT preserve alias names for
-        // primitives, literals, or unions. Function type aliases are skipped
-        // because JSDoc callbacks with @template can have empty type_params
-        // in the DefInfo, causing incorrect alias lookup (e.g., "B" instead
-        // of "B<string>").
-        if tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_none() {
+        let is_object = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some();
+        let is_function = if !is_object {
+            if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+            {
+                // Skip function types that have their own type parameters — these
+                // are generic functions (including JSDoc @template callbacks) where
+                // the DefInfo may report empty type_params even though the body is
+                // generic. Using the alias name would lose the instantiated form.
+                if !fn_shape.type_params.is_empty() {
+                    return None;
+                }
+                true
+            } else {
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).is_some()
+            }
+        } else {
+            false
+        };
+        if !is_object && !is_function {
             return None;
         }
 
