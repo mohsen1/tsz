@@ -5,6 +5,7 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
+use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1264,7 +1265,7 @@ impl<'a> CheckerState<'a> {
         if type_args.len() > base_type_params.len() {
             type_args.truncate(base_type_params.len());
         }
-        let substitution =
+        let mut substitution =
             TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
         // When the extends clause has explicit type arguments, rebuild the base class name
@@ -1283,6 +1284,14 @@ impl<'a> CheckerState<'a> {
 
         // Base type parameters are only needed to build the extends-clause substitution here.
         self.pop_type_parameters(base_type_param_updates);
+
+        // Compose substitutions through the entire inheritance chain.
+        // The chain summary stores raw (uninstantiated) member types from ancestor classes.
+        // For example, if L<RT> extends T<RT[RT['a']]> and T<A> has member a: A,
+        // the chain summary stores a: A (T's raw type param). The initial substitution
+        // only maps RT -> X_type, leaving A unresolved. We need to also map A -> the
+        // instantiated extends clause type arg, so A maps to the correct concrete type.
+        self.compose_ancestor_substitutions(base_idx, &mut substitution);
 
         let base_chain_summary = self.summarize_class_chain(base_idx);
         let base_instance_member_names: rustc_hash::FxHashSet<String> = base_chain_summary
@@ -1968,6 +1977,132 @@ impl<'a> CheckerState<'a> {
             name.push('<');
             name.push_str(&param_names.join(", "));
             name.push('>');
+        }
+    }
+
+    /// Walk the inheritance chain from `class_idx` upward and compose type parameter
+    /// substitutions into `substitution`. This ensures that type parameters from
+    /// ancestor classes (not just the immediate base) are correctly mapped.
+    ///
+    /// For example, given `X extends L<X>` where `L<RT> extends T<RT[RT['a']]>`:
+    /// - The initial substitution maps `RT -> X_type`
+    /// - This method walks L -> T, finding `T<A>` with extends arg `RT[RT['a']]`
+    /// - It instantiates the extends arg with the current substitution: `X[X['a']]`
+    /// - It adds `A -> X[X['a']]` to the substitution
+    fn compose_ancestor_substitutions(
+        &mut self,
+        class_idx: NodeIndex,
+        substitution: &mut TypeSubstitution,
+    ) {
+        use rustc_hash::FxHashSet;
+
+        let mut current = class_idx;
+        let mut visited = FxHashSet::default();
+
+        while visited.insert(current) {
+            let Some(class) = self.ctx.arena.get_class_at(current) else {
+                break;
+            };
+
+            let heritage_clauses = match class.heritage_clauses.as_ref() {
+                Some(hc) => hc.clone(),
+                None => break,
+            };
+
+            let mut next_class = None;
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                let Some(&type_idx) = heritage.types.nodes.first() else {
+                    continue;
+                };
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+
+                let (expr_idx, type_arguments) =
+                    if let Some(expr_ta) = self.ctx.arena.get_expr_type_args(type_node) {
+                        (expr_ta.expression, expr_ta.type_arguments.as_ref().cloned())
+                    } else {
+                        (type_idx, None)
+                    };
+
+                // No type arguments means no intermediate substitution needed
+                let Some(ta) = type_arguments else {
+                    // Still need to walk up the chain in case there are further ancestors
+                    if let Some(parent_idx) = self.get_base_class_idx(current) {
+                        next_class = Some(parent_idx);
+                    }
+                    break;
+                };
+
+                // Resolve the parent class
+                let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                    break;
+                };
+                let Some(parent_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
+                else {
+                    break;
+                };
+                let Some(parent_class) = self.ctx.arena.get_class_at(parent_class_idx) else {
+                    break;
+                };
+
+                // Push current class's type params so we can resolve extends type args
+                let (_, current_tp_updates) = self.push_type_parameters(&class.type_parameters);
+
+                // Resolve extends clause type arguments
+                let mut extends_type_args = Vec::new();
+                for &arg_idx in &ta.nodes {
+                    extends_type_args.push(self.get_type_from_type_node(arg_idx));
+                }
+
+                self.pop_type_parameters(current_tp_updates);
+
+                // Get parent's type parameters
+                let (parent_type_params, parent_tp_updates) =
+                    self.push_type_parameters(&parent_class.type_parameters);
+                self.pop_type_parameters(parent_tp_updates);
+
+                // For each parent type parameter, instantiate the extends type arg
+                // with the current (accumulated) substitution and add the mapping
+                for (i, param) in parent_type_params.iter().enumerate() {
+                    if substitution.get(param.name).is_some() {
+                        continue; // Already mapped
+                    }
+                    let arg_type = if i < extends_type_args.len() {
+                        extends_type_args[i]
+                    } else {
+                        param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN)
+                    };
+                    let instantiated = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        arg_type,
+                        substitution,
+                    );
+                    substitution.insert(param.name, instantiated);
+                }
+
+                next_class = Some(parent_class_idx);
+                break; // Only process first extends clause
+            }
+
+            match next_class {
+                Some(nc) => current = nc,
+                None => break,
+            }
         }
     }
 
