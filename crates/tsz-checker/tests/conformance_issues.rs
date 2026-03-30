@@ -864,6 +864,24 @@ var c2 = () => { }
 }
 
 #[test]
+fn test_ambient_class_function_merge_new_uses_constructor() {
+    // When an ambient function and class merge, `new Foo(...)` should use the
+    // class constructor parameters, not the function parameters.
+    let source = r#"
+declare function Foo(x: number): number;
+declare class Foo { constructor(x: string); }
+const a = new Foo("");
+const b = Foo(12);
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    // `new Foo("")` uses the class constructor (x: string), so "" is valid
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "new Foo(\"\") should NOT emit TS2345 - should use class constructor (string), not function (number). Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_merged_enum_duplicate_member_reports_all_occurrences() {
     let source = r#"
 enum e5a { One }
