@@ -1488,6 +1488,28 @@ impl<'a> NarrowingContext<'a> {
     /// let narrowed = narrowing.narrow_type(string_or_null, &guard, GuardSense::Negative);
     /// // Result should exclude null and undefined
     /// ```
+    /// Resolve Lazy/Application types to their concrete form for use in exclusion
+    /// narrowing paths. This is needed because `narrow_excluding_type` cannot see
+    /// through Lazy(DefId) to access union/intersection members.
+    ///
+    /// Must NOT be called globally at the `narrow_type` entry point because
+    /// Instanceof guards with type parameters would break.
+    fn resolve_for_exclusion_narrowing(&self, source_type: TypeId) -> TypeId {
+        if matches!(
+            self.db.lookup(source_type),
+            Some(TypeData::Lazy(_) | TypeData::Application(_))
+        ) {
+            let r = self.resolve_type(source_type);
+            if r == TypeId::ERROR && source_type != TypeId::ERROR {
+                source_type
+            } else {
+                r
+            }
+        } else {
+            source_type
+        }
+    }
+
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
         let sense = matches!(sense, GuardSense::Positive);
         // Resolve IndexAccess types (e.g., `A[K]`) to their concrete form before
@@ -1513,8 +1535,9 @@ impl<'a> NarrowingContext<'a> {
                     if source_type == TypeId::ANY {
                         return source_type;
                     }
-                    // Negation: exclude typeof type
-                    self.narrow_by_typeof_negation(source_type, type_name)
+                    // Negation: exclude typeof type — resolve Lazy types first
+                    let resolved = self.resolve_for_exclusion_narrowing(source_type);
+                    self.narrow_by_typeof_negation(resolved, type_name)
                 }
             }
 
@@ -1593,25 +1616,9 @@ impl<'a> NarrowingContext<'a> {
                     // Equality: narrow to the literal type
                     self.narrow_to_type(source_type, *literal_type)
                 } else {
-                    // Inequality: exclude the literal type.
-                    // Resolve Lazy/Application types first so narrow_excluding_type
-                    // can see the union structure (e.g., type aliases like
-                    // `type Variants = "a" | "b" | "c" | "d"` need to be unwrapped
-                    // for individual members to be excluded).
-                    let resolved_source = if matches!(
-                        self.db.lookup(source_type),
-                        Some(TypeData::Lazy(_) | TypeData::Application(_))
-                    ) {
-                        let r = self.resolve_type(source_type);
-                        if r == TypeId::ERROR && source_type != TypeId::ERROR {
-                            source_type
-                        } else {
-                            r
-                        }
-                    } else {
-                        source_type
-                    };
-                    self.narrow_excluding_type(resolved_source, *literal_type)
+                    // Inequality: exclude the literal type — resolve Lazy types first
+                    let resolved = self.resolve_for_exclusion_narrowing(source_type);
+                    self.narrow_excluding_type(resolved, *literal_type)
                 }
             }
 
@@ -1620,8 +1627,9 @@ impl<'a> NarrowingContext<'a> {
                     // Equality with null: narrow to null | undefined
                     self.db.union2(TypeId::NULL, TypeId::UNDEFINED)
                 } else {
-                    // Inequality: exclude null and undefined
-                    let without_null = self.narrow_excluding_type(source_type, TypeId::NULL);
+                    // Inequality: exclude null and undefined — resolve Lazy types first
+                    let resolved = self.resolve_for_exclusion_narrowing(source_type);
+                    let without_null = self.narrow_excluding_type(resolved, TypeId::NULL);
                     self.narrow_excluding_type(without_null, TypeId::UNDEFINED)
                 }
             }
