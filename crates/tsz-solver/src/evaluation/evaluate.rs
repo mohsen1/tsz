@@ -61,8 +61,8 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// individual members instead of the full intersection type.
     suppress_this_binding: bool,
     /// PERF: Cache for subtype check results used in conditional type evaluation.
-    /// Key: (check_type, extends_type), Value: is_subtype.
-    /// Deeply recursive conditional types (DeepReadonly, Compute, etc.) often check
+    /// Key: (`check_type`, `extends_type`), Value: `is_subtype`.
+    /// Deeply recursive conditional types (`DeepReadonly`, `Compute`, etc.) often check
     /// the same (check, extends) pair many times across distributed branches and
     /// tail-recursion iterations. Caching avoids redundant structural comparison.
     conditional_subtype_cache: FxHashMap<(TypeId, TypeId), bool>,

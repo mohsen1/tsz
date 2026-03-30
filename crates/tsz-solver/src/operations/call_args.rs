@@ -917,7 +917,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Given a rest param type and an offset of consumed fixed elements,
     /// return the remaining type that the spread should match.
-    /// For Array types or TypeParameters, return as-is (spread covers all).
+    /// For `Array` types or `TypeParameters`, return as-is (spread covers all).
     /// For Tuple types like `[number, ...U]` with offset 1, return `U`
     /// (the variadic portion after the fixed prefix).
     fn remaining_rest_type_after_offset(&self, rest_type: TypeId, consumed: usize) -> TypeId {
