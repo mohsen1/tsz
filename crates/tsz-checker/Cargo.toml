@@ -207,5 +207,9 @@ path = "tests/js_container_merge_ts2339_tests.rs"
 name = "ts2344_typeof_merged_tests"
 path = "tests/ts2344_typeof_merged_tests.rs"
 
+[[test]]
+name = "promise_constructor_capability_tests"
+path = "tests/promise_constructor_capability_tests.rs"
+
 [lints]
 workspace = true
