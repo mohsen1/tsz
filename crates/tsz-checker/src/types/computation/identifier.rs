@@ -1662,12 +1662,29 @@ impl<'a> CheckerState<'a> {
         // carry VALUE_MODULE) do not suppress TS2708 / TS2686 diagnostics.
         let real_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
 
+        // A symbol counts as a non-UMD global value if:
+        // 1. It has real value flags AND is not a UMD export, OR
+        // 2. It is a UMD export that has been merged with a non-UMD value declaration
+        //    (e.g., `export as namespace X` merged with `declare global { const X }`).
+        //    In this case, the symbol retains `is_umd_export = true` but gains
+        //    VARIABLE flags from the global augmentation.
+        let is_non_umd_value = |sym: &tsz_binder::Symbol| -> bool {
+            let has_real_value = (sym.flags & real_value_flags) != 0;
+            if !has_real_value {
+                return false;
+            }
+            if !sym.is_umd_export {
+                return true;
+            }
+            // UMD export merged with a variable declaration from `declare global`
+            (sym.flags & symbol_flags::VARIABLE) != 0
+        };
+
         // Check lib_contexts (lib files + some user files)
         for lib_ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(sym) = lib_ctx.binder.get_symbol(sym_id)
-                && (sym.flags & real_value_flags) != 0
-                && !sym.is_umd_export
+                && is_non_umd_value(sym)
             {
                 return true;
             }
@@ -1687,8 +1704,7 @@ impl<'a> CheckerState<'a> {
                     .map(|binder| binder.as_ref())
                     .unwrap_or(self.ctx.binder);
                 if let Some(sym) = binder.get_symbol(sym_id)
-                    && (sym.flags & real_value_flags) != 0
-                    && !sym.is_umd_export
+                    && is_non_umd_value(sym)
                 {
                     return true;
                 }
@@ -1697,8 +1713,7 @@ impl<'a> CheckerState<'a> {
             for binder in all_binders.iter() {
                 if let Some(sym_id) = binder.file_locals.get(name)
                     && let Some(sym) = binder.get_symbol(sym_id)
-                    && (sym.flags & real_value_flags) != 0
-                    && !sym.is_umd_export
+                    && is_non_umd_value(sym)
                 {
                     return true;
                 }
