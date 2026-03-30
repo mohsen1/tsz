@@ -346,6 +346,26 @@ m.set("key", true);
 }
 
 #[test]
+fn test_map_constructor_rejects_heterogeneous_value_inference() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const map = new Map([["", true], ["", 0]]);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        real_errors.iter().any(|(c, _)| *c == 2769),
+        "Map constructor should reject heterogeneous value inference instead of widening to a union.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
 fn test_promise_chaining_identity_stable() {
     if !lib_files_available() {
         return;
