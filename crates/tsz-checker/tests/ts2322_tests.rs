@@ -3,6 +3,7 @@
 //! These tests verify that TS2322 "Type 'X' is not assignable to type 'Y'" errors
 //! are properly emitted in various contexts.
 
+use rustc_hash::FxHashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
@@ -16,54 +17,44 @@ use tsz_solver::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.esnext.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.esnext.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/lib.dom.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+    let lib_roots = [
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+    ];
+    let lib_names = [
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "dom.d.ts",
+        "dom.generated.d.ts",
+        "dom.iterable.d.ts",
+        "esnext.d.ts",
     ];
 
     let mut lib_files = Vec::new();
-
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let lib_file = LibFile::from_source("lib.es5.d.ts".to_string(), content);
-            lib_files.push(Arc::new(lib_file));
+    let mut seen_files = FxHashSet::default();
+    for file_name in lib_names {
+        for root in &lib_roots {
+            let lib_path = root.join(file_name);
+            if lib_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&lib_path)
+            {
+                if !seen_files.insert(file_name.to_string()) {
+                    break;
+                }
+                let lib_file = LibFile::from_source(file_name.to_string(), content);
+                lib_files.push(Arc::new(lib_file));
+                break;
+            }
         }
     }
 
