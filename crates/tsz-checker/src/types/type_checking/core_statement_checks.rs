@@ -418,63 +418,34 @@ impl<'a> CheckerState<'a> {
     /// ## Parameters:
     /// - `stmt_idx`: The for-await statement node index to check
     ///
-    /// ## Validation:
-    /// - Emits TS1103 if for-await is used outside async function and not at top level
-    /// - Emits TS1432 if for-await is at top level but module/target options don't support it
+    /// ## Notes:
+    /// tsc 6.0 no longer emits TS1103/TS1431/TS1432 for `for await` statements.
+    /// Top-level await and `for await` in non-async functions are now accepted
+    /// without error.  Only TS18038 (`for await` in class static blocks) is
+    /// still emitted.
     pub(crate) fn check_for_await_statement(&mut self, stmt_idx: NodeIndex) {
-        if !self.ctx.in_async_context() {
+        if !self.ctx.in_async_context()
+            && self.ctx.function_depth > 0
+            && self.find_enclosing_static_block(stmt_idx).is_some()
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-            // Check if we're at top level of a module
-            let at_top_level = self.ctx.function_depth == 0;
-
-            if at_top_level {
-                // TS1431: Only emit when the file is NOT a module (no imports/exports).
-                // If the file is a module, top-level for-await is potentially valid
-                // (just needs the right module/target settings).
-                if !self.ctx.binder.is_external_module() {
-                    self.error_at_node(
-                        stmt_idx,
-                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A,
-                        diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A,
-                    );
-                }
-
-                // TS1432: Top-level for-await requires ES2022+/ESNext module and ES2017+ target
-                if !self.supports_top_level_await() {
-                    self.error_at_node(
-                        stmt_idx,
-                        diagnostic_messages::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20,
-                        diagnostic_codes::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20,
-                    );
-                }
-            } else if self.find_enclosing_static_block(stmt_idx).is_some() {
-                // TS18038: 'for await' loops cannot be used inside a class static block
-                // TSC anchors this error at the `await` keyword, not the `for` keyword.
-                // The `await` keyword follows `for ` (4 chars) in `for await (...)`.
-                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
-                    let await_pos = stmt_node.pos + 4; // skip "for "
-                    let await_len = 5u32; // "await"
-                    self.error(
-                        await_pos,
-                        await_len,
-                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK
-                            .to_string(),
-                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                    );
-                } else {
-                    self.error_at_node(
-                        stmt_idx,
-                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                    );
-                }
+            // TS18038: 'for await' loops cannot be used inside a class static block.
+            // TSC anchors this error at the `await` keyword, not the `for` keyword.
+            if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                let await_pos = stmt_node.pos + 4; // skip "for "
+                let await_len = 5u32; // "await"
+                self.error(
+                    await_pos,
+                    await_len,
+                    diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK
+                        .to_string(),
+                    diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                );
             } else {
-                // TS1103: 'for await' loops are only allowed within async functions
                 self.error_at_node(
                     stmt_idx,
-                    diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
-                    diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                    diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
                 );
             }
         }

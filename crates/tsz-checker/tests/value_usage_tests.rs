@@ -1010,6 +1010,51 @@ ns.foo.bar();
 // TS2339 errors (wrong code → correct code), so no tests flip from pass to fail.
 
 #[test]
+fn test_for_await_no_ts1103_ts1431_ts1432() {
+    // tsc 6.0 no longer emits TS1103/TS1431/TS1432 for `for await` statements.
+    // Top-level `for await` and `for await` in non-async functions are accepted.
+    // Only TS18038 (for-await in class static blocks) is still emitted.
+    let source = r#"
+async function ok() {
+    let y: any;
+    for await (const x of y) {}
+}
+function notAsync() {
+    let y: any;
+    for await (const x of y) {}
+}
+for await (const x of []) {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let obsolete: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1103 || d.code == 1431 || d.code == 1432)
+        .collect();
+    assert!(
+        obsolete.is_empty(),
+        "Expected no TS1103/TS1431/TS1432 (obsolete in tsc 6.0), got: {obsolete:?}"
+    );
+}
+
+#[test]
 fn test_literal_undefined_in_binary_op_emits_ts18050() {
     // When the literal `undefined` keyword is used in a binary operation,
     // tsc emits TS18050 "The value 'undefined' cannot be used here."
