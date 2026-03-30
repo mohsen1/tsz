@@ -236,7 +236,228 @@ impl<'a> CheckerState<'a> {
         // Check that interface correctly extends base interfaces (error 2430)
         self.check_interface_extension_compatibility(stmt_idx, iface);
 
+        // Check variance annotations match actual usage (TS2636)
+        self.check_variance_annotations(stmt_idx, &iface.type_parameters);
+
         self.pop_type_parameters(type_param_updates);
+    }
+
+    /// Check that variance annotations (`in`/`out`) on type parameters match
+    /// the actual variance of each parameter as computed by the solver (TS2636).
+    ///
+    /// For `out T` (covariant), T must not appear in contravariant positions.
+    /// For `in T` (contravariant), T must not appear in covariant positions.
+    /// `in out T` (invariant) always passes.
+    ///
+    /// Works for interfaces, classes, and type aliases.
+    /// If `body_type` is provided, variance is computed directly on it (for type aliases
+    /// whose DefId body may not be resolved yet). Otherwise, resolves via DefId.
+    pub(crate) fn check_variance_annotations(
+        &mut self,
+        stmt_idx: NodeIndex,
+        type_parameters: &Option<tsz_parser::parser::base::NodeList>,
+    ) {
+        self.check_variance_annotations_with_body(stmt_idx, type_parameters, None);
+    }
+
+    /// Like `check_variance_annotations` but accepts an optional pre-resolved body type.
+    pub(crate) fn check_variance_annotations_with_body(
+        &mut self,
+        stmt_idx: NodeIndex,
+        type_parameters: &Option<tsz_parser::parser::base::NodeList>,
+        body_type: Option<TypeId>,
+    ) {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(type_params) = type_parameters else {
+            return;
+        };
+
+        // Collect declared variance info for each type parameter
+        struct ParamVarianceInfo {
+            declared_in: bool,
+            declared_out: bool,
+            modifier_idx: NodeIndex,
+            name: String,
+            atom: tsz_common::interner::Atom,
+        }
+
+        let mut annotated_params: Vec<(usize, ParamVarianceInfo)> = Vec::new();
+
+        for (i, &param_idx) in type_params.nodes.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            let Some(modifiers) = &param.modifiers else {
+                continue;
+            };
+
+            let mut declared_in = false;
+            let mut declared_out = false;
+            let mut first_modifier_idx = NodeIndex::NONE;
+
+            for &modifier_idx in &modifiers.nodes {
+                let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
+                    continue;
+                };
+                if modifier_node.kind == SyntaxKind::InKeyword as u16 {
+                    declared_in = true;
+                    if first_modifier_idx.is_none() {
+                        first_modifier_idx = modifier_idx;
+                    }
+                } else if modifier_node.kind == SyntaxKind::OutKeyword as u16 {
+                    declared_out = true;
+                    if first_modifier_idx.is_none() {
+                        first_modifier_idx = modifier_idx;
+                    }
+                }
+            }
+
+            if !declared_in && !declared_out {
+                continue;
+            }
+
+            // `in out` (invariant) is always valid
+            if declared_in && declared_out {
+                continue;
+            }
+
+            let param_name = self
+                .ctx
+                .arena
+                .get(param.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|id| id.escaped_text.clone())
+                .unwrap_or_default();
+
+            let atom = self.ctx.types.intern_string(&param_name);
+
+            annotated_params.push((
+                i,
+                ParamVarianceInfo {
+                    declared_in,
+                    declared_out,
+                    modifier_idx: first_modifier_idx,
+                    name: param_name,
+                    atom,
+                },
+            ));
+        }
+
+        if annotated_params.is_empty() {
+            return;
+        }
+
+        // Compute all variances upfront (immutable borrow of self.ctx)
+        // to avoid borrow conflicts with error_at_node (mutable borrow).
+        let computed_variances: Vec<Option<tsz_solver::types::Variance>> = {
+            let db = self.ctx.types.as_type_database();
+            let resolver = &self.ctx as &dyn tsz_solver::def::resolver::TypeResolver;
+
+            // Try DefId-based resolution first (works for interfaces/classes and
+            // type aliases whose bodies are already resolved)
+            let sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
+            let def_id = sym_id.and_then(|sid| self.ctx.get_existing_def_id(sid));
+            let def_variances = def_id.and_then(|did| {
+                tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
+                    db, resolver, did,
+                )
+            });
+
+            annotated_params
+                .iter()
+                .map(|(i, info)| {
+                    // Try direct body type computation first (more reliable for
+                    // type aliases where the DefId body may not be resolved yet)
+                    if let Some(body) = body_type {
+                        let v = tsz_solver::relations::variance::compute_variance_with_resolver(
+                            db, resolver, body, info.atom,
+                        );
+                        if !v.is_independent() {
+                            return Some(v);
+                        }
+                    }
+                    // Fall back to DefId-based resolution
+                    def_variances.as_ref().and_then(|v| v.get(*i).copied())
+                })
+                .collect()
+        };
+
+        // Get the declaration name for error messages
+        let decl_name = self
+            .ctx
+            .binder
+            .get_node_symbol(stmt_idx)
+            .and_then(|sid| self.ctx.binder.get_symbol(sid))
+            .map(|sym| sym.escaped_name.clone())
+            .unwrap_or_default();
+
+        // Collect all type param names for formatting
+        let all_param_names: Vec<String> = type_params
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                let name_node = self.ctx.arena.get(param.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                Some(ident.escaped_text.clone())
+            })
+            .collect();
+
+        for (idx, (i, info)) in annotated_params.iter().enumerate() {
+            let Some(actual_variance) = computed_variances[idx] else {
+                continue;
+            };
+
+            let violation = if info.declared_out {
+                // `out T` (covariant): error if T appears contravariantly
+                actual_variance.contains(tsz_solver::types::Variance::CONTRAVARIANT)
+            } else {
+                // `in T` (contravariant): error if T appears covariantly
+                actual_variance.contains(tsz_solver::types::Variance::COVARIANT)
+            };
+
+            if !violation {
+                continue;
+            }
+
+            // Format error message: "Type 'Controller<sub-T>' is not assignable to
+            // type 'Controller<super-T>' as implied by variance annotation."
+            let format_type = |marker: &str| -> String {
+                let args: Vec<String> = all_param_names
+                    .iter()
+                    .enumerate()
+                    .map(|(j, name)| {
+                        if j == *i {
+                            format!("{}-{}", marker, name)
+                        } else {
+                            name.clone()
+                        }
+                    })
+                    .collect();
+                format!("{}<{}>", decl_name, args.join(", "))
+            };
+
+            let (sub_type, super_type) = if info.declared_out {
+                (format_type("sub"), format_type("super"))
+            } else {
+                (format_type("super"), format_type("sub"))
+            };
+
+            let message = crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_AS_IMPLIED_BY_VARIANCE_ANNOTATION
+                .replace("{0}", &sub_type)
+                .replace("{1}", &super_type);
+
+            self.error_at_node(
+                info.modifier_idx,
+                &message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_AS_IMPLIED_BY_VARIANCE_ANNOTATION,
+            );
+        }
     }
 
     /// Check for duplicate property names in interface members (TS2300).

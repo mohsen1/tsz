@@ -678,6 +678,9 @@ impl<'a> CheckerState<'a> {
             self.ctx.enclosing_class_chain.pop();
         }
 
+        // Check variance annotations match actual usage (TS2636)
+        self.check_variance_annotations(stmt_idx, &class.type_parameters);
+
         self.pop_type_parameters(type_param_updates);
 
         let mut refresh_symbols = Vec::new();
