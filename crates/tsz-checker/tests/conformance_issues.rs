@@ -19613,6 +19613,73 @@ var x: Promise2<string>;
     );
 }
 
+#[test]
+fn test_ts2403_overload_order_is_not_redeclaration_identical() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface A {
+    (x: { s: string }): string;
+    (x: { n: number }): number;
+}
+
+interface C {
+    (x: { n: number }): number;
+    (x: { s: string }): string;
+}
+
+declare var w: A;
+declare var w: C;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2403),
+        "Expected TS2403 when overloaded signature order differs.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_failed_overload_call_returns_never_for_follow_on_property_access() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface A {
+    (x: { s: string }): string;
+    (x: { n: number }): number;
+}
+
+interface B {
+    (x: { s: string }): string;
+    (x: { n: number }): number;
+}
+
+declare var v: A;
+declare var v: B;
+
+v({ s: "", n: 0 }).toLowerCase();
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2769_count = diagnostics.iter().filter(|(code, _)| *code == 2769).count();
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+
+    assert_eq!(
+        ts2769_count, 1,
+        "Expected exactly one TS2769 for the failed overload call.\nActual: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected the failed overload result to behave like never and surface TS2339 on `.toLowerCase()`.\nActual: {diagnostics:#?}"
+    );
+}
+
 /// TS2304: implements clause with unresolved name should emit TS2304.
 /// From: bind1.ts
 #[test]

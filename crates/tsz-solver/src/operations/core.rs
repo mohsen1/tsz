@@ -2329,11 +2329,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             func_type: self.interner.callable(callable.clone()),
             arg_types: arg_types.to_vec(),
             failures,
-            fallback_return: callable
-                .call_signatures
-                .first()
-                .map(|s| s.return_type)
-                .unwrap_or(TypeId::ANY),
+            // Preserve the semantic fact that a failed overload call has no
+            // usable result type. Returning `never` lets downstream property
+            // access and control-flow consumers observe the failed call as
+            // bottom instead of pretending the first overload succeeded.
+            fallback_return: TypeId::NEVER,
         }
     }
 }
