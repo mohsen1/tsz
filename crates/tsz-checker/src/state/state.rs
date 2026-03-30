@@ -1222,6 +1222,11 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
+        // Guard: NodeIndex::NONE is a sentinel (u32::MAX) that must never reach
+        // the type cache — doing so would try to allocate a multi-GB Vec.
+        if idx.is_none() {
+            return TypeId::ERROR;
+        }
         let use_node_cache = request.is_empty();
         let request_cache_key = if use_node_cache {
             None

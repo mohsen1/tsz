@@ -106,6 +106,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the type of the await operand with transformed contextual type
+        // Guard: if the operand is missing (e.g. `await;`), return ANY
+        if unary.expression.is_none() {
+            return TypeId::ANY;
+        }
         let expr_type = self.get_type_of_node_with_request(unary.expression, &operand_request);
 
         // Recursively unwrap Promise<T> to get T (simulating Awaited<T>)

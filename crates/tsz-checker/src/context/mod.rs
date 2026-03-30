@@ -204,8 +204,15 @@ impl NodeTypeCache {
     }
 
     /// Insert a type for a raw node index.
+    ///
+    /// Rejects sentinel values (u32::MAX / NodeIndex::NONE) to prevent
+    /// multi-GB allocations from bogus indices.
     #[inline]
     pub fn insert(&mut self, key: u32, value: TypeId) {
+        // NodeIndex::NONE == u32::MAX; resizing to that would OOM.
+        if key == u32::MAX {
+            return;
+        }
         let idx = key as usize;
         if idx >= self.data.len() {
             self.data.resize(idx + 1, TypeId::NONE);
