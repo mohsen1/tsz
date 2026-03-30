@@ -848,33 +848,54 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check Application expansion to target (one-sided Application case).
     ///
-    /// When the target is an Application type that can be expanded (e.g., conditional
-    /// types, mapped types), we first expand it and then check subtyping.
+    /// When the source is an Application type, try structural expansion first.
+    /// If that fails, fall back to type evaluation.
     pub(crate) fn check_application_expansion_target(
         &mut self,
-        _source: TypeId,
+        source: TypeId,
         target: TypeId,
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
         match self.try_expand_application(app_id) {
             Some(expanded) => self.check_subtype(expanded, target),
-            None => SubtypeResult::False,
+            None => {
+                let s_eval = self.evaluate_type(source);
+                if s_eval != source {
+                    self.check_subtype(s_eval, target)
+                } else {
+                    SubtypeResult::False
+                }
+            }
         }
     }
 
     /// Check source to Application expansion (one-sided Application case).
     ///
-    /// When the source is an Application type that can be expanded (e.g., conditional
-    /// types, mapped types), we first expand it and then check subtyping.
+    /// When the target is an Application type that can be expanded (e.g., mapped
+    /// types like Readonly<T>), we first try structural expansion. If that fails
+    /// (common for lib types where the resolver doesn't have type params), fall
+    /// back to type evaluation which has broader resolution capabilities.
     pub(crate) fn check_source_to_application_expansion(
         &mut self,
         source: TypeId,
-        _target: TypeId,
+        target: TypeId,
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
         match self.try_expand_application(app_id) {
             Some(expanded) => self.check_subtype(source, expanded),
-            None => SubtypeResult::False,
+            None => {
+                // Evaluation fallback: when try_expand_application fails
+                // (common for lib type aliases like Readonly<T>, Partial<T>
+                // where the resolver can't resolve the definition body), try
+                // full type evaluation which can resolve through the evaluation
+                // pipeline (including mapped type expansion).
+                let t_eval = self.evaluate_type(target);
+                if t_eval != target {
+                    self.check_subtype(source, t_eval)
+                } else {
+                    SubtypeResult::False
+                }
+            }
         }
     }
 

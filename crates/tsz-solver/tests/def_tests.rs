@@ -1673,3 +1673,40 @@ fn from_semantic_defs_resolves_heritage() {
         "Child.implements should contain Printable"
     );
 }
+
+/// TypeEnvironment::get_lazy_type_params should fall back to the DefinitionStore
+/// when type params are not in the local cache. This mirrors how get_def falls
+/// back to the store for type bodies.
+#[test]
+fn test_type_environment_get_lazy_type_params_definition_store_fallback() {
+    use crate::def::resolver::TypeEnvironment;
+    use crate::def::resolver::TypeResolver;
+
+    let interner = create_test_interner();
+    let store = std::sync::Arc::new(DefinitionStore::new());
+
+    // Register a type alias with type params in the store
+    let name = interner.intern_string("Readonly");
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let info = DefinitionInfo::type_alias(name, vec![t_param.clone()], TypeId::NUMBER);
+    let def_id = store.register(info);
+
+    // Create a TypeEnvironment with the store but DON'T insert params locally
+    let mut env = TypeEnvironment::new();
+    env.set_definition_store(store);
+
+    // get_lazy_type_params should find the params via the DefinitionStore fallback
+    let params = env.get_lazy_type_params(def_id);
+    assert!(
+        params.is_some(),
+        "get_lazy_type_params should find params from DefinitionStore"
+    );
+    let params = params.unwrap();
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].name, t_param.name);
+}
