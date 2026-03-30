@@ -743,14 +743,15 @@ impl ParserState {
                 .map_or(self.token_end(), |node| node.end);
         }
 
-        if self.is_js_file() {
-            self.parse_error_at(
-                start_pos,
-                end_pos.saturating_sub(start_pos),
-                tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
-                tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
-            );
-        }
+        // tsc's parser always emits TS2657 when adjacent JSX siblings
+        // are found in expression context, regardless of file extension
+        // (.tsx, .jsx, or .js with JSX enabled).
+        self.parse_error_at(
+            start_pos,
+            end_pos.saturating_sub(start_pos),
+            tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+            tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+        );
         true
     }
 
@@ -966,9 +967,45 @@ impl ParserState {
         };
 
         // Parse property access chain (Foo.Bar.Baz)
+        // Private identifiers (e.g. #prop) are not allowed in JSX element names;
+        // tsc uses allowPrivateIdentifiers=false for the right-hand side of the
+        // dot here, so we emit TS1003 "Identifier expected" and create a missing
+        // identifier node instead of accepting the private name.
         while self.is_token(SyntaxKind::DotToken) {
             self.next_token(); // consume .
-            let name = self.parse_identifier();
+            let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
+                // Private identifiers are not valid in JSX element names.
+                // tsc's parseRightSideOfDot consumes the PrivateIdentifier
+                // via parsePrivateIdentifier(), then calls createMissingNode
+                // with reportAtCurrentPosition:true which uses
+                // scanner.getTokenStart() — the start of the NEXT token's
+                // trivia (which equals the end of the PrivateIdentifier
+                // token).  We replicate that by recording the end position
+                // of the PrivateIdentifier and emitting the error there.
+                let pos = self.token_pos();
+                let end = self.token_end();
+                let err_pos = end;
+                self.next_token(); // consume the private identifier
+                self.parse_error_at(
+                    err_pos,
+                    0,
+                    "Identifier expected.",
+                    tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+                self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    pos,
+                    end,
+                    crate::parser::node::IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                )
+            } else {
+                self.parse_identifier()
+            };
             let end_pos = self.token_end();
             expr = self.arena.add_access_expr(
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
