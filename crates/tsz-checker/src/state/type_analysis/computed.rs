@@ -10,11 +10,113 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
         contains_type_parameters(self.ctx.types, type_id)
             || contains_infer_types(self.ctx.types, type_id)
+    }
+
+    fn should_skip_namespace_export_name(
+        &self,
+        exports_table: &tsz_binder::SymbolTable,
+        export_name: &str,
+        export_sym_id: SymbolId,
+    ) -> bool {
+        if export_name == "export=" {
+            return true;
+        }
+        if !export_name.starts_with('_') {
+            return false;
+        }
+
+        let Some(default_sym_id) = exports_table.get("default") else {
+            return false;
+        };
+        if default_sym_id == export_sym_id {
+            return true;
+        }
+
+        let lookup_symbol = |sym_id: SymbolId| {
+            self.ctx
+                .binder
+                .get_symbol(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+        };
+
+        let Some(export_symbol) = lookup_symbol(export_sym_id) else {
+            return false;
+        };
+        let Some(default_symbol) = lookup_symbol(default_sym_id) else {
+            return false;
+        };
+
+        (export_symbol.value_declaration.is_some()
+            && export_symbol.value_declaration == default_symbol.value_declaration)
+            || export_symbol
+                .declarations
+                .iter()
+                .any(|decl| default_symbol.declarations.contains(decl))
+    }
+
+    fn append_export_equals_import_type_namespace_props(
+        &mut self,
+        module_name: &str,
+        declaring_file_idx: Option<usize>,
+        exports_table: &tsz_binder::SymbolTable,
+        props: &mut Vec<PropertyInfo>,
+    ) {
+        let Some(export_equals_sym_id) = exports_table.get("export=") else {
+            return;
+        };
+        let Some(export_equals_symbol) = self.get_symbol_globally(export_equals_sym_id) else {
+            return;
+        };
+
+        let mut nested_exports = tsz_binder::SymbolTable::new();
+        self.merge_export_equals_import_type_members(export_equals_symbol, &mut nested_exports);
+
+        for (name, &export_sym_id) in nested_exports.iter() {
+            if self.should_skip_namespace_export_name(&nested_exports, name, export_sym_id) {
+                continue;
+            }
+            if props
+                .iter()
+                .any(|p| self.ctx.types.resolve_atom_ref(p.name).as_ref() == name)
+            {
+                continue;
+            }
+            if self.is_type_only_export_symbol(export_sym_id)
+                || self.is_export_from_type_only_wildcard(module_name, name)
+                || self.export_symbol_has_no_value(export_sym_id)
+                || self.is_export_type_only_from_file(module_name, name, declaring_file_idx)
+            {
+                continue;
+            }
+
+            self.record_cross_file_symbol_if_needed(export_sym_id, name, module_name);
+            let mut prop_type = self.get_type_of_symbol(export_sym_id);
+            prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+            let declaration_order = if name == "default" {
+                1
+            } else {
+                props.len() as u32 + 2
+            };
+            let name_atom = self.ctx.types.intern_string(name);
+            props.push(PropertyInfo {
+                name: name_atom,
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order,
+                is_string_named: false,
+            });
+        }
     }
 
     /// Compute type of a symbol (internal, not cached).
@@ -1470,7 +1572,8 @@ impl<'a> CheckerState<'a> {
                         } else {
                             let mut props: Vec<PropertyInfo> = Vec::new();
                             for (name, &sym_id) in exports_table.iter() {
-                                if name == "export=" {
+                                if self.should_skip_namespace_export_name(&exports_table, name, sym_id)
+                                {
                                     continue;
                                 }
                                 // Skip type-only, wildcard-type-only, value-less, and
@@ -1494,6 +1597,11 @@ impl<'a> CheckerState<'a> {
                                     name,
                                     prop_type,
                                 );
+                                let declaration_order = if name == "default" {
+                                    1
+                                } else {
+                                    props.len() as u32 + 2
+                                };
                                 let name_atom = self.ctx.types.intern_string(name);
                                 props.push(PropertyInfo {
                                     name: name_atom,
@@ -1505,7 +1613,7 @@ impl<'a> CheckerState<'a> {
                                     is_class_prototype: false,
                                     visibility: Visibility::Public,
                                     parent_id: None,
-                                    declaration_order: 0,
+                                    declaration_order,
                                     is_string_named: false,
                                 });
                             }
@@ -1753,7 +1861,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             let mut props: Vec<PropertyInfo> = Vec::new();
                             for (name, &export_sym_id) in exports_table.iter() {
-                                if name == "export=" {
+                                if self.should_skip_namespace_export_name(
+                                    &exports_table,
+                                    name,
+                                    export_sym_id,
+                                ) {
                                     continue;
                                 }
                                 // Skip type-only exports (`export type { A }`), exports
@@ -1778,6 +1890,11 @@ impl<'a> CheckerState<'a> {
                                 prop_type =
                                     self.apply_module_augmentations(module_name, name, prop_type);
 
+                                let declaration_order = if name == "default" {
+                                    1
+                                } else {
+                                    props.len() as u32 + 2
+                                };
                                 let name_atom = self.ctx.types.intern_string(name);
                                 props.push(PropertyInfo {
                                     name: name_atom,
@@ -1789,12 +1906,19 @@ impl<'a> CheckerState<'a> {
                                     is_class_prototype: false,
                                     visibility: Visibility::Public,
                                     parent_id: None,
-                                    declaration_order: 0,
+                                    declaration_order,
                                     is_string_named: false,
                                 });
                             }
                             props
                         };
+
+                        self.append_export_equals_import_type_namespace_props(
+                            module_name,
+                            declaring_file_idx,
+                            &exports_table,
+                            &mut props,
+                        );
 
                         // Add augmentation declarations that introduce entirely new names.
                         // If the target resolves to a non-module export= value, these names
@@ -2110,6 +2234,18 @@ impl<'a> CheckerState<'a> {
                                 use tsz_solver::PropertyInfo;
                                 let mut props: Vec<PropertyInfo> = Vec::new();
                                 for (name, &export_sym_id) in exports_table.iter() {
+                                    if self.should_skip_namespace_export_name(
+                                        &exports_table,
+                                        name,
+                                        export_sym_id,
+                                    ) {
+                                        continue;
+                                    }
+                                    let declaration_order = if name == "default" {
+                                        1
+                                    } else {
+                                        props.len() as u32 + 2
+                                    };
                                     let prop_type = self.get_type_of_symbol(export_sym_id);
                                     let name_atom = self.ctx.types.intern_string(name);
                                     props.push(PropertyInfo {
@@ -2122,7 +2258,7 @@ impl<'a> CheckerState<'a> {
                                         is_class_prototype: false,
                                         visibility: Visibility::Public,
                                         parent_id: None,
-                                        declaration_order: 0,
+                                        declaration_order,
                                         is_string_named: false,
                                     });
                                 }

@@ -783,7 +783,8 @@ impl<'a> TypeFormatter<'a> {
         let readonly = if prop.readonly { "readonly " } else { "" };
         let raw_name = self.atom(prop.name);
         let name = if needs_property_name_quotes(&raw_name) {
-            format!("\"{raw_name}\"")
+            let escaped = raw_name.replace('\\', "\\\\").replace('\'', "\\'");
+            format!("'{escaped}'")
         } else {
             raw_name.to_string()
         };
