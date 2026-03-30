@@ -202,6 +202,18 @@ struct VarianceVisitor<'a, 'b> {
     /// Depth counter for mapped type nesting. When > 0, occurrences of the target
     /// parameter are inside a mapped type and should not set `DIRECT_USAGE`.
     inside_mapped_depth: u32,
+    /// Depth counter for method-bivariant traversal. When > 0, we're inside
+    /// method parameter types. TypeScript methods have bivariant parameter
+    /// checking, and tsc's variance computation (via marker types) always
+    /// produces BIVARIANT for type params found through method params, which
+    /// is then checked using the COVARIANT direction. To match this, we
+    /// record all target param occurrences as COVARIANT when inside method
+    /// params, regardless of actual nesting depth/polarity.
+    method_bivariant_depth: u32,
+    /// When true, suppress method_bivariant_depth from being set. This is
+    /// used inside indexed access types where `{ m(x: T): any }['m']`
+    /// extracts the method as a plain function, stripping method-ness.
+    suppress_method_bivariance: bool,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -218,6 +230,8 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             bound_type_params: smallvec::SmallVec::new(),
             seen_target_in_index_access: false,
             inside_mapped_depth: 0,
+            method_bivariant_depth: 0,
+            suppress_method_bivariance: false,
         }
     }
 
@@ -265,7 +279,14 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
 
     /// Record an occurrence of the target parameter at the current polarity.
     fn add_occurrence(&mut self, polarity: bool) {
-        if polarity {
+        if self.method_bivariant_depth > 0 {
+            // Inside method parameter types, always record as COVARIANT.
+            // This matches tsc behavior: method bivariance makes T appear in
+            // both co and contra positions (BIVARIANT), but tsc checks bivariant
+            // type args using the covariant direction first. The net effect is
+            // that method-param occurrences act as covariant for variance checking.
+            self.result |= Variance::COVARIANT;
+        } else if polarity {
             self.result |= Variance::COVARIANT;
         } else {
             self.result |= Variance::CONTRAVARIANT;
@@ -363,10 +384,18 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         let shape = self.computer.db.function_shape(FunctionShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
-        // CRITICAL FIX: Method bivariance - methods have bivariant parameters
-        // If is_method is true, skip parameter variance (bivariant doesn't constrain)
-        // Otherwise, parameters are CONTRAVARIANT (flip polarity)
-        if !shape.is_method {
+        // For methods (unless suppressed by indexed access context), visit
+        // parameters under method_bivariant_depth so that any target param
+        // occurrences are recorded as COVARIANT (matching tsc's bivariant →
+        // covariant-first behavior). For non-methods, visit normally with
+        // contravariant polarity (strict function types).
+        if shape.is_method && !self.suppress_method_bivariance {
+            self.method_bivariant_depth += 1;
+            for param in &shape.params {
+                self.visit_with_polarity(param.type_id, !current_polarity);
+            }
+            self.method_bivariant_depth -= 1;
+        } else if !shape.is_method {
             for param in &shape.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
             }
@@ -394,12 +423,22 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
         // Call signatures
         for sig in &callable.call_signatures {
-            // CRITICAL FIX: Method bivariance - skip parameter variance if is_method
-            if !sig.is_method {
+            // For methods (see visit_function for full rationale).
+            if sig.is_method && !self.suppress_method_bivariance {
+                self.method_bivariant_depth += 1;
+                for param in &sig.params {
+                    self.visit_with_polarity(param.type_id, !current_polarity);
+                }
+                self.method_bivariant_depth -= 1;
+            } else if !sig.is_method {
                 for param in &sig.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
             }
+            // When suppress_method_bivariance && is_method: skip params entirely.
+            // Inside indexed access (bivarianceHack pattern), method params
+            // should not contribute to variance since the indexed access
+            // extracts the method as a plain function type.
             // Return type is covariant
             self.visit_with_polarity(sig.return_type, current_polarity);
             if let Some(this_ty) = sig.this_type {
@@ -485,13 +524,18 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // already accounted for by visit_mapped visiting mapped.constraint directly.
         let is_bound = self.bound_type_params.contains(&info.name);
         if !is_bound {
-            // Also check constraint (at current polarity)
+            // Also check constraint (at current polarity).
+            // Constraints affect structural shape: `<U extends T>` means T
+            // constrains what U can be, so T's variance is affected.
             if let Some(constraint) = info.constraint {
                 let current_polarity = self.get_current_polarity();
                 self.visit_with_polarity(constraint, current_polarity);
             }
 
-            // Default type (at current polarity)
+            // Default type (at current polarity). When inside method params
+            // (method_bivariant_depth > 0), add_occurrence forces COVARIANT,
+            // so defaults like `TResult1 = T` in `then<TResult1 = T>` won't
+            // spuriously add contravariant occurrences.
             if let Some(default) = info.default {
                 let current_polarity = self.get_current_polarity();
                 self.visit_with_polarity(default, current_polarity);
@@ -751,8 +795,17 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             self.seen_target_in_index_access = true;
         }
         let before = self.result;
+        // Suppress method bivariance inside indexed access. When a type uses
+        // the `bivarianceHack` pattern like `{ m(x: T): any }['m']`, the
+        // indexed access extracts the method as a plain function, stripping
+        // method-ness. Method params should be skipped here (INDEPENDENT),
+        // matching the original behavior that allowed structural comparison
+        // with proper method bivariance at the assignability level.
+        let saved_smb = self.suppress_method_bivariance;
+        self.suppress_method_bivariance = true;
         self.visit_with_polarity(object_type, current_polarity);
         self.visit_with_polarity(key_type, current_polarity);
+        self.suppress_method_bivariance = saved_smb;
         // If the target parameter was found inside this indexed access,
         // the variance shortcut is unreliable — require structural fallback.
         if self.result != before {

@@ -337,10 +337,14 @@ fn test_variance_invariant_explicit_write_type() {
 // =============================================================================
 
 #[test]
-fn test_variance_bivariant_method_parameters() {
-    // Method parameters in TypeScript are bivariant (a well-known unsoundness)
-    // For a method: { m(x: T): void } - T in method params should NOT contribute
-    // to variance (bivariance = skip parameter variance)
+fn test_variance_method_parameters_contravariant() {
+    // Method parameters contribute to variance just like regular function parameters.
+    // While method bivariance is a TypeScript assignability-level concept (methods
+    // have bivariant parameter checking), variance COMPUTATION must still traverse
+    // method parameters to discover type parameter positions. Without this,
+    // type parameters appearing only in method parameter positions would be
+    // incorrectly marked as INDEPENDENT, causing the variance fast path to skip
+    // checks entirely for types like Promise<T>.
     let interner = create_interner();
     let t_param = intern_type_param(&interner, "T");
 
@@ -362,10 +366,13 @@ fn test_variance_bivariant_method_parameters() {
     let t_atom = interner.intern_string("T");
     let variance = compute_variance(&interner, method, t_atom);
 
-    // Method parameters are bivariant - their params are skipped in variance calculation
+    // Method parameters contribute COVARIANT due to method bivariance.
+    // In tsc, method bivariance makes type params appear BIVARIANT through
+    // marker types, but checks bivariant using covariant direction first.
+    // We match this by recording all method-param occurrences as COVARIANT.
     assert!(
-        variance.is_independent(),
-        "Method parameter should be independent (bivariant - skipped)"
+        variance.is_covariant(),
+        "Method parameter T should be covariant (method bivariance → covariant-first)"
     );
 }
 
@@ -392,6 +399,58 @@ fn test_variance_method_return_still_covariant() {
     assert!(
         variance.is_covariant(),
         "Method return type should still be covariant"
+    );
+}
+
+#[test]
+fn test_variance_method_with_callback_param_is_covariant() {
+    // Promise<T> pattern: { then<U>(cb: (x: T) => R): R }
+    // T appears in callback parameter (contra) of method parameter (contra)
+    // double-contravariant = covariant
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+
+    // Inner callback: (x: T) => void
+    let callback = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Outer method: then(cb: (x: T) => void): void
+    let method = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("cb")),
+            type_id: callback,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true, // This is a method
+    });
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, method, t_atom);
+
+    // T at double-contravariant depth (method param → callback param) is covariant.
+    // This is the key fix: previously method params were skipped entirely, making T
+    // independent and causing Promise<Foo> <: Promise<Bar> to skip variance checks.
+    assert!(
+        variance.is_covariant(),
+        "T in callback param of method param should be covariant (contra × contra = co)"
     );
 }
 
