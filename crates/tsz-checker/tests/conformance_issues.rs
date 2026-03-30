@@ -21843,3 +21843,66 @@ namespace NS { export const x = 1; }
         "Expected 0 TS1294 when erasableSyntaxOnly is disabled. Got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_setter_parameter_type_constraint_ts2344_in_interface_and_object_literal() {
+    // divergentAccessorsTypes6.ts: tsc eagerly checks setter parameter type annotations
+    // even when the setter is never observed (getter returns early in type computation).
+    // `Fail<string>` where `type Fail<T extends never> = T` should emit TS2344 because
+    // `string` does not satisfy `never`.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Fail<T extends never> = T;
+
+// Interface setter — parameter type must be validated
+interface I1 {
+    get x(): number;
+    set x(value: Fail<string>);
+}
+
+// Object literal setter — parameter type must be validated
+const o1 = {
+    get x(): number { return 0; },
+    set x(value: Fail<string>) {}
+}
+"#,
+    );
+
+    let ts2344_count = diagnostics.iter().filter(|(c, _)| *c == 2344).count();
+    assert_eq!(
+        ts2344_count, 2,
+        "Expected 2 TS2344 errors (one for interface setter, one for object literal setter). Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_setter_parameter_type_constraint_ts2344_with_lib_files() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+export {};
+type Fail<T extends never> = T;
+interface I1 {
+    get x(): number;
+    set x(value: Fail<string>);
+}
+const o1 = {
+    get x(): number { return 0; },
+    set x(value: Fail<string>) {}
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2344_count = diagnostics.iter().filter(|(c, _)| *c == 2344).count();
+    assert_eq!(
+        ts2344_count, 2,
+        "Expected 2 TS2344 errors with lib files. Actual diagnostics: {diagnostics:#?}"
+    );
+}
