@@ -540,7 +540,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     visited,
                 );
             }
-            return;
         }
     }
 
@@ -583,9 +582,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    /// Check if a type contains TypeParameter references that are NOT in the
+    /// Check if a type contains `TypeParameter` references that are NOT in the
     /// tracked set. These are "foreign" type params from nested generic signatures
-    /// (e.g., Promise.catch's TResult when matching through .then()).
+    /// (e.g., `Promise.catch`'s `TResult` when matching through `.then()`).
     fn target_contains_untracked_type_params(
         &self,
         type_id: TypeId,
@@ -1135,11 +1134,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // from the callback should NOT be widened to string.
         if !structural_return_subst.is_empty() {
             for (&name, &ty) in structural_return_subst.map().iter() {
-                if self.type_contains_literals(ty) {
-                    if let Some(tp_idx) = func.type_params.iter().position(|tp| tp.name == name) {
-                        let var = type_param_vars[tp_idx];
-                        infer_ctx.add_upper_bound(var, ty);
-                    }
+                if self.type_contains_literals(ty)
+                    && let Some(tp_idx) = func.type_params.iter().position(|tp| tp.name == name)
+                {
+                    let var = type_param_vars[tp_idx];
+                    infer_ctx.add_upper_bound(var, ty);
                 }
             }
         }

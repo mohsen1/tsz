@@ -143,7 +143,7 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_deferred_prototype_method_statements:
         FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// JS class-like heuristic: `let X; X.prototype.b = ...` → `declare class X { ... }`.
-    /// Maps variable name → list of (member_name_idx, initializer_idx).
+    /// Maps variable name → list of (`member_name_idx`, `initializer_idx`).
     pub(super) js_class_like_prototype_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the class-like prototype heuristic (skipped during emit).
     pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
@@ -3383,7 +3383,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Stub: Check if a JS variable declaration looks like a class-like pattern
     /// and emit an appropriate declaration. Returns true if handled.
-    fn emit_js_class_like_heuristic_if_needed(
+    const fn emit_js_class_like_heuristic_if_needed(
         &mut self,
         _decl_name: NodeIndex,
         _is_exported: bool,
