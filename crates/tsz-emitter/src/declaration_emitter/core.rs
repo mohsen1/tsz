@@ -3235,6 +3235,17 @@ impl<'a> DeclarationEmitter<'a> {
 
                 if regular_decls.len() == 1 {
                     let (is_exported, decl_idx, _decl_node, decl) = regular_decls[0];
+                    if self.emit_js_class_like_heuristic_if_needed(
+                        decl.name,
+                        is_exported,
+                    ) {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
                     if self.emit_js_object_literal_namespace_if_possible(
                         decl.name,
                         decl.initializer,
@@ -3331,6 +3342,10 @@ impl<'a> DeclarationEmitter<'a> {
                         {
                             self.write(": typeof ");
                             self.write(&alias_text);
+                        } else if !decl.type_annotation.is_some()
+                            && self.emit_arrow_fn_type_from_ast(decl.initializer)
+                        {
+                            // Emitted function type directly from AST
                         } else {
                             self.emit_variable_decl_type_or_initializer(
                                 keyword,
@@ -3373,19 +3388,122 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Stub: Check if a JS variable declaration looks like a class-like pattern
-    /// and emit an appropriate declaration. Returns true if handled.
-    #[allow(dead_code)]
-    const fn emit_js_class_like_heuristic_if_needed(
+    /// Emit a `declare class X { private constructor(); ... }` for a variable
+    /// that has `.prototype` member assignments (the JS class-like heuristic).
+    fn emit_js_class_like_heuristic_if_needed(
         &mut self,
-        _decl_name: NodeIndex,
-        _is_exported: bool,
+        name_idx: NodeIndex,
+        is_exported: bool,
     ) -> bool {
-        // TODO: implement JS class-like heuristic detection for .d.ts emit
-        false
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        let Some(members) = self.js_class_like_prototype_members.get(&name).cloned() else {
+            return false;
+        };
+        if members.is_empty() {
+            return false;
+        }
+
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
+        if self.should_emit_declare_keyword(is_exported) {
+            self.write("declare ");
+        }
+        self.write("class ");
+        self.emit_node(name_idx);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        self.write_indent();
+        self.write("private constructor();");
+        self.write_line();
+
+        for (member_name, initializer) in &members {
+            self.emit_js_class_like_member(*member_name, *initializer);
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+        true
     }
 
-    fn emit_js_object_literal_namespace_if_possible(
+    fn emit_js_class_like_member(&mut self, name_idx: NodeIndex, initializer: NodeIndex) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            self.emit_js_synthetic_class_method(name_idx, initializer);
+            return;
+        }
+
+        self.write_indent();
+        self.emit_node(name_idx);
+        self.write(": ");
+
+        if let Some(type_id) = self.get_node_type_or_names(&[initializer]) {
+            let printed = self.print_type_id(type_id);
+            self.write(&printed);
+        } else {
+            match init_node.kind {
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                    self.write("{}");
+                }
+                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                    self.write("any[]");
+                }
+                _ => {
+                    self.write("any");
+                }
+            }
+        }
+        self.write(";");
+        self.write_line();
+    }
+
+    /// Emit a function/arrow initializer's type annotation directly from the AST
+    /// when it has an explicit return type. This preserves source-level type alias
+    /// references in type parameter constraints and binding pattern formatting
+    /// (including trailing commas) that the TypePrinter would otherwise expand.
+    fn emit_arrow_fn_type_from_ast(&mut self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+        if func.type_annotation.is_none() {
+            return false;
+        }
+        self.write(": ");
+        // Emit type parameters from AST
+        if let Some(ref type_params) = func.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            }
+        }
+        // Emit parameters from AST
+        self.write("(");
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.write(") => ");
+        // Emit return type from AST
+        self.emit_type(func.type_annotation);
+        true
+    }
+
+        fn emit_js_object_literal_namespace_if_possible(
         &mut self,
         decl_name: NodeIndex,
         initializer: NodeIndex,
