@@ -488,7 +488,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                let mut primary = Diagnostic::error(
+                let primary = Diagnostic::error(
                     file_name.clone(),
                     start,
                     length,
@@ -496,15 +496,42 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
 
-                // Attach TS2328 as related information (not a standalone diagnostic)
-                // when the mismatched parameter types are themselves callable.
-                // tsc emits TS2328 as part of the diagnostic chain, not as a separate error.
+                // Emit TS2328 as a separate top-level diagnostic when:
+                // 1. We're at the top-level (depth == 0)
+                // 2. The outer source/target are direct function types (not type
+                //    alias applications like `Func<T,U>` — tsc reports those via
+                //    type-argument elaboration, not TS2328)
+                // 3. The mismatched parameter types are themselves callable
+                // 4. Neither callback parameter type contains type parameters
+                //    (tsc skips TS2328 elaboration for generic signatures)
+                //
+                // tsc emits TS2328 as its own diagnostic in the error list, so it
+                // must appear as a standalone "error TS2328:" line.
+                let source_is_direct_callable =
+                    tsz_solver::type_queries::is_callable_type(self.ctx.types, source);
+                let target_is_direct_callable =
+                    tsz_solver::type_queries::is_callable_type(self.ctx.types, target);
                 let source_param_is_callable =
                     tsz_solver::type_queries::is_callable_type(self.ctx.types, *source_param);
                 let target_param_is_callable =
                     tsz_solver::type_queries::is_callable_type(self.ctx.types, *target_param);
+                let source_param_is_generic = tsz_solver::type_queries::contains_type_parameters_db(
+                    self.ctx.types,
+                    *source_param,
+                );
+                let target_param_is_generic = tsz_solver::type_queries::contains_type_parameters_db(
+                    self.ctx.types,
+                    *target_param,
+                );
 
-                if depth == 0 && source_param_is_callable && target_param_is_callable {
+                if depth == 0
+                    && source_is_direct_callable
+                    && target_is_direct_callable
+                    && source_param_is_callable
+                    && target_param_is_callable
+                    && !source_param_is_generic
+                    && !target_param_is_generic
+                {
                     let source_name = tsz_solver::type_queries::get_callable_shape_for_type(
                         self.ctx.types,
                         source,
@@ -535,16 +562,14 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                         &[&source_name, &target_name],
                     );
-                    primary
-                        .related_information
-                        .push(DiagnosticRelatedInformation {
-                            category: DiagnosticCategory::Error,
-                            code: diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
-                            file: file_name.to_string(),
-                            start,
-                            length,
-                            message_text: ts2328_message,
-                        });
+                    let ts2328_diag = Diagnostic::error(
+                        file_name.clone(),
+                        start,
+                        length,
+                        ts2328_message,
+                        diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+                    );
+                    self.ctx.push_diagnostic(ts2328_diag);
                 }
 
                 primary

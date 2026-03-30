@@ -269,3 +269,116 @@ fn test_function_property_contravariance_strict_mode() {
         2322, // Type error
     );
 }
+
+/// Helper: collect all error codes from checking a strict-function-types source.
+fn collect_error_codes(source: &str) -> Vec<u32> {
+    let source_clean = source.replace("// @strictFunctionTypes: true", "");
+    let source_clean = source_clean.trim();
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
+
+    let ctx = TestContext::new();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source);
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+
+    let mut codes: Vec<u32> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318) // ignore "Cannot find global type"
+        .map(|d| d.code)
+        .collect();
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
+/// TS2328: When a callback parameter type is itself a function type and is
+/// incompatible, tsc emits TS2328 ("Types of parameters 'X' and 'Y' are
+/// incompatible") as a separate diagnostic alongside TS2322.
+#[test]
+fn test_ts2328_emitted_for_callback_parameter_mismatch() {
+    // fc1 has parameter f: (x: Animal) => Animal
+    // fc2 has parameter f: (x: Dog) => Dog
+    // Assigning fc1 to fc2 should emit both TS2322 and TS2328
+    // because the parameter types (f) are themselves callable and incompatible.
+    let codes = collect_error_codes(
+        r#"
+        interface Animal { animal: void }
+        interface Dog extends Animal { dog: void }
+
+        declare let fc1: (f: (x: Animal) => Animal) => void;
+        declare let fc2: (f: (x: Dog) => Dog) => void;
+        fc2 = fc1;
+        "#,
+    );
+    assert!(codes.contains(&2322), "Expected TS2322 in {codes:?}");
+    assert!(codes.contains(&2328), "Expected TS2328 in {codes:?}");
+}
+
+/// TS2328 should NOT be emitted when the outer types are generic type alias
+/// applications (like Func<T,U>), even if the underlying parameter types are
+/// callable.  tsc reports such failures via type-argument elaboration, not
+/// TS2328.
+#[test]
+fn test_ts2328_not_emitted_for_type_alias_applications() {
+    let codes = collect_error_codes(
+        r#"
+        type Func<T, U> = (x: T) => U;
+
+        declare let h1: Func<Func<Object, void>, Object>;
+        declare let h3: Func<Func<string, void>, Object>;
+        h3 = h1;
+        "#,
+    );
+    assert!(codes.contains(&2322), "Expected TS2322 in {codes:?}");
+    assert!(
+        !codes.contains(&2328),
+        "TS2328 should NOT appear for type alias applications, got {codes:?}"
+    );
+}
+
+/// TS2328 should NOT be emitted when callback parameter types contain
+/// generic type parameters (tsc skips elaboration for generic signatures).
+#[test]
+fn test_ts2328_not_emitted_for_generic_callback_params() {
+    let codes = collect_error_codes(
+        r#"
+        function assignmentWithComplexRest2<T extends any[]>() {
+            const fn1: (cb: (x: string, ...rest: T) => void) => void = (cb) => {};
+            const fn2: (cb: (...args: never) => void) => void = fn1;
+        }
+        "#,
+    );
+    assert!(codes.contains(&2322), "Expected TS2322 in {codes:?}");
+    assert!(
+        !codes.contains(&2328),
+        "TS2328 should NOT appear for generic callback params, got {codes:?}"
+    );
+}
