@@ -211,15 +211,17 @@ impl<'a> CheckerState<'a> {
             let (ps, pt) = self.prepare_assignability_inputs(source, target);
             let request = RelationRequest::assign(ps, pt);
             let outcome = self.execute_relation_request(&request);
-            if outcome.weak_union_violation
-                || self.should_skip_weak_union_error_with_outcome(
-                    source,
-                    target,
-                    source_idx,
-                    Some(&outcome),
-                )
-            {
+            if self.should_skip_weak_union_error_with_outcome(
+                source,
+                target,
+                source_idx,
+                Some(&outcome),
+            ) {
                 return true;
+            }
+            if outcome.weak_union_violation {
+                self.error_no_common_properties(source, target, diag_idx);
+                return false;
             }
         }
 
@@ -473,15 +475,19 @@ impl<'a> CheckerState<'a> {
 
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
-        if outcome.weak_union_violation
-            || self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            )
-        {
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
             return true;
+        }
+        // Weak union violation for non-object-literal sources → emit TS2559
+        // instead of the general TS2322/TS2345 error.
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
         if !skip_source_elaboration
             && self.try_elaborate_assignment_source_error(source_idx, target)
@@ -575,15 +581,17 @@ impl<'a> CheckerState<'a> {
             RelationRequest::assign(ps, pt)
         };
         let outcome = self.execute_relation_request(&request);
-        if outcome.weak_union_violation
-            || self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            )
-        {
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
             return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         if self.try_elaborate_assignment_source_error(source_idx, target) {
@@ -624,15 +632,17 @@ impl<'a> CheckerState<'a> {
             RelationRequest::assign(ps, pt)
         };
         let outcome = self.execute_relation_request(&request);
-        if outcome.weak_union_violation
-            || self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            )
-        {
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
             return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         self.error_type_not_assignable_generic_at(source, target, diag_idx);
@@ -989,6 +999,32 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
         self.analyze_assignability_failure(source, target)
             .weak_union_violation
+    }
+
+    /// Emit TS2559 ("Type 'X' has no properties in common with type 'Y'")
+    /// at the given node. Used for variable assignment and parameter sites
+    /// where the solver detected a weak type violation.
+    pub(crate) fn error_no_common_properties(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        if source == TypeId::ERROR
+            || target == TypeId::ERROR
+            || source == TypeId::ANY
+            || target == TypeId::ANY
+        {
+            return;
+        }
+
+        let source_str = self.format_type_diagnostic(source);
+        let target_str = self.format_type_diagnostic(target);
+        self.error_at_node_msg(
+            idx,
+            crate::diagnostics::diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+            &[&source_str, &target_str],
+        );
     }
 
     pub(crate) const fn checker_only_assignability_failure_reason(
