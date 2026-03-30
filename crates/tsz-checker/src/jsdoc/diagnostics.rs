@@ -1509,7 +1509,7 @@ impl<'a> CheckerState<'a> {
         comment_end: u32,
         source_text: &str,
     ) {
-        use crate::diagnostics::{Diagnostic, diagnostic_codes};
+        use crate::diagnostics::diagnostic_codes;
 
         let end = (comment_end as usize).min(source_text.len());
         let comment_range = &source_text[comment_pos as usize..end];
@@ -1525,13 +1525,12 @@ impl<'a> CheckerState<'a> {
             if let Some(suggestion) = self.find_jsdoc_type_spelling_suggestion(name) {
                 self.ctx.spelling_suggestions_emitted += 1;
                 let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
-                self.ctx.push_diagnostic(Diagnostic::error(
-                    self.ctx.file_name.clone(),
+                self.error_at_position(
                     start,
                     length,
-                    message,
+                    &message,
                     diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
-                ));
+                );
                 return;
             }
         }

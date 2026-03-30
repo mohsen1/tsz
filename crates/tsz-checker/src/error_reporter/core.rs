@@ -862,17 +862,7 @@ impl<'a> CheckerState<'a> {
     /// Used to determine whether an object literal property should display its
     /// literal value (for discriminated union contexts) or the widened type.
     fn type_contains_string_literal(&self, type_id: TypeId) -> bool {
-        use tsz_solver::types::TypeData;
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeData::Literal(tsz_solver::types::LiteralValue::String(_))) => true,
-            Some(TypeData::Union(members)) => {
-                let members = self.ctx.types.type_list(members);
-                members
-                    .iter()
-                    .any(|m| self.type_contains_string_literal(*m))
-            }
-            _ => false,
-        }
+        crate::query_boundaries::common::type_contains_string_literal(self.ctx.types, type_id)
     }
 
     pub(super) fn literal_expression_display(&self, expr_idx: NodeIndex) -> Option<String> {
