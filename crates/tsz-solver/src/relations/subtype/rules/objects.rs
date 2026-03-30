@@ -156,20 +156,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Weak type check (TS2559): if the target is a "weak type" (all properties optional,
         // at least one property, no index signatures), reject if the source has properties
-        // but none in common with the target. This check is propagated from CompatChecker
-        // via the `enforce_weak_types` flag so union-member structural comparisons cannot
-        // bypass weak-type rejection by jumping directly into the subtype kernel.
-        // Top-level compat still owns the richer TS2559 diagnostics and exemptions; this
-        // shared relation path only enforces the semantic incompatibility.
-        // Check ordering: O(1) flag/length guards first, then O(n) shape scan, then O(m+n) merge.
-        // tsc skips this check when the source is ALSO a weak type (`!isWeakType(source)`).
-        // Two weak types with no common properties are still compatible.
-        // Skip weak type enforcement when checking against individual intersection
-        // members. The source may have no common properties with one weak-type member
-        // but still be assignable to the combined intersection (e.g., ITreeItem <:
-        // ITreeItem & { Id?: number } where { Id?: number } is a weak type).
+        // but none in common with the target. Propagated from CompatChecker via
+        // `enforce_weak_types`. tsc skips when the source is ALSO a weak type.
+        //
+        // When checking direct intersection members (`in_intersection_member_check`),
+        // suppress this check: the source may have no common properties with one
+        // weak-type member but still be assignable to the combined intersection
+        // (e.g., ITreeItem <: ITreeItem & { Id?: number }).
+        //
+        // However, when we're inside a nested property type comparison
+        // (`in_property_check`), the weak type check must still apply:
+        //   { x: { c: string } } <: { x: { a?: string } }
+        // The inner `{ c: string } <: { a?: string }` must fail because `{ a?: string }`
+        // is a weak type and `{ c: string }` has no common properties with it.
         if self.enforce_weak_types
-            && !self.in_intersection_member_check
+            && (!self.in_intersection_member_check || self.in_property_check)
             && !source.properties.is_empty()
             && Self::is_weak_type_shape(target)
             && !Self::is_weak_type_shape(source)
