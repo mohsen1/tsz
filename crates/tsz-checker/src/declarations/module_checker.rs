@@ -210,8 +210,20 @@ impl<'a> CheckerState<'a> {
             || self.target_file_has_export_assignment(&module_name);
 
         if has_export_equals {
-            // TSC quotes the module specifier in the diagnostic
-            let quoted = format!("\"{}\"", module_name);
+            // TSC uses the resolved module name (without relative prefix or extension)
+            // e.g., './a' becomes 'a', '../utils/foo' becomes 'foo'
+            let display_name = module_name
+                .strip_prefix("./")
+                .or_else(|| module_name.strip_prefix("../"))
+                .unwrap_or(&module_name);
+            // Strip file extension if present
+            let display_name = display_name
+                .strip_suffix(".ts")
+                .or_else(|| display_name.strip_suffix(".js"))
+                .or_else(|| display_name.strip_suffix(".tsx"))
+                .or_else(|| display_name.strip_suffix(".jsx"))
+                .unwrap_or(display_name);
+            let quoted = format!("\"{}\"", display_name);
             self.error_at_node_msg(
                 export_decl.module_specifier,
                 diagnostic_codes::MODULE_USES_EXPORT_AND_CANNOT_BE_USED_WITH_EXPORT,
