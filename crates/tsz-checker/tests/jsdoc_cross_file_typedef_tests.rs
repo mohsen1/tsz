@@ -1,9 +1,32 @@
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+
+fn local_module_specifiers(file_name: &str) -> Vec<String> {
+    let base = file_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(file_name)
+        .rsplit('\\')
+        .next()
+        .unwrap_or(file_name);
+    let mut specs = vec![format!("./{base}")];
+    for suffix in [
+        ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
+        ".mjs", ".cjs",
+    ] {
+        if let Some(stem) = base.strip_suffix(suffix) {
+            specs.push(format!("./{stem}"));
+            break;
+        }
+    }
+    specs
+}
 
 fn check_types_file_with_jsdoc_global(
     types_source: &str,
@@ -44,13 +67,13 @@ fn check_types_file_with_jsdoc_global(
     checker.ctx.diagnostics.iter().map(|d| d.code).collect()
 }
 
-fn check_js_file_with_types(
+fn check_js_file_with_types_diagnostics(
     types_name: &str,
     types_source: &str,
     js_name: &str,
     js_source: &str,
     options: CheckerOptions,
-) -> Vec<u32> {
+) -> Vec<Diagnostic> {
     let mut parser_types = ParserState::new(types_name.to_string(), types_source.to_string());
     let root_types = parser_types.parse_source_file();
     let mut binder_types = BinderState::new();
@@ -81,9 +104,32 @@ fn check_js_file_with_types(
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(1);
     checker.ctx.set_lib_contexts(Vec::new());
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    for specifier in local_module_specifiers(types_name) {
+        resolved_module_paths.insert((1, specifier.clone()), 0);
+        resolved_modules.insert(specifier);
+    }
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
     checker.check_source_file(root_js);
 
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    checker.ctx.diagnostics
+}
+
+fn check_js_file_with_types(
+    types_name: &str,
+    types_source: &str,
+    js_name: &str,
+    js_source: &str,
+    options: CheckerOptions,
+) -> Vec<u32> {
+    check_js_file_with_types_diagnostics(types_name, types_source, js_name, js_source, options)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
 }
 
 #[test]
@@ -250,5 +296,60 @@ class Foo {}
     assert!(
         codes.contains(&2300),
         "Expected same-file JSDoc typedef/class name collision to keep TS2300, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn jsdoc_namespace_type_from_required_declaration_module_preserves_ts2454() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "mod1.d.ts",
+        r#"
+export interface Bar {
+    prop: string
+}
+
+export class Baz {
+    prop: string
+}
+"#,
+        "use.js",
+        r#"
+var mod = require("./mod1");
+
+/** @type {mod.Bar} */
+let c;
+c.prop;
+
+/** @type {mod.Baz} */
+let d;
+d.prop;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        codes.contains(&2454),
+        "Expected TS2454 for require()-namespace JSDoc types from declaration modules, got diagnostics: {rendered:?}"
+    );
+    assert!(
+        !codes.contains(&18048),
+        "Did not expect TS18048 once JSDoc namespace types resolve to direct typed exports, got diagnostics: {rendered:?}"
+    );
+    assert!(
+        !codes.contains(&2339),
+        "Did not expect TS2339 once JSDoc namespace member types preserve property shape, got diagnostics: {rendered:?}"
     );
 }

@@ -819,11 +819,27 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+        let receiver_start = self
+            .ctx
+            .arena
+            .get(access.expression)
+            .map(|node| node.pos)
+            .unwrap_or(u32::MAX);
+        let receiver_has_daa_error = self.ctx.daa_error_nodes.contains(&access.expression.0)
+            || self.ctx.daa_error_nodes.contains(&idx.0)
+            || self
+                .ctx
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == 2454 && diag.start == receiver_start);
+        if receiver_has_daa_error && !skip_flow_narrowing {
+            return TypeId::ERROR;
+        }
         if !skip_flow_narrowing
             // When TS2454 already forced the receiver read back to its declared type,
             // a second property-read flow pass would incorrectly reapply narrowing
             // and hide follow-on property errors like TS2339.
-            && !self.ctx.daa_error_nodes.contains(&access.expression.0)
+            && !receiver_has_daa_error
             && self.ctx.arena.get(access.expression).is_some_and(|expr| {
                 matches!(
                     expr.kind,
@@ -2208,6 +2224,14 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
+                    if receiver_has_daa_error {
+                        return self.finalize_property_access_result(
+                            idx,
+                            TypeId::ERROR,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
                     TypeId::ERROR
                 }
 
@@ -2215,6 +2239,14 @@ impl<'a> CheckerState<'a> {
                     property_type,
                     cause,
                 } => {
+                    if receiver_has_daa_error {
+                        return self.finalize_property_access_result(
+                            idx,
+                            property_type.unwrap_or(TypeId::ERROR),
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
                     // Check for optional chaining (?.)
                     if access.question_dot_token {
                         if self
