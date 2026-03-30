@@ -83,7 +83,7 @@ pub mod type_handles {
         MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId, OrderedFloat, ParamInfo,
         PropertyInfo, PropertyLookup, SymbolRef, TemplateSpan, TupleElement, TupleListId,
         TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
-        TypePredicate, TypePredicateTarget, Visibility, is_compiler_managed_type,
+        TypePredicate, TypePredicateTarget, Variance, Visibility, is_compiler_managed_type,
     };
 }
 

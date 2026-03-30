@@ -1102,9 +1102,7 @@ impl<'a> CheckerState<'a> {
         // constraint for display purposes. tsc shows the apparent type in error
         // messages (e.g., 'NumClass<number> | StrClass<string>'), not the raw
         // indexed access type (e.g., 'Entries[EntryId]').
-        if let Some(tsz_solver::types::TypeData::IndexAccess(_, _)) =
-            self.ctx.types.lookup(display_object_type)
-        {
+        if tsz_solver::is_index_access_type(self.ctx.types, display_object_type) {
             let resolved = self.resolve_index_access_base_constraint(display_object_type);
             if resolved != display_object_type {
                 display_object_type = resolved;
@@ -2470,30 +2468,22 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_env(type_id);
 
         // If fully resolved (no longer an IndexAccess), use it
-        if !matches!(
-            self.ctx.types.lookup(evaluated),
-            Some(tsz_solver::types::TypeData::IndexAccess(_, _))
-        ) {
+        if !tsz_solver::is_index_access_type(self.ctx.types, evaluated) {
             return evaluated;
         }
 
         // Still an IndexAccess — try resolving the index type parameter's constraint.
         // E.g., {[s:string]:V}[K] where K extends keyof T => evaluate {[s:string]:V}[keyof T] => V
-        if let Some(tsz_solver::types::TypeData::IndexAccess(ia_obj, ia_idx)) =
-            self.ctx.types.lookup(evaluated)
-        {
-            if let Some(tsz_solver::types::TypeData::TypeParameter(info)) =
-                self.ctx.types.lookup(ia_idx)
+        if let Some((ia_obj, ia_idx)) = tsz_solver::index_access_parts(self.ctx.types, evaluated) {
+            if let Some(info) =
+                tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, ia_idx)
             {
                 if let Some(constraint) = info.constraint {
                     let resolved = self
                         .ctx
                         .types
                         .evaluate_index_access_with_options(ia_obj, constraint, false);
-                    if !matches!(
-                        self.ctx.types.lookup(resolved),
-                        Some(tsz_solver::types::TypeData::IndexAccess(_, _))
-                    ) {
+                    if !tsz_solver::is_index_access_type(self.ctx.types, resolved) {
                         return resolved;
                     }
                 }

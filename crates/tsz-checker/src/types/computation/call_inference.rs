@@ -479,36 +479,23 @@ impl<'a> CheckerState<'a> {
     /// against an Array target, we extract the element type rather than using the
     /// full array type.
     fn is_iterable_like_for_substitution(&self, type_id: TypeId) -> bool {
-        use tsz_solver::TypeData;
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                if shape.number_index.is_some() {
-                    return true;
-                }
-                for prop in &shape.properties {
-                    let name = self.ctx.types.resolve_atom(prop.name);
-                    if name == "__@iterator" || name == "[Symbol.iterator]" {
-                        return true;
-                    }
-                }
-                false
-            }
-            Some(TypeData::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.number_index.is_some() {
-                    return true;
-                }
-                for prop in &shape.properties {
-                    let name = self.ctx.types.resolve_atom(prop.name);
-                    if name == "__@iterator" || name == "[Symbol.iterator]" {
-                        return true;
-                    }
-                }
-                false
-            }
-            _ => false,
+        let has_iterator_in_props = |props: &[tsz_solver::type_handles::PropertyInfo]| {
+            props.iter().any(|prop| {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                name == "__@iterator" || name == "[Symbol.iterator]"
+            })
+        };
+        if let Some(shape_id) = tsz_solver::object_shape_id(self.ctx.types, type_id)
+            .or_else(|| tsz_solver::object_with_index_shape_id(self.ctx.types, type_id))
+        {
+            let shape = self.ctx.types.object_shape(shape_id);
+            return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
         }
+        if let Some(shape_id) = tsz_solver::callable_shape_id(self.ctx.types, type_id) {
+            let shape = self.ctx.types.callable_shape(shape_id);
+            return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
+        }
+        false
     }
 
     pub(crate) fn collect_return_context_substitution(
