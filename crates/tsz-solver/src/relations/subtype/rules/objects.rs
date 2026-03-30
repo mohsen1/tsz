@@ -162,9 +162,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Top-level compat still owns the richer TS2559 diagnostics and exemptions; this
         // shared relation path only enforces the semantic incompatibility.
         // Check ordering: O(1) flag/length guards first, then O(n) shape scan, then O(m+n) merge.
+        // tsc skips this check when the source is ALSO a weak type (`!isWeakType(source)`).
+        // Two weak types with no common properties are still compatible.
         if self.enforce_weak_types
             && !source.properties.is_empty()
             && Self::is_weak_type_shape(target)
+            && !Self::is_weak_type_shape(source)
             && !crate::utils::has_common_property_name(&source.properties, &target.properties)
         {
             return SubtypeResult::False;
