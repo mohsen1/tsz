@@ -6,12 +6,42 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn nullish_cause_includes_undefined_like(&self, type_id: TypeId) -> bool {
+        if matches!(type_id, TypeId::UNDEFINED | TypeId::VOID) {
+            return true;
+        }
+
+        crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some_and(
+            |members| {
+                members
+                    .iter()
+                    .any(|&member| self.nullish_cause_includes_undefined_like(member))
+            },
+        )
+    }
+
     /// Get the apparent type for a type parameter (constraint or `unknown` for unconstrained).
     /// This matches tsc's `getReducedApparentType` behavior for type parameters.
-    pub(super) fn get_type_param_apparent_type(&self, type_id: TypeId) -> TypeId {
-        crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
-            .and_then(|info| info.constraint)
-            .unwrap_or(TypeId::UNKNOWN)
+    pub(crate) fn get_type_param_apparent_type(&mut self, type_id: TypeId) -> TypeId {
+        let Some(constraint) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
+                .and_then(|info| info.constraint)
+        else {
+            return TypeId::UNKNOWN;
+        };
+
+        let evaluated_constraint = self.evaluate_type_with_env(constraint);
+        let (non_nullish, nullish_cause) = self.split_nullish_type(evaluated_constraint);
+        if non_nullish.is_some_and(|ty| {
+            ty == TypeId::OBJECT
+                || crate::query_boundaries::common::is_empty_object_type(self.ctx.types, ty)
+        }) && !nullish_cause
+            .is_some_and(|cause| self.nullish_cause_includes_undefined_like(cause))
+        {
+            return TypeId::OBJECT;
+        }
+
+        evaluated_constraint
     }
 
     /// Check if two type parameters are comparable (one constrains to the other).
