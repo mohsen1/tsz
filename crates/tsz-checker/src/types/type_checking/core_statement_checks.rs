@@ -675,8 +675,10 @@ impl<'a> CheckerState<'a> {
         // parameters (checks constraint), unions, keyof, literals, etc.
         // Index-access constraints like AB[K] are accepted when K is known to be
         // constrained to the object's key space.
-        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-        let is_valid = evaluator.is_valid_mapped_type_key_type(evaluated);
+        let is_valid = crate::query_boundaries::common::is_valid_mapped_type_key_type(
+            self.ctx.types,
+            evaluated,
+        );
         let is_deferred_index_access =
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, evaluated)
                 .is_some_and(|(object_type, index_type)| {
