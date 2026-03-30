@@ -203,6 +203,9 @@ impl<'a> CheckerState<'a> {
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
 
+        self.check_duplicate_type_parameters(&func.type_parameters);
+        self.check_type_parameters_for_missing_names(&func.type_parameters);
+
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&func.type_parameters, func_idx);
         if func.type_parameters.is_none() {
