@@ -1,7 +1,7 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeDatabase, TypeId};
 
 // =============================================================================
 // Relation boundary helpers (thin wrappers over assignability)
@@ -272,4 +272,9 @@ pub(crate) fn build_own_member_summary(
     }
 
     summary
+}
+
+/// Check if a type is a valid base class type (for `extends` clause validation).
+pub(crate) fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::data::is_valid_base_type(db, type_id)
 }
