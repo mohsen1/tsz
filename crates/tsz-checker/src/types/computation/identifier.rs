@@ -1026,6 +1026,24 @@ impl<'a> CheckerState<'a> {
                             .register_type_to_def(enum_obj, def_id);
                     })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+            } else if (flags & symbol_flags::CLASS) != 0 && has_value && value_decl.is_some() {
+                // CLASS symbols in value position: resolve via the value declaration
+                // to get the constructor type (typeof C). Using get_type_of_symbol
+                // can hit circular resolution when the class is self-referencing
+                // (e.g., instance property initializer `x = C.bar` triggers instance
+                // type building which triggers get_type_of_symbol which is already
+                // in the resolution set). get_class_constructor_type has its own
+                // independent resolution mechanism that avoids this cycle.
+                let preferred_value_decl = self
+                    .preferred_value_declaration(sym_id, value_decl, &symbol_declarations)
+                    .unwrap_or(value_decl);
+                let ctor_type =
+                    self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl);
+                if ctor_type != TypeId::UNKNOWN && ctor_type != TypeId::ERROR {
+                    ctor_type
+                } else {
+                    self.get_type_of_symbol(sym_id)
+                }
             } else {
                 self.get_type_of_symbol(sym_id)
             };
