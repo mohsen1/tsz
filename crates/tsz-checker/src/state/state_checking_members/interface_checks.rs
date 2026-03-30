@@ -353,7 +353,7 @@ impl<'a> CheckerState<'a> {
 
         // Compute all variances upfront (immutable borrow of self.ctx)
         // to avoid borrow conflicts with error_at_node (mutable borrow).
-        let computed_variances: Vec<Option<tsz_solver::types::Variance>> = {
+        let computed_variances: Vec<Option<tsz_solver::type_handles::Variance>> = {
             let db = self.ctx.types.as_type_database();
             let resolver = &self.ctx as &dyn tsz_solver::def::resolver::TypeResolver;
 
@@ -415,10 +415,10 @@ impl<'a> CheckerState<'a> {
 
             let violation = if info.declared_out {
                 // `out T` (covariant): error if T appears contravariantly
-                actual_variance.contains(tsz_solver::types::Variance::CONTRAVARIANT)
+                actual_variance.contains(tsz_solver::type_handles::Variance::CONTRAVARIANT)
             } else {
                 // `in T` (contravariant): error if T appears covariantly
-                actual_variance.contains(tsz_solver::types::Variance::COVARIANT)
+                actual_variance.contains(tsz_solver::type_handles::Variance::COVARIANT)
             };
 
             if !violation {

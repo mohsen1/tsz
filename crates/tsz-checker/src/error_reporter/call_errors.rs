@@ -134,8 +134,8 @@ impl<'a> CheckerState<'a> {
                         // Create a union with undefined if not already present.
                         if p.type_id == TypeId::UNDEFINED {
                             p.type_id
-                        } else if let Some(tsz_solver::types::TypeData::Union(list_id)) =
-                            self.ctx.types.lookup(p.type_id)
+                        } else if let Some(list_id) =
+                            tsz_solver::union_list_id(self.ctx.types, p.type_id)
                         {
                             let members = self.ctx.types.type_list(list_id);
                             if members.contains(&TypeId::UNDEFINED) {
