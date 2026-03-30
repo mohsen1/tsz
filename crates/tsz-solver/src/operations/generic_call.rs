@@ -312,26 +312,42 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Source union decomposition: when the source return type is a union
-        // like TResult1 | TResult2, decompose it and match each non-nullish
-        // member against the target. This is essential for matching Application
-        // type args (e.g., Promise<TResult1 | TResult2> vs Promise<DooDad>).
+        // of simple type parameters (like TResult1 | TResult2), decompose it
+        // and match each member against the target. This is essential for
+        // matching Application type args (e.g., Promise<TResult1 | TResult2>
+        // vs Promise<DooDad>).
+        // Guard: only decompose when ALL non-nullish members are tracked type
+        // parameters. Complex unions (containing conditionals, applications,
+        // etc.) should not be decomposed as the individual members lack the
+        // context needed for correct matching.
         if let Some(source_members) =
             crate::type_queries::get_union_members(self.interner.as_type_database(), source)
         {
-            for member in source_members
+            let non_nullish: Vec<TypeId> = source_members
                 .into_iter()
                 .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
-            {
-                self.collect_return_context_substitution(
-                    member,
-                    target,
-                    tracked_type_params,
-                    substitution,
-                    visited,
-                );
-            }
-            if !substitution.is_empty() {
-                return;
+                .collect();
+            let all_tracked_type_params = !non_nullish.is_empty()
+                && non_nullish.iter().all(|&member| {
+                    if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(member) {
+                        tracked_type_params.contains(&tp.name)
+                    } else {
+                        false
+                    }
+                });
+            if all_tracked_type_params {
+                for &member in &non_nullish {
+                    self.collect_return_context_substitution(
+                        member,
+                        target,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
             }
         }
 
