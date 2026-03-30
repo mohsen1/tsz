@@ -1815,7 +1815,7 @@ impl<'a> CheckerState<'a> {
                                     Some(self.normalize_contextual_call_param_type(param_type))
                                 })
                                 .collect();
-                            self.collect_call_argument_types_with_context(
+                            let mut refreshed_args = self.collect_call_argument_types_with_context(
                                 args,
                                 |i, _arg_count| {
                                     refreshed_contextual_types
@@ -1829,7 +1829,66 @@ impl<'a> CheckerState<'a> {
                                 check_excess_properties,
                                 None,
                                 callable_ctx,
-                            )
+                            );
+                            // When the return context substitution provides concrete
+                            // types for type parameters, adjust callback arg types
+                            // whose return type is a fresh literal that satisfies the
+                            // contextual return type. This matches tsc's behavior
+                            // where literals contextually typed by type parameters
+                            // are treated as non-fresh during inference, preventing
+                            // widening (e.g., "ELSE" → string).
+                            for (i, arg_type) in refreshed_args.iter_mut().enumerate() {
+                                let Some(&arg_idx) = args.get(i) else {
+                                    continue;
+                                };
+                                let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                                    continue;
+                                };
+                                if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                                    && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                                {
+                                    continue;
+                                }
+                                let Some(fn_shape) =
+                                    common::function_shape_for_type(self.ctx.types, *arg_type)
+                                else {
+                                    continue;
+                                };
+                                // Only adjust when the return type contains
+                                // literals that the solver would widen.
+                                let ret = fn_shape.return_type;
+                                let widened = tsz_solver::operations::widening::widen_literal_type(
+                                    self.ctx.types,
+                                    ret,
+                                );
+                                if widened == ret {
+                                    // No widening would happen, skip
+                                    continue;
+                                }
+                                // Get the contextual return type for this callback
+                                // from the refreshed param type
+                                let ctx_return = refreshed_contextual_types
+                                    .get(i)
+                                    .copied()
+                                    .flatten()
+                                    .and_then(|ctx| {
+                                        crate::query_boundaries::checkers::call::get_contextual_signature(self.ctx.types, ctx)
+                                    })
+                                    .map(|s| s.return_type);
+                                let Some(ctx_return) = ctx_return else {
+                                    continue;
+                                };
+                                // If the literal satisfies the contextual return type,
+                                // replace the callback return with the contextual type
+                                // to prevent widening in the solver's inference.
+                                if self.is_assignable_to_with_env(fn_shape.return_type, ctx_return)
+                                {
+                                    let mut new_shape = (*fn_shape).clone();
+                                    new_shape.return_type = ctx_return;
+                                    *arg_type = self.ctx.types.factory().function(new_shape);
+                                }
+                            }
+                            refreshed_args
                         } else if let Some(instantiated_params) = self
                             .resolve_call_with_checker_adapter(
                                 callee_type_for_context,
