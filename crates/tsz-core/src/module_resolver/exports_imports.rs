@@ -131,6 +131,16 @@ impl ModuleResolver {
                 }
                 None
             }
+            PackageExports::Array(elements) => {
+                // Array of fallback targets — try each element in order
+                for element in elements {
+                    if let Some(result) = self.resolve_export_target_to_string(element, conditions)
+                    {
+                        return Some(result);
+                    }
+                }
+                None
+            }
             PackageExports::Map(_) | PackageExports::Null => None, // Subpath maps not valid here
         }
     }
@@ -287,6 +297,20 @@ impl ModuleResolver {
                 }
                 None
             }
+            PackageExports::Array(elements) => {
+                // Array of fallback targets — try each element in order
+                for element in elements {
+                    if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                        package_dir,
+                        element,
+                        subpath,
+                        conditions,
+                    ) {
+                        return Some(resolved);
+                    }
+                }
+                None
+            }
             PackageExports::Null => None,
         }
     }
@@ -318,6 +342,16 @@ impl ModuleResolver {
                         ) {
                             return Some(resolved);
                         }
+                    }
+                }
+                None
+            }
+            PackageExports::Array(elements) => {
+                for element in elements {
+                    if let Some(resolved) =
+                        self.resolve_export_value_with_conditions(package_dir, element, conditions)
+                    {
+                        return Some(resolved);
                     }
                 }
                 None
