@@ -208,13 +208,19 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.resolve_identifier_symbol(new_expr.expression))
                     .filter(|&sym_id| {
                         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            let is_single_class_decl = symbol.declarations.len() == 1
-                                && symbol.value_declaration.is_some()
-                                && self.ctx.arena.get(symbol.value_declaration).is_some_and(
-                                    |decl| decl.kind == syntax_kind_ext::CLASS_DECLARATION,
-                                );
+                            // Accept single-class declarations AND merged class+function
+                            // declarations. For merged symbols, `get_type_of_symbol` correctly
+                            // produces a Callable with both call and construct signatures.
+                            // The slow path (`get_type_of_node_with_request`) can return the
+                            // function type instead of the merged class constructor type.
+                            let has_class_decl = symbol.declarations.iter().any(|&d| {
+                                d.is_some()
+                                    && self.ctx.arena.get(d).is_some_and(|decl| {
+                                        decl.kind == syntax_kind_ext::CLASS_DECLARATION
+                                    })
+                            });
                             symbol.escaped_name == identifier_text
-                                && is_single_class_decl
+                                && has_class_decl
                                 && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
                                 && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
                                 && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
@@ -519,10 +525,13 @@ impl<'a> CheckerState<'a> {
         // generic construct signatures and return no contextual type, causing array/object literals
         // passed as arguments to be over-widened (e.g. `[["",true]]` → `(string|boolean)[][]`
         // instead of `[string, boolean][]`).
-        let ctx_helper = if is_generic_new && let Some(ref shape) = constructor_shape {
-            // Build a Function type from the generic signature so that
-            // `ParameterForCallExtractor::visit_function` can extract param types directly,
-            // bypassing the Callable-level logic that skips generic construct signatures.
+        let ctx_helper = if let Some(ref shape) = constructor_shape {
+            // Build a Function type from the construct signature so that
+            // `ParameterForCallExtractor::visit_function` can extract param types
+            // directly, bypassing the Callable-level logic that only looks at call
+            // signatures. Without this, merged function+class declarations would use
+            // the function's call signature parameters instead of the class constructor's
+            // construct signature parameters for contextual typing of `new` arguments.
             let factory = self.ctx.types.factory();
             let func_type = factory.function(tsz_solver::FunctionShape {
                 params: shape.params.clone(),
@@ -970,6 +979,13 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
+
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[new_expr] constructor_type={:?}, data={:?}",
+            constructor_type,
+            self.ctx.types.lookup(constructor_type)
+        );
 
         // Delegate to Solver for constructor resolution, passing contextual type
         // so generic constructors like `new Promise(...)` can infer type parameters
