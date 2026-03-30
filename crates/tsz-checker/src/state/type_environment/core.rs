@@ -989,7 +989,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This can be passed to `is_assignable_to_with_env` for type checking
     /// that needs to resolve type references.
-    pub fn build_type_environment(&mut self) -> tsz_solver::TypeEnvironment {
+    pub fn build_type_environment(&mut self) {
         use tsz_binder::symbol_flags;
 
         // Reset the session's instantiation fuel for this file. Each file gets a
@@ -1031,9 +1031,68 @@ impl<'a> CheckerState<'a> {
             (u8::from(!is_type_defining), sym_id.0)
         });
 
+        // PERF: Seed symbol_types and type_env from DefinitionStore for symbols
+        // whose types have already been resolved by another parallel file checker.
+        // In multi-file projects (e.g., ts-toolbelt with 242 files), the same
+        // cross-file type aliases are resolved independently by each file. This
+        // seeding step lets files skip expensive re-resolution by reusing bodies
+        // already computed and cached in the shared DefinitionStore.
+        if self.ctx.definition_store.len() > 0 {
+            for &(sym_id, flags) in &symbols_with_flags {
+                // Only seed type-defining symbols that would go through the
+                // expensive compute_type_of_symbol path below.
+                let is_type_defining = flags
+                    & (symbol_flags::TYPE_ALIAS
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::CLASS
+                        | symbol_flags::ENUM)
+                    != 0;
+                if !is_type_defining {
+                    continue;
+                }
+                // Already cached locally — skip.
+                if self.ctx.symbol_types.contains_key(&sym_id) {
+                    continue;
+                }
+                // Look up existing DefId in the shared store.
+                let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0) else {
+                    continue;
+                };
+                // Check if the body has been resolved (set_body was called by
+                // another checker context that fully resolved this type).
+                let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+                    continue;
+                };
+                if body == TypeId::ERROR || body == TypeId::UNKNOWN {
+                    continue;
+                }
+                // Seed symbol_types so get_type_of_symbol hits the cache.
+                self.ctx.symbol_types.insert(sym_id, body);
+                // Populate local DefId caches.
+                self.ctx.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+                self.ctx.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                // Seed type_env with the DefId -> body mapping.
+                if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                    let type_params = self
+                        .ctx
+                        .definition_store
+                        .get_type_params(def_id)
+                        .unwrap_or_default();
+                    if type_params.is_empty() {
+                        env.insert_def(def_id, body);
+                    } else {
+                        env.insert_def_with_params(def_id, body, type_params);
+                    }
+                }
+            }
+        }
+
         // Resolve each symbol and add to the environment.
         // Skip variable/parameter symbols — their types are computed lazily during
         // statement checking when proper enclosing_class context is available.
+        // Also skip pure import aliases — they trigger expensive cross-file
+        // delegation during build_type_environment but their types are resolved
+        // on-demand when first accessed during statement checking.
         for (sym_id, flags) in symbols_with_flags {
             // Skip variable and parameter symbols - their types will be computed
             // lazily during statement checking with proper class context
@@ -1053,6 +1112,39 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip pure import alias symbols (`import { Foo } from './bar'`).
+            // Their types are resolved via cross-file delegation which is expensive
+            // during the initial build_type_environment phase. Deferring resolution
+            // to statement checking (when actually referenced) avoids
+            // O(imports * cross_file_cost) upfront work per file.
+            //
+            // Only skip symbols with ALIAS flag that are actual imports (have
+            // import_module set) and no type-defining flags. This preserves
+            // eager resolution for export default wrappers, namespace merges, etc.
+            if flags & symbol_flags::ALIAS != 0
+                && flags
+                    & (symbol_flags::CLASS
+                        | symbol_flags::FUNCTION
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::TYPE_ALIAS
+                        | symbol_flags::ENUM
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE
+                        | symbol_flags::PROPERTY
+                        | symbol_flags::EXPORT_VALUE)
+                    == 0
+            {
+                // Verify it's an actual import (has import_module)
+                let is_import = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.import_module.is_some());
+                if is_import {
+                    continue;
+                }
+            }
+
             // IMPORTANT: get_type_of_symbol internally calls compute_type_of_symbol which
             // returns both the type AND the correct type_params, then inserts them into
             // ctx.type_env. We MUST NOT separately call get_type_params_for_symbol because
@@ -1060,9 +1152,9 @@ impl<'a> CheckerState<'a> {
             let _type_id = self.get_type_of_symbol(sym_id);
         }
 
-        // Return a clone of ctx.type_env which was correctly populated by get_type_of_symbol
-        // with matching type parameter IDs
-        self.ctx.type_env.borrow().clone()
+        // type_env and type_environment are already populated in-place by
+        // get_type_of_symbol -> compute_type_of_symbol -> register_def_in_envs.
+        // No clone needed.
     }
 
     /// Get type parameters for a symbol (generic types).
