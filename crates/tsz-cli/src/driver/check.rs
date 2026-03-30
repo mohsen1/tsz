@@ -642,7 +642,6 @@ pub(super) fn collect_diagnostics(
         let file_names: Vec<String> = program.files.iter().map(|f| f.file_name.clone()).collect();
         build_duplicate_package_redirects(&file_names, options)
     };
-
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -1014,6 +1013,14 @@ pub(super) fn collect_diagnostics(
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
 
+        // Create shared cross-file query cache for multi-file projects.
+        // Eliminates redundant type evaluations and relation checks across files.
+        let shared_query_cache = if work_items.len() > 1 {
+            Some(tsz_solver::SharedQueryCache::new())
+        } else {
+            None
+        };
+
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
@@ -1042,6 +1049,7 @@ pub(super) fn collect_diagnostics(
                             project_env: &project_env,
                             resolved_module_specifiers: &resolved_module_specifiers,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
+                            shared_query_cache: shared_query_cache.as_ref(),
                             no_check,
                             check_js,
                             explicit_check_js_false,
@@ -1065,6 +1073,7 @@ pub(super) fn collect_diagnostics(
                             project_env: &project_env,
                             resolved_module_specifiers: &resolved_module_specifiers,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
+                            shared_query_cache: shared_query_cache.as_ref(),
                             no_check,
                             check_js,
                             explicit_check_js_false,
@@ -1096,6 +1105,7 @@ pub(super) fn collect_diagnostics(
                     project_env: &project_env,
                     resolved_module_specifiers: &resolved_module_specifiers,
                     shared_lib_cache: Arc::clone(&shared_lib_cache),
+                    shared_query_cache: shared_query_cache.as_ref(),
                     no_check,
                     check_js,
                     explicit_check_js_false,
@@ -1709,6 +1719,9 @@ pub(super) struct CheckFileForParallelContext<'a> {
     project_env: &'a tsz::checker::context::ProjectEnv,
     resolved_module_specifiers: &'a Arc<FxHashSet<(usize, String)>>,
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    /// Shared cross-file query cache for multi-file projects.
+    /// Eliminates redundant type evaluations and relation checks across files.
+    shared_query_cache: Option<&'a tsz_solver::SharedQueryCache>,
     no_check: bool,
     check_js: bool,
     /// `true` when `checkJs: false` was explicitly specified in compiler options.
@@ -1742,6 +1755,7 @@ pub(super) fn check_file_for_parallel<'a>(
         project_env,
         resolved_module_specifiers,
         shared_lib_cache,
+        shared_query_cache,
         no_check,
         check_js,
         explicit_check_js_false,
@@ -1761,7 +1775,12 @@ pub(super) fn check_file_for_parallel<'a>(
     }
 
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
-    let query_cache = QueryCache::new(&program.type_interner);
+    // For multi-file projects, use shared L2 cache to avoid redundant computation.
+    let query_cache = if let Some(shared) = shared_query_cache {
+        QueryCache::new_with_shared(&program.type_interner, shared)
+    } else {
+        QueryCache::new(&program.type_interner)
+    };
 
     // Build resolved_modules directly from the pre-computed resolved_module_specifiers
     // set (populated in build_resolved_module_maps). This avoids a redundant
