@@ -897,6 +897,18 @@ impl DefinitionStore {
     /// parameter names (e.g., `MyClass<T>` instead of just `MyClass`).
     pub fn set_type_params(&self, id: DefId, params: Vec<TypeParamInfo>) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
+            // If this is a TypeAlias that previously had empty type_params,
+            // set_body may have created a body_to_alias entry. Now that we
+            // know it's generic, remove that entry to avoid incorrect alias
+            // lookups (e.g., showing "B" instead of "B<string>").
+            if entry.kind == DefKind::TypeAlias
+                && entry.type_params.is_empty()
+                && !params.is_empty()
+            {
+                if let Some(body) = entry.body {
+                    self.body_to_alias.remove(&body);
+                }
+            }
             entry.type_params = params;
         }
     }
