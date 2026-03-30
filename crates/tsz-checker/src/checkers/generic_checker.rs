@@ -1040,9 +1040,21 @@ impl<'a> CheckerState<'a> {
                                                 false
                                             }
                                         };
+                                        // When the true branch is an `infer` variable
+                                        // (e.g., `F extends (...args: infer L) => any ? L : never`),
+                                        // the result is structurally extracted from the extends type
+                                        // pattern, not bounded by it. The extends type is a pattern
+                                        // matcher, not a constraint proxy. Defer to instantiation.
+                                        // This covers `Parameters<F>`, `ReturnType<F>`,
+                                        // `ConstructorParameters<F>`, `InstanceType<F>`, etc.
+                                        let cond_true_is_infer = query::is_infer_type(
+                                            self.ctx.types.as_type_database(),
+                                            cond_true,
+                                        );
                                         let is_extract_like = cond_true == cond_check
                                             || (cond_true_is_bare_param
-                                                && !is_key_filtering_pattern);
+                                                && !is_key_filtering_pattern
+                                                && !cond_true_is_infer);
                                         if !is_extract_like {
                                             // True branch is a structural type derived from the
                                             // check type (e.g., mapped type). Constraint satisfaction
