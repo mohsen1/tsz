@@ -163,8 +163,10 @@ struct ReadonlyChecker<'a> {
 impl<'a> TypeVisitor for ReadonlyChecker<'a> {
     type Output = bool;
 
-    fn visit_intrinsic(&mut self, _kind: crate::types::IntrinsicKind) -> Self::Output {
-        false
+    fn visit_intrinsic(&mut self, kind: crate::types::IntrinsicKind) -> Self::Output {
+        // The `string` primitive has an implicit readonly number index signature
+        // (you cannot assign to individual characters: `s[0] = "x"` is an error).
+        kind == crate::types::IntrinsicKind::String && matches!(self.kind, IndexKind::Number)
     }
 
     fn visit_literal(&mut self, _value: &crate::LiteralValue) -> Self::Output {

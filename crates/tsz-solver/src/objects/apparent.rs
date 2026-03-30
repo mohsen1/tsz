@@ -387,6 +387,11 @@ pub fn apparent_primitive_shape(
     }
     properties.sort_by_key(|a| a.name);
 
+    // Note: string's implicit number index is semantically readonly (you cannot
+    // assign to characters), but we keep readonly=false here because the
+    // ReadonlyChecker visitor handles this in is_readonly_index_signature().
+    // Setting readonly=true here would change subtype variance (readonly → covariant)
+    // which has broader implications for assignability that need separate work.
     let number_index = (kind == IntrinsicKind::String).then_some(IndexSignature {
         key_type: TypeId::NUMBER,
         value_type: TypeId::STRING,
