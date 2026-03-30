@@ -3444,11 +3444,22 @@ pub fn check_files_parallel(
             .collect(),
     );
 
+    // PERF: Pre-compute merged augmentation data ONCE instead of per-file.
+    // This reduces augmentation merging from O(N_files^2) to O(N_files).
+    let shared_binder_data = SharedBinderData::from_program(&program.files);
+
     let shared_binders: Vec<Arc<BinderState>> = program
         .files
         .iter()
         .enumerate()
-        .map(|(file_idx, file)| Arc::new(create_binder_from_bound_file(file, program, file_idx)))
+        .map(|(file_idx, file)| {
+            Arc::new(create_binder_from_bound_file_with_shared(
+                file,
+                program,
+                file_idx,
+                &shared_binder_data,
+            ))
+        })
         .collect();
     let all_binders = Arc::new(shared_binders.clone());
     let all_arenas = Arc::new(
@@ -3599,6 +3610,65 @@ pub fn check_files_parallel(
     }
 }
 
+/// Pre-computed data shared across all file binders in a parallel check.
+///
+/// These are computed ONCE from the program's files and shared via Arc,
+/// eliminating O(N_files^2) redundant iteration in `create_binder_from_bound_file`.
+pub struct SharedBinderData {
+    /// Merged module augmentations from all files.
+    pub merged_module_augmentations:
+        rustc_hash::FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
+    /// Merged augmentation target modules from all files.
+    pub merged_augmentation_target_modules: rustc_hash::FxHashMap<crate::binder::SymbolId, String>,
+    /// Merged global augmentations from all files.
+    pub merged_global_augmentations:
+        rustc_hash::FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
+}
+
+impl SharedBinderData {
+    /// Build shared binder data from all files in one pass.
+    pub fn from_program(files: &[BoundFile]) -> Self {
+        let mut merged_module_augmentations = rustc_hash::FxHashMap::default();
+        let mut merged_augmentation_target_modules = rustc_hash::FxHashMap::default();
+        let mut merged_global_augmentations = rustc_hash::FxHashMap::default();
+
+        for file in files {
+            for (spec, augs) in &file.module_augmentations {
+                merged_module_augmentations
+                    .entry(spec.clone())
+                    .or_insert_with(Vec::new)
+                    .extend(augs.iter().map(|aug| {
+                        crate::binder::ModuleAugmentation::with_arena(
+                            aug.name.clone(),
+                            aug.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+            for (&sym_id, module_spec) in &file.augmentation_target_modules {
+                merged_augmentation_target_modules.insert(sym_id, module_spec.clone());
+            }
+            for (name, decls) in &file.global_augmentations {
+                merged_global_augmentations
+                    .entry(name.clone())
+                    .or_insert_with(Vec::new)
+                    .extend(decls.iter().map(|aug| {
+                        crate::binder::GlobalAugmentation::with_arena(
+                            aug.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+        }
+
+        Self {
+            merged_module_augmentations,
+            merged_augmentation_target_modules,
+            merged_global_augmentations,
+        }
+    }
+}
+
 /// Create a `BinderState` from a `BoundFile` for type checking
 pub fn create_binder_from_bound_file(
     file: &BoundFile,
@@ -3646,8 +3716,8 @@ pub fn create_binder_from_bound_file(
         }
     }
 
-    // Merge module augmentations from all files
-    // When checking a file, we need access to augmentations from all other files
+    // Merge augmentations from all files (O(N_files^2) when called per-file).
+    // When SharedBinderData is not available, compute inline.
     let mut merged_module_augmentations: rustc_hash::FxHashMap<
         String,
         Vec<crate::binder::ModuleAugmentation>,
@@ -3675,9 +3745,6 @@ pub fn create_binder_from_bound_file(
         }
     }
 
-    // Merge global augmentations from all files
-    // When checking a file, we need access to `declare global` augmentations from all other files.
-    // Each augmentation gets tagged with its source arena for cross-file resolution.
     let mut merged_global_augmentations: rustc_hash::FxHashMap<
         String,
         Vec<crate::binder::GlobalAugmentation>,
@@ -3689,8 +3756,6 @@ pub fn create_binder_from_bound_file(
                 .entry(name.clone())
                 .or_default()
                 .extend(decls.iter().map(|aug| {
-                    // Tag each augmentation with its source file's arena
-                    // so the checker can read declaration nodes from the correct arena
                     crate::binder::GlobalAugmentation::with_arena(
                         aug.node,
                         Arc::clone(&other_file.arena),
@@ -3759,6 +3824,106 @@ pub fn create_binder_from_bound_file(
     // Mark lib symbols as merged since the MergedProgram's symbol arena
     // contains all remapped lib symbols with unique global IDs.
     // This enables the fast path in get_symbol() that avoids cross-binder lookups.
+    binder.set_lib_symbols_merged(true);
+
+    binder
+}
+
+/// Create a `BinderState` from a `BoundFile` using pre-computed shared augmentation data.
+///
+/// This avoids the O(N_files) augmentation merge per file by reusing data computed once
+/// via `SharedBinderData::from_program`. For ts-toolbelt (242 files), this eliminates
+/// ~242 * 242 = 58,564 redundant augmentation iterations.
+pub fn create_binder_from_bound_file_with_shared(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    shared: &SharedBinderData,
+) -> BinderState {
+    let declaration_arenas: DeclarationArenaMap = program
+        .declaration_arenas
+        .iter()
+        .filter_map(|(&(sym_id, decl_idx), arenas)| {
+            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
+            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
+        })
+        .collect();
+
+    let symbols_with_non_local_declarations: FxHashSet<SymbolId> = declaration_arenas
+        .keys()
+        .map(|&(sym_id, _)| sym_id)
+        .collect();
+
+    let symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = program
+        .symbol_arenas
+        .iter()
+        .filter_map(|(&sym_id, arena)| {
+            let has_non_local_decl = symbols_with_non_local_declarations.contains(&sym_id);
+            (has_non_local_decl || !Arc::ptr_eq(arena, &file.arena))
+                .then(|| (sym_id, Arc::clone(arena)))
+        })
+        .collect();
+
+    let mut file_locals = SymbolTable::new();
+    if file_idx < program.file_locals.len() {
+        for (name, &sym_id) in program.file_locals[file_idx].iter() {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+    for (name, &sym_id) in program.globals.iter() {
+        if !file_locals.has(name) {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
+        BinderOptions::default(),
+        program.symbols.clone(),
+        file_locals,
+        file.node_symbols.clone(),
+        BinderStateScopeInputs {
+            scopes: file.scopes.clone(),
+            node_scope_ids: file.node_scope_ids.clone(),
+            global_augmentations: shared.merged_global_augmentations.clone(),
+            module_augmentations: shared.merged_module_augmentations.clone(),
+            augmentation_target_modules: shared.merged_augmentation_target_modules.clone(),
+            module_exports: program.module_exports.clone(),
+            module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
+            reexports: program.reexports.clone(),
+            wildcard_reexports: program.wildcard_reexports.clone(),
+            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
+            symbol_arenas,
+            declaration_arenas,
+            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
+            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
+            modules_with_export_equals: FxHashSet::default(),
+            flow_nodes: file.flow_nodes.clone(),
+            node_flow: file.node_flow.clone(),
+            switch_clause_to_switch: file.switch_clause_to_switch.clone(),
+            expando_properties: file.expando_properties.clone(),
+            alias_partners: program.alias_partners.clone(),
+        },
+    );
+
+    binder.is_external_module = file.is_external_module;
+    binder.file_features = file.file_features;
+    binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
+    binder.lib_binders = program.lib_binders.clone();
+    binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+
+    if !program.definition_store.is_fully_populated() {
+        let mut composed_semantic_defs = program.semantic_defs.clone();
+        for (sym_id, entry) in &file.semantic_defs {
+            composed_semantic_defs.insert(*sym_id, entry.clone());
+        }
+        binder.semantic_defs = composed_semantic_defs;
+    }
+    if let Some(root_scope) = binder.scopes.first() {
+        binder.current_scope = root_scope.table.clone();
+        binder.current_scope_id = crate::binder::ScopeId(0);
+    }
+
+    binder.declared_modules = program.declared_modules.clone();
     binder.set_lib_symbols_merged(true);
 
     binder
