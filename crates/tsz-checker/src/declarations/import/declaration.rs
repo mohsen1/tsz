@@ -589,6 +589,14 @@ impl<'a> CheckerState<'a> {
         };
 
         let module_name = &literal.text;
+        // tsc emits TS2307 independently per import declaration, even when multiple
+        // imports reference the same module.  Clear the per-module dedup entry so
+        // this declaration gets its own chance to report a module-not-found error.
+        // The within-declaration dedup (resolution-error path vs fallback path)
+        // is preserved because both paths insert the key before returning.
+        self.ctx
+            .modules_with_ts2307_emitted
+            .remove(module_name.as_str());
         let has_import_clause = self.ctx.arena.get(import_clause_idx).is_some();
         let is_side_effect_import = !has_import_clause;
         // Note: side-effect imports may return early in the resolution error check below
