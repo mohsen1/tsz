@@ -1134,12 +1134,23 @@ impl<'a> CheckerState<'a> {
             };
             let left_type =
                 self.resolve_typeof_qualified_value_chain_with_request(qn.left, request, use_flow);
-            if left_type == TypeId::ANY || left_type == TypeId::ERROR {
-                return left_type;
-            }
             if let Some(rn) = self.ctx.arena.get(qn.right)
                 && let Some(ident) = self.ctx.arena.get_identifier(rn)
             {
+                if let Some(global_like_type) = self.resolve_global_like_typeof_member_access(
+                    qn.left,
+                    &ident.escaped_text,
+                    qn.right,
+                ) {
+                    return if use_flow {
+                        self.apply_flow_narrowing(idx, global_like_type)
+                    } else {
+                        global_like_type
+                    };
+                }
+                if left_type == TypeId::ANY || left_type == TypeId::ERROR {
+                    return left_type;
+                }
                 let object_type = self.resolve_type_for_property_access(left_type);
                 if object_type == TypeId::ANY || object_type == TypeId::ERROR {
                     return object_type;
@@ -1180,6 +1191,53 @@ impl<'a> CheckerState<'a> {
             };
             self.get_type_of_node_with_request(idx, &expr_request)
         }
+    }
+
+    pub(super) fn resolve_global_like_typeof_member_access(
+        &mut self,
+        left_idx: NodeIndex,
+        member_name: &str,
+        member_node: NodeIndex,
+    ) -> Option<TypeId> {
+        let is_this_global = self.is_this_resolving_to_global(left_idx);
+        if !(self.is_global_this_like_expression(left_idx) || is_this_global) {
+            return None;
+        }
+
+        let base_display = if self.is_global_this_expression(left_idx) || is_this_global {
+            "typeof globalThis"
+        } else {
+            "Window & typeof globalThis"
+        };
+        let allow_unknown_property_fallback =
+            self.is_global_this_expression(left_idx) || is_this_global;
+        let property_type = self.resolve_global_this_property_type(
+            member_name,
+            member_node,
+            allow_unknown_property_fallback,
+            base_display,
+        );
+        if property_type == TypeId::ERROR {
+            return Some(TypeId::ERROR);
+        }
+
+        if is_this_global
+            && property_type == TypeId::ANY
+            && self.ctx.no_implicit_any()
+            && !self.is_js_file()
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                member_node,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                    &["typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+            );
+        }
+
+        Some(self.resolve_type_query_type(property_type))
     }
 
     #[allow(dead_code)]

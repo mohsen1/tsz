@@ -2366,7 +2366,10 @@ impl<'a> CheckerState<'a> {
 
                     // Try to get the name of the expression (handles identifiers and property chains like a.b)
                     // Use specific error codes (TS18047/18048/18049) when name is available
-                    let name = self.expression_text(access.expression);
+                    let name = self.expression_text(access.expression).or_else(|| {
+                        self.is_this_expression(access.expression)
+                            .then(|| "this".to_string())
+                    });
 
                     let (code, message): (u32, String) = if let Some(ref name) = name {
                         // Use specific error codes with the variable name
