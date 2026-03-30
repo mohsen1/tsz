@@ -695,6 +695,92 @@ fn test_check_files_parallel_preserves_same_file_namespace_exports() {
 }
 
 #[test]
+fn test_check_files_parallel_preserves_import_shadowing_type_meaning() {
+    let files = vec![
+        ("b.ts".to_string(), "export const zzz = 123;\n".to_string()),
+        (
+            "a.ts".to_string(),
+            r#"import * as B from "./b";
+
+interface B {
+    x: string;
+}
+
+const x: B = { x: "" };
+B.zzz;
+
+export { B };
+"#
+            .to_string(),
+        ),
+        (
+            "index.ts".to_string(),
+            r#"import { B } from "./a";
+
+const x: B = { x: "" };
+B.zzz;
+
+import * as OriginalB from "./b";
+OriginalB.zzz;
+
+const y: OriginalB = x;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let a_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "a.ts")
+        .expect("expected a.ts result");
+    assert!(
+        !a_file.diagnostics.iter().any(|diag| diag.code == 2353),
+        "Did not expect TS2353 in a.ts. Actual diagnostics: {:#?}",
+        a_file.diagnostics
+    );
+
+    let index_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "index.ts")
+        .expect("expected index.ts result");
+    let ts2709: Vec<_> = index_file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2709)
+        .collect();
+    assert_eq!(
+        ts2709.len(),
+        1,
+        "Expected exactly one TS2709 in index.ts. Actual diagnostics: {:#?}",
+        index_file.diagnostics
+    );
+    assert!(
+        ts2709[0].message_text.contains("OriginalB"),
+        "Expected TS2709 to mention OriginalB. Actual diagnostic: {:?}",
+        ts2709[0]
+    );
+    assert!(
+        !index_file.diagnostics.iter().any(|diag| diag.code == 2353),
+        "Did not expect TS2353 in index.ts. Actual diagnostics: {:#?}",
+        index_file.diagnostics
+    );
+}
+
+#[test]
 #[ignore = "namespace-local ComponentClass inference broken after solver merge"]
 fn test_check_files_parallel_keeps_namespace_local_component_for_create_element_inference() {
     let files = vec![(

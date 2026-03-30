@@ -10,6 +10,33 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_has_declared_type_meaning(&self, sym_id: SymbolId) -> bool {
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::ALIAS) == 0
+            && (symbol.flags & symbol_flags::TYPE) != 0
+        {
+            return true;
+        }
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let arena = self
+                .ctx
+                .binder
+                .get_arena_for_declaration(sym_id, decl_idx)
+                .map_or(self.ctx.arena, |arena| arena.as_ref());
+            arena.get(decl_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || node.kind == syntax_kind_ext::ENUM_DECLARATION
+            })
+        })
+    }
+
     /// Resolve `Array<T>`, `ReadonlyArray<T>`, or `ConcatArray<T>` without explicit type arguments.
     pub(crate) fn resolve_array_type_reference(
         &mut self,
@@ -359,8 +386,20 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
             if symbol.flags & symbol_flags::ALIAS != 0 {
+                if self.symbol_has_declared_type_meaning(sym_id) {
+                    return false;
+                }
+
                 let mut visited = Vec::new();
-                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                let target_sym_id = self.resolve_alias_symbol(sym_id, &mut visited);
+
+                if matches!(symbol.import_name.as_deref(), Some("*"))
+                    && target_sym_id.is_some()
+                {
+                    return true;
+                }
+
+                if let Some(target_sym_id) = target_sym_id
                     && target_sym_id != sym_id
                 {
                     return self.symbol_is_namespace_only(target_sym_id);
@@ -369,7 +408,8 @@ impl<'a> CheckerState<'a> {
                 // For module-level imports (`import X = require('...')` or
                 // `import * as X from '...'`), when the alias can't be resolved,
                 // the symbol may represent a module namespace. These have import_module
-                // set but import_name is None because they import the whole module.
+                // set and use either no import_name or the synthetic `*` marker
+                // because they import the whole module namespace.
                 //
                 // Only flag as namespace-only when the target module IS known in our
                 // exports table (so we know its shape) but doesn't have `export =`.
@@ -377,7 +417,7 @@ impl<'a> CheckerState<'a> {
                 // above. If the module isn't in our exports table at all (unresolved
                 // cross-file reference), we can't assume it's namespace-only.
                 if let Some(ref module_name) = symbol.import_module
-                    && symbol.import_name.is_none()
+                    && matches!(symbol.import_name.as_deref(), None | Some("*"))
                     && self
                         .ctx
                         .binder
@@ -393,7 +433,7 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::NAMESPACE_MODULE
                     | symbol_flags::VALUE_MODULE))
                 != 0;
-            let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+            let has_type = self.symbol_has_declared_type_meaning(sym_id);
             return is_namespace && !has_type;
         }
         false
