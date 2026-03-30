@@ -10810,7 +10810,7 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.type_param(t_param.clone());
+    let t_type = interner.type_param(t_param);
     let identity = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
@@ -10865,7 +10865,7 @@ fn test_trivial_identity_widens_literal_without_contextual_type() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.type_param(t_param.clone());
+    let t_type = interner.type_param(t_param);
     let identity = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
