@@ -919,8 +919,8 @@ impl<'a> CheckerState<'a> {
             }
 
             let has_local_type_meaning = self.symbol_has_declared_type_meaning(sym_id);
-            let is_namespace_import_alias =
-                symbol.import_module.is_some() && matches!(symbol.import_name.as_deref(), Some("*"));
+            let is_namespace_import_alias = symbol.import_module.is_some()
+                && matches!(symbol.import_name.as_deref(), Some("*"));
 
             has_local_type_meaning || is_namespace_import_alias
         };

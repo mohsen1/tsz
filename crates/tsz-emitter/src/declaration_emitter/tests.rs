@@ -6729,13 +6729,22 @@ fn probe_js_class_like_prototype_heuristic() {
         "let Dog;\nDog.prototype.bark = function() { return 'woof'; };\nDog.prototype.age = 1;",
     );
     println!("PROBE js class-like heuristic:\n{output}");
-    assert!(output.contains("declare class Dog"), "missing class emit: {output}");
+    assert!(
+        output.contains("declare class Dog"),
+        "missing class emit: {output}"
+    );
     assert!(
         output.contains("private constructor();"),
         "missing private constructor: {output}"
     );
-    assert!(output.contains("bark()"), "missing prototype method: {output}");
-    assert!(output.contains("age: number;"), "missing prototype value: {output}");
+    assert!(
+        output.contains("bark()"),
+        "missing prototype method: {output}"
+    );
+    assert!(
+        output.contains("age: number;"),
+        "missing prototype value: {output}"
+    );
 }
 
 #[test]

@@ -16,9 +16,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags & symbol_flags::ALIAS) == 0
-            && (symbol.flags & symbol_flags::TYPE) != 0
-        {
+        if (symbol.flags & symbol_flags::ALIAS) == 0 && (symbol.flags & symbol_flags::TYPE) != 0 {
             return true;
         }
 
@@ -393,9 +391,7 @@ impl<'a> CheckerState<'a> {
                 let mut visited = Vec::new();
                 let target_sym_id = self.resolve_alias_symbol(sym_id, &mut visited);
 
-                if matches!(symbol.import_name.as_deref(), Some("*"))
-                    && target_sym_id.is_some()
-                {
+                if matches!(symbol.import_name.as_deref(), Some("*")) && target_sym_id.is_some() {
                     return true;
                 }
 
