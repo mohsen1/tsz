@@ -2434,7 +2434,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
-        _display_target: &str,
+        display_target: &str,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -2455,10 +2455,67 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // tsc does NOT emit TS2559 (weak type / no common properties) for JSX spread
-        // attributes. Extra properties in spreads are silently ignored — only per-property
-        // type mismatches (TS2322) are checked below. Skipping weak type detection here
-        // matches tsc behavior.
+        // TS2559: When the spread type has no properties in common with the target
+        // props type (a "weak type" violation), tsc emits TS2559 instead of proceeding
+        // with per-property TS2322 checks.
+        //
+        // tsc checks against the full intersection type (IntrinsicAttributes &
+        // IntrinsicClassAttributes<T> & PropsType & { children?: ReactNode }), so
+        // properties like `ref`, `key`, `children`, and `data-*` count as common
+        // properties and prevent TS2559. We check the normalized props_type for the
+        // weak type violation, then verify no spread property is a JSX-managed name
+        // before emitting TS2559.
+        if !spread_has_type_params {
+            let analysis = self.analyze_assignability_failure(spread_type, props_type);
+            if matches!(
+                &analysis.failure_reason,
+                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+            ) {
+                // Before emitting TS2559, check if any spread property is a JSX-managed
+                // attribute (key, ref, children, data-*) that would be valid in the full
+                // intersection type. If so, the spread has common properties and TS2559
+                // should not fire.
+                let resolved_spread = self.evaluate_type_with_env(spread_type);
+                let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
+                let has_jsx_managed_prop =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
+                        .map(|shape| {
+                            shape.properties.iter().any(|p| {
+                                let name = self.ctx.types.resolve_atom(p.name);
+                                name == "key"
+                                    || name == "ref"
+                                    || name == "children"
+                                    || name.starts_with("data-")
+                                    || name.starts_with("aria-")
+                            })
+                        })
+                        .unwrap_or(false);
+
+                if !has_jsx_managed_prop {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let source_str = self.format_type(spread_type);
+                    // Use display_target for the formatted full intersection,
+                    // matching tsc's formatting of the target type in TS2559.
+                    let target_str = if display_target.is_empty() {
+                        self.format_type(props_type)
+                    } else {
+                        display_target.to_string()
+                    };
+                    let message = format_message(
+                        diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    self.error_at_node(
+                        tag_name_idx,
+                        &message,
+                        diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    );
+                    return true;
+                }
+            }
+        }
 
         // Resolve the spread type to extract its properties
         let resolved_spread = self.evaluate_type_with_env(spread_type);
