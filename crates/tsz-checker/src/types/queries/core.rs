@@ -1660,6 +1660,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When TS2454 (variable used before being assigned) has already been
+        // emitted for this expression, suppress TS18047/18048/18049.  tsc does
+        // not stack "possibly undefined" on top of "used before assignment".
+        if self.ctx.daa_error_nodes.contains(&idx.0) {
+            return;
+        }
+
         // Try to get the name if the expression is an identifier
         // Use specific error codes (TS18047/18048/18049) when name is available
         let name = self
