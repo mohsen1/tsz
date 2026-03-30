@@ -277,7 +277,6 @@ impl<'a> FlowAnalyzer<'a> {
                 // A member returning general `boolean` (or any non-false truthy type) makes
                 // the overall union guard unsound, regardless of predicate target.
                 // If multiple predicate members exist, their predicates must match.
-                //
                 let mut common_sig: Option<PredicateSignature> = None;
                 let mut has_non_predicate_boolean = false;
 

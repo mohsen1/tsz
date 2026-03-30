@@ -157,13 +157,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Weak type check (TS2559): if the target is a "weak type" (all properties optional,
         // at least one property, no index signatures), reject if the source has properties
         // but none in common with the target. This check is propagated from CompatChecker
-        // via the `enforce_weak_types` flag so it applies during nested property type
-        // comparisons. The `in_property_check` guard ensures this only fires for nested
-        // comparisons — the CompatChecker handles top-level weak checks with proper
-        // exemptions (global Object, union-level policies, etc.).
+        // via the `enforce_weak_types` flag so union-member structural comparisons cannot
+        // bypass weak-type rejection by jumping directly into the subtype kernel.
+        // Top-level compat still owns the richer TS2559 diagnostics and exemptions; this
+        // shared relation path only enforces the semantic incompatibility.
         // Check ordering: O(1) flag/length guards first, then O(n) shape scan, then O(m+n) merge.
         if self.enforce_weak_types
-            && self.in_property_check
             && !source.properties.is_empty()
             && Self::is_weak_type_shape(target)
             && !crate::utils::has_common_property_name(&source.properties, &target.properties)
