@@ -1265,6 +1265,57 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
+            // Last resort: when the object type is an indexed access Obj[K] where Obj
+            // is a concrete type, evaluate the union of all value types and check if
+            // the index literal is valid. This handles patterns like:
+            //   { [K in keyof Obj]: Obj[K]['name'] }
+            // where Obj has an `as` clause or other constructs that prevent the solver
+            // from resolving Obj[K] with a generic K.
+            if let Some((base_obj, _base_idx)) = tsz_solver::type_queries::get_index_access_types(
+                self.ctx.types,
+                object_type_for_check,
+            ) {
+                let eval_base = self.evaluate_type_with_env(base_obj);
+                let is_concrete = !crate::query_boundaries::common::is_type_parameter_like(
+                    self.ctx.types,
+                    eval_base,
+                ) && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    eval_base,
+                ) && !tsz_solver::is_index_access_type(self.ctx.types, eval_base)
+                    && !tsz_solver::is_conditional_type(self.ctx.types, eval_base)
+                    && !tsz_solver::is_generic_application(self.ctx.types, eval_base);
+                if is_concrete {
+                    let keyof_base = self.ctx.types.evaluate_keyof(eval_base);
+                    let values_union = self.evaluate_type_with_env(
+                        self.ctx.types.factory().index_access(eval_base, keyof_base),
+                    );
+                    if values_union != TypeId::ERROR
+                        && values_union != TypeId::UNDEFINED
+                        && !tsz_solver::is_index_access_type(self.ctx.types, values_union)
+                    {
+                        // Check if the index is a valid key of the values union
+                        let keyof_values = self.ctx.types.evaluate_keyof(values_union);
+                        if self.is_assignable_to(index_type_for_check, keyof_values) {
+                            return;
+                        }
+                        // Also try property access for string literal indices
+                        if let Some(prop_atom) = tsz_solver::type_queries::get_string_literal_value(
+                            self.ctx.types,
+                            index_type_for_check,
+                        ) {
+                            let property_name = self.ctx.types.resolve_atom(prop_atom);
+                            if matches!(
+                                self.resolve_property_access_with_env(values_union, &property_name),
+                                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                            ) {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
             let message_2536 = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
                 &[&index_type_str, &obj_type_str],
