@@ -172,6 +172,18 @@ impl<'a> CheckerState<'a> {
 
         self.check_variance_annotations_supported_for_type_alias(alias);
 
+        // Check variance annotations match actual usage (TS2636).
+        // Resolve the alias body type directly so the solver can compute variance.
+        // This must be done while type parameters are still in scope.
+        {
+            let body_type = self.get_type_from_type_node(alias.type_node);
+            self.check_variance_annotations_with_body(
+                node_idx,
+                &alias.type_parameters,
+                Some(body_type),
+            );
+        }
+
         // TS4109: detect circular type arguments when the alias body is directly
         // a TypeReference (e.g. `type X = Foo<X extends {} ? A : B>`).  In TSC
         // this fires only during `resolveTypeArguments` for the direct body type
