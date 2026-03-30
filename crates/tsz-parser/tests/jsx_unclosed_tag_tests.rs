@@ -174,3 +174,23 @@ fn test_jsx_no_ts1382_without_bare_greater_than() {
         "Should not emit TS1381 for normal JSX text, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn test_jsx_child_comma_expression_emits_ts18007() {
+    let codes = get_parser_error_codes("let x = <div>{foo, bar}</div>;", "test.tsx");
+    let ts18007_count = codes.iter().filter(|&&code| code == 18007).count();
+    assert_eq!(
+        ts18007_count, 1,
+        "Expected one TS18007 for JSX child comma expression, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_attribute_comma_expression_emits_ts18007() {
+    let codes = get_parser_error_codes("let x = <div className={foo, bar} />;", "test.tsx");
+    let ts18007_count = codes.iter().filter(|&&code| code == 18007).count();
+    assert_eq!(
+        ts18007_count, 1,
+        "Expected one TS18007 for JSX attribute comma expression, got codes: {codes:?}"
+    );
+}

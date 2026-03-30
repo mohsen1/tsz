@@ -1144,7 +1144,7 @@ impl ParserState {
         let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
             NodeIndex::NONE
         } else {
-            self.parse_expression()
+            self.parse_jsx_embedded_expression()
         };
 
         self.parse_expected(SyntaxKind::CloseBraceToken);
@@ -1172,7 +1172,7 @@ impl ParserState {
         let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
             NodeIndex::NONE
         } else {
-            self.parse_expression()
+            self.parse_jsx_embedded_expression()
         };
 
         self.parse_expected(SyntaxKind::CloseBraceToken);
@@ -1187,6 +1187,32 @@ impl ParserState {
                 expression,
             },
         )
+    }
+
+    fn parse_jsx_embedded_expression(&mut self) -> NodeIndex {
+        let expression = self.parse_expression();
+        self.report_jsx_comma_expression(expression);
+        expression
+    }
+
+    fn report_jsx_comma_expression(&mut self, expression: NodeIndex) {
+        let expression = self.arena.skip_parenthesized_and_assertions(expression);
+        let Some(node) = self.arena.get(expression) else {
+            return;
+        };
+        let Some(binary) = self.arena.get_binary_expr(node) else {
+            return;
+        };
+        if binary.operator_token != SyntaxKind::CommaToken as u16 {
+            return;
+        }
+
+        self.parse_error_at(
+            node.pos,
+            node.end.saturating_sub(node.pos),
+            tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MAY_NOT_USE_THE_COMMA_OPERATOR_DID_YOU_MEAN_TO_WRITE_AN_ARRAY,
+            tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MAY_NOT_USE_THE_COMMA_OPERATOR_DID_YOU_MEAN_TO_WRITE_AN_ARRAY,
+        );
     }
 
     /// Parse JSX children (elements, text, expressions).
