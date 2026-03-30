@@ -625,52 +625,75 @@ impl<'a> CheckerState<'a> {
             let target_same_base = common::application_info(self.ctx.types, target)
                 .is_some_and(|(tb, ta)| tb == _source_base && ta.len() == source_args.len());
             if !target_same_base {
-                // Special case: when the source Application evaluates to an
-                // iterable-like interface (e.g., Iterable<T>) and the target
-                // is an Array or Tuple, skip the naive decomposition that would
-                // map T to the full array type. The solver's constraint
-                // collection has proper iterable matching that extracts the
-                // element type correctly. Without this guard, `Iterable<T>`
-                // matched against `number[]` infers T = number[] instead of
-                // letting the solver infer T = number.
-                let target_is_array_like =
-                    common::array_element_type(self.ctx.types, target).is_some();
-                let source_is_iterable_like = target_is_array_like && !source_args.is_empty() && {
-                    let evaluated = self.evaluate_type_with_env(source);
-                    self.is_iterable_like_for_substitution(evaluated)
-                };
-                if source_is_iterable_like {
-                    // Extract the array element type and widen it (e.g., 0|2|8 → number)
-                    // before mapping against the source type args. This prevents the
-                    // contextual substitution from using unwidened literal types that
-                    // would cause false TS2345 mismatches.
-                    let elem = common::array_element_type(self.ctx.types, target).unwrap();
-                    let widened_elem =
-                        tsz_solver::operations::widening::widen_literal_type(self.ctx.types, elem);
-                    for &source_arg in &source_args {
-                        self.collect_return_context_substitution(
-                            source_arg,
-                            widened_elem,
-                            tracked_type_params,
-                            substitution,
-                            visited,
-                        );
-                    }
-                    if !substitution.is_empty() {
-                        return;
-                    }
+                // When the source Application evaluates to a callable type
+                // (e.g., Mapper<T, U> = (x: T) => U) and the target is also
+                // a callable type (e.g., (x: string) => number), skip the
+                // naive decomposition that would map each type arg to the
+                // whole target. The function matching below (via
+                // get_contextual_signature) will correctly decompose the
+                // evaluated callable's parameters and return type.
+                let source_eval_for_guard = self.evaluate_type_with_env(source);
+                let source_evals_to_callable = source_eval_for_guard != source
+                    && call_checker::get_contextual_signature(
+                        self.ctx.types,
+                        source_eval_for_guard,
+                    )
+                    .is_some();
+                let target_is_callable =
+                    call_checker::get_contextual_signature(self.ctx.types, target).is_some();
+                if source_evals_to_callable && target_is_callable {
+                    // Don't decompose — let function matching below handle it
                 } else {
-                    for &source_arg in &source_args {
-                        self.collect_return_context_substitution(
-                            source_arg,
-                            target,
-                            tracked_type_params,
-                            substitution,
-                            visited,
+                    // Special case: when the source Application evaluates to an
+                    // iterable-like interface (e.g., Iterable<T>) and the target
+                    // is an Array or Tuple, skip the naive decomposition that would
+                    // map T to the full array type. The solver's constraint
+                    // collection has proper iterable matching that extracts the
+                    // element type correctly. Without this guard, `Iterable<T>`
+                    // matched against `number[]` infers T = number[] instead of
+                    // letting the solver infer T = number.
+                    let target_is_array_like =
+                        common::array_element_type(self.ctx.types, target).is_some();
+                    let source_is_iterable_like =
+                        target_is_array_like && !source_args.is_empty() && {
+                            let evaluated = self.evaluate_type_with_env(source);
+                            self.is_iterable_like_for_substitution(evaluated)
+                        };
+                    if source_is_iterable_like {
+                        // Extract the array element type and widen it (e.g., 0|2|8 → number)
+                        // before mapping against the source type args. This prevents the
+                        // contextual substitution from using unwidened literal types that
+                        // would cause false TS2345 mismatches.
+                        let elem = common::array_element_type(self.ctx.types, target).unwrap();
+                        let widened_elem = tsz_solver::operations::widening::widen_literal_type(
+                            self.ctx.types,
+                            elem,
                         );
-                    }
-                    if !substitution.is_empty() {
-                        return;
+                        for &source_arg in &source_args {
+                            self.collect_return_context_substitution(
+                                source_arg,
+                                widened_elem,
+                                tracked_type_params,
+                                substitution,
+                                visited,
+                            );
+                        }
+                        if !substitution.is_empty() {
+                            return;
+                        }
+                    } else {
+                        for &source_arg in &source_args {
+                            self.collect_return_context_substitution(
+                                source_arg,
+                                target,
+                                tracked_type_params,
+                                substitution,
+                                visited,
+                            );
+                        }
+                        if !substitution.is_empty() {
+                            return;
+                        }
                     }
                 }
             }
