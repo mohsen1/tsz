@@ -179,6 +179,11 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// from applying weak checks at the top level (where the `CompatChecker` already handles
     /// them with proper exemptions like global Object and union-level policies).
     pub(crate) in_property_check: bool,
+    /// When true, we're checking source <: individual members of an intersection target.
+    /// Weak type checks (TS2559) are suppressed for individual members because the
+    /// source may have no common properties with one member but still be assignable
+    /// to the combined intersection (e.g., `A <: A & WeakType` should pass).
+    pub(crate) in_intersection_member_check: bool,
     /// Whether recursive relation cycles and overflow should be treated as
     /// assumed-related (`true`) or definitive failure (`false`).
     pub assume_related_on_cycle: bool,
@@ -246,6 +251,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             any_propagation: AnyPropagationMode::All,
             enforce_weak_types: false,
             in_property_check: false,
+            in_intersection_member_check: false,
             assume_related_on_cycle: true,
             identity_cycle_check: false,
             bypass_evaluation: false,
@@ -285,6 +291,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             any_propagation: AnyPropagationMode::All,
             enforce_weak_types: false,
             in_property_check: false,
+            in_intersection_member_check: false,
             assume_related_on_cycle: true,
             identity_cycle_check: false,
             bypass_evaluation: false,
@@ -860,11 +867,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
+            // When checking source <: each intersection member, temporarily disable
+            // weak type checks (TS2559). Individual intersection members may be weak
+            // types (all-optional properties) that the source has no properties in
+            // common with. But `A <: A & WeakType` should still pass because the
+            // source IS assignable to the combined intersection even though it has
+            // no properties in common with the WeakType member alone.
+            // The weak type check should only apply to the combined intersection
+            // target, not to individual members.
+            //
+            // Use `in_intersection_member_check` instead of modifying `enforce_weak_types`
+            // directly to avoid polluting the subtype cache with results computed under
+            // different weak-type-enforcement policies.
+            let saved = self.in_intersection_member_check;
+            self.in_intersection_member_check = true;
             for &member in member_list.iter() {
                 if !self.check_subtype(source, member).is_true() {
+                    self.in_intersection_member_check = saved;
                     return SubtypeResult::False;
                 }
             }
+            self.in_intersection_member_check = saved;
             return SubtypeResult::True;
         }
 
@@ -2185,3 +2208,7 @@ mod type_predicate_tests;
 #[cfg(test)]
 #[path = "../../../tests/overlap_tests.rs"]
 mod overlap_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/intersection_optional_subtype_tests.rs"]
+mod intersection_optional_subtype_tests;
