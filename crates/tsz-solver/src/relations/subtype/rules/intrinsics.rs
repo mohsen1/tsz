@@ -38,6 +38,9 @@ fn make_subtype_method_type(db: &dyn TypeDatabase, return_type: TypeId) -> TypeI
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Extract the yield type from a target that has a `[Symbol.iterator]` method
+    /// returning a type application (e.g., `ArrayIterator<any>`). This is a
+    /// direct shape-level check used as a fallback when `get_iterator_info` fails.
     fn extract_iterable_yield_type_from_target(&self, target: TypeId) -> Option<TypeId> {
         let shape_id = object_shape_id(self.interner, target)
             .or_else(|| object_with_index_shape_id(self.interner, target))?;
@@ -411,6 +414,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// let m: number = new Number(); // ❌ Number is not assignable to number
     /// let o: Object = 42;           // ✅ number <: Number <: Object
     /// ```
+    /// Check if a target type has named properties beyond `[Symbol.iterator]`
+    /// and `__@iterator` (the iterable protocol). Properties like `length` and
+    /// numeric index signatures that `String` naturally has are also excluded.
+    fn target_has_non_iterable_properties(&self, target: TypeId) -> bool {
+        let shape = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))
+            .map(|id| self.interner.object_shape(id));
+        let Some(shape) = shape else {
+            return false;
+        };
+        let sym_iter = self.interner.intern_string("[Symbol.iterator]");
+        let internal_iter = self.interner.intern_string("__@iterator");
+        let length_atom = self.interner.intern_string("length");
+        for prop in &shape.properties {
+            if prop.name == sym_iter || prop.name == internal_iter || prop.name == length_atom {
+                continue;
+            }
+            // This property is not part of the iterable protocol or String's natural shape
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn is_boxed_primitive_subtype(
         &mut self,
         source_kind: IntrinsicKind,
@@ -430,19 +456,56 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
+        // String-iterable shortcut: when the target is iterable with a yield type
+        // compatible with `string`, check if the target is PURELY iterable (no extra
+        // named properties beyond what String provides). This is needed because the
+        // registered boxed `String` type may not include the es2015 `[Symbol.iterator]`
+        // augmentation, so `String <: Iterable<string>` would fail structurally.
+        //
+        // However, we must NOT allow `string` to be assignable to types like `IArguments`
+        // that are iterable but also have additional properties (e.g., `callee: Function`)
+        // that `string`/`String` lacks.
         if source_kind == IntrinsicKind::String {
-            if let Some(db) = self.query_db
-                && let Some(iter_info) = get_iterator_info(db, target, false)
-                && self
-                    .check_subtype(TypeId::STRING, iter_info.yield_type)
-                    .is_true()
-            {
-                return true;
-            }
-            if let Some(yield_type) = self.extract_iterable_yield_type_from_target(target)
-                && self.check_subtype(TypeId::STRING, yield_type).is_true()
-            {
-                return true;
+            let iterable_match = (|| {
+                if let Some(db) = self.query_db
+                    && let Some(iter_info) = get_iterator_info(db, target, false)
+                    && self
+                        .check_subtype(TypeId::STRING, iter_info.yield_type)
+                        .is_true()
+                {
+                    return true;
+                }
+                if let Some(yield_type) = self.extract_iterable_yield_type_from_target(target)
+                    && self.check_subtype(TypeId::STRING, yield_type).is_true()
+                {
+                    return true;
+                }
+                false
+            })();
+
+            if iterable_match {
+                // The target is iterable with compatible yield type. Now check
+                // whether the target has additional properties that the boxed
+                // String type cannot satisfy. If the boxed type check passes,
+                // the shortcut is valid. If it fails, only allow the shortcut
+                // when the target has NO extra named properties beyond what
+                // the iterable protocol requires.
+                let boxed_type = self
+                    .resolver
+                    .get_boxed_type(source_kind)
+                    .or_else(|| self.interner.get_boxed_type(source_kind));
+                if let Some(boxed_type) = boxed_type {
+                    if self.check_subtype(boxed_type, target).is_true() {
+                        return true;
+                    }
+                }
+                // Boxed type doesn't satisfy all target properties. Check if
+                // the target only has iterable-related properties (no extras).
+                let target_has_extra_props = self.target_has_non_iterable_properties(target);
+                if !target_has_extra_props {
+                    return true;
+                }
+                // Target has extra properties — fall through to normal boxed check.
             }
         }
 
