@@ -386,14 +386,33 @@ impl<'a> InferenceContext<'a> {
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
-        // Filter out only synthetic inference placeholders from contra-candidates.
-        // Real outer type parameters (for example `T` in `Enqueue<T>`) are valid
-        // inference evidence and must be preserved; only transient `__infer_*` /
-        // `__infer_src_*` placeholders should be ignored here.
+        // Filter out synthetic inference placeholders from contra-candidates.
+        // Both bare placeholders (`__infer_0`) AND types that contain stale
+        // placeholders from previous inference rounds (e.g., unions like
+        // `__infer_0 | PromiseLike<__infer_0>`) are filtered. These arise when
+        // contextually-typed callback parameters carry forward unresolved
+        // placeholder types from Round 1 into Round 2's constraint collection.
         let concrete_contra_candidates: Vec<_> = contra_candidates
             .iter()
             .filter(|c| {
-                !crate::type_queries::data::is_bare_infer_placeholder_db(self.interner, c.type_id)
+                // Check bare placeholder first (fast path)
+                if crate::type_queries::data::is_bare_infer_placeholder_db(self.interner, c.type_id)
+                {
+                    return false;
+                }
+                // Check if the type contains any non-infer type parameters.
+                // If it ONLY contains `__infer_*` placeholders (no real type params),
+                // it's a stale inference artifact and should be filtered.
+                if crate::type_queries::data::contains_infer_placeholder_db(
+                    self.interner,
+                    c.type_id,
+                ) && !crate::type_queries::data::contains_non_infer_type_parameters_db(
+                    self.interner,
+                    c.type_id,
+                ) {
+                    return false;
+                }
+                true
             })
             .cloned()
             .collect();

@@ -174,6 +174,24 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
 }
 
+/// Check if a type contains any tsz inference placeholder (`__infer_*`).
+///
+/// This detects both bare placeholders and structural types that contain them
+/// (e.g., unions like `__infer_0 | PromiseLike<__infer_0>`).
+pub fn contains_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if is_bare_infer_placeholder_db(db, type_id) {
+        return true;
+    }
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::TypeParameter(tp) => {
+            let name = db.resolve_atom_ref(tp.name);
+            name.starts_with("__infer_") || name.starts_with("__infer_src_")
+        }
+        TypeData::Infer(_) => true,
+        _ => false,
+    })
+}
+
 /// Check if a type contains the error type.
 ///
 /// Delegates to `visitor_predicates::contains_type_matching` with an `Error`-only
