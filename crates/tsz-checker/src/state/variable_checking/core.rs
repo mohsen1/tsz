@@ -1679,6 +1679,14 @@ impl<'a> CheckerState<'a> {
                             if let Some(lib_sym_id) = binder.file_locals.get(&name)
                                 && let Some(lib_sym) = binder.get_symbol(lib_sym_id)
                             {
+                                // TS2403 only applies when the lib symbol has a VALUE
+                                // declaration (variable, function, etc.). Type-only symbols
+                                // (interfaces, type aliases) occupy a different declaration
+                                // space and never conflict with var declarations.
+                                use tsz_binder::symbols::symbol_flags;
+                                if lib_sym.flags & symbol_flags::VALUE == 0 {
+                                    continue;
+                                }
                                 for &lib_decl in &lib_sym.declarations {
                                     if lib_decl.is_some()
                                         && CheckerState::enter_cross_arena_delegation()
