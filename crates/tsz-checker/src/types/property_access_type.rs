@@ -2353,6 +2353,20 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    // When TS2454 (variable used before being assigned) has already been
+                    // emitted for this expression, suppress TS18047/18048/18049.  tsc does
+                    // not stack "possibly undefined" on top of "used before assignment".
+                    if self.ctx.daa_error_nodes.contains(&access.expression.0)
+                        || self.ctx.daa_error_nodes.contains(&idx.0)
+                    {
+                        return self.finalize_property_access_result(
+                            idx,
+                            property_type.unwrap_or(TypeId::ERROR),
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
+
                     // Try to get the name of the expression (handles identifiers and property chains like a.b)
                     // Use specific error codes (TS18047/18048/18049) when name is available
                     let name = self.expression_text(access.expression);

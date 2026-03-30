@@ -251,7 +251,11 @@ impl<'a> CheckerState<'a> {
         if let Some(cause) = nullish_cause {
             // Without strictNullChecks, null/undefined are in every type's domain,
             // so "possibly null/undefined" diagnostics should not be emitted.
-            if self.ctx.compiler_options.strict_null_checks {
+            // When TS2454 (variable used before being assigned) has already been
+            // emitted for this expression, suppress TS18047/18048/18049.
+            if self.ctx.compiler_options.strict_null_checks
+                && !self.ctx.daa_error_nodes.contains(&new_expr.expression.0)
+            {
                 let (code, message) = if let Some(name) = self.expression_text(new_expr.expression)
                 {
                     if cause == TypeId::NULL {

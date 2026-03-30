@@ -140,6 +140,13 @@ impl<'a> CheckerState<'a> {
     /// - If the expression is the literal `null`/`undefined` keyword → TS18050
     /// - If the expression is a variable with a null/undefined type → TS18048/TS18047
     pub(crate) fn emit_nullish_operand_error(&mut self, idx: NodeIndex, cause: TypeId) {
+        // When TS2454 (variable used before being assigned) has already been
+        // emitted for this expression, suppress TS18047/18048/18049.  tsc does
+        // not stack "possibly undefined" on top of "used before assignment".
+        if self.ctx.daa_error_nodes.contains(&idx.0) {
+            return;
+        }
+
         let is_literal = self.is_literal_null_or_undefined_node(idx);
 
         if is_literal {
