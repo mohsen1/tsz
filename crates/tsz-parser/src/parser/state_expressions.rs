@@ -113,6 +113,10 @@ impl ParserState {
 
     // Parse assignment expression
     pub(crate) fn parse_assignment_expression(&mut self) -> NodeIndex {
+        let saved_pending_failed_async_arrow_colon_recovery =
+            self.pending_failed_async_arrow_colon_recovery;
+        let mut deferred_failed_async_arrow_colon_recovery = false;
+
         // Check for arrow function first (including async arrow)
         let lookahead_token = self.current_token;
         let lookahead_state = self.scanner.save_state();
@@ -131,9 +135,14 @@ impl ParserState {
                     // async => expr - treat 'async' as identifier parameter
                     return self.parse_arrow_function_expression_with_async(false);
                 }
-                return self.parse_async_arrow_function_expression();
+                if self.look_ahead_can_commit_async_arrow_function() {
+                    return self.parse_async_arrow_function_expression();
+                }
+                deferred_failed_async_arrow_colon_recovery = true;
+                self.pending_failed_async_arrow_colon_recovery = true;
+            } else {
+                return self.parse_arrow_function_expression_with_async(false);
             }
-            return self.parse_arrow_function_expression_with_async(false);
         }
 
         // Parse the non-assignment binary expression first.
@@ -157,6 +166,11 @@ impl ParserState {
             self.next_token();
             let right = self.parse_assignment_expression();
             let end_pos = self.token_end();
+            if deferred_failed_async_arrow_colon_recovery && !self.is_token(SyntaxKind::ColonToken)
+            {
+                self.pending_failed_async_arrow_colon_recovery =
+                    saved_pending_failed_async_arrow_colon_recovery;
+            }
             return self.arena.add_binary_expr(
                 syntax_kind_ext::BINARY_EXPRESSION,
                 start_pos,
@@ -169,7 +183,54 @@ impl ParserState {
             );
         }
 
+        if deferred_failed_async_arrow_colon_recovery && !self.is_token(SyntaxKind::ColonToken) {
+            self.pending_failed_async_arrow_colon_recovery =
+                saved_pending_failed_async_arrow_colon_recovery;
+        }
+
         left
+    }
+
+    fn look_ahead_can_commit_async_arrow_function(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        let saved_context_flags = self.context_flags;
+        let saved_last_error_pos = self.last_error_pos;
+        let saved_diagnostics_len = self.parse_diagnostics.len();
+        let saved_nodes_len = self.arena.nodes.len();
+        let saved_extended_info_len = self.arena.extended_info.len();
+        let saved_deferred_module_close_braces = self.deferred_module_close_braces;
+        let saved_abort_intersection_continuation = self.abort_intersection_continuation;
+        let saved_fallback_import_type_options_once = self.fallback_import_type_options_once;
+        let saved_in_import_type_options_context = self.in_import_type_options_context;
+        let saved_import_attribute_tail_recovered = self.import_attribute_tail_recovered;
+        let saved_suppress_object_literal_comma_once = self.suppress_object_literal_comma_once;
+        let saved_suppress_next_missing_close_paren_error_once =
+            self.suppress_next_missing_close_paren_error_once;
+        let saved_saw_arrow_parameter_recovery = self.saw_arrow_parameter_recovery;
+
+        self.saw_arrow_parameter_recovery = false;
+        let _ = self.parse_async_arrow_function_expression();
+        let can_commit = !self.saw_arrow_parameter_recovery;
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        self.context_flags = saved_context_flags;
+        self.last_error_pos = saved_last_error_pos;
+        self.parse_diagnostics.truncate(saved_diagnostics_len);
+        self.arena.nodes.truncate(saved_nodes_len);
+        self.arena.extended_info.truncate(saved_extended_info_len);
+        self.deferred_module_close_braces = saved_deferred_module_close_braces;
+        self.abort_intersection_continuation = saved_abort_intersection_continuation;
+        self.fallback_import_type_options_once = saved_fallback_import_type_options_once;
+        self.in_import_type_options_context = saved_in_import_type_options_context;
+        self.import_attribute_tail_recovered = saved_import_attribute_tail_recovered;
+        self.suppress_object_literal_comma_once = saved_suppress_object_literal_comma_once;
+        self.suppress_next_missing_close_paren_error_once =
+            saved_suppress_next_missing_close_paren_error_once;
+        self.saw_arrow_parameter_recovery = saved_saw_arrow_parameter_recovery;
+
+        can_commit
     }
 
     // Parse async arrow function: async (x) => ... or async x => ...
