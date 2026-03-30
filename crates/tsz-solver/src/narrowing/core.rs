@@ -1560,15 +1560,20 @@ impl<'a> NarrowingContext<'a> {
 
                     // Fallback 1: If standard narrowing returns NEVER but source wasn't NEVER,
                     // it might be an interface vs class check (which is allowed in TS).
-                    // Use intersection in that case.
-                    let intersection = self.db.intersection2(source_type, *instance_type);
-                    if intersection != TypeId::NEVER {
-                        return intersection;
+                    // Only create intersection if the types don't have conflicting properties.
+                    if self.are_instanceof_types_overlapping(source_type, *instance_type) {
+                        let intersection = self.db.intersection2(source_type, *instance_type);
+                        if intersection != TypeId::NEVER {
+                            return intersection;
+                        }
+                    } else {
+                        // Types have conflicting properties — intersection is uninhabitable.
+                        return TypeId::NEVER;
                     }
 
-                    // Fallback 2: If even intersection fails, narrow to object-like types.
-                    // On the true branch of instanceof, we know the value must be some
-                    // kind of object (primitives can never pass instanceof).
+                    // Fallback 2: If even intersection construction fails,
+                    // narrow to object-like types. On the true branch of instanceof,
+                    // we know the value must be some kind of object.
                     self.narrow_to_objectish(source_type)
                 } else {
                     // Negative: !(x instanceof Class)
