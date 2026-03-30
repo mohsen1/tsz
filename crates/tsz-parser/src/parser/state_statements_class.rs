@@ -451,9 +451,10 @@ impl ParserState {
         // Parse rest parameter (...)
         let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
 
-        // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
-        // This must be called BEFORE parsing the parameter name to catch reserved words
-        self.check_illegal_binding_identifier();
+        // NOTE: tsc's parser does NOT check for `await`/`yield` as reserved words
+        // in parameter names. Any such errors are deferred to the checker/binder.
+        // `async function * f(await) {}` produces no parser error in tsc.
+        // Do NOT call check_illegal_binding_identifier() here.
         if (self.context_flags & CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS) != 0
             && self.is_token(SyntaxKind::StaticKeyword)
         {
