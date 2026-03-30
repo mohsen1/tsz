@@ -24,6 +24,7 @@ impl ParserState {
 
         let mut elements = Vec::new();
 
+        let mut has_trailing_comma = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -206,6 +207,11 @@ impl ParserState {
                 {
                     self.next_token();
                 }
+            } else if self.is_token(SyntaxKind::CloseBraceToken)
+                || self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                has_trailing_comma = true;
+                break;
             }
         }
 
@@ -235,7 +241,11 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::BindingPatternData {
-                elements: self.make_node_list(elements),
+                elements: {
+                    let mut list = self.make_node_list(elements);
+                    list.has_trailing_comma = has_trailing_comma;
+                    list
+                },
             },
         )
     }
