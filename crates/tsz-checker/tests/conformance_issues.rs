@@ -83,6 +83,73 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_invokable_union_assignments_keep_both_ts2322_diagnostics() {
+    let source = r#"
+interface ConstructableA {
+  new(): { somePropA: any };
+}
+
+interface IDirectiveLinkFn<TScope> {
+    (scope: TScope): void;
+}
+
+interface IDirectivePrePost<TScope> {
+    pre?: IDirectiveLinkFn<TScope>;
+    post?: IDirectiveLinkFn<TScope>;
+}
+
+export let blah: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = (x: string) => {}
+
+export let ctor: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = class {
+    someUnaccountedProp: any;
+}
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    let blah_start = source.find("blah:").unwrap() as u32;
+    let ctor_start = source.find("ctor:").unwrap() as u32;
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected both union assignment failures to report TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| {
+            diag.start == blah_start
+                && diag.message_text.contains(
+                    "Type '(x: string) => void' is not assignable to type 'ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number>'."
+                )
+        }),
+        "Expected the function assignment diagnostic to preserve the construct-interface display. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| {
+            diag.start == ctor_start
+                && diag.message_text.contains(
+                    "Type 'typeof ctor' is not assignable to type 'ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number>'."
+                )
+        }),
+        "Expected the class assignment diagnostic to stay anchored on `ctor`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|diag| !diag.message_text.contains("typeof ConstructableA")),
+        "Construct-only interfaces should display as type-space names, not value-space `typeof` names. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_this_in_function_call_js_emits_ts2683_for_unannotated_callbacks_only() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "a.js",

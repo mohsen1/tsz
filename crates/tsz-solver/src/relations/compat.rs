@@ -235,6 +235,73 @@ impl<'a> CompatChecker<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    fn function_like_weak_type_properties(
+        &self,
+        mut props: Vec<PropertyInfo>,
+        has_call_signatures: bool,
+        has_construct_signatures: bool,
+    ) -> Vec<PropertyInfo> {
+        let mut ensure_prop = |name: &str| {
+            let atom = self.interner.intern_string(name);
+            if !props.iter().any(|prop| prop.name == atom) {
+                props.push(PropertyInfo::new(atom, TypeId::ANY));
+            }
+        };
+
+        if has_call_signatures {
+            // Function-like values expose Function members even when the callable
+            // shape itself does not materialize them. Weak-type overlap checks need
+            // to see those stable property names so unrelated weak object targets
+            // don't incorrectly accept function/class values.
+            ensure_prop("call");
+            ensure_prop("apply");
+        }
+
+        if has_construct_signatures {
+            ensure_prop("prototype");
+        }
+
+        props
+    }
+
+    fn weak_type_source_properties(&self, source: TypeId) -> Option<(Vec<PropertyInfo>, bool)> {
+        if source == TypeId::FUNCTION {
+            return Some((self.function_like_weak_type_properties(Vec::new(), true, false), false));
+        }
+
+        match self.interner.lookup(source) {
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                let props = self.function_like_weak_type_properties(
+                    shape.properties.clone(),
+                    !shape.call_signatures.is_empty(),
+                    !shape.construct_signatures.is_empty(),
+                );
+                Some((props, shape.string_index.is_some() || shape.number_index.is_some()))
+            }
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                let props = self.function_like_weak_type_properties(
+                    Vec::new(),
+                    !shape.is_constructor,
+                    shape.is_constructor,
+                );
+                Some((props, false))
+            }
+            _ => {
+                let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+                let source_shape_id = extractor.extract(source)?;
+                let source_shape = self
+                    .interner
+                    .object_shape(crate::types::ObjectShapeId(source_shape_id));
+                Some((
+                    source_shape.properties.clone(),
+                    source_shape.string_index.is_some() || source_shape.number_index.is_some(),
+                ))
+            }
+        }
+    }
+
     fn normalize_assignability_operand(&mut self, mut type_id: TypeId) -> TypeId {
         // Keep normalization bounded to avoid infinite resolver/evaluator cycles.
         for _ in 0..8 {
@@ -1628,26 +1695,22 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
-        let source_shape_id = match extractor.extract(source) {
-            Some(id) => id,
-            None => {
-                // No extractable object shape. tsc considers primitives assignable
-                // to weak types: `bigint extends {t?: string}` is valid because
-                // the weak type check is about objects with wrong properties.
-                // Primitives have no own properties to conflict.
-                return false;
-            }
+        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        else {
+            // No extractable object/function-like shape. tsc considers primitives
+            // assignable to weak types: `bigint extends {t?: string}` is valid
+            // because the weak type check is about object-ish values with the
+            // wrong property set.
+            return false;
         };
 
-        let source_shape = self
-            .interner
-            .object_shape(crate::types::ObjectShapeId(source_shape_id));
-        let source_props = source_shape.properties.as_slice();
+        if has_index_signature {
+            return false;
+        }
 
         // Empty objects are assignable to weak types (all optional properties).
         // Only trigger weak type violation if source has properties that don't overlap.
-        !source_props.is_empty() && !self.has_common_property(source_props, target_props)
+        !source_props.is_empty() && !self.has_common_property(source_props.as_slice(), target_props)
     }
 
     fn source_lacks_union_common_property(
@@ -1681,32 +1744,27 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Use visitor for Object types
-        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
-        let source_shape_id = match extractor.extract(source) {
-            Some(id) => id,
-            None => {
-                // Array/Tuple types are objects but not extractable. They rarely
-                // share property names with arbitrary union members, so treat as
-                // lacking common properties (matching tsc's getPropertiesOfType
-                // behavior for arrays in weak type detection).
-                if self.is_array_or_tuple_type(source) {
-                    return true;
-                }
-                return false;
+        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        else {
+            // Array/Tuple types are objects but not extractable. They rarely
+            // share property names with arbitrary union members, so treat as
+            // lacking common properties (matching tsc's getPropertiesOfType
+            // behavior for arrays in weak type detection).
+            if self.is_array_or_tuple_type(source) {
+                return true;
             }
+            return false;
         };
 
-        let source_shape = self
-            .interner
-            .object_shape(crate::types::ObjectShapeId(source_shape_id));
-        if source_shape.string_index.is_some() || source_shape.number_index.is_some() {
+        if has_index_signature {
             return false;
         }
-        let source_props = source_shape.properties.as_slice();
+
         if source_props.is_empty() {
             return false;
         }
 
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let mut has_common = false;
         for member in target_members {
             let resolved_member = self.resolve_weak_type_ref(*member);
@@ -1721,7 +1779,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if member_shape.string_index.is_some() || member_shape.number_index.is_some() {
                 return false;
             }
-            if self.has_common_property(source_props, member_shape.properties.as_slice()) {
+            if self.has_common_property(source_props.as_slice(), member_shape.properties.as_slice()) {
                 has_common = true;
                 break;
             }
