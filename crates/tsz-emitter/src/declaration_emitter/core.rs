@@ -3468,7 +3468,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Emit a function/arrow initializer's type annotation directly from the AST
     /// when it has an explicit return type. This preserves source-level type alias
     /// references in type parameter constraints and binding pattern formatting
-    /// (including trailing commas) that the TypePrinter would otherwise expand.
+    /// (including trailing commas) that the `TypePrinter` would otherwise expand.
     fn emit_arrow_fn_type_from_ast(&mut self, initializer: NodeIndex) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;

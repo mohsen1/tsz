@@ -13,11 +13,11 @@ pub struct TypeCacheView {
     pub node_types: FxHashMap<u32, TypeId>,
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
     pub def_to_symbol: FxHashMap<DefId, SymbolId>,
-    /// Maps DefId.0 -> resolved body TypeId (from TypeEnvironment).
+    /// Maps `DefId.0` -> resolved body TypeId (from `TypeEnvironment`).
     /// Used by the declaration emitter to evaluate mapped types and type alias
     /// applications that reference cross-file type aliases via Lazy(DefId).
     pub def_types: FxHashMap<u32, TypeId>,
-    /// Maps DefId.0 -> type parameters (from TypeEnvironment).
+    /// Maps `DefId.0` -> type parameters (from `TypeEnvironment`).
     /// Paired with `def_types` for type alias application evaluation.
     pub def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
 }
