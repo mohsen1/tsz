@@ -1223,14 +1223,46 @@ impl<'a> CheckerState<'a> {
                                     && c != ','
                             })
                             .unwrap_or(rest_trimmed.len());
-                        let error_pos =
+                        let expr_pos =
                             comment.pos + after_import as u32 + skip_ws as u32 + clause_end as u32;
-                        self.error_at_position(
-                            error_pos,
-                            1,
-                            "'from' expected.",
-                            crate::diagnostics::diagnostic_codes::EXPECTED,
-                        );
+                        // Check if the rest after the import clause is just whitespace/comment
+                        // markers (bare import like `@import foo`), or has additional content
+                        // like `@import x = require("types")`.
+                        let after_clause = rest_trimmed[clause_end..].trim();
+                        let after_clause_clean = after_clause
+                            .trim_end_matches("*/")
+                            .trim()
+                            .trim_start_matches('*')
+                            .trim();
+                        let is_bare_import = after_clause_clean.is_empty();
+                        if is_bare_import {
+                            // TS1109: Expression expected — at the position after the bare
+                            // import clause where the module specifier was expected.
+                            // tsc only emits this for bare imports (e.g., `@import foo`).
+                            self.error_expression_expected_at_position(expr_pos, 1);
+                            // TS1005: 'from' expected — tsc emits this at the closing `*/`
+                            // of the JSDoc comment for bare imports.
+                            let from_error_pos = if comment.end >= 2 {
+                                comment.end - 2
+                            } else {
+                                expr_pos
+                            };
+                            self.error_at_position(
+                                from_error_pos,
+                                1,
+                                "'from' expected.",
+                                crate::diagnostics::diagnostic_codes::EXPECTED,
+                            );
+                        } else {
+                            // For imports with additional content (e.g., `@import x = require("types")`),
+                            // only emit TS1005 at the import clause position (not TS1109).
+                            self.error_at_position(
+                                expr_pos,
+                                1,
+                                "'from' expected.",
+                                crate::diagnostics::diagnostic_codes::EXPECTED,
+                            );
+                        }
                     }
                     search_from = after_import;
                 }
