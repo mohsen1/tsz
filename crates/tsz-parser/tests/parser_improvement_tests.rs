@@ -2361,7 +2361,7 @@ let b: ?number = 42;
 }
 
 #[test]
-fn test_adjacent_jsx_roots_in_tsx_do_not_report_ts2657_or_expression_cascade() {
+fn test_adjacent_jsx_roots_in_tsx_report_ts2657() {
     let source = r"
 declare namespace JSX { interface Element { } }
 
@@ -2378,9 +2378,10 @@ var x = <div></div><div></div>
     let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
     let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
 
-    assert_eq!(
-        ts2657_count, 0,
-        "Expected TSX adjacent JSX root recovery to avoid TS2657, got diagnostics: {diagnostics:?}"
+    // tsc emits TS2657 for adjacent JSX roots in ALL JSX files (.tsx, .jsx, .js)
+    assert!(
+        ts2657_count >= 1,
+        "Expected TS2657 for adjacent JSX siblings in TSX, got diagnostics: {diagnostics:?}"
     );
     assert_eq!(
         ts1003_count, 0,
