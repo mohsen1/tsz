@@ -787,6 +787,33 @@ impl<'a> CheckerState<'a> {
                     } else {
                         tsz_solver::utils::union_or_single(self.ctx.types, types)
                     });
+
+                    // Mark class member symbols as referenced for unused-variable tracking.
+                    // Element access like `this[key]` where `key: "a" | "b"` reads
+                    // private properties `a` and `b`. Without this, those members would
+                    // be falsely reported as unused (TS6133) because the solver's property
+                    // resolution pipeline never marks binder symbols.
+                    if self.is_this_expression(access.expression)
+                        && !string_keys.is_empty()
+                        && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
+                        && let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
+                        && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                        && let Some(ref members) = class_symbol.members
+                    {
+                        for &key_atom in &string_keys {
+                            let key_name = self.ctx.types.resolve_atom(key_atom);
+                            if let Some(member_sym_id) = members.get(&key_name) {
+                                self.ctx
+                                    .referenced_symbols
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                                self.ctx
+                                    .referenced_as_property
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                            }
+                        }
+                    }
                 }
             }
         }
