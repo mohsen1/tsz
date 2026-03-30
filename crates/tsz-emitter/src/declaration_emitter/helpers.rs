@@ -121,6 +121,46 @@ pub(crate) struct JsdocParamDecl {
     pub(crate) rest: bool,
 }
 
+/// Lightweight `TypeResolver` backed by `TypeCacheView` data for DTS emit.
+pub(crate) struct DtsCacheResolver<'a> {
+    pub(crate) cache: &'a crate::type_cache_view::TypeCacheView,
+}
+
+impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
+    fn resolve_ref(
+        &self,
+        _symbol: tsz_solver::types::SymbolRef,
+        _interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::types::TypeId> {
+        None
+    }
+
+    fn resolve_lazy(
+        &self,
+        def_id: tsz_solver::DefId,
+        interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let &type_id = self.cache.def_types.get(&def_id.0)?;
+        use tsz_solver::types::TypeData;
+        match interner.lookup(type_id) {
+            Some(TypeData::Union(_))
+            | Some(TypeData::Intersection(_))
+            | Some(TypeData::Lazy(_))
+            | Some(TypeData::KeyOf(_)) => Some(type_id),
+            _ if type_id.is_intrinsic() => Some(type_id),
+            _ if tsz_solver::visitor::literal_value(interner, type_id).is_some() => Some(type_id),
+            _ => None,
+        }
+    }
+
+    fn get_lazy_type_params(
+        &self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<Vec<tsz_solver::types::TypeParamInfo>> {
+        self.cache.def_type_params.get(&def_id.0).cloned()
+    }
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn emit_expression(&mut self, expr_idx: NodeIndex) {
         let Some(expr_node) = self.arena.get(expr_idx) else {
