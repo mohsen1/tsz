@@ -21663,8 +21663,10 @@ const cfg = pluginImportX.configs["stage-0"];
 
 #[test]
 fn test_ts1294_erasable_syntax_only_enums() {
-    let mut options = CheckerOptions::default();
-    options.erasable_syntax_only = true;
+    let options = CheckerOptions {
+        erasable_syntax_only: true,
+        ..Default::default()
+    };
 
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -21683,8 +21685,10 @@ declare enum Legal { B = 1 }
 
 #[test]
 fn test_ts1294_erasable_syntax_only_parameter_properties() {
-    let mut options = CheckerOptions::default();
-    options.erasable_syntax_only = true;
+    let options = CheckerOptions {
+        erasable_syntax_only: true,
+        ..Default::default()
+    };
 
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -21704,8 +21708,10 @@ class Foo {
 
 #[test]
 fn test_ts1294_erasable_syntax_only_instantiated_namespace() {
-    let mut options = CheckerOptions::default();
-    options.erasable_syntax_only = true;
+    let options = CheckerOptions {
+        erasable_syntax_only: true,
+        ..Default::default()
+    };
 
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
