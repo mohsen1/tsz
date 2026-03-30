@@ -13,9 +13,9 @@ use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
-    application_id, contains_type_parameter_named, index_access_parts, is_empty_object_type,
-    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
-    object_with_index_shape_id, type_param_info, union_list_id,
+    application_id, contains_type_parameter_named, index_access_parts, intersection_list_id,
+    is_empty_object_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
+    object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
@@ -1155,6 +1155,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         _target: TypeId,
         mapped_id: MappedTypeId,
     ) -> SubtypeResult {
+        // Try distributing homomorphic mapped types over intersection arguments
+        // BEFORE expansion. Expansion of mapped types like Readonly<T & { name: string }>
+        // is lossy when T is a type parameter: it only produces the concrete properties
+        // (e.g., { readonly name: string }), losing the generic T constraint.
+        // Distribution preserves the full type structure:
+        //   Readonly<T & { name: string }> → Readonly<T> & Readonly<{ name: string }>
+        if let Some(distributed) = self.try_distribute_mapped_over_intersection(mapped_id) {
+            let result = self.check_subtype(source, distributed);
+            if result.is_true() {
+                return result;
+            }
+        }
+
         match self.try_expand_mapped(mapped_id) {
             Some(expanded) => self.check_subtype(source, expanded),
             None => {
@@ -1181,10 +1194,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // source <: { [K in keyof S]+?: S[K] } when source <: S
                 // and the mapped type doesn't remove optional.
                 if self.check_source_to_homomorphic_mapped(source, mapped_id) {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
+                    return SubtypeResult::True;
                 }
+
+                SubtypeResult::False
             }
         }
     }
@@ -1257,6 +1270,69 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         false
+    }
+
+    /// Distribute a homomorphic mapped type over an intersection argument.
+    ///
+    /// When the mapped type has the form `{ [K in keyof (A & B)]: (A & B)[K] }`
+    /// (possibly with readonly/optional modifiers), this is equivalent to
+    /// `{ [K in keyof A]: A[K] } & { [K in keyof B]: B[K] }` with the same
+    /// modifiers. This implements the tsc equivalence:
+    ///   `Readonly<A & B>` ≡ `Readonly<A> & Readonly<B>`
+    ///
+    /// Returns `Some(distributed_intersection)` if distribution applies, `None` otherwise.
+    fn try_distribute_mapped_over_intersection(
+        &mut self,
+        mapped_id: MappedTypeId,
+    ) -> Option<TypeId> {
+        let mapped = self.interner.get_mapped(mapped_id);
+
+        // Must not have name remapping (as clause)
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        // Constraint must be keyof(S) for some S
+        let constraint_source = keyof_inner_type(self.interner, mapped.constraint)?;
+
+        // S must be an intersection
+        let list_id = intersection_list_id(self.interner, constraint_source)?;
+        let members = self.interner.type_list(list_id).to_vec();
+
+        if members.len() < 2 {
+            return None;
+        }
+
+        // Template must be S[K] (identity indexed access form)
+        let (template_obj, template_idx) = index_access_parts(self.interner, mapped.template)?;
+        let idx_param = type_param_info(self.interner, template_idx)?;
+        if idx_param.name != mapped.type_param.name || template_obj != constraint_source {
+            return None;
+        }
+
+        // Distribute: for each member M, create { [K in keyof M]: M[K] } with same modifiers
+        let mut distributed_members = Vec::with_capacity(members.len());
+        for &member in &members {
+            let member_constraint = self.interner.keyof(member);
+            let member_k = self.interner.type_param(TypeParamInfo {
+                name: mapped.type_param.name,
+                constraint: Some(member_constraint),
+                default: None,
+                is_const: false,
+            });
+            let member_template = self.interner.index_access(member, member_k);
+            let member_mapped = self.interner.mapped(MappedType {
+                type_param: mapped.type_param,
+                constraint: member_constraint,
+                name_type: None,
+                template: member_template,
+                readonly_modifier: mapped.readonly_modifier,
+                optional_modifier: mapped.optional_modifier,
+            });
+            distributed_members.push(member_mapped);
+        }
+
+        Some(self.interner.intersection(distributed_members))
     }
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
