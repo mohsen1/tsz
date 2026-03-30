@@ -1748,6 +1748,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
+        // Check global augmentations (`declare global { namespace X { ... } }`).
+        // A `declare global` namespace with value members provides a legitimate
+        // global value binding that should suppress TS2686 / TS2708, even though
+        // the namespace symbol only carries VALUE_MODULE (excluded above).
+        // tsc merges these augmentations into the global symbol, giving it value
+        // semantics; we check for their existence as a proxy.
+        if self.ctx.binder.global_augmentations.contains_key(name) {
+            return true;
+        }
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            if lib_ctx.binder.global_augmentations.contains_key(name) {
+                return true;
+            }
+        }
+        if let Some(ref all_binders) = self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if binder.global_augmentations.contains_key(name) {
+                    return true;
+                }
+            }
+        }
+
         false
     }
 
