@@ -21490,3 +21490,55 @@ fn test_export_type_star_as_namespace_emits_ts1362_in_value_context() {
         "Expected TS1362 for type-only namespace export used as value. Got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_export_equals_typeof_import_namespace_import_exposes_referenced_named_exports() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "pkg/index.d.ts",
+                r#"
+declare const pluginImportX: typeof import("./lib/index");
+export = pluginImportX;
+"#,
+            ),
+            (
+                "pkg/lib/index.d.ts",
+                r#"
+interface PluginConfig {
+    parser?: string | null;
+}
+declare const configs: {
+    "stage-0": PluginConfig;
+};
+declare const _default: {
+    configs: {
+        "stage-0": PluginConfig;
+    };
+};
+export default _default;
+export { configs };
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import * as pluginImportX from "./pkg/index";
+const cfg = pluginImportX.configs["stage-0"];
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2020,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339 || *code == 2551),
+        "Namespace import should expose `configs` from `export = typeof import(...)`; got: {diagnostics:#?}"
+    );
+}
