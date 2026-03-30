@@ -1731,9 +1731,15 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(module_block) = self.arena.get_module_block(body_node)
                 && let Some(ref stmts) = module_block.statements
             {
-                // Save emission-tracking flags for this namespace scope
+                // Save emission-tracking flags for this namespace scope.
+                // `emitted_module_indicator` must also be saved/restored so
+                // that `export` keywords on members inside an ambient module
+                // augmentation (`declare module "foo" { export function f(); }`)
+                // do not leak into the file-level flag and suppress the
+                // top-level `export {};` marker.
                 let prev_emitted_non_exported = self.emitted_non_exported_declaration;
                 let prev_emitted_scope_marker = self.emitted_scope_marker;
+                let prev_emitted_module_indicator = self.emitted_module_indicator;
                 self.emitted_non_exported_declaration = false;
                 self.emitted_scope_marker = false;
 
@@ -1773,6 +1779,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Restore tracking flags
                 self.emitted_non_exported_declaration = prev_emitted_non_exported;
                 self.emitted_scope_marker = prev_emitted_scope_marker;
+                self.emitted_module_indicator = prev_emitted_module_indicator;
                 self.ambient_module_has_scope_marker = prev_ambient_scope_marker;
             }
 
