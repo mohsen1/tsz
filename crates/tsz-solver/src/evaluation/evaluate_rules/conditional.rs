@@ -1284,7 +1284,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.interner().union_from_slice(&inferred_members))
                 }
             }
-            _ => None,
+            Some(TypeData::Intersection(members)) => {
+                // For intersection types (e.g., constructor & static props),
+                // search each member for the property. The first member that has
+                // the property wins (intersections share properties).
+                let members = self.interner().type_list(members);
+                for &member in members.iter() {
+                    let member_unwrapped = match self.interner().lookup(member) {
+                        Some(TypeData::ReadonlyType(inner)) => inner,
+                        _ => member,
+                    };
+                    if let Some(inferred) = self.resolve_conditional_infer_property(
+                        member_unwrapped,
+                        prop_name,
+                        optional,
+                    ) {
+                        return Some(inferred);
+                    }
+                }
+                optional.then_some(TypeId::UNDEFINED)
+            }
+            _ => {
+                // Fallback: try evaluating the source further and recursing.
+                // This handles cases where the source is a TypeQuery, Lazy, Application
+                // or other form that hasn't been fully evaluated.
+                let evaluated = self.evaluate(source);
+                if evaluated != source {
+                    self.resolve_conditional_infer_property(evaluated, prop_name, optional)
+                } else {
+                    None
+                }
+            }
         }
     }
 
