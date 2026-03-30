@@ -21369,3 +21369,32 @@ var r4 = $.sammy.x;
         "Expected TS2339 for 'x' not existing on Sammy instance type. Got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_export_type_star_as_namespace_emits_ts1362_in_value_context() {
+    // exportNamespace10.ts: `export type * as ns from "./a"` makes ns type-only.
+    // Using `ns` in value context (e.g., `new ns.A()`) should emit TS1362.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("a.ts", "export class A {}\n"),
+            ("b.ts", "export type * as ns from './a';\n"),
+            (
+                "c.ts",
+                "import { ns } from './b';\nlet _: ns.A = new ns.A();\n",
+            ),
+        ],
+        "c.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let has_ts1362 = diagnostics.iter().any(|(code, _)| *code == 1362);
+    assert!(
+        has_ts1362,
+        "Expected TS1362 for type-only namespace export used as value. Got: {diagnostics:#?}"
+    );
+}

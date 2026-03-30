@@ -640,11 +640,14 @@ impl<'a> CheckerState<'a> {
                         checker.ctx.diagnostics.retain(|diag| {
                             diag.code
                                 == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
-                                // TS2693/TS2585: type-only keywords used as values are
-                                // structural errors, not contextual-typing artifacts.
+                                // TS2693/TS2585/TS1361/TS1362: type-only keywords and
+                                // type-only import/export used as values are structural
+                                // errors, not contextual-typing artifacts.
                                 // They must survive the pre-contextual diagnostic reset.
                                 || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE
                                 || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO
+                                || diag.code == crate::diagnostics::diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE
+                                || diag.code == crate::diagnostics::diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE
                                 // Preserve TS2454 (variable used before assignment) — these
                                 // are definite-assignment errors for variables referenced
                                 // inside the initializer, not stale contextual-typing
