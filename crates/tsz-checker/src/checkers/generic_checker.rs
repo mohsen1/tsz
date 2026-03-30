@@ -1636,8 +1636,20 @@ impl<'a> CheckerState<'a> {
                 // TS2559 (no common properties).
                 let primitive_satisfies_weak = constraint_is_all_optional
                     && query::is_primitive_type(self.ctx.types.as_type_database(), type_arg);
+                // When the constraint is a weak type (all-optional) and the type arg
+                // is NOT primitive, use assignability WITH weak type checks so that
+                // TS2559 is emitted when source has no common properties with the
+                // constraint. Without this, `{x: string}` would pass against
+                // `{y?: string}` structurally (all target props optional) but miss
+                // the weak type violation.
                 let mut is_satisfied = primitive_satisfies_weak
-                    || self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint);
+                    || if constraint_is_all_optional
+                        && !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg)
+                    {
+                        self.is_assignable_to(type_arg, instantiated_constraint)
+                    } else {
+                        self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint)
+                    };
 
                 // When the constraint is all-optional and the structural check
                 // passed (because all-optional types have no required properties),

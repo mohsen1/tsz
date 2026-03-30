@@ -992,8 +992,6 @@ const r = apply(42, x => x);
 /// Weak type detection (TS2559): when the target type has only optional
 /// properties and a non-fresh source shares NO properties with it, tsc
 /// emits TS2559. (For fresh object literals, EPC/TS2353 takes priority.)
-///
-/// The Lawyer layer's weak-type detection now correctly emits TS2559.
 #[test]
 fn test_weak_type_detection_ts2559_for_non_fresh_source() {
     let source = r#"
@@ -1010,7 +1008,7 @@ configure(obj);
 
     let diagnostics = check_default(source);
 
-    // tsc: TS2559: Type '{ unknown: boolean; }' has no properties in common
+    // tsc emits TS2559: Type '{ unknown: boolean; }' has no properties in common
     // with type 'Options'.
     let ts2559_errors: Vec<_> = diagnostics
         .iter()
@@ -1053,6 +1051,64 @@ configure({ unknown: true });
     assert!(
         !ts2353_errors.is_empty(),
         "Expected TS2353 (EPC) for fresh literal to weak type, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Generic type argument constraint against a weak type (all-optional properties)
+/// must emit TS2559 when the type argument has no properties in common with the
+/// constraint. This matches tsc behavior where `checkTypeAssignableTo` includes
+/// weak type detection for constraint checking.
+///
+/// Regression test for: incorrectNumberOfTypeArgumentsDuringErrorReporting.ts
+#[test]
+fn test_ts2559_weak_type_constraint_on_generic_type_argument() {
+    let source = r#"
+interface ObjA {
+  y?: string,
+}
+
+interface ObjB {[key:string]:any}
+
+interface Opts<A, B> {a:A, b:B}
+
+const fn2 = <
+  A extends ObjA,
+  B extends ObjB = ObjB
+>(opts:Opts<A, B>):string => 'Z'
+
+interface MyObjA {
+  x: string,
+}
+
+fn2<MyObjA>({
+  a: {x: 'X', y: 'Y'},
+  b: {},
+})
+"#;
+
+    let diagnostics = check_default(source);
+
+    let ts2559_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2559)
+        .collect();
+
+    assert!(
+        !ts2559_errors.is_empty(),
+        "Expected TS2559 for type argument with no common properties against weak constraint, \
+         got diagnostics={diagnostics:?}"
+    );
+
+    // Should NOT emit TS2344 (general constraint violation) for this case
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2344)
+        .collect();
+
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should emit TS2559 (weak type), not TS2344 (general constraint violation), \
+         got diagnostics={diagnostics:?}"
     );
 }
 
