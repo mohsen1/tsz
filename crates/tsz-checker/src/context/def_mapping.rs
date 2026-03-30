@@ -956,6 +956,16 @@ impl<'a> CheckerContext<'a> {
         let mappings = self.definition_store.all_symbol_mappings();
         let mut count = 0;
 
+        // Pre-size the local caches to avoid rehashing during bulk insertion.
+        {
+            let current_len = self.symbol_to_def.borrow().len();
+            if mappings.len() > current_len {
+                let additional = mappings.len() - current_len;
+                self.symbol_to_def.borrow_mut().reserve(additional);
+                self.def_to_symbol.borrow_mut().reserve(additional);
+            }
+        }
+
         for (raw_sym_id, def_id) in &mappings {
             let sym_id = tsz_binder::SymbolId(*raw_sym_id);
 
@@ -967,20 +977,12 @@ impl<'a> CheckerContext<'a> {
             self.symbol_to_def.borrow_mut().insert(sym_id, *def_id);
             self.def_to_symbol.borrow_mut().insert(*def_id, sym_id);
 
-            // Propagate DefKind to both TypeEnvironments so the evaluator
-            // and flow-analyzer can query it without waiting for first access.
-            if let Some(info) = self.definition_store.get(*def_id) {
-                self.register_def_kind_in_envs(*def_id, info.kind);
-
-                // For classes, also warm the ClassConstructor companion's
-                // DefKind so the checker doesn't need to create one on demand.
-                if info.kind == tsz_solver::def::DefKind::Class
-                    && let Some(ctor_def_id) = self.definition_store.get_constructor_def(*def_id)
-                    && let Some(ctor_info) = self.definition_store.get(ctor_def_id)
-                {
-                    self.register_def_kind_in_envs(ctor_def_id, ctor_info.kind);
-                }
-            }
+            // NOTE: DefKind registration is intentionally skipped here.
+            // The TypeEnvironment is rebuilt from scratch in build_type_environment()
+            // (called later in check_source_file), and ensure_type_env_has_definition_store()
+            // installs the DefinitionStore reference for lazy DefKind fallback.
+            // Eagerly registering DefKinds here would be overwritten and wastes
+            // N DashMap lookups per symbol (for .get() and .get_constructor_def()).
 
             count += 1;
         }
