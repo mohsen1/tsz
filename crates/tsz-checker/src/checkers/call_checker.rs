@@ -2352,10 +2352,7 @@ impl<'a> CheckerState<'a> {
                 func_type: TypeId::ANY,
                 arg_types,
                 failures,
-                fallback_return: signatures
-                    .first()
-                    .map(|sig| sig.return_type)
-                    .unwrap_or(TypeId::ANY),
+                fallback_return: TypeId::NEVER,
             },
         })
     }

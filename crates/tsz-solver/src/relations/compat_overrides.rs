@@ -565,6 +565,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let a = a_norm;
         let b = b_norm;
 
+        // Overload order is part of the semantic surface for direct callable
+        // identity. Two overloaded callables with the same signatures in a
+        // different order are not redeclaration-identical because overload
+        // resolution picks the first applicable signature.
+        if !self.overloaded_callable_signatures_match_in_order(a, b) {
+            return false;
+        }
+
         // 5a. DNF normalization for intersection-of-unions.
         //
         // TypeScript's `isTypeIdenticalTo` normalizes intersection types to their
@@ -667,6 +675,103 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             bwd,
             "are_types_identical_for_redeclaration: result"
         );
+        fwd && bwd
+    }
+
+    fn overloaded_callable_signatures_match_in_order(&mut self, a: TypeId, b: TypeId) -> bool {
+        let (Some(TypeData::Callable(a_cid)), Some(TypeData::Callable(b_cid))) =
+            (self.interner.lookup(a), self.interner.lookup(b))
+        else {
+            return true;
+        };
+
+        let a_callable = self.interner.callable_shape(a_cid);
+        let b_callable = self.interner.callable_shape(b_cid);
+        let is_overloaded = a_callable.call_signatures.len() > 1
+            || b_callable.call_signatures.len() > 1
+            || a_callable.construct_signatures.len() > 1
+            || b_callable.construct_signatures.len() > 1;
+        if !is_overloaded {
+            return true;
+        }
+
+        if a_callable.call_signatures.len() != b_callable.call_signatures.len()
+            || a_callable.construct_signatures.len() != b_callable.construct_signatures.len()
+        {
+            return false;
+        }
+
+        a_callable
+            .call_signatures
+            .iter()
+            .zip(b_callable.call_signatures.iter())
+            .all(|(a_sig, b_sig)| self.call_signatures_are_identical_in_order(a_sig, b_sig))
+            && a_callable
+                .construct_signatures
+                .iter()
+                .zip(b_callable.construct_signatures.iter())
+                .all(|(a_sig, b_sig)| self.call_signatures_are_identical_in_order(a_sig, b_sig))
+    }
+
+    fn call_signatures_are_identical_in_order(
+        &mut self,
+        a_sig: &crate::types::CallSignature,
+        b_sig: &crate::types::CallSignature,
+    ) -> bool {
+        if a_sig.params.len() != b_sig.params.len()
+            || a_sig.type_params.len() != b_sig.type_params.len()
+            || a_sig.type_predicate != b_sig.type_predicate
+            || a_sig.is_method != b_sig.is_method
+        {
+            return false;
+        }
+
+        if !a_sig
+            .params
+            .iter()
+            .zip(b_sig.params.iter())
+            .all(|(a_param, b_param)| {
+                a_param.optional == b_param.optional
+                    && a_param.rest == b_param.rest
+                    && self.type_ids_are_identity_related(a_param.type_id, b_param.type_id)
+            })
+        {
+            return false;
+        }
+
+        match (a_sig.this_type, b_sig.this_type) {
+            (Some(a_this), Some(b_this)) => {
+                if !self.type_ids_are_identity_related(a_this, b_this) {
+                    return false;
+                }
+            }
+            (None, None) => {}
+            _ => return false,
+        }
+
+        self.type_ids_are_identity_related(a_sig.return_type, b_sig.return_type)
+    }
+
+    fn type_ids_are_identity_related(&mut self, a: TypeId, b: TypeId) -> bool {
+        if a == b {
+            return true;
+        }
+
+        let saved_any_mode = self.subtype.any_propagation;
+        let saved_identity_cycle = self.subtype.identity_cycle_check;
+        let saved_method_bivariance = self.subtype.disable_method_bivariance;
+        let saved_strict_fn = self.subtype.strict_function_types;
+        self.subtype.any_propagation =
+            crate::relations::subtype::core::AnyPropagationMode::TopLevelOnly;
+        self.subtype.identity_cycle_check = true;
+        self.subtype.disable_method_bivariance = true;
+        self.subtype.strict_function_types = true;
+        let fwd = self.subtype.is_subtype_of(a, b);
+        let bwd = self.subtype.is_subtype_of(b, a);
+        self.subtype.any_propagation = saved_any_mode;
+        self.subtype.identity_cycle_check = saved_identity_cycle;
+        self.subtype.disable_method_bivariance = saved_method_bivariance;
+        self.subtype.strict_function_types = saved_strict_fn;
         fwd && bwd
     }
 

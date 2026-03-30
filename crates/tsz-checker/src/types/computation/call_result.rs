@@ -680,11 +680,11 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
                 ..
             } => {
-                let has_error_surface = self.type_contains_error(callee_type)
-                    || args.iter().copied().any(|arg_idx| {
-                        let arg_type = self.get_type_of_node(arg_idx);
-                        arg_type == TypeId::ERROR || self.type_contains_error(arg_type)
-                    });
+                let has_error_surface = callee_type == TypeId::ERROR
+                    || args
+                        .iter()
+                        .copied()
+                        .any(|arg_idx| self.get_type_of_node(arg_idx) == TypeId::ERROR);
                 if has_error_surface {
                     return TypeId::ERROR;
                 }
