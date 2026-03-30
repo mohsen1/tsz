@@ -720,6 +720,39 @@ impl<'a> CheckerState<'a> {
     /// This avoids incorrect type resolution when symbol IDs collide across
     /// binders (current file vs. lib files).
     pub(crate) fn type_of_value_symbol_by_name(&mut self, name: &str) -> TypeId {
+        let lib_binders = self.get_lib_binders();
+
+        if let Some(value_sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(value_sym_id, &lib_binders)
+        {
+            let value_flags_except_module =
+                tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
+            if (symbol.flags & value_flags_except_module) != 0 && !symbol.is_type_only {
+                // Prefer the merged binder's own value declarations when available.
+                // Driver-mode checking rebuilds checker-facing lib binders, so
+                // direct SymbolIds from those fresh binders are not stable inputs
+                // to type_of_value_declaration_for_symbol.
+                for &decl_idx in &symbol.declarations {
+                    if decl_idx.is_none() {
+                        continue;
+                    }
+                    let value_type =
+                        self.type_of_value_declaration_for_symbol(value_sym_id, decl_idx);
+                    if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                        return value_type;
+                    }
+                }
+
+                let value_type = self.get_type_of_symbol(value_sym_id);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return value_type;
+                }
+            }
+        }
+
         if let Some((sym_id, value_decl)) = self.find_value_declaration_in_libs(name) {
             let value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
             if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
@@ -732,7 +765,6 @@ impl<'a> CheckerState<'a> {
             // get_type_of_symbol returns the interface type. In value context we need the
             // variable's declared type (e.g., SymbolConstructor). Search the symbol's
             // declarations for a variable declaration with a type annotation first.
-            let lib_binders = self.get_lib_binders();
             if let Some(symbol) = self
                 .ctx
                 .binder
