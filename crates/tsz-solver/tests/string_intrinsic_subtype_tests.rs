@@ -6,10 +6,10 @@
 //! - StringIntrinsic(kind, S) <: StringIntrinsic(kind, T) when S <: T (covariant)
 //! - Constraint-based: Uppercase<T extends C> <: Uppercase<C> evaluated
 
+use crate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{StringIntrinsicKind, TemplateSpan, TypeData, TypeId, TypeParamInfo};
-use crate::evaluate_type;
 use crate::{RelationContext, RelationKind, RelationPolicy, query_relation};
 
 // =============================================================================

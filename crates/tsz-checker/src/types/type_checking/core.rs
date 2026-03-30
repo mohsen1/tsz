@@ -1580,7 +1580,11 @@ impl<'a> CheckerState<'a> {
         if is_await_using {
             // await using accepts either Symbol.asyncDispose or Symbol.dispose
             return has_dispose
-                || has_property(self, type_id, &["[Symbol.asyncDispose]", "Symbol.asyncDispose"]);
+                || has_property(
+                    self,
+                    type_id,
+                    &["[Symbol.asyncDispose]", "Symbol.asyncDispose"],
+                );
         }
 
         has_dispose

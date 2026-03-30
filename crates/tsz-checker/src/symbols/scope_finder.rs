@@ -282,7 +282,8 @@ impl<'a> CheckerState<'a> {
         if fn_node.kind == FUNCTION_EXPRESSION {
             let mut current = enclosing_fn;
             for _ in 0..3 {
-                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+                else {
                     break;
                 };
                 let Some(parent_node) = self.ctx.arena.get(parent) else {
@@ -600,7 +601,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let call = if parent_node.kind == CALL_EXPRESSION || parent_node.kind == NEW_EXPRESSION {
+            let call = if parent_node.kind == CALL_EXPRESSION || parent_node.kind == NEW_EXPRESSION
+            {
                 let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
                     break;
                 };

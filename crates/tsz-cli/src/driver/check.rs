@@ -1997,8 +1997,7 @@ const class2 = "bar";
 const elem = <div className={class1, class2}/>;
 "#;
 
-        let result =
-            parallel::parse_and_bind_single("file.tsx".to_string(), source.to_string());
+        let result = parallel::parse_and_bind_single("file.tsx".to_string(), source.to_string());
         let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
 
         assert!(

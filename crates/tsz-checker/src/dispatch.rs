@@ -1294,11 +1294,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 self.checker.invalidate_function_like_for_contextual_retry(
                                     expr_data.expression,
                                 );
-                                self.checker
-                                    .get_type_of_node_with_request(
-                                        expr_data.expression,
-                                        &children_request,
-                                    )
+                                self.checker.get_type_of_node_with_request(
+                                    expr_data.expression,
+                                    &children_request,
+                                )
                             } else {
                                 // Still process the arrow/function expression to emit
                                 // diagnostics (e.g., TS7006 for unannotated parameters).
