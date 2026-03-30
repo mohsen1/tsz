@@ -2160,8 +2160,7 @@ const elem = <div className={class1, class2}/>;
         let ts2722_count = diagnostics
             .iter()
             .filter(|diag| {
-                diag.code
-                    == diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED
+                diag.code == diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED
             })
             .count();
         let ts2349_count = diagnostics

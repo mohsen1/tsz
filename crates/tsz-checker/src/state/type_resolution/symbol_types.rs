@@ -78,9 +78,9 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_arena_for_declaration(sym_id, decl_idx)
                     .map_or(self.ctx.arena, |arena| arena.as_ref());
-                arena.get(decl_idx).is_some_and(|node| {
-                    node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                })
+                arena
+                    .get(decl_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
             });
             if flags & symbol_flags::INTERFACE != 0 || has_interface_decl {
                 if !declarations.is_empty() {
@@ -98,12 +98,12 @@ impl<'a> CheckerState<'a> {
 
                     let mut structural_type =
                         if is_merged_with_namespace || should_force_interface_decl_path {
-                        // Compute the interface type directly, bypassing get_type_of_symbol
-                        // which would return the namespace type for merged symbols.
-                        self.compute_interface_type_from_declarations(sym_id)
-                    } else {
-                        self.get_type_of_symbol(sym_id)
-                    };
+                            // Compute the interface type directly, bypassing get_type_of_symbol
+                            // which would return the namespace type for merged symbols.
+                            self.compute_interface_type_from_declarations(sym_id)
+                        } else {
+                            self.get_type_of_symbol(sym_id)
+                        };
                     // Cross-file fallback: if the structural type could not be
                     // computed locally, the declarations may be in a different
                     // arena/binder. Delegate to a child checker with the symbol's
@@ -234,10 +234,9 @@ impl<'a> CheckerState<'a> {
                     })
                     .unwrap_or(false)
             });
-            let should_attempt_type_alias_resolution =
-                has_type_alias_decl
-                    || ((flags & symbol_flags::TYPE_ALIAS) != 0
-                        && (value_declaration.is_some() || !declarations.is_empty()));
+            let should_attempt_type_alias_resolution = has_type_alias_decl
+                || ((flags & symbol_flags::TYPE_ALIAS) != 0
+                    && (value_declaration.is_some() || !declarations.is_empty()));
             if should_attempt_type_alias_resolution {
                 if has_type_alias_decl || (flags & symbol_flags::TYPE_ALIAS) != 0 {
                     // Return structural type directly for type aliases (not Lazy) so

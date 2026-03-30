@@ -1209,9 +1209,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let evaluated_left = self.evaluate(left);
         let evaluated_right = self.evaluate(right);
-        left == evaluated_right
-            || evaluated_left == right
-            || evaluated_left == evaluated_right
+        left == evaluated_right || evaluated_left == right || evaluated_left == evaluated_right
     }
 
     fn index_type_overlaps_optional_props(
@@ -1219,7 +1217,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         index_type: TypeId,
         optional_props: &[tsz_common::Atom],
     ) -> bool {
-        if let Some(name) = crate::type_queries::get_literal_property_name(self.interner(), index_type)
+        if let Some(name) =
+            crate::type_queries::get_literal_property_name(self.interner(), index_type)
         {
             return optional_props.contains(&name);
         }
@@ -1276,7 +1275,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => return false,
         };
 
-        !optional_props.is_empty() && self.index_type_overlaps_optional_props(index_type, &optional_props)
+        !optional_props.is_empty()
+            && self.index_type_overlaps_optional_props(index_type, &optional_props)
     }
 
     fn apply_mapped_optional_read_semantics(
@@ -1394,8 +1394,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, index_type);
 
-        let value_type =
-            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let value_type = self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
         Some(self.apply_mapped_optional_read_semantics(
             object_type,
