@@ -117,6 +117,13 @@ pub(crate) fn lazy_def_id(
     tsz_solver::type_queries::get_lazy_def_id(db, type_id)
 }
 
+pub(crate) fn application_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::TypeApplicationId> {
+    tsz_solver::visitor::application_id(db, type_id)
+}
+
 pub(crate) fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::has_construct_signatures(db, type_id)
 }
@@ -778,6 +785,10 @@ pub(crate) fn string_literal_value(
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
     tsz_solver::type_queries::get_string_literal_value(db, type_id)
+}
+
+pub(crate) fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::type_contains_string_literal(db, type_id)
 }
 
 // ── Number literal value extraction ──

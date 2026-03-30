@@ -364,6 +364,18 @@ pub fn get_string_literal_value(
     }
 }
 
+/// Check if a type contains string literal types (directly or as union members).
+pub fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(crate::types::LiteralValue::String(_))) => true,
+        Some(TypeData::Union(members)) => {
+            let members = db.type_list(members);
+            members.iter().any(|m| type_contains_string_literal(db, *m))
+        }
+        _ => false,
+    }
+}
+
 /// Convert a literal type to its JavaScript string representation.
 ///
 /// This mirrors how TypeScript stringifies values in template literal evaluation:

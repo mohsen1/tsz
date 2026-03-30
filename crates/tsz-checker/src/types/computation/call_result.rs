@@ -819,7 +819,7 @@ impl<'a> CheckerState<'a> {
     /// the mismatch is structural (e.g., different private brands) and cannot be
     /// resolved by type parameter instantiation. In this case, deferral is incorrect.
     fn are_incompatible_generic_class_instances(&self, actual: TypeId, expected: TypeId) -> bool {
-        use tsz_solver::{application_id, lazy_def_id};
+        use crate::query_boundaries::common::{application_id, lazy_def_id};
 
         let db = self.ctx.types;
 
