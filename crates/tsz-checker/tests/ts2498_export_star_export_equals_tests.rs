@@ -79,8 +79,7 @@ fn export_star_as_ns_from_export_equals_emits_ts2498() {
         .collect();
     assert!(
         !ts2498_errors.is_empty(),
-        "Expected TS2498 for `export * as ns` from a module with `export =`, got: {:?}",
-        diagnostics
+        "Expected TS2498 for `export * as ns` from a module with `export =`, got: {diagnostics:?}"
     );
     assert!(
         ts2498_errors[0].1.contains("export ="),
@@ -98,8 +97,7 @@ fn export_star_bare_from_export_equals_emits_ts2498() {
         .collect();
     assert!(
         !ts2498_errors.is_empty(),
-        "Expected TS2498 for `export *` from a module with `export =`, got: {:?}",
-        diagnostics
+        "Expected TS2498 for `export *` from a module with `export =`, got: {diagnostics:?}"
     );
 }
 
@@ -114,8 +112,7 @@ fn export_named_from_export_equals_no_ts2498() {
         .collect();
     assert!(
         ts2498_errors.is_empty(),
-        "Named export should NOT emit TS2498, got: {:?}",
-        diagnostics
+        "Named export should NOT emit TS2498, got: {diagnostics:?}"
     );
 }
 
@@ -130,7 +127,6 @@ fn export_star_from_normal_module_no_ts2498() {
         .collect();
     assert!(
         ts2498_errors.is_empty(),
-        "Normal module should NOT emit TS2498, got: {:?}",
-        diagnostics
+        "Normal module should NOT emit TS2498, got: {diagnostics:?}"
     );
 }
