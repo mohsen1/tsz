@@ -663,17 +663,36 @@ impl BinderState {
     /// Find the enclosing scope for a given node by walking up the AST.
     /// Returns the `ScopeId` of the nearest scope-creating ancestor node.
     pub fn find_enclosing_scope(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<ScopeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
         let mut current = node_idx;
+        // Track whether we've passed through a ComputedPropertyName while walking up.
+        // If so, the enclosing class member's function scope must be skipped because
+        // computed property names are evaluated in the class scope, not the method scope.
+        // In `[foo<T>(a)]<T>(a: T) {}`, `T` and `a` inside `[...]` must NOT resolve
+        // to the method's own type parameter/parameter.
+        let mut inside_computed_property_name = false;
 
         // Walk up the AST using parent pointers to find the nearest scope
         while current.is_some() {
-            // Check if this node creates a scope
-            if let Some(&scope_id) = self.node_scope_ids.get(&current.0) {
-                return Some(scope_id);
-            }
+            if let Some(node) = arena.get(current) {
+                if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    inside_computed_property_name = true;
+                }
 
-            // Move to parent node
-            if let Some(_node) = arena.get(current) {
+                // Check if this node creates a scope
+                if let Some(&scope_id) = self.node_scope_ids.get(&current.0) {
+                    // If we're inside a computed property name and this scope belongs
+                    // to a class member (method, accessor, property), skip it.
+                    // The computed property name should resolve in the parent (class) scope.
+                    if inside_computed_property_name && Self::is_class_member_kind(node.kind) {
+                        // Don't return this scope; continue walking to the class scope.
+                        inside_computed_property_name = false;
+                    } else {
+                        return Some(scope_id);
+                    }
+                }
+
                 if let Some(ext) = arena.get_extended(current) {
                     current = ext.parent;
                 } else {
@@ -686,5 +705,16 @@ impl BinderState {
 
         // If no scope found, return the root scope (index 0) if it exists
         (!self.scopes.is_empty()).then_some(ScopeId(0))
+    }
+
+    /// Returns true if the node kind is a class member that creates its own function scope
+    /// (method, constructor, accessor). These scopes must be skipped for names inside
+    /// computed property names.
+    fn is_class_member_kind(kind: u16) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        kind == syntax_kind_ext::METHOD_DECLARATION
+            || kind == syntax_kind_ext::CONSTRUCTOR
+            || kind == syntax_kind_ext::GET_ACCESSOR
+            || kind == syntax_kind_ext::SET_ACCESSOR
     }
 }
