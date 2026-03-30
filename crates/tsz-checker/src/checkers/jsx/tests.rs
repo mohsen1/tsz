@@ -267,6 +267,35 @@ fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
 }
 
 #[test]
+fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface IntrinsicElements {}
+        }
+
+        interface LinkComponent {
+            (props: { className?: string }): { invalid: true };
+            (props: { htmlFor?: string }): { invalid: true };
+        }
+
+        declare const Link: LinkComponent;
+
+        <Link class="bad" />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2769),
+        "Overload prop mismatches should still emit TS2769, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.contains(&2786),
+        "No-overload JSX mismatches should not be pre-empted by TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_generic_sfc_defaulted_props_contextually_type_function_attributes() {
     let diagnostics = check_jsx_codes(
         r#"

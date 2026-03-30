@@ -1420,24 +1420,27 @@ impl<'a> CheckerState<'a> {
             }
 
             let jsx_element_expr_type = self.get_jsx_element_type_for_check();
-
-            // TS2786: component return type must be valid JSX element
-            self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
-
             let reported_factory_arity =
                 self.check_jsx_sfc_factory_arity(resolved_component_type, tag_name_idx);
+            let recovered_props = if reported_factory_arity {
+                None
+            } else {
+                self.recover_jsx_component_props_type(
+                    jsx_opening.attributes,
+                    component_metadata_type,
+                    Some(idx),
+                )
+            };
+            let uses_jsx_overload_resolution = recovered_props.is_none()
+                && (self.is_overloaded_sfc(resolved_component_type)
+                    || self.has_multi_signature_overloads(resolved_component_type));
 
             // Extract props type from the component and check attributes.
             // TS2607/TS2608 are emitted within props extraction when applicable.
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
-            if !reported_factory_arity
-                && let Some((props_type, raw_has_type_params)) = self
-                    .recover_jsx_component_props_type(
-                        jsx_opening.attributes,
-                        component_metadata_type,
-                        Some(idx),
-                    )
-            {
+            if let Some((props_type, raw_has_type_params)) = recovered_props {
+                // TS2786: component return type must be valid JSX element
+                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                 let props_type =
                     self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
                 let preferred_props_display =
@@ -1459,9 +1462,7 @@ impl<'a> CheckerState<'a> {
                     request,
                     children_ctx,
                 );
-            } else if self.is_overloaded_sfc(resolved_component_type)
-                || self.has_multi_signature_overloads(resolved_component_type)
-            {
+            } else if uses_jsx_overload_resolution {
                 // JSX overload resolution: try each call signature (including generic
                 // ones) against the provided attributes. If no overload matches, emit
                 // TS2769. The `has_multi_signature_overloads` fallback covers cases
@@ -1473,6 +1474,9 @@ impl<'a> CheckerState<'a> {
                     children_ctx,
                 );
             } else {
+                // TS2786: component return type must be valid JSX element
+                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+
                 // Grammar check: TS17000 for empty expressions in JSX attributes.
                 self.check_grammar_jsx_element(jsx_opening.attributes);
 
