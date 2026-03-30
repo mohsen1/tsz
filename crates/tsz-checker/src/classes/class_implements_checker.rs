@@ -1256,31 +1256,48 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(class_error_idx, &full_message, diagnostic_code);
                     }
 
-                    // tsc always emits TS2416 for incompatible member types,
-                    // regardless of whether the target is a class or interface.
-                    // TS2720 is only used for *missing* members when implementing
-                    // a class (handled above in the missing_members branch).
-                    for (class_member_idx, member_name, expected, actual) in incompatible_members {
-                        let error_node_idx =
-                            if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
-                                self.get_member_name_node(member_node)
-                                    .unwrap_or(class_member_idx)
-                            } else {
-                                class_member_idx
-                            };
+                    // When implementing a CLASS (not interface) and there are
+                    // incompatible members, tsc emits TS2720 ("incorrectly
+                    // implements class — did you mean to extend?") instead of
+                    // per-property TS2416.
+                    if is_class && !incompatible_members.is_empty() {
+                        let message = format!(
+                            "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
+                        );
                         self.error_at_node(
-                            error_node_idx,
-                            &format!(
-                                "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_display_name}'."
-                            ),
-                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                            class_error_idx,
+                            &message,
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
                         );
-                        self.report_type_not_assignable_detail(
-                            error_node_idx,
-                            &actual,
-                            &expected,
-                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                        );
+                    }
+
+                    // For interfaces (or when is_class is false), emit TS2416
+                    // per incompatible member.
+                    if !is_class {
+                        for (class_member_idx, member_name, expected, actual) in
+                            incompatible_members
+                        {
+                            let error_node_idx =
+                                if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
+                                    self.get_member_name_node(member_node)
+                                        .unwrap_or(class_member_idx)
+                                } else {
+                                    class_member_idx
+                                };
+                            self.error_at_node(
+                                error_node_idx,
+                                &format!(
+                                    "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_display_name}'."
+                                ),
+                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                            );
+                            self.report_type_not_assignable_detail(
+                                error_node_idx,
+                                &actual,
+                                &expected,
+                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                            );
+                        }
                     }
 
                     // Pop interface type parameters from scope
