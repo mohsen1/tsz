@@ -261,6 +261,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.enclosing_function_owns_active_this_binding(idx) {
+            return false;
+        }
+
         if fn_node.kind == FUNCTION_DECLARATION {
             // Function declarations always create a fresh `this` binding and are
             // never contextually typed by an object-literal receiver. Only an
@@ -311,6 +315,13 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    pub(crate) fn enclosing_function_owns_active_this_binding(&self, idx: NodeIndex) -> bool {
+        let Some(owner) = self.ctx.function_owned_this_stack.last().copied() else {
+            return false;
+        };
+        self.find_enclosing_non_arrow_function(idx) == Some(owner)
     }
 
     /// Find the nearest enclosing class declaration/expression by walking parents.

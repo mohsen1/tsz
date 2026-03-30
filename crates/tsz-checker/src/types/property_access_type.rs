@@ -832,13 +832,12 @@ impl<'a> CheckerState<'a> {
                 .diagnostics
                 .iter()
                 .any(|diag| diag.code == 2454 && diag.start == receiver_start);
-        if receiver_has_daa_error && !skip_flow_narrowing {
-            return TypeId::ERROR;
-        }
         if !skip_flow_narrowing
             // When TS2454 already forced the receiver read back to its declared type,
-            // a second property-read flow pass would incorrectly reapply narrowing
-            // and hide follow-on property errors like TS2339.
+            // keep property access on that declared type so member lookup and call
+            // contextual typing still work. Only the second property-read flow pass
+            // must be skipped, otherwise we reapply narrowing and lose tsc-aligned
+            // downstream behavior.
             && !receiver_has_daa_error
             && self.ctx.arena.get(access.expression).is_some_and(|expr| {
                 matches!(

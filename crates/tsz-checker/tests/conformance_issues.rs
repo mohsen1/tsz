@@ -139,6 +139,48 @@ class Test {
 }
 
 #[test]
+fn test_contextual_generic_callback_this_survives_ts2454_receiver_reads() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+// @target: es2015
+interface JQuery {
+    each<T>(
+        collection: T[], callback: (this: T, dit: T) => T
+    ): T[];
+}
+
+let $: JQuery;
+let lines: string[];
+$.each(lines, function(dit) {
+    return dit.charAt(0) + this.charAt(1);
+});
+"#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts2454_count = semantic_errors.iter().filter(|(code, _)| *code == 2454).count();
+
+    assert_eq!(
+        ts2454_count, 2,
+        "Expected both receiver reads to keep TS2454. Actual diagnostics: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2683),
+        "Contextual generic callback `this` should survive TS2454 receiver reads. Actual diagnostics: {semantic_errors:#?}"
+    );
+}
+
+#[test]
 #[ignore = "requires lib.es2015.symbol.d.ts to be loaded; passes in conformance runner"]
 fn test_recursive_complicated_classes_emits_ts2507_for_symbol_extends() {
     if load_lib_files_for_test().is_empty() {

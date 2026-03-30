@@ -482,6 +482,7 @@ impl<'a> CheckerState<'a> {
             if is_this && param.type_annotation.is_some() {
                 let this_type = self.get_type_from_type_node(param.type_annotation);
                 self.ctx.this_type_stack.push(this_type);
+                self.ctx.function_owned_this_stack.push(func_idx);
                 pushed_this_type = true;
             }
         }
@@ -497,6 +498,7 @@ impl<'a> CheckerState<'a> {
             );
             if let Some(this_type) = ctx_helper.get_this_type() {
                 self.ctx.this_type_stack.push(this_type);
+                self.ctx.function_owned_this_stack.push(func_idx);
                 pushed_this_type = true;
             }
         }
@@ -719,6 +721,7 @@ impl<'a> CheckerState<'a> {
 
         if pushed_this_type {
             self.ctx.this_type_stack.pop();
+            self.ctx.function_owned_this_stack.pop();
         }
         if let Some(outer_this) = masked_outer_this {
             self.ctx.this_type_stack.push(outer_this);
