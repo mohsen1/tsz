@@ -21253,3 +21253,52 @@ function foo() {
         "Expected at least 2 TS2339 for 'onChanges' on union type. Got: {diagnostics:?}"
     );
 }
+
+/// TS2576: Accessing a static member on a class instance through an interface
+/// property should emit "Did you mean to access the static member?" when the
+/// class is merged with a namespace.
+///
+/// Root cause: `symbol_member_is_type_only` incorrectly classified class static
+/// methods as type-only (METHOD flag without FUNCTION flag), which caused the
+/// `namespace_has_type_only_member` check to short-circuit property access
+/// resolution before reaching the TS2576 diagnostic path.
+#[test]
+fn test_ts2576_class_namespace_merge_via_interface_property() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Sammy {
+   foo() { return "hi"; }
+  static bar() {
+    return -1;
+   }
+}
+namespace Sammy {
+    export var x = 1;
+}
+interface JQueryStatic {
+    sammy: Sammy;
+}
+declare var $: JQueryStatic;
+var r3 = $.sammy.bar();
+var r4 = $.sammy.x;
+"#,
+    );
+
+    // $.sammy.bar() should emit TS2576 — `bar` is a static member
+    let has_ts2576 = diagnostics
+        .iter()
+        .any(|(code, msg)| *code == 2576 && msg.contains("bar") && msg.contains("Sammy"));
+    assert!(
+        has_ts2576,
+        "Expected TS2576 for accessing static member 'bar' on Sammy instance via $.sammy. Got: {diagnostics:#?}"
+    );
+
+    // $.sammy.x should emit TS2339 — `x` is a namespace export, not on the instance
+    let has_ts2339_x = diagnostics
+        .iter()
+        .any(|(code, msg)| *code == 2339 && msg.contains("'x'"));
+    assert!(
+        has_ts2339_x,
+        "Expected TS2339 for 'x' not existing on Sammy instance type. Got: {diagnostics:#?}"
+    );
+}
