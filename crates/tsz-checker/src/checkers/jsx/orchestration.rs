@@ -580,7 +580,17 @@ impl<'a> CheckerState<'a> {
         // (for example selector props) have had a chance to refine generic
         // parameters. Otherwise defaulted type params can freeze the children
         // context too early and produce the wrong TS2322/TS7006 pair.
-        if (has_function_valued_attrs || has_function_valued_children) && !substitution.is_empty() {
+        //
+        // When substitution is empty (all attrs are function-valued, no
+        // defaults/constraints), we still enter this block to bootstrap
+        // inference from function-valued attrs whose contextual parameter
+        // types are concrete (don't depend on type params being inferred).
+        // This enables intra-expression inference in JSX, e.g.:
+        //   <Foo a={() => 10} b={(arg) => arg.toString()} />
+        // where `a: (x: string) => T` has concrete param types and can
+        // be typed first to infer T, then `b: (arg: T) => void` is typed
+        // with the inferred T.
+        if has_function_valued_attrs || has_function_valued_children {
             let mut all_attrs = concrete_attrs;
 
             if has_function_valued_attrs {
