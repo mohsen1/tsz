@@ -824,3 +824,13 @@ pub(crate) fn classify_for_literal_value(
 ) -> LiteralValueKind {
     tsz_solver::type_queries::classify_for_literal_value(db, type_id)
 }
+
+/// Check if a type is a valid mapped type key constraint (keyof, string, number,
+/// symbol, union of these, or a type parameter with such a constraint).
+pub(crate) fn is_valid_mapped_type_key_type(
+    db: &dyn tsz_solver::QueryDatabase,
+    type_id: TypeId,
+) -> bool {
+    let evaluator = tsz_solver::BinaryOpEvaluator::new(db);
+    evaluator.is_valid_mapped_type_key_type(type_id)
+}
