@@ -1030,14 +1030,18 @@ impl<'a> CheckerState<'a> {
                 && (flags & symbol_flags::FUNCTION) == 0
                 && has_value
                 && value_decl.is_some()
+                && self.ctx.symbol_resolution_set.contains(&sym_id)
             {
-                // CLASS symbols in value position (without function merge): resolve via
-                // the value declaration to get the constructor type (typeof C). Using
-                // get_type_of_symbol can hit circular resolution when the class is
-                // self-referencing (e.g., instance property initializer `x = C.bar`
-                // triggers instance type building which triggers get_type_of_symbol
-                // which is already in the resolution set). get_class_constructor_type
-                // has its own independent resolution mechanism that avoids this cycle.
+                // CLASS symbols in value position during circular resolution: use
+                // type_of_value_declaration_for_symbol to get the constructor type.
+                // The normal get_type_of_symbol path returns Lazy(def_id) during
+                // circularity, which resolves to the instance type rather than the
+                // constructor type (typeof C). This causes false TS2339 errors for
+                // valid static member access in instance property initializers
+                // (e.g., `x = C.bar` where bar is a static member).
+                // type_of_value_declaration_for_symbol calls get_class_constructor_type
+                // which has its own independent resolution mechanism that avoids the
+                // cycle and returns the correct constructor type.
                 // Note: When a class merges with a function declaration, we must use
                 // get_type_of_symbol to get the merged type with both call and construct
                 // signatures.
