@@ -2929,6 +2929,16 @@ fn resolve_package_extends_exports(
             }
             None
         }
+        PackageExports::Array(elements) => {
+            for element in elements {
+                if let Some(resolved) =
+                    resolve_package_extends_exports(package_dir, element, subpath)
+                {
+                    return Some(resolved);
+                }
+            }
+            None
+        }
         PackageExports::Null => None,
     }
 }
@@ -2952,6 +2962,16 @@ fn resolve_package_extends_export_value(
                     {
                         return Some(resolved);
                     }
+                }
+            }
+            None
+        }
+        PackageExports::Array(elements) => {
+            for element in elements {
+                if let Some(resolved) =
+                    resolve_package_extends_export_value(package_dir, element, conditions)
+                {
+                    return Some(resolved);
                 }
             }
             None
