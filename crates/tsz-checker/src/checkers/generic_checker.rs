@@ -1613,7 +1613,27 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let mut is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
+                // When the constraint is an object type with ONLY optional properties
+                // (a "weak type" like `{t?: string}`), any concrete type satisfies it
+                // in tsc. This is because all-optional means no required properties,
+                // so structurally it's equivalent to `{}` for constraint purposes.
+                // Skip the full assignability check in this case to avoid false TS2344
+                // for primitives like `bigint` and `number`.
+                let constraint_is_all_optional = {
+                    let db = self.ctx.types.as_type_database();
+                    if let Some(shape_id) = tsz_solver::object_shape_id(db, instantiated_constraint)
+                    {
+                        let shape = db.object_shape(shape_id);
+                        !shape.properties.is_empty()
+                            && shape.properties.iter().all(|p| p.optional)
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                    } else {
+                        false
+                    }
+                };
+                let mut is_satisfied = constraint_is_all_optional
+                    || self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint);
 
                 // Fallback for recursive generic constraints (coinductive semantics).
                 //
