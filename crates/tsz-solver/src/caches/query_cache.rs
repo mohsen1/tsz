@@ -272,7 +272,7 @@ pub struct QueryCache<'a> {
     assignability_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
     /// Optional shared cross-file cache for multi-file project checking.
-    /// When present, local cache misses fall through to the shared DashMap cache,
+    /// When present, local cache misses fall through to the shared `DashMap` cache,
     /// and local cache inserts are also written to the shared cache.
     shared: Option<&'a SharedQueryCache>,
 }
@@ -1053,11 +1053,11 @@ impl QueryDatabase for QueryCache<'_> {
         }
 
         // L2: Check shared cross-file cache before doing expensive evaluation.
-        if let Some(shared) = self.shared {
-            if let Some(result) = shared.eval_cache.get(&key).map(|r| *r) {
-                self.eval_cache.borrow_mut().insert(key, result);
-                return result;
-            }
+        if let Some(shared) = self.shared
+            && let Some(result) = shared.eval_cache.get(&key).map(|r| *r)
+        {
+            self.eval_cache.borrow_mut().insert(key, result);
+            return result;
         }
 
         // Fast path: leaf types that never change during evaluation.
@@ -1209,16 +1209,16 @@ impl QueryDatabase for QueryCache<'_> {
         }
 
         // L2: Check shared cross-file cache.
-        if let Some(shared) = self.shared {
-            if let Some(result) = shared.subtype_cache.get(&key).map(|r| *r) {
-                self.subtype_cache.borrow_mut().insert(key, result);
-                self.subtype_cache_hits
-                    .set(self.subtype_cache_hits.get() + 1);
-                if let Some(query_id) = trace_query_id {
-                    query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
-                }
-                return result;
+        if let Some(shared) = self.shared
+            && let Some(result) = shared.subtype_cache.get(&key).map(|r| *r)
+        {
+            self.subtype_cache.borrow_mut().insert(key, result);
+            self.subtype_cache_hits
+                .set(self.subtype_cache_hits.get() + 1);
+            if let Some(query_id) = trace_query_id {
+                query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
             }
+            return result;
         }
 
         self.subtype_cache_misses
@@ -1287,21 +1287,16 @@ impl QueryDatabase for QueryCache<'_> {
         }
 
         // L2: Check shared cross-file cache.
-        if let Some(shared) = self.shared {
-            if let Some(result) = shared.assignability_cache.get(&key).map(|r| *r) {
-                self.assignability_cache.borrow_mut().insert(key, result);
-                self.assignability_cache_hits
-                    .set(self.assignability_cache_hits.get() + 1);
-                if let Some(query_id) = trace_query_id {
-                    query_trace::relation_end(
-                        query_id,
-                        "is_assignable_to_with_flags",
-                        result,
-                        true,
-                    );
-                }
-                return result;
+        if let Some(shared) = self.shared
+            && let Some(result) = shared.assignability_cache.get(&key).map(|r| *r)
+        {
+            self.assignability_cache.borrow_mut().insert(key, result);
+            self.assignability_cache_hits
+                .set(self.assignability_cache_hits.get() + 1);
+            if let Some(query_id) = trace_query_id {
+                query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
             }
+            return result;
         }
 
         self.assignability_cache_misses
