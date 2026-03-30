@@ -5855,6 +5855,56 @@ class C {}
 }
 
 #[test]
+fn test_new_expression_class_used_before_declaration() {
+    // `new C()` before `class C` must emit TS2449.
+    // The fast path for `new` expressions with identifier targets was
+    // previously bypassing the TDZ check in get_type_of_identifier.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+let a = new C();
+class C { id: string = ''; }
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2449),
+        "Expected TS2449 for `new C()` before class declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_new_expression_class_after_declaration_no_tdz() {
+    // `new C()` after `class C` must NOT emit TS2449.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C { id: string = ''; }
+let a = new C();
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2449),
+        "Did not expect TS2449 for `new C()` after class declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_new_expression_merged_namespace_class_tdz() {
+    // `new A()` inside a namespace body that merges with a class declared
+    // after the namespace must emit TS2449.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+namespace A {
+    export var Instance = new A();
+}
+class A { id: string = ''; }
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2449),
+        "Expected TS2449 for `new A()` inside namespace before class declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_duplicate_extends_clause_does_not_create_false_base_cycle() {
     let diagnostics = compile_and_get_diagnostics(
         r"
