@@ -2810,3 +2810,72 @@ fn test_ts2322_array_not_assignable_to_interface_extending_array_with_extra_prop
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn nested_weak_type_in_intersection_target_emits_ts2322() {
+    // When assigning to an intersection target where nested properties are weak types,
+    // the weak type check must still apply to the inner property comparison.
+    // `in_intersection_member_check` should only suppress weak type checks at the
+    // direct intersection member level, not for nested property types.
+    // See: nestedExcessPropertyChecking.ts
+    let source = r#"
+        type A1 = { x: { a?: string } };
+        type B1 = { x: { b?: string } };
+        type C1 = { x: { c: string } };
+        const ab1: A1 & B1 = {} as C1;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2322 || has_ts2559,
+        "Expected TS2322 or TS2559 for nested weak type mismatch in intersection target. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn flat_weak_type_in_intersection_target_emits_ts2559() {
+    // For flat (non-nested) weak types in an intersection, TS2559 should be emitted.
+    let source = r#"
+        type A2 = { a?: string };
+        type B2 = { b?: string };
+        type C2 = { c: string };
+        const ab2: A2 & B2 = {} as C2;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for flat weak type mismatch in intersection target. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn intersection_member_weak_type_suppression_still_works() {
+    // When the source has properties that overlap with one intersection member
+    // but not with a weak-type member, the assignment should still pass.
+    // The weak type suppression during intersection member checking should work
+    // at the DIRECT level but not for nested property types.
+    let source = r#"
+        interface ITreeItem {
+            Parent?: ITreeItem;
+        }
+        interface IDecl {
+            Id?: number;
+        }
+        const x: ITreeItem & IDecl = {} as ITreeItem;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        !has_ts2322 && !has_ts2559,
+        "ITreeItem should be assignable to ITreeItem & IDecl without error. Got: {:?}",
+        diagnostics
+    );
+}
