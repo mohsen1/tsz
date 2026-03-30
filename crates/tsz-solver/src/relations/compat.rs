@@ -1703,11 +1703,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
         else {
-            // No extractable object/function-like shape. tsc considers primitives
-            // assignable to weak types: `bigint extends {t?: string}` is valid
-            // because the weak type check is about object-ish values with the
-            // wrong property set.
-            return false;
+            // No extractable object/function-like shape. For primitive types
+            // (string/number/boolean/bigint/symbol literals, enum members, etc.),
+            // tsc emits TS2559 because primitives have no user-defined properties
+            // in common with weak types.
+            //
+            // We check if the target's weak type properties could overlap with
+            // well-known primitive prototype properties (e.g., `length` for strings).
+            // If no overlap, it's a weak type violation.
+            return self.primitive_violates_weak_type(source, target_props);
         };
 
         if has_index_signature {
@@ -1717,6 +1721,138 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Empty objects are assignable to weak types (all optional properties).
         // Only trigger weak type violation if source has properties that don't overlap.
         !source_props.is_empty() && !self.has_common_property(source_props.as_slice(), target_props)
+    }
+
+    /// Check if a primitive source type violates a weak type target by having
+    /// no properties in common.
+    ///
+    /// In tsc, primitives have apparent types (e.g., `string` has the `String`
+    /// interface with `length`, `charAt`, etc.). When checking a primitive
+    /// against a weak type, tsc checks if ANY of the weak type's properties
+    /// exist on the primitive's apparent type.
+    ///
+    /// We approximate this by checking target properties against a set of
+    /// well-known primitive prototype properties.
+    fn primitive_violates_weak_type(&self, source: TypeId, target_props: &[PropertyInfo]) -> bool {
+        // Determine if source is a primitive type
+        let is_primitive = if source.is_intrinsic() {
+            matches!(
+                source,
+                TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+            )
+        } else {
+            matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::Intrinsic(_))
+            )
+        };
+
+        if !is_primitive {
+            // Not a primitive — fall back to the original behavior (no violation
+            // because we can't determine the source's properties).
+            return false;
+        }
+
+        // Determine which primitive category the source belongs to
+        let is_string_like = source == TypeId::STRING
+            || matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(LiteralValue::String(_)))
+            )
+            || self.is_string_enum_member(source);
+
+        let is_number_like = source == TypeId::NUMBER
+            || matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(LiteralValue::Number(_)))
+            )
+            || self.is_numeric_enum_member(source);
+
+        // Check if any target property matches a well-known primitive property.
+        // If so, the primitive's apparent type shares a property with the weak
+        // target and this is NOT a violation.
+        for prop in target_props {
+            let name = self.interner.resolve_atom_ref(prop.name);
+            // Properties common to all primitives (from Object.prototype)
+            if matches!(
+                name.as_ref(),
+                "toString"
+                    | "valueOf"
+                    | "constructor"
+                    | "toLocaleString"
+                    | "hasOwnProperty"
+                    | "isPrototypeOf"
+                    | "propertyIsEnumerable"
+            ) {
+                return false;
+            }
+            // String-specific properties
+            if is_string_like
+                && matches!(
+                    name.as_ref(),
+                    "length"
+                        | "charAt"
+                        | "charCodeAt"
+                        | "concat"
+                        | "indexOf"
+                        | "lastIndexOf"
+                        | "match"
+                        | "replace"
+                        | "search"
+                        | "slice"
+                        | "split"
+                        | "substring"
+                        | "toLowerCase"
+                        | "toUpperCase"
+                        | "trim"
+                        | "trimStart"
+                        | "trimEnd"
+                        | "padStart"
+                        | "padEnd"
+                        | "startsWith"
+                        | "endsWith"
+                        | "includes"
+                        | "repeat"
+                        | "normalize"
+                        | "at"
+                )
+            {
+                return false;
+            }
+            // Number-specific properties
+            if is_number_like
+                && matches!(name.as_ref(), "toFixed" | "toExponential" | "toPrecision")
+            {
+                return false;
+            }
+        }
+
+        // None of the target's properties match the primitive's apparent type
+        true
+    }
+
+    /// Check if a type is a string enum member.
+    fn is_string_enum_member(&self, type_id: TypeId) -> bool {
+        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
+            matches!(
+                self.interner.lookup(member_type),
+                Some(TypeData::Literal(LiteralValue::String(_)))
+            ) || member_type == TypeId::STRING
+        } else {
+            false
+        }
+    }
+
+    /// Check if a type is a numeric enum member.
+    fn is_numeric_enum_member(&self, type_id: TypeId) -> bool {
+        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
+            matches!(
+                self.interner.lookup(member_type),
+                Some(TypeData::Literal(LiteralValue::Number(_)))
+            ) || member_type == TypeId::NUMBER
+        } else {
+            false
+        }
     }
 
     fn source_lacks_union_common_property(

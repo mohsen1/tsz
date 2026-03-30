@@ -2274,11 +2274,17 @@ impl<'a> CheckerState<'a> {
 
         // When the failure reason is NoCommonProperties (weak types with no
         // properties in common), tsc emits TS2559 directly instead of TS2345.
+        // Use the unwidened literal type for the diagnostic message — tsc preserves
+        // literal types (e.g., "12" not "number", "false" not "boolean") in
+        // "has no properties in common" messages.
         if matches!(
             &analysis.failure_reason,
             Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
         ) {
-            let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
+            // Try to get the literal expression display (unwidened) from the AST
+            let arg_str = self
+                .literal_call_argument_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(arg_type));
             let param_str =
                 self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
             let message = format_message(

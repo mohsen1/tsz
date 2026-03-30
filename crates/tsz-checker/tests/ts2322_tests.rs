@@ -2870,3 +2870,104 @@ fn intersection_member_weak_type_suppression_still_works() {
         diagnostics
     );
 }
+
+#[test]
+fn primitive_number_literal_vs_weak_type_emits_ts2559() {
+    // A number literal assigned to a weak type (all optional properties)
+    // should emit TS2559, not TS2322/TS2345.
+    // See: weakType.ts - `doSomething(12)`
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething(12);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for number literal assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_string_literal_vs_weak_type_emits_ts2559() {
+    // A string literal assigned to a weak type should emit TS2559.
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething("completely wrong");
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for string literal assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_boolean_literal_vs_weak_type_emits_ts2559() {
+    // A boolean literal assigned to a weak type should emit TS2559.
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething(false);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for boolean literal assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn enum_member_vs_weak_type_emits_ts2559() {
+    // A string enum member assigned to a weak type with no common properties
+    // should emit TS2559.
+    // See: nestedExcessPropertyChecking.ts - `let x: { nope?: any } = E.A`
+    let source = r#"
+        enum E { A = "A" }
+        let x: { nope?: any } = E.A;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for enum member assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_with_matching_property_passes_weak_type() {
+    // A string assigned to a weak type that has 'length' property should NOT
+    // trigger TS2559 because strings have a 'length' property.
+    let source = r#"
+        let x: { length?: number } = "hello" as any as string;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        !has_ts2559,
+        "String should not trigger TS2559 for weak type with 'length' property. Got: {:?}",
+        diagnostics
+    );
+}
