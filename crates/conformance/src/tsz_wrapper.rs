@@ -288,11 +288,13 @@ pub fn prepare_test_dir(
         None
     };
     // Match tsc 6.0's implicit include defaults.
-    // tsc always includes .js/.jsx in the include patterns regardless of allowJs;
-    // the actual file filtering respects allowJs separately. This matters for the
-    // TS18003 "no inputs found" message which displays these include patterns.
+    // tsc always includes .js/.jsx/.mts/.cts/.mjs/.cjs in the include patterns
+    // regardless of allowJs; the actual file filtering respects allowJs separately.
+    // This matters for the TS18003 "no inputs found" message which displays these
+    // include patterns.
     let include = serde_json::json!([
-        "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+        "*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
+        "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
     ]);
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
