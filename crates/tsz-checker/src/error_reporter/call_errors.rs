@@ -2337,16 +2337,25 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
     ) {
         // When there are excess arguments, point to them instead of the callee.
-        let (start, length) =
-            if let Some((s, l)) = self.resolve_excess_argument_span(args, expected_max) {
-                (s, l)
-            } else if let Some(anchor) =
-                self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
-            {
+        let (start, length) = if let Some((s, l)) =
+            self.resolve_excess_argument_span(args, expected_max)
+        {
+            (s, l)
+        } else if self.is_new_expression(idx) {
+            // For `new X()` with too few arguments, TSC uses the full
+            // `new X(...)` span (starting from the `new` keyword).
+            if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {
                 (anchor.start, anchor.length)
             } else {
                 return;
-            };
+            }
+        } else if let Some(anchor) =
+            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
+        {
+            (anchor.start, anchor.length)
+        } else {
+            return;
+        };
 
         let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
             self.ctx.types,
@@ -2358,6 +2367,14 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .diagnostics
             .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+    }
+
+    /// Check if a node is a `new` expression.
+    fn is_new_expression(&self, idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::NEW_EXPRESSION)
     }
 
     /// Report a spread argument type error (TS2556).
