@@ -15,6 +15,7 @@
 //! - Import type resolution (`resolve_jsdoc_import_type_reference`)
 
 use super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
+use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::symbol_flags;
@@ -934,7 +935,82 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn jsdoc_module_specifier_prefers_direct_type_exports(&self, module_specifier: &str) -> bool {
+        let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+        else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        source_file.is_declaration_file
+            || is_declaration_file_name(&source_file.file_name)
+            || !is_js_file_name(&source_file.file_name)
+    }
+
+    fn jsdoc_direct_module_member_symbol(
+        &self,
+        current_sym: tsz_binder::SymbolId,
+        segment: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.get_cross_file_symbol(current_sym).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(current_sym, &lib_binders)
+        })?;
+
+        if let Some(module_specifier) = symbol.import_module.as_deref()
+            && self.jsdoc_module_specifier_prefers_direct_type_exports(module_specifier)
+        {
+            return self.resolve_jsdoc_import_member(module_specifier, segment);
+        }
+
+        let decl = symbol.value_declaration;
+        if decl.is_none() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl)?;
+        let decl = if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.get_extended(decl)?.parent;
+            if parent.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(parent)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::VARIABLE_DECLARATION)
+            {
+                parent
+            } else {
+                decl
+            }
+        } else {
+            decl
+        };
+
+        let var_decl = self
+            .ctx
+            .arena
+            .get(decl)
+            .and_then(|node| self.ctx.arena.get_variable_declaration(node))?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        let module_specifier = self.get_require_module_specifier(var_decl.initializer)?;
+        if !self.jsdoc_module_specifier_prefers_direct_type_exports(&module_specifier) {
+            return None;
+        }
+        self.resolve_jsdoc_import_member(&module_specifier, segment)
+    }
+
     fn resolve_jsdoc_qualified_type_name(&mut self, name: &str) -> Option<TypeId> {
+        if let Some(resolved) = self.resolve_jsdoc_require_qualified_type_name(name) {
+            return Some(resolved);
+        }
+
         if let Some(sym_id) = self.resolve_jsdoc_entity_name_symbol(name) {
             let resolved = self.resolve_jsdoc_symbol_type(sym_id);
             if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
@@ -943,6 +1019,75 @@ impl<'a> CheckerState<'a> {
         }
 
         self.resolve_jsdoc_assigned_value_type(name)
+    }
+
+    fn resolve_jsdoc_require_qualified_type_name(&mut self, name: &str) -> Option<TypeId> {
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        let first_member = segments.next()?;
+        let root_sym = self.ctx.binder.file_locals.get(root_name)?;
+        let root_symbol = self.ctx.binder.get_symbol(root_sym)?;
+
+        let decl = root_symbol.value_declaration;
+        if decl.is_none() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl)?;
+        let decl = if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.get_extended(decl)?.parent;
+            if parent.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(parent)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::VARIABLE_DECLARATION)
+            {
+                parent
+            } else {
+                decl
+            }
+        } else {
+            decl
+        };
+        let var_decl = self
+            .ctx
+            .arena
+            .get(decl)
+            .and_then(|node| self.ctx.arena.get_variable_declaration(node))?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        let module_specifier = self.get_require_module_specifier(var_decl.initializer)?;
+        if !self.jsdoc_module_specifier_prefers_direct_type_exports(&module_specifier) {
+            return None;
+        }
+
+        let mut current_sym = self.resolve_jsdoc_import_member(&module_specifier, first_member)?;
+        for segment in segments {
+            let lib_binders = self.get_lib_binders();
+            let mut visited_aliases = Vec::new();
+            current_sym = self
+                .resolve_alias_symbol(current_sym, &mut visited_aliases)
+                .unwrap_or(current_sym);
+            let symbol = self.get_cross_file_symbol(current_sym).or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(current_sym, &lib_binders)
+            })?;
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+        }
+
+        let resolved = self.resolve_jsdoc_symbol_type(current_sym);
+        (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
     }
 
     fn resolve_jsdoc_entity_name_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
@@ -957,6 +1102,11 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
 
         for segment in segments {
+            if let Some(member_sym) = self.jsdoc_direct_module_member_symbol(current_sym, segment) {
+                current_sym = member_sym;
+                continue;
+            }
+
             let mut visited_aliases = Vec::new();
             current_sym = self
                 .resolve_alias_symbol(current_sym, &mut visited_aliases)
