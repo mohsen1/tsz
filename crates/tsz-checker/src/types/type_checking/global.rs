@@ -84,7 +84,13 @@ impl<'a> CheckerState<'a> {
         // These types provide proper typing for .call()/.apply()/.bind() and are
         // required when strict (which implies strictBindCallApply) is active.
         // When strict is false / strictBindCallApply is off, tsc does NOT require them.
-        if self.ctx.compiler_options.strict_bind_call_apply {
+        //
+        // IMPORTANT: tsc only emits TS2318 for these when Function itself is NOT
+        // available. When Function IS defined (even manually in a --noLib file),
+        // CallableFunction/NewableFunction are auxiliary extensions and their absence
+        // is not an error.
+        if self.ctx.compiler_options.strict_bind_call_apply && !self.ctx.has_name_in_lib("Function")
+        {
             for &type_name in FUNCTION_AUX_TYPES {
                 if !self.ctx.has_name_in_lib(type_name) {
                     self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
