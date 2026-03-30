@@ -2787,5 +2787,8 @@ mod ts2305_tests;
 #[path = "../../tsz-checker/tests/ts2306_tests.rs"]
 mod ts2306_tests;
 #[cfg(test)]
+#[path = "../../tsz-checker/tests/ts2498_export_star_export_equals_tests.rs"]
+mod ts2498_export_star_export_equals_tests;
+#[cfg(test)]
 #[path = "../../tsz-checker/tests/widening_integration_tests.rs"]
 mod widening_integration_tests;
