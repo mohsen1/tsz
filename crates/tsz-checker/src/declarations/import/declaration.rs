@@ -885,7 +885,7 @@ impl<'a> CheckerState<'a> {
             if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
                 let mut skip_export_checks = false;
                 // Extract data we need before any mutable borrows
-                let (target_is_declaration_file, file_info) = {
+                let (_target_is_declaration_file, file_info) = {
                     let arena = self.ctx.get_arena_for_file(target_idx as u32);
                     if let Some(source_file) = arena.source_files.first() {
                         let file_name = source_file.file_name.as_str();
@@ -981,28 +981,11 @@ impl<'a> CheckerState<'a> {
                     let module_has_cjs_esm_boundary =
                         self.ctx.compiler_options.module.is_node16_or_node18();
 
-                    // TSC suppresses TS1479 when:
-                    // - Target is a declaration file (.d.mts) AND importer is TypeScript (.cts):
-                    //   Both are compiled by tsc so CJS/ESM interop is handled at build time.
-                    //   JS importers (.cjs) still get TS1479 for .d.mts targets since JS
-                    //   files aren't recompiled by tsc.
-                    let current_is_ts_file = {
-                        let f = &self.ctx.file_name;
-                        (f.ends_with(".ts")
-                            || f.ends_with(".tsx")
-                            || f.ends_with(".cts")
-                            || f.ends_with(".mts"))
-                            && !f.ends_with(".d.ts")
-                            && !f.ends_with(".d.mts")
-                            && !f.ends_with(".d.cts")
-                    };
-                    let suppress_for_dts_target = target_is_declaration_file && current_is_ts_file;
                     if current_is_commonjs
                         && target_is_esm
                         && module_has_cjs_esm_boundary
                         && !is_type_only_import
                         && !suppress_for_cjs_relative
-                        && !suppress_for_dts_target
                     {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
