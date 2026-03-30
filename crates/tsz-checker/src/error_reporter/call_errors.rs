@@ -1618,9 +1618,23 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             };
 
-            // Get the property name string
-            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
-                continue;
+            // Get the property name string.
+            // For computed property names (e.g., `[SYM]`), fall back to type-level
+            // resolution so unique symbols and const-evaluated keys are resolved.
+            let is_computed_property = self
+                .ctx
+                .arena
+                .get(prop_name_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
+                Some(name) => name,
+                None if is_computed_property => {
+                    match self.get_property_name_resolved(prop_name_idx) {
+                        Some(name) => name,
+                        None => continue,
+                    }
+                }
+                None => continue,
             };
 
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
@@ -1788,22 +1802,44 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let source_prop_type_for_diagnostic =
-                    if self.is_fresh_literal_expression(prop_value_idx) {
-                        self.widen_literal_type(source_prop_type)
-                    } else {
-                        source_prop_type
-                    };
-
-                // Emit TS2322 on the property name node, using the declared type
-                // (without optional undefined) for the error message
-                let source_prop_type_for_diagnostic =
-                    self.widen_function_like_call_source(source_prop_type_for_diagnostic);
-                self.error_type_not_assignable_at_with_anchor(
-                    source_prop_type_for_diagnostic,
-                    target_prop_type_for_diagnostic,
-                    prop_name_idx,
-                );
+                // For computed property names, emit TS2418 ("Type of computed
+                // property's value is '{0}', which is not assignable to type
+                // '{1}'.") instead of the generic TS2322.  This matches tsc's
+                // behavior in `elaborateElementwise`.  tsc does not widen
+                // literal types in the TS2418 message.
+                if is_computed_property {
+                    // For TS2418, use the literal type from the initializer
+                    // expression when available (tsc shows "str" not string).
+                    let computed_source = self
+                        .literal_type_from_initializer(prop_value_idx)
+                        .unwrap_or(source_prop_type);
+                    let src_str = self.format_type_for_assignability_message(computed_source);
+                    let tgt_str =
+                        self.format_type_for_assignability_message(target_prop_type_for_diagnostic);
+                    let msg = format_message(
+                        diagnostic_messages::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    self.error_at_node(
+                        prop_name_idx,
+                        &msg,
+                        diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                } else {
+                    let source_prop_type_for_diagnostic =
+                        if self.is_fresh_literal_expression(prop_value_idx) {
+                            self.widen_literal_type(source_prop_type)
+                        } else {
+                            source_prop_type
+                        };
+                    let source_prop_type_for_diagnostic =
+                        self.widen_function_like_call_source(source_prop_type_for_diagnostic);
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_prop_type_for_diagnostic,
+                        target_prop_type_for_diagnostic,
+                        prop_name_idx,
+                    );
+                }
                 elaborated = true;
             }
         }
@@ -1886,21 +1922,22 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Extract a property name from an object literal element node.
-    fn object_literal_property_name_from_elem(&self, elem_idx: NodeIndex) -> Option<String> {
+    /// Falls back to type-level resolution for computed property names
+    /// (e.g., unique symbols, const-evaluated keys).
+    fn object_literal_property_name_from_elem(&mut self, elem_idx: NodeIndex) -> Option<String> {
         use tsz_parser::parser::syntax_kind_ext;
         let elem_node = self.ctx.arena.get(elem_idx)?;
-        match elem_node.kind {
+        let name_idx = match elem_node.kind {
             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                let prop = self.ctx.arena.get_property_assignment(elem_node)?;
-                self.object_literal_property_name_text(prop.name)
+                self.ctx.arena.get_property_assignment(elem_node)?.name
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                let prop = self.ctx.arena.get_shorthand_property(elem_node)?;
-                self.object_literal_property_name_text(prop.name)
+                self.ctx.arena.get_shorthand_property(elem_node)?.name
             }
-            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => None,
-            _ => None,
-        }
+            _ => return None,
+        };
+        self.object_literal_property_name_text(name_idx)
+            .or_else(|| self.get_property_name_resolved(name_idx))
     }
 
     /// Elaborate array literal element type mismatches with TS2322.
