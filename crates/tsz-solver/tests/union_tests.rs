@@ -217,6 +217,7 @@ fn test_union_not_assignable_to_mixed_optional_required() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
@@ -262,6 +263,7 @@ fn test_union_with_type_mismatch_not_assignable() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
@@ -481,6 +483,7 @@ fn test_discriminated_union_narrowing() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::opt(interner.intern_string("radius"), TypeId::NUMBER),
         PropertyInfo::opt(interner.intern_string("side"), TypeId::NUMBER),
@@ -528,6 +531,7 @@ fn test_union_with_common_discriminant_property() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING),
         PropertyInfo::opt(interner.intern_string("b"), TypeId::NUMBER),
@@ -755,6 +759,7 @@ fn test_discriminated_union_optional_property_narrowing() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Target member 1: { foo?: undefined }
@@ -769,6 +774,7 @@ fn test_discriminated_union_optional_property_narrowing() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Target member 2: { foo: number }

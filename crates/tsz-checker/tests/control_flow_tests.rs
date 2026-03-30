@@ -208,6 +208,7 @@ switch (x.kind) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let member_b = types.object(vec![PropertyInfo {
         name: kind_name,
@@ -220,6 +221,7 @@ switch (x.kind) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let union = types.union(vec![member_a, member_b]);
@@ -316,6 +318,7 @@ switch (true) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: radius_name,
@@ -328,6 +331,7 @@ switch (true) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 1,
+            is_string_named: false,
         },
     ]);
     let square = types.object(vec![
@@ -342,6 +346,7 @@ switch (true) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: side_name,
@@ -354,6 +359,7 @@ switch (true) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 1,
+            is_string_named: false,
         },
     ]);
     let union = types.union(vec![circle, square]);
@@ -454,6 +460,7 @@ if (x instanceof Foo) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let union = types.union(vec![TypeId::STRING, obj_type]);
 
@@ -505,6 +512,7 @@ if ("a" in x) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -517,6 +525,7 @@ if ("a" in x) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -568,6 +577,7 @@ if ("a" in x) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -580,6 +590,7 @@ if ("a" in x) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -631,6 +642,7 @@ if (#a in x) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -643,6 +655,7 @@ if (#a in x) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
 

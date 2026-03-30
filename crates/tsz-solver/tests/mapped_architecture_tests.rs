@@ -70,6 +70,7 @@ fn classify_source_plain_object() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     assert_eq!(
         classify_mapped_source(&interner, obj),
@@ -278,6 +279,7 @@ fn collect_source_props_from_object() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: b_name,
@@ -290,6 +292,7 @@ fn collect_source_props_from_object() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 1,
+            is_string_named: false,
         },
     ]);
     let props = collect_homomorphic_source_properties(&interner, obj);

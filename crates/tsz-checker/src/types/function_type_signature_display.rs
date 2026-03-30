@@ -26,6 +26,8 @@ impl<'a> CheckerState<'a> {
                     .collect();
                 Some(if parts.is_empty() {
                     "{}".to_string()
+                } else if pattern.elements.has_trailing_comma {
+                    format!("{{ {}, }}", parts.join(", "))
                 } else {
                     format!("{{ {} }}", parts.join(", "))
                 })

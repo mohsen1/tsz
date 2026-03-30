@@ -2722,6 +2722,7 @@ mod tests {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             },
             PropertyInfo {
                 name: interner.intern_string("value"),
@@ -2734,6 +2735,7 @@ mod tests {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 1,
+                is_string_named: false,
             },
         ]);
 
@@ -3000,6 +3002,7 @@ mod tests {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             }],
             string_index: None,
             number_index: None,
@@ -3031,6 +3034,7 @@ mod tests {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             },
             PropertyInfo {
                 name: name_y,
@@ -3043,6 +3047,7 @@ mod tests {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 1,
+                is_string_named: false,
             },
         ]);
 

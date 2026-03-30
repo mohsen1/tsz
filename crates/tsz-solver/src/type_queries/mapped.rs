@@ -670,6 +670,7 @@ pub fn expand_mapped_type_to_properties(
                 visibility: crate::types::Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             });
         }
     }

@@ -421,6 +421,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: 0,
+                    is_string_named: false,
                 });
             }
         }

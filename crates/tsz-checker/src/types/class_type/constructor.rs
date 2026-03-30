@@ -392,6 +392,7 @@ impl<'a> CheckerState<'a> {
                     visibility: self.get_member_visibility(&prop.modifiers, prop.name),
                     parent_id: current_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 });
             }
             if inst_props.is_empty() {
@@ -544,6 +545,7 @@ impl<'a> CheckerState<'a> {
                                 visibility,
                                 parent_id: current_sym,
                                 declaration_order: 0,
+                                is_string_named: false,
                             }),
                             &inherited_static_props,
                             &all_static_member_names,
@@ -660,6 +662,7 @@ impl<'a> CheckerState<'a> {
                                 visibility,
                                 parent_id: current_sym,
                                 declaration_order: 0,
+                                is_string_named: false,
                             }),
                             &inherited_static_props,
                             &all_static_member_names,
@@ -735,6 +738,7 @@ impl<'a> CheckerState<'a> {
                             visibility,
                             parent_id: current_sym,
                             declaration_order: 0,
+                            is_string_named: false,
                         },
                     );
                 }
@@ -1019,6 +1023,7 @@ impl<'a> CheckerState<'a> {
                     visibility: accessor.visibility,
                     parent_id: current_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 },
             );
         }
@@ -1055,6 +1060,7 @@ impl<'a> CheckerState<'a> {
                     visibility: method.visibility,
                     parent_id: current_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 },
             );
         }
@@ -1177,6 +1183,7 @@ impl<'a> CheckerState<'a> {
                         visibility: self.get_member_visibility(&prop.modifiers, prop.name),
                         parent_id: current_sym,
                         declaration_order: 0,
+                        is_string_named: false,
                     });
                 }
                 if !inst_props.is_empty() {
@@ -1229,6 +1236,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: current_sym,
                 declaration_order: 0,
+                is_string_named: false,
             },
         );
 
@@ -1783,6 +1791,7 @@ impl<'a> CheckerState<'a> {
                 visibility: method.visibility,
                 parent_id: current_sym,
                 declaration_order: 0,
+                is_string_named: false,
             });
         }
 
@@ -1813,6 +1822,7 @@ impl<'a> CheckerState<'a> {
                 visibility: accessor.visibility,
                 parent_id: current_sym,
                 declaration_order: 0,
+                is_string_named: false,
             });
         }
 
@@ -1846,6 +1856,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: current_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 });
             }
         }

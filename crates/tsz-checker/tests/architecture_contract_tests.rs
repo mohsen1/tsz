@@ -22,6 +22,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let dog = interner.object(vec![
@@ -36,6 +37,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         tsz_solver::PropertyInfo {
             name: dog_breed,
@@ -48,6 +50,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 

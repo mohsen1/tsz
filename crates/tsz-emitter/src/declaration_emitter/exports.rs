@@ -1605,6 +1605,34 @@ impl<'a> DeclarationEmitter<'a> {
             || self
                 .arena
                 .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
+
+        // In module files (public API filter active), non-exported ambient
+        // `declare namespace X { ... }` declarations are global augmentations
+        // and must NOT be re-emitted in the .d.ts — tsc strips them because
+        // they don't contribute to the module's type surface.
+        // Only identifier-named namespaces are affected; string-literal
+        // modules (`declare module "foo"`) and `declare global` are handled
+        // separately inside `should_emit_public_api_module`.
+        if !is_exported
+            && self.public_api_filter_enabled()
+            && self
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            let is_identifier_namespace = self
+                .arena
+                .get(module.name)
+                .is_some_and(|n| n.kind != SyntaxKind::StringLiteral as u16);
+            let is_global = self
+                .arena
+                .get(module.name)
+                .and_then(|n| self.arena.get_identifier(n))
+                .is_some_and(|ident| ident.escaped_text == "global");
+            if is_identifier_namespace && !is_global {
+                return;
+            }
+        }
+
         if !self.should_emit_public_api_module(is_exported, module.name) {
             return;
         }

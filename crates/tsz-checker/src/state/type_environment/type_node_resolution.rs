@@ -537,6 +537,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: Some(sym_id),
                 declaration_order: properties.len() as u32,
+                is_string_named: false,
             });
             changed = true;
         }
@@ -660,6 +661,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: Some(sym_id),
                     declaration_order: property_count as u32,
+                    is_string_named: false,
                 },
             );
             property_count += 1;

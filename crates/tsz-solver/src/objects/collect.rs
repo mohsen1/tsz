@@ -291,6 +291,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         is_class_prototype: prop.is_class_prototype,
                         parent_id: prop.parent_id,
                         declaration_order: 0,
+                        is_string_named: prop.is_string_named,
                     });
                 }
             }

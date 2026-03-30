@@ -311,6 +311,7 @@ fn test_variance_invariant_explicit_write_type() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let t_atom = interner.intern_string("T");

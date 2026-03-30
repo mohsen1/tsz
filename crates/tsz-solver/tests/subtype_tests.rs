@@ -449,6 +449,7 @@ fn test_apparent_symbol_member_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let mismatch = interner.object(vec![PropertyInfo {
         name,
@@ -461,6 +462,7 @@ fn test_apparent_symbol_member_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(TypeId::SYMBOL, target));
@@ -937,6 +939,7 @@ fn test_weak_type_detection_not_weak_if_has_required() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 
@@ -967,6 +970,7 @@ fn test_split_accessor_variance() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let narrow_accessor = interner.object(vec![PropertyInfo {
@@ -980,6 +984,7 @@ fn test_split_accessor_variance() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(wide_accessor, narrow_accessor));
@@ -1003,6 +1008,7 @@ fn test_exact_optional_property_types_toggle() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let source = interner.object(vec![PropertyInfo {
         name,
@@ -1015,6 +1021,7 @@ fn test_exact_optional_property_types_toggle() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -1293,6 +1300,7 @@ fn test_readonly_property_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let mutable_obj = interner.object(vec![PropertyInfo {
         name,
@@ -1305,6 +1313,7 @@ fn test_readonly_property_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // TypeScript allows readonly property → mutable property assignment
@@ -3950,6 +3959,7 @@ fn test_method_source_bivariant_against_function_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -3963,6 +3973,7 @@ fn test_method_source_bivariant_against_function_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -4018,6 +4029,7 @@ fn test_function_source_bivariant_against_method_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -4031,6 +4043,7 @@ fn test_function_source_bivariant_against_method_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -4919,6 +4932,7 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -4932,6 +4946,7 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -4977,6 +4992,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -4990,6 +5006,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -5806,6 +5823,7 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let required_readonly =
         interner.object(vec![PropertyInfo::readonly(to_fixed, TypeId::BOOLEAN)]);
@@ -6138,6 +6156,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: name_b,
@@ -6150,6 +6169,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
     let mutable_required_target = interner.object(vec![
@@ -6196,6 +6216,7 @@ fn test_mapped_type_optional_readonly_remove_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_subtype_of(mapped, mutable_required_target));
@@ -6517,6 +6538,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let required_readonly_b =
         interner.object(vec![PropertyInfo::readonly(prop_b.name, TypeId::NUMBER)]);
@@ -6545,6 +6567,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     };
     let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
@@ -6851,6 +6874,7 @@ fn test_generic_covariant_return_position() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let producer_union = interner.object(vec![PropertyInfo {
@@ -6864,6 +6888,7 @@ fn test_generic_covariant_return_position() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Covariant: Producer<string> <: Producer<string | number>
@@ -6974,6 +6999,7 @@ fn test_generic_mixed_variance_positions() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let transform_b = interner.object(vec![PropertyInfo {
@@ -6987,6 +7013,7 @@ fn test_generic_mixed_variance_positions() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Transform with wider input and narrower output is subtype
@@ -7241,6 +7268,7 @@ fn test_mutable_property_split_accessor_wider_write() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let obj_normal = interner.object(vec![PropertyInfo::new(prop_name, TypeId::STRING)]);
@@ -8401,6 +8429,7 @@ fn test_invariant_ref_cell_pattern() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: set_name,
@@ -8413,6 +8442,7 @@ fn test_invariant_ref_cell_pattern() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 
@@ -8453,6 +8483,7 @@ fn test_invariant_ref_cell_pattern() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: set_name,
@@ -8465,6 +8496,7 @@ fn test_invariant_ref_cell_pattern() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 
@@ -11047,6 +11079,7 @@ fn test_readonly_with_optional() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let obj_readonly_required =
@@ -11104,6 +11137,7 @@ fn test_readonly_method_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let obj_mutable_method = interner.object(vec![PropertyInfo::method(method_name, method)]);
@@ -12499,6 +12533,7 @@ fn test_implements_optional_method() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Empty class
@@ -13862,6 +13897,7 @@ fn test_never_is_bottom_type_for_object_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // never <: { name: string }
@@ -13983,6 +14019,7 @@ fn test_unknown_is_top_type_for_object_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // { name: string } <: unknown
@@ -16389,6 +16426,7 @@ fn test_variance_method_bivariant_params() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }],
         string_index: None,
         number_index: None,
@@ -16424,6 +16462,7 @@ fn test_variance_method_bivariant_params() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }],
         string_index: None,
         number_index: None,
@@ -16467,6 +16506,7 @@ fn test_variance_function_property_contravariant() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Object with function property taking wide param
@@ -16494,6 +16534,7 @@ fn test_variance_function_property_contravariant() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Wide param function <: narrow param function (contravariant)
@@ -18219,6 +18260,7 @@ fn test_symbol_keyed_object_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(iterable_obj != TypeId::ERROR);
@@ -18371,6 +18413,7 @@ fn test_iterable_protocol_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Iterator is valid object type
@@ -18404,6 +18447,7 @@ fn test_async_iterable_protocol_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // AsyncIterator<number> = { next(): Promise<AsyncIteratorResult<number>> }
@@ -18428,6 +18472,7 @@ fn test_async_iterable_protocol_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // AsyncIterator is valid object type
@@ -20618,6 +20663,7 @@ fn test_constructor_with_static_properties() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }],
         string_index: None,
         number_index: None,
@@ -21514,6 +21560,7 @@ fn test_this_type_with_getter_setter() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(obj != TypeId::ERROR);
@@ -21999,6 +22046,7 @@ fn test_readonly_optional_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(readonly_optional != TypeId::ERROR);
@@ -22116,6 +22164,7 @@ fn test_readonly_method_is_always_readonly() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(obj != TypeId::ERROR);
@@ -24032,6 +24081,7 @@ fn test_overload_constructor_overloads() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: interner.intern_string("toISOString"),
@@ -24052,6 +24102,7 @@ fn test_overload_constructor_overloads() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 

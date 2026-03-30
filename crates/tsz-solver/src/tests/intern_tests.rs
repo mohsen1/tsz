@@ -444,6 +444,7 @@ fn test_intersection_visibility_merging() {
         visibility: Visibility::Private,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Create object { x: string } with public visibility
@@ -601,6 +602,7 @@ fn test_visibility_interning_distinct_shape_ids() {
         visibility: Visibility::Private,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // These should have different TypeIds because visibility differs
@@ -643,6 +645,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         visibility: Visibility::Public,
         parent_id: Some(SymbolId(1)),
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let obj_class2 = interner.object(vec![PropertyInfo {
@@ -656,6 +659,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         visibility: Visibility::Public,
         parent_id: Some(SymbolId(2)),
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // These should have different TypeIds because parent_id differs
@@ -781,6 +785,7 @@ fn test_partial_object_merging_in_intersection() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -794,6 +799,7 @@ fn test_partial_object_merging_in_intersection() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Create a primitive type
@@ -890,6 +896,7 @@ fn test_partial_object_and_callable_merging() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -903,6 +910,7 @@ fn test_partial_object_and_callable_merging() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Create callable types

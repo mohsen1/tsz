@@ -132,6 +132,7 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let dog = interner.object(vec![
         PropertyInfo {
@@ -145,6 +146,7 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ]);

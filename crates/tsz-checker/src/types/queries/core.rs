@@ -62,6 +62,29 @@ pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) 
     None
 }
 
+/// Check if a property name node is syntactically a string key (not numeric).
+/// Handles direct string literals and computed property names with string literal expressions.
+pub(crate) fn is_string_property_name_node(arena: &NodeArena, name_idx: NodeIndex) -> bool {
+    let Some(name_node) = arena.get(name_idx) else {
+        return false;
+    };
+    // Direct string literal property name: { "404": value }
+    if name_node.kind == SyntaxKind::StringLiteral as u16 {
+        return true;
+    }
+    // Computed property name with string literal: { ["404"]: value }
+    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+        if let Some(computed) = arena.get_computed_property(name_node) {
+            if let Some(expr_node) = arena.get(computed.expression) {
+                if expr_node.kind == SyntaxKind::StringLiteral as u16 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities
@@ -862,6 +885,28 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
     // Section 30: Name Extraction Utilities
     // =========================================================================
+
+    /// Check if a computed property name resolves to a string literal type
+    /// (e.g. `[hundredStr]` where `const hundredStr = "100"`).
+    pub(crate) fn is_computed_string_property_name(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return false;
+        };
+        if self.ctx.arena.get_identifier(expr_node).is_none() {
+            return false;
+        }
+        let expr_type = self.get_type_of_node(computed.expression);
+        tsz_solver::type_queries::is_string_literal(self.ctx.types, expr_type)
+    }
 
     /// Get property name as string from a property name node (identifier, string literal, etc.)
     ///

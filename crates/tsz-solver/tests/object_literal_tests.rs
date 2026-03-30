@@ -18,6 +18,7 @@ fn test_build_object_type() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }];
 
     let obj_type = builder.build_object_type(properties);
@@ -43,6 +44,7 @@ fn test_merge_spread() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }];
 
     // Create spread object { y: string, x: boolean }
@@ -58,6 +60,7 @@ fn test_merge_spread() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: db.intern_string("x"),
@@ -70,6 +73,7 @@ fn test_merge_spread() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ];
     let spread_type = db.object(spread_props);
@@ -109,6 +113,7 @@ fn test_apply_contextual_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Create properties { x: 1 } (where 1 is a literal number type)
@@ -124,6 +129,7 @@ fn test_apply_contextual_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }];
 
     let contextualized = builder.apply_contextual_types(properties, ctx_type);
@@ -149,6 +155,7 @@ fn test_extract_properties_from_intersection() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let type2 = db.object(vec![PropertyInfo {
@@ -162,6 +169,7 @@ fn test_extract_properties_from_intersection() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let intersection = db.intersection2(type1, type2);
@@ -198,6 +206,7 @@ fn test_collect_spread_properties() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }],
         ObjectFlags::FRESH_LITERAL,
     );

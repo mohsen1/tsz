@@ -751,6 +751,9 @@ pub struct PropertyInfo {
     pub parent_id: Option<SymbolId>,
     /// Declaration order for preserving source ordering in emit (excluded from equality/hash).
     pub declaration_order: u32,
+    /// Whether this property was declared with a string key that looks numeric.
+    /// Display-only; excluded from PartialEq/Hash.
+    pub is_string_named: bool,
 }
 
 impl PartialEq for PropertyInfo {
@@ -796,6 +799,7 @@ impl PropertyInfo {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }
     }
 

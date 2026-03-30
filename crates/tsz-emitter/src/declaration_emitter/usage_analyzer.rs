@@ -858,12 +858,21 @@ impl<'a> UsageAnalyzer<'a> {
             self.in_value_pos = old;
         }
 
-        // When there is no explicit type annotation, the declaration emitter
-        // may use the initializer's referenced name as the emitted type (e.g.
-        // `var d: X` for `var d = new X()`, or `typeof b` for `var b2 = b`).
+        // When there is no explicit type annotation AND no inferred type from
+        // the type cache, the declaration emitter may use the initializer's
+        // referenced name as the emitted type (e.g. `var d: X` for
+        // `var d = new X()`, or `typeof b` for `var b2 = b`).
         // We must mark import alias dependencies from the initializer so that
         // non-exported `import =` aliases are preserved in the .d.ts.
-        if decl.type_annotation.is_none() && decl.initializer.is_some() {
+        //
+        // When an inferred type IS available, `walk_inferred_type_or_related`
+        // already captured all type-level dependencies. Adding the callee
+        // here would incorrectly mark value-only references (e.g. a
+        // `declare function` used in a call expression) as needed in the
+        // .d.ts, even though tsc expands/inlines the result type instead.
+        let has_inferred_type = self.type_cache.node_types.contains_key(&decl_idx.0)
+            || (decl.name.is_some() && self.type_cache.node_types.contains_key(&decl.name.0));
+        if decl.type_annotation.is_none() && decl.initializer.is_some() && !has_inferred_type {
             // Unwrap `new X()` / `X()` to get the callee, or use the
             // initializer directly if it's a plain identifier/expression.
             let callee = self.unwrap_export_default_expression(decl.initializer);
@@ -1351,7 +1360,7 @@ impl<'a> UsageAnalyzer<'a> {
 
         symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             && symbol.import_module.is_some()
-            && symbol.import_name.is_none()
+            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
     }
 
     fn value_reference_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {

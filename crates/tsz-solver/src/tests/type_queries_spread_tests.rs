@@ -231,6 +231,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: db.intern_string("#hidden"),
@@ -243,6 +244,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             visibility: Visibility::Private,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: db.intern_string("method"),
@@ -255,6 +257,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 

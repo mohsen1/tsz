@@ -79,6 +79,16 @@ pub(crate) struct JsStaticMethodAugmentations {
     pub(crate) augmented_method_nodes: FxHashSet<NodeIndex>,
 }
 
+/// Collected prototype member assignments for JS class-like heuristic variables.
+/// e.g. `let A; A.prototype.b = {};` → variable `A` becomes `declare class A { ... }`.
+#[derive(Default)]
+pub(crate) struct JsClassLikePrototypeMembers {
+    /// Maps variable name → list of (member_name_idx, initializer_idx) pairs.
+    pub(crate) members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    /// Statement indices consumed by the class-like heuristic (to skip during normal emit).
+    pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
+}
+
 type JsStaticMethodKey = (String, String);
 type JsStaticMethodInfo = (NodeIndex, NodeIndex, bool);
 type JsStaticMethodAugmentationEntry = (
@@ -2066,6 +2076,147 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         declarations
+    }
+
+    /// Collect `X.prototype.Y = expr` assignments for top-level variables that are
+    /// NOT already handled by the CJS expando machinery.  tsc uses a "class-like
+    /// heuristic": any variable whose name appears in a `Name.prototype.prop = ...`
+    /// statement is emitted as `declare class Name { private constructor(); ... }`
+    /// instead of `declare let Name: any;`.
+    pub(crate) fn collect_js_class_like_prototype_members(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> JsClassLikePrototypeMembers {
+        let mut result = JsClassLikePrototypeMembers::default();
+        if !self.source_file_is_js(source_file) {
+            return result;
+        }
+
+        // First, collect all top-level variable names (let/var/const declarations).
+        let mut top_level_var_names: FxHashSet<String> = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                    continue;
+                }
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        && let Some(name) = self.get_identifier_text(decl.name)
+                    {
+                        // Skip names already handled by CJS expando
+                        if !js_export_equals_names.contains(&name) {
+                            top_level_var_names.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        if top_level_var_names.is_empty() {
+            return result;
+        }
+
+        // Now scan for `X.prototype.Y = expr` expression statements.
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            // LHS must be `X.prototype.Y`
+            let lhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.left);
+            let Some(lhs_node) = self.arena.get(lhs) else {
+                continue;
+            };
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            let Some(_member_name) = self.get_identifier_text(lhs_access.name_or_argument) else {
+                continue;
+            };
+
+            // Receiver must be `X.prototype` where X is a top-level variable
+            let receiver = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+            let Some(receiver_node) = self.arena.get(receiver) else {
+                continue;
+            };
+            if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(receiver_access) = self.arena.get_access_expr(receiver_node) else {
+                continue;
+            };
+            if self
+                .get_identifier_text(receiver_access.name_or_argument)
+                .as_deref()
+                != Some("prototype")
+            {
+                continue;
+            }
+            let Some(root_name) = self.get_identifier_text(receiver_access.expression) else {
+                continue;
+            };
+            if !top_level_var_names.contains(&root_name) {
+                continue;
+            }
+
+            let rhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right);
+            let entry = result.members.entry(root_name).or_default();
+            if !entry.iter().any(|(existing_name, existing_init)| {
+                *existing_name == lhs_access.name_or_argument && *existing_init == rhs
+            }) {
+                entry.push((lhs_access.name_or_argument, rhs));
+            }
+            result.consumed_stmts.insert(stmt_idx);
+        }
+
+        result
     }
 
     pub(crate) fn collect_js_commonjs_named_exports(
@@ -6214,6 +6365,12 @@ impl<'a> DeclarationEmitter<'a> {
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
         if let Some(interner) = self.type_interner {
+            // Evaluate the type before printing to expand mapped types over
+            // literal union constraints (e.g., `{[k in "ar"|"bg"]?: T}` becomes
+            // `{ar?: T; bg?: T}`).  This matches tsc's behavior in declaration
+            // emit where mapped types are fully resolved.
+            let type_id = tsz_solver::evaluate_type(interner, type_id);
+
             let module_path_resolver = |sym_id| self.resolve_symbol_module_path(sym_id);
             let namespace_alias_resolver = |sym_id| self.resolve_namespace_import_alias(sym_id);
             let local_import_alias_name_resolver =
@@ -6617,7 +6774,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             && symbol.import_module.is_some()
-            && symbol.import_name.is_none()
+            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
     }
 
     pub(crate) fn resolve_namespace_import_alias(&self, sym_id: SymbolId) -> Option<String> {

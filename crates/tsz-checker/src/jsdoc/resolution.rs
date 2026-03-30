@@ -1772,6 +1772,7 @@ impl<'a> CheckerState<'a> {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: (properties.len() + 1) as u32,
+                        is_string_named: false,
                     });
                 }
             }
@@ -2039,6 +2040,7 @@ impl<'a> CheckerState<'a> {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: (existing_props.len() + 1) as u32,
+            is_string_named: false,
         })
     }
     /// Resolve a `@typedef` referenced by name from JSDoc comments.
@@ -2342,6 +2344,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             });
         }
         let object_type = if !prop_infos.is_empty() {
