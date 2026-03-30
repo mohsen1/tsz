@@ -1397,3 +1397,88 @@ useCallback(({ x }) => {});
         "Expected no errors for callable binding pattern, got diagnostics={diagnostics:?}"
     );
 }
+
+/// When a generic method like `.then()` returns `Promise<TResult>` and the
+/// contextual type is `Promise<DooDad>` where `DooDad = 'A' | 'B'`, the
+/// callback return literal should not be widened to `string` during inference.
+/// This matches tsc's behavior where literals contextually typed by type
+/// parameters are treated as non-fresh.
+#[test]
+fn test_generic_call_return_context_preserves_literal_in_callback() {
+    let source = r#"
+type DooDad = 'SOMETHING' | 'ELSE';
+
+declare function invoke<T>(f: () => T): T;
+let xx: DooDad = invoke(() => 'ELSE');
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "invoke(() => 'ELSE') should infer T = 'ELSE' (subtype of DooDad), got: {diagnostics:?}"
+    );
+}
+
+/// Same as above but through Promise.resolve().then() chain — the contextual
+/// return type `Promise<DooDad>` should flow through the generic `.then()` call
+/// and prevent literal widening in the callback.
+#[test]
+fn test_promise_then_return_context_preserves_literal() {
+    let source = r#"
+// @strict: true
+// @target: es6
+
+type DooDad = 'SOMETHING' | 'ELSE';
+
+function test(): Promise<DooDad> {
+    return Promise.resolve().then(() => {
+        return 'ELSE';
+    });
+}
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Promise.resolve().then(() => 'ELSE') should not produce TS2322 when contextual type is Promise<DooDad>, got: {ts2322:?}"
+    );
+}
+
+/// Multi-return callback: when the callback has if/else returning different
+/// string literals that together form the union type, widening should still
+/// be prevented.
+#[test]
+fn test_promise_then_multi_return_preserves_literal_union() {
+    let source = r#"
+// @strict: true
+// @target: es6
+
+type DooDad = 'SOMETHING' | 'ELSE';
+
+function test(): Promise<DooDad> {
+    return Promise.resolve().then(() => {
+        if (1 < 2) {
+            return 'SOMETHING';
+        }
+        return 'ELSE';
+    });
+}
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Multi-return callback should not produce TS2322 when all returns are subtypes of DooDad, got: {ts2322:?}"
+    );
+}
