@@ -563,14 +563,72 @@ impl<'a> CheckerState<'a> {
         }
 
         if any_checked && !all_valid {
-            let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                tag_name_idx,
-                diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT,
-                &[&tag_text],
-            );
+            self.report_invalid_jsx_component_return_type(tag_name_idx);
         }
+    }
+
+    pub(super) fn check_jsx_sfc_return_type(
+        &mut self,
+        return_type: TypeId,
+        tag_name_idx: NodeIndex,
+    ) {
+        if return_type == TypeId::ANY
+            || return_type == TypeId::ERROR
+            || return_type == TypeId::UNKNOWN
+            || return_type == TypeId::NEVER
+        {
+            return;
+        }
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, return_type) {
+            return;
+        }
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
+        let Some(jsx_element_type_raw) = self.get_jsx_element_type_for_check() else {
+            return;
+        };
+        let jsx_element_type = self.evaluate_type_with_env(jsx_element_type_raw);
+        if matches!(
+            jsx_element_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return;
+        }
+
+        let evaluated_return = self.evaluate_type_with_env(return_type);
+        if matches!(
+            evaluated_return,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) || tsz_solver::type_queries::needs_evaluation_for_merge(
+            self.ctx.types,
+            evaluated_return,
+        ) || crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            evaluated_return,
+        ) {
+            return;
+        }
+
+        let non_null_return = tsz_solver::remove_nullish(self.ctx.types, evaluated_return);
+        if non_null_return == TypeId::NEVER {
+            return;
+        }
+
+        if !self.is_assignable_to(non_null_return, jsx_element_type) {
+            self.report_invalid_jsx_component_return_type(tag_name_idx);
+        }
+    }
+
+    fn report_invalid_jsx_component_return_type(&mut self, tag_name_idx: NodeIndex) {
+        let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            tag_name_idx,
+            diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT,
+            &[&tag_text],
+        );
     }
 
     /// Extract props type from a Stateless Function Component (first param of call sig).
