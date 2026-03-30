@@ -170,12 +170,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 //
                 // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
                 // → { a: {name:"a"}, b: {name:"b"} }
-                if mapped.name_type.is_some() {
-                    if let Some(result) =
+                if mapped.name_type.is_some()
+                    && let Some(result) =
                         self.try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
-                    {
-                        return result;
-                    }
+                {
+                    return result;
                 }
                 tracing::trace!(
                     keys_lookup = ?self.interner().lookup(keys),
