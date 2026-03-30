@@ -15728,6 +15728,44 @@ class D14<T extends U, U extends V, V extends Date> extends C3<Date> {
     );
 }
 
+/// Mutually recursive class hierarchy: X extends L<X>, where L<RT> extends T<RT[RT['a']]>.
+/// The inherited property `a` from T<A> should be properly instantiated through the chain:
+/// A → RT[RT['a']] → X[X['a']] = X['a' | 'b'] = ('a'|'b') | number.
+/// Since X.a is 'a'|'b' which is assignable to 'a'|'b'|number, no TS2416 should be emitted.
+#[test]
+fn test_no_false_ts2416_for_mutually_recursive_class_hierarchy() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class T<A> {
+    a: A;
+    b: any
+}
+class L<RT extends { a: 'a' | 'b', b: any }> extends T<RT[RT['a']]> {
+    m() { this.a }
+}
+class X extends L<X> {
+    a: 'a' | 'b'
+    b: number
+    m2() {
+        this.a
+    }
+}
+        "#,
+    );
+
+    let ts2416: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect();
+
+    assert!(
+        ts2416.is_empty(),
+        "Should not emit false TS2416 for mutually recursive class hierarchy where inherited \
+         property types are compatible after full substitution chain.\n\
+         Actual TS2416 diagnostics: {ts2416:?}"
+    );
+}
+
 /// TS2416 for interface method with type parameters instantiated from the interface level.
 /// After `IFoo<number>`, the method `foo(x: T): T` becomes `foo(x: number): number`.
 /// The class method `foo(x: string): string` is incompatible.
