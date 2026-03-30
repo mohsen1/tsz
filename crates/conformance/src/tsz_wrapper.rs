@@ -1295,8 +1295,10 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
     use regex::Regex;
 
     static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*)$")
-            .expect("valid regex")
+        Regex::new(
+            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*)$",
+        )
+        .expect("valid regex")
     });
 
     let mut codes = Vec::new();

@@ -11,11 +11,9 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn normalize_jsx_contextual_callable_member(&mut self, type_id: TypeId) -> TypeId {
-        let type_id = crate::query_boundaries::common::unwrap_readonly_or_noinfer(
-            self.ctx.types,
-            type_id,
-        )
-        .unwrap_or(type_id);
+        let type_id =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+                .unwrap_or(type_id);
         let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
         else {
             return type_id;
@@ -586,8 +584,10 @@ impl<'a> CheckerState<'a> {
             let mut all_attrs = concrete_attrs;
 
             if has_function_valued_attrs {
-                let r1_instantiated = self
-                    .instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+                let r1_instantiated = self.instantiate_jsx_function_shape_with_substitution(
+                    &function_shape,
+                    &substitution,
+                );
                 if let Some(r1_props_param) = r1_instantiated.params.first() {
                     let r1_props_type = r1_props_param.type_id;
                     let r1_props_type = self.resolve_type_for_property_access(r1_props_type);
@@ -642,8 +642,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if has_function_valued_attrs {
-                let r2_instantiated = self
-                    .instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+                let r2_instantiated = self.instantiate_jsx_function_shape_with_substitution(
+                    &function_shape,
+                    &substitution,
+                );
                 if let Some(r2_props_param) = r2_instantiated.params.first() {
                     let r2_props_type = r2_props_param.type_id;
                     let r2_props_type = self.resolve_type_for_property_access(r2_props_type);
@@ -671,8 +673,7 @@ impl<'a> CheckerState<'a> {
                             &mut substitution,
                         );
 
-                        let full_attrs_type =
-                            self.build_jsx_provided_attrs_object_type(&all_attrs);
+                        let full_attrs_type = self.build_jsx_provided_attrs_object_type(&all_attrs);
                         let round3_sub = {
                             let env = self.ctx.type_env.borrow();
                             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
@@ -692,8 +693,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if has_function_valued_children {
-                let r2_instantiated = self
-                    .instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+                let r2_instantiated = self.instantiate_jsx_function_shape_with_substitution(
+                    &function_shape,
+                    &substitution,
+                );
                 if let Some(r2_props_param) = r2_instantiated.params.first() {
                     let r2_props_type = r2_props_param.type_id;
                     let r2_props_type = self.resolve_type_for_property_access(r2_props_type);
@@ -714,8 +717,7 @@ impl<'a> CheckerState<'a> {
                     );
 
                     if !all_attrs.is_empty() {
-                        let full_attrs_type =
-                            self.build_jsx_provided_attrs_object_type(&all_attrs);
+                        let full_attrs_type = self.build_jsx_provided_attrs_object_type(&all_attrs);
                         let round3_sub = {
                             let env = self.ctx.type_env.borrow();
                             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
@@ -769,8 +771,11 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
         use rustc_hash::FxHashSet;
 
-        let tracked_type_params: FxHashSet<_> =
-            function_shape.type_params.iter().map(|tp| tp.name).collect();
+        let tracked_type_params: FxHashSet<_> = function_shape
+            .type_params
+            .iter()
+            .map(|tp| tp.name)
+            .collect();
 
         for (attr_name, attr_type) in typed_attrs {
             let expected_type = match self.resolve_property_access_with_env(props_type, attr_name) {
@@ -902,19 +907,20 @@ impl<'a> CheckerState<'a> {
 
             let contextual_type = self.refine_jsx_callable_contextual_type(expected_type);
             if let Some(names) = unresolved_type_params.filter(|names| !names.is_empty()) {
-                let should_defer = crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    contextual_type,
-                )
-                .is_some_and(|signature| {
-                    signature.params.iter().any(|param| {
-                        crate::query_boundaries::common::references_any_type_param_named(
-                            self.ctx.types,
-                            param.type_id,
-                            names,
-                        )
-                    })
-                });
+                let should_defer =
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        contextual_type,
+                    )
+                    .is_some_and(|signature| {
+                        signature.params.iter().any(|param| {
+                            crate::query_boundaries::common::references_any_type_param_named(
+                                self.ctx.types,
+                                param.type_id,
+                                names,
+                            )
+                        })
+                    });
                 if should_defer {
                     continue;
                 }
