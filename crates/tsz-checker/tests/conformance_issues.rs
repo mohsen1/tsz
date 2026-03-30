@@ -16761,6 +16761,35 @@ function f<T extends Item, K extends keyof T>(obj: T, k: K) {
 }
 
 #[test]
+fn test_assignment_diagnostic_preserves_generic_mapped_intersection_index_access_target() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Errors<T> = { [P in keyof T]: string | undefined } & { all: string | undefined };
+
+function foo<T>() {
+    let obj!: Errors<T>;
+    let x!: keyof T;
+    obj[x] = undefined;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    .contains("Type 'undefined' is not assignable to type 'Errors<T>[keyof T]'.")
+        }),
+        "Expected TS2322 to preserve generic mapped intersection indexed-access display.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_return_diagnostic_preserves_literal_for_generic_indexed_target() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
