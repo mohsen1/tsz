@@ -408,11 +408,16 @@ impl<'a> CheckerState<'a> {
             && let Some(node) = self.ctx.arena.get(decl_idx)
             && let Some(class) = self.ctx.arena.get_class(node)
         {
+            // Build instance type FIRST so that the constructor type's construct
+            // signatures can use the real instance type instead of a rough
+            // approximation. This ensures that static methods like
+            // `static getInstance() { return new C(); }` infer the correct
+            // return type when the class is a class expression.
+            let instance_type = self.get_class_instance_type(decl_idx, class);
+            self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+
             let ctor_type = self.get_class_constructor_type(decl_idx, class);
             self.ctx.symbol_types.insert(sym_id, ctor_type);
-            let instance_type = self.get_class_instance_type(decl_idx, class);
-
-            self.ctx.symbol_instance_types.insert(sym_id, instance_type);
 
             let ctor_type = if flags & symbol_flags::FUNCTION != 0 {
                 self.merge_function_call_signatures_into_class(ctor_type, declarations)
