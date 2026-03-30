@@ -1256,24 +1256,10 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(class_error_idx, &full_message, diagnostic_code);
                     }
 
-                    // When implementing a CLASS (not interface) and there are
-                    // incompatible members, tsc emits TS2720 ("incorrectly
-                    // implements class — did you mean to extend?") instead of
-                    // per-property TS2416.
-                    if is_class && !incompatible_members.is_empty() {
-                        let message = format!(
-                            "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
-                        );
-                        self.error_at_node(
-                            class_error_idx,
-                            &message,
-                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
-                        );
-                    }
-
-                    // For interfaces (or when is_class is false), emit TS2416
-                    // per incompatible member.
-                    if !is_class {
+                    // TS2416 for incompatible member types in the implements
+                    // clause.  Emit per-property errors for both interfaces and
+                    // classes.
+                    {
                         for (class_member_idx, member_name, expected, actual) in
                             incompatible_members
                         {
