@@ -3613,7 +3613,7 @@ pub fn check_files_parallel(
 /// Pre-computed data shared across all file binders in a parallel check.
 ///
 /// These are computed ONCE from the program's files and shared via Arc,
-/// eliminating O(N_files^2) redundant iteration in `create_binder_from_bound_file`.
+/// eliminating `O(N_files^2)` redundant iteration in `create_binder_from_bound_file()`.
 pub struct SharedBinderData {
     /// Merged module augmentations from all files.
     pub merged_module_augmentations:
@@ -3831,7 +3831,7 @@ pub fn create_binder_from_bound_file(
 
 /// Create a `BinderState` from a `BoundFile` using pre-computed shared augmentation data.
 ///
-/// This avoids the O(N_files) augmentation merge per file by reusing data computed once
+/// This avoids the `O(N_files)` augmentation merge per file by reusing data computed once
 /// via `SharedBinderData::from_program`. For ts-toolbelt (242 files), this eliminates
 /// ~242 * 242 = 58,564 redundant augmentation iterations.
 pub fn create_binder_from_bound_file_with_shared(
