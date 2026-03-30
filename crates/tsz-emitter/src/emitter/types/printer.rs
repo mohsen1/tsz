@@ -955,7 +955,7 @@ impl<'a> TypePrinter<'a> {
 
                 // Property name (quote if needed)
                 let name = self.resolve_atom(property.name);
-                if needs_property_name_quoting(&name) {
+                if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
                     line.push_str(&quote_property_name(&name));
                 } else {
                     line.push_str(&name);
@@ -1065,7 +1065,7 @@ impl<'a> TypePrinter<'a> {
 
                 // Property name (quote if needed)
                 let name = self.resolve_atom(property.name);
-                if needs_property_name_quoting(&name) {
+                if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
                     member.push_str(&quote_property_name(&name));
                 } else {
                     member.push_str(&name);
@@ -2575,6 +2575,12 @@ fn quote_property_name(name: &str) -> String {
 /// Check if a property name needs quoting (contains spaces, hyphens, etc.)
 /// Does NOT quote: valid identifiers, numeric literals, computed names `[...]`
 fn needs_property_name_quoting(name: &str) -> bool {
+    needs_property_name_quoting_with_flag(name, false)
+}
+
+/// Check if a property name needs quoting, with an `is_string_named` flag
+/// for properties that were declared with a string key that looks numeric.
+fn needs_property_name_quoting_with_flag(name: &str, is_string_named: bool) -> bool {
     if name.is_empty() {
         return true;
     }
@@ -2582,9 +2588,9 @@ fn needs_property_name_quoting(name: &str) -> bool {
     if name.starts_with('[') && name.ends_with(']') {
         return false;
     }
-    // Pure numeric names don't need quoting (e.g. 0, 1, 404)
+    // Pure numeric names: quote if originally a string key, else emit bare
     if name.chars().all(|ch| ch.is_ascii_digit()) {
-        return false;
+        return is_string_named;
     }
     // `new` must be quoted because `new(...)` in a type literal is parsed
     // as a construct signature, not a method named "new".

@@ -142,6 +142,11 @@ pub struct DeclarationEmitter<'a> {
     /// re-emitted as a synthetic `declare class Root { method(): ... }`.
     pub(super) js_deferred_prototype_method_statements:
         FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    /// JS class-like heuristic: `let X; X.prototype.b = ...` → `declare class X { ... }`.
+    /// Maps variable name → list of (member_name_idx, initializer_idx).
+    pub(super) js_class_like_prototype_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    /// Expression statements consumed by the class-like prototype heuristic (skipped during emit).
+    pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
     /// JS `Clazz.method.prop = value` statements re-emitted as merged
     /// `namespace Clazz { function method(); namespace method { ... } }`.
     pub(super) js_static_method_augmentation_statements:
@@ -257,6 +262,8 @@ impl<'a> DeclarationEmitter<'a> {
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
+            js_class_like_prototype_members: FxHashMap::default(),
+            js_class_like_prototype_stmts: FxHashSet::default(),
             js_static_method_augmentation_statements: FxHashMap::default(),
             js_skipped_static_method_augmentation_statements: FxHashSet::default(),
             js_augmented_static_method_nodes: FxHashSet::default(),
@@ -335,6 +342,8 @@ impl<'a> DeclarationEmitter<'a> {
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
+            js_class_like_prototype_members: FxHashMap::default(),
+            js_class_like_prototype_stmts: FxHashSet::default(),
             js_static_method_augmentation_statements: FxHashMap::default(),
             js_skipped_static_method_augmentation_statements: FxHashSet::default(),
             js_augmented_static_method_nodes: FxHashSet::default(),
@@ -845,6 +854,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_deferred_prototype_method_statements =
             js_commonjs_expando_declarations.prototype_methods;
+        let js_class_like =
+            self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
+        self.js_class_like_prototype_members = js_class_like.members;
+        self.js_class_like_prototype_stmts = js_class_like.consumed_stmts;
         let js_static_method_augmentations =
             self.collect_js_class_static_method_augmentations(source_file);
         self.js_static_method_augmentation_statements = js_static_method_augmentations.statements;
@@ -1036,6 +1049,10 @@ impl<'a> DeclarationEmitter<'a> {
             .js_skipped_static_method_augmentation_statements
             .contains(&stmt_idx)
         {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self.js_class_like_prototype_stmts.contains(&stmt_idx) {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -3218,6 +3235,14 @@ impl<'a> DeclarationEmitter<'a> {
 
                 if regular_decls.len() == 1 {
                     let (is_exported, decl_idx, _decl_node, decl) = regular_decls[0];
+                    if self.emit_js_class_like_heuristic_if_needed(decl.name, is_exported) {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
                     if self.emit_js_object_literal_namespace_if_possible(
                         decl.name,
                         decl.initializer,
@@ -4638,7 +4663,103 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        // tsc only emits `typeof alias` when the alias target is a function, class,
+        // enum, or module — NOT when it targets a plain variable. For plain variables
+        // (e.g. `import b = a.x` where `x` is `var x = 10`), tsc resolves and emits
+        // the actual type (e.g. `number`).
+        if self.import_alias_targets_plain_variable(binder, sym) {
+            return None;
+        }
+
         Some(name.clone())
+    }
+
+    /// Check whether an import-equals alias resolves to a plain variable.
+    /// Returns `true` when the alias target's symbol has only VARIABLE flags
+    /// (not FUNCTION, CLASS, ENUM, or MODULE).
+    fn import_alias_targets_plain_variable(
+        &self,
+        binder: &BinderState,
+        alias_sym: &tsz_binder::Symbol,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        // Find the import-equals declaration to get the entity name reference.
+        let import_decl_idx = alias_sym.declarations.iter().copied().find(|&decl_idx| {
+            self.arena
+                .get(decl_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+        });
+        let import_decl_idx = match import_decl_idx {
+            Some(idx) => idx,
+            None => return false,
+        };
+        let import_node = match self.arena.get(import_decl_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        let import_data = match self.arena.get_import_decl(import_node) {
+            Some(d) => d,
+            None => return false,
+        };
+
+        // module_specifier is the entity name (e.g. `a.x` or just `a`).
+        // Resolve it to find the target symbol.
+        let target_sym_id =
+            self.resolve_entity_name_to_symbol(binder, import_data.module_specifier);
+        let target_sym_id = match target_sym_id {
+            Some(id) => id,
+            None => return false,
+        };
+        let target_sym = match binder.symbols.get(target_sym_id) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // A "plain variable" has VARIABLE flags but not FUNCTION, CLASS, ENUM, or MODULE.
+        let non_variable_value = symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::REGULAR_ENUM
+            | symbol_flags::CONST_ENUM
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE;
+        target_sym.flags & symbol_flags::VARIABLE != 0 && target_sym.flags & non_variable_value == 0
+    }
+
+    /// Resolve a qualified entity name (e.g. `a.x`) to its final symbol by walking
+    /// through namespace exports. For a simple identifier, resolve via scope chain.
+    fn resolve_entity_name_to_symbol(
+        &self,
+        binder: &BinderState,
+        entity_name: NodeIndex,
+    ) -> Option<SymbolId> {
+        let node = self.arena.get(entity_name)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            // Simple identifier — resolve via scope chain from the entity name's location.
+            let ident = self.arena.get_identifier(node)?;
+            let scope_id = binder.find_enclosing_scope(self.arena, entity_name)?;
+            self.resolve_name_in_scope_chain(binder, scope_id, &ident.escaped_text)
+        } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            // Qualified name (e.g. `a.x`) — resolve left side first, then look up right
+            // in the left symbol's exports.
+            let qn = self.arena.get_qualified_name(node)?;
+            let left_sym_id = self.resolve_entity_name_to_symbol(binder, qn.left)?;
+            let left_sym = binder.symbols.get(left_sym_id)?;
+            let right_node = self.arena.get(qn.right)?;
+            let right_ident = self.arena.get_identifier(right_node)?;
+            let right_name = &right_ident.escaped_text;
+
+            // Look up in exports table of the left symbol.
+            if let Some(exports) = &left_sym.exports {
+                if let Some(sym_id) = exports.get(right_name) {
+                    return Some(sym_id);
+                }
+            }
+            None
+        } else {
+            None
+        }
     }
 
     /// Walk the scope chain from `scope_id` upward, looking for a symbol with the given name.

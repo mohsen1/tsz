@@ -13,6 +13,7 @@ fn object_with_property(interner: &TypeInterner, name: &str) -> TypeId {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }])
 }
 
@@ -71,6 +72,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: interner.intern_string("#hidden"),
@@ -83,6 +85,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             visibility: Visibility::Private,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: interner.intern_string("secret"),
@@ -95,6 +98,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             visibility: Visibility::Protected,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 

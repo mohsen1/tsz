@@ -1126,6 +1126,7 @@ fn object_readonly_property() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let rw = i.object(vec![PropertyInfo::new(
         i.intern_string("x"),

@@ -1523,6 +1523,7 @@ fn test_object_property_does_not_contaminate_method_type_param() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 

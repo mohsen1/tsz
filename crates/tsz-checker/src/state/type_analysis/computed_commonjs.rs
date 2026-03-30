@@ -215,6 +215,7 @@ impl<'a> CheckerState<'a> {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: declaration_order as u32,
+                        is_string_named: false,
                     });
                 }
                 factory.object(props)
@@ -270,6 +271,7 @@ impl<'a> CheckerState<'a> {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }]);
         self.ctx.namespace_module_names.insert(
             namespace_type,
@@ -374,6 +376,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: props.len() as u32,
+                is_string_named: false,
             });
         }
 
@@ -1037,6 +1040,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: properties.len() as u32,
+                    is_string_named: false,
                 },
             );
             changed = true;
@@ -1151,6 +1155,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: property_count as u32,
+                    is_string_named: false,
                 },
             );
             property_count += 1;
@@ -1613,6 +1618,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order,
+                is_string_named: false,
             });
         }
 
@@ -1647,6 +1653,7 @@ impl<'a> CheckerState<'a> {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order,
+            is_string_named: false,
         })
     }
 
@@ -2003,6 +2010,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: props.len() as u32,
+                is_string_named: false,
             });
         }
     }
@@ -2266,6 +2274,7 @@ impl<'a> CheckerState<'a> {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: props.len() as u32,
+                        is_string_named: false,
                     });
                 }
                 props
@@ -2291,6 +2300,7 @@ impl<'a> CheckerState<'a> {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: 0,
+                        is_string_named: false,
                     });
                 }
             }

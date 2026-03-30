@@ -93,6 +93,7 @@ impl JsExportSurface {
             visibility: existing.visibility,
             parent_id: existing.parent_id.or(overlay.parent_id),
             declaration_order: existing.declaration_order.min(overlay.declaration_order),
+            is_string_named: false,
         }
     }
 
@@ -707,6 +708,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: idx as u32,
+                    is_string_named: false,
                 });
             }
         }

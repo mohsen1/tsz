@@ -1457,6 +1457,7 @@ impl<'a> CheckerState<'a> {
                 visibility: tsz_common::Visibility::Public,
                 parent_id: None,
                 declaration_order: props.len() as u32,
+                is_string_named: false,
             });
         }
 

@@ -76,6 +76,7 @@ impl<'a> CheckerState<'a> {
                         visibility: tsz_solver::Visibility::Public,
                         parent_id: Some(parent_sym),
                         declaration_order: 0,
+                        is_string_named: false,
                     },
                 ));
                 continue;
@@ -110,6 +111,7 @@ impl<'a> CheckerState<'a> {
                     visibility: tsz_solver::Visibility::Public,
                     parent_id: Some(parent_sym),
                     declaration_order: 0,
+                    is_string_named: false,
                 },
             ));
         }
@@ -383,6 +385,7 @@ impl<'a> CheckerState<'a> {
                         visibility: tsz_solver::Visibility::Public,
                         parent_id: Some(parent_sym),
                         declaration_order: 0,
+                        is_string_named: false,
                     },
                 ));
             }

@@ -24,6 +24,7 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let dog = interner.object(vec![
@@ -38,6 +39,7 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ]);
@@ -498,6 +500,7 @@ fn test_method_bivariance_even_strict() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -511,6 +514,7 @@ fn test_method_bivariance_even_strict() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -556,6 +560,7 @@ fn test_function_property_stays_strict() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -569,6 +574,7 @@ fn test_function_property_stays_strict() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -1680,6 +1686,7 @@ fn test_object_keyword_accepts_non_primitives() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     assert!(checker.is_assignable(obj, TypeId::OBJECT));
 
@@ -1764,6 +1771,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -1777,6 +1785,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -1799,6 +1808,7 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -1812,6 +1822,7 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -1886,6 +1897,7 @@ fn test_function_type_rejects_non_callables() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     assert!(!checker.is_assignable(obj, function_top));
 }
@@ -2382,6 +2394,7 @@ fn test_optional_property_allows_undefined() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -2394,6 +2407,7 @@ fn test_optional_property_allows_undefined() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -2416,6 +2430,7 @@ fn test_optional_property_rejects_required_target() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -2428,6 +2443,7 @@ fn test_optional_property_rejects_required_target() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -2450,6 +2466,7 @@ fn test_optional_property_rejects_string_index_signature() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object_with_index(ObjectShape {
@@ -2489,6 +2506,7 @@ fn test_exact_optional_property_rejects_undefined() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -2501,6 +2519,7 @@ fn test_exact_optional_property_rejects_undefined() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -2524,6 +2543,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let target = interner.object_with_index(ObjectShape {
@@ -3064,6 +3084,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let union = interner.union(vec![weak_type, non_weak_type]);
@@ -3080,6 +3101,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Should be accepted since source matches the non-weak member
@@ -3454,6 +3476,7 @@ fn test_void_return_exception_constructors() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // new () => Instance
@@ -3476,6 +3499,7 @@ fn test_void_return_exception_constructors() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Constructor returning instance IS assignable to void-returning constructor
@@ -3523,6 +3547,7 @@ fn test_method_bivariance_allows_derived_methods() {
         readonly: false,
         is_method: true,
         is_class_prototype: false,
+        is_string_named: false,
     }]);
 
     // class Derived extends Base { x: string; y: number; compare(other: Derived): void }
@@ -3550,6 +3575,7 @@ fn test_method_bivariance_allows_derived_methods() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // With method bivariance (default), derived method with narrower parameter is assignable
@@ -3595,6 +3621,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         readonly: false,
         is_method: true,
         is_class_prototype: false,
+        is_string_named: false,
     }]);
 
     // Derived type with method
@@ -3622,6 +3649,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Methods are still bivariant even with strictFunctionTypes
@@ -3682,6 +3710,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let obj_with_animal_method = interner.object(vec![PropertyInfo {
@@ -3695,6 +3724,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Methods are bivariant even with strictFunctionTypes
@@ -3981,6 +4011,7 @@ fn test_union_intersection_distributivity_basic() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo::new(age, TypeId::NUMBER)]);
@@ -3996,6 +4027,7 @@ fn test_union_intersection_distributivity_basic() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // (A | B) & C
@@ -4031,6 +4063,7 @@ fn test_intersection_union_distributivity() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo::new(age, TypeId::NUMBER)]);
@@ -4046,6 +4079,7 @@ fn test_intersection_union_distributivity() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // A & (B | C)
@@ -4195,6 +4229,7 @@ fn test_strict_function_types_affects_methods_independently() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Dog: { name: string, breed: string } - Dog is subtype of Animal
@@ -4211,6 +4246,7 @@ fn test_strict_function_types_affects_methods_independently() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ]);
@@ -4318,6 +4354,7 @@ fn test_keyof_union_contravariance() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Type B: { age: number }
@@ -4348,6 +4385,7 @@ fn test_keyof_union_contravariance() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     };
     // Type C: { name: string, x: number }
     let type_c = interner.object(vec![
@@ -4394,6 +4432,7 @@ fn test_keyof_intersection_distributivity() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Type B: { name: string, age: number }
@@ -4409,6 +4448,7 @@ fn test_keyof_intersection_distributivity() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
     ]);
@@ -4455,6 +4495,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
     ]);
@@ -4473,6 +4514,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::new(email, TypeId::STRING),
     ]);
@@ -4543,6 +4585,7 @@ fn test_best_common_type_with_supertype() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Type Dog: { name: string, breed: string }
@@ -4559,6 +4602,7 @@ fn test_best_common_type_with_supertype() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ]);
@@ -4708,6 +4752,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let target = interner.object(vec![
         PropertyInfo::new(brand, TypeId::NEVER),
@@ -4722,6 +4767,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 
@@ -4751,6 +4797,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
     let target = interner.object(vec![PropertyInfo {
@@ -4764,6 +4811,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // A class can implement an interface (source with brand -> target without brand)
@@ -4789,6 +4837,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -4801,6 +4850,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Structural check passes

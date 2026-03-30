@@ -511,6 +511,7 @@ impl CheckerState<'_> {
                     visibility: Visibility::Public,
                     parent_id: parent_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 },
             );
         }
@@ -858,6 +859,7 @@ impl CheckerState<'_> {
                         visibility,
                         parent_id: class_sym,
                         declaration_order: 0,
+                        is_string_named: false,
                     });
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -903,6 +905,7 @@ impl CheckerState<'_> {
                             visibility,
                             parent_id: class_sym,
                             declaration_order: 0,
+                            is_string_named: false,
                         });
                     }
                 }

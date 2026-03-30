@@ -55,6 +55,7 @@ fn test_definition_store_interface() {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             },
             PropertyInfo {
                 name: y_name,
@@ -67,6 +68,7 @@ fn test_definition_store_interface() {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             },
         ],
     );
@@ -494,6 +496,7 @@ fn test_find_def_by_shape_via_register() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: y_name,
@@ -506,6 +509,7 @@ fn test_find_def_by_shape_via_register() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ];
 
@@ -591,6 +595,7 @@ fn test_find_def_by_shape_via_set_instance_shape() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }],
         string_index: None,
         number_index: None,

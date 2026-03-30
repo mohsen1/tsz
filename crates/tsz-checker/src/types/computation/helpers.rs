@@ -1425,6 +1425,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: 0,
+                    is_string_named: false,
                 };
                 return factory.object(vec![prop]);
             }
@@ -1445,6 +1446,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             };
             return factory.object(vec![prop]);
         }

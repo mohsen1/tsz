@@ -900,6 +900,7 @@ mod lawyer_strict_mode_tests {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }])
     }
 
@@ -2498,6 +2499,7 @@ mod homomorphic_mapped_type_tests {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             },
             PropertyInfo {
                 name: key_b,
@@ -2510,6 +2512,7 @@ mod homomorphic_mapped_type_tests {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             },
         ]);
 

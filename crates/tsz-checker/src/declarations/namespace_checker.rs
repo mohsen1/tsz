@@ -256,6 +256,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: 0,
+                    is_string_named: false,
                 },
             );
         }
@@ -313,6 +314,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             });
         }
         self.ctx.symbol_resolution_depth.set(depth);
@@ -746,6 +748,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             });
         }
 

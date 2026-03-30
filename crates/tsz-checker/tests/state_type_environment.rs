@@ -349,6 +349,7 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
         PropertyInfo {
             name: b_name,
@@ -361,6 +362,7 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         },
     ]);
 

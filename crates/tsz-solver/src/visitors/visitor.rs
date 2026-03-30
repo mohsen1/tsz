@@ -1186,6 +1186,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
                         declaration_order: 0,
+                        is_string_named: prop.is_string_named,
                     });
                 }
 
@@ -1211,6 +1212,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
                         declaration_order: 0,
+                        is_string_named: prop.is_string_named,
                     });
                 }
 

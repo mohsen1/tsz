@@ -744,6 +744,14 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
+                    // Determine if this property was declared with a string key
+                    // that looks numeric (e.g. "404" vs 404). This affects DTS
+                    // emit quoting: `"404": ...` vs `404: ...`.
+                    let is_string_named =
+                        crate::types_domain::queries::core::is_string_property_name_node(
+                            self.ctx.arena,
+                            prop.name,
+                        ) || self.is_computed_string_property_name(prop.name);
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -757,6 +765,7 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: order,
+                            is_string_named,
                         },
                     );
                 } else {
@@ -1137,6 +1146,7 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: order,
+                            is_string_named: false,
                         },
                     );
                 } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
@@ -1423,6 +1433,7 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: order,
+                            is_string_named: false,
                         },
                     );
                 } else {
@@ -1617,6 +1628,7 @@ impl<'a> CheckerState<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
+                                is_string_named: false,
                             });
                         }
                         self.ctx
@@ -1793,6 +1805,7 @@ impl<'a> CheckerState<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: existing_order,
+                                is_string_named: false,
                             },
                         );
                     } else {
@@ -1819,6 +1832,7 @@ impl<'a> CheckerState<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: order,
+                                is_string_named: false,
                             },
                         );
                     }

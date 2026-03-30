@@ -1506,6 +1506,7 @@ impl<'a> CheckerState<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
+                                    is_string_named: false,
                                 });
                             }
                             props
@@ -1530,6 +1531,7 @@ impl<'a> CheckerState<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
+                                    is_string_named: false,
                                 });
                             }
                         }
@@ -1788,6 +1790,7 @@ impl<'a> CheckerState<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
+                                    is_string_named: false,
                                 });
                             }
                             props
@@ -1815,6 +1818,7 @@ impl<'a> CheckerState<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
+                                    is_string_named: false,
                                 });
                             }
                         }
@@ -1843,6 +1847,7 @@ impl<'a> CheckerState<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
+                                    is_string_named: false,
                                 });
                             }
                         }
@@ -1867,6 +1872,7 @@ impl<'a> CheckerState<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
+                                    is_string_named: false,
                                 });
                             }
                         }
@@ -2117,6 +2123,7 @@ impl<'a> CheckerState<'a> {
                                         visibility: Visibility::Public,
                                         parent_id: None,
                                         declaration_order: 0,
+                                        is_string_named: false,
                                     });
                                 }
                                 let module_type = factory.object(props);

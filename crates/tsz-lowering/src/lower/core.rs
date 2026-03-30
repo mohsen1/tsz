@@ -184,6 +184,7 @@ impl InterfaceParts {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: order,
+                        is_string_named: false,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -200,6 +201,7 @@ impl InterfaceParts {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: order,
+                        is_string_named: false,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -247,6 +249,7 @@ impl InterfaceParts {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: order,
+                        is_string_named: false,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -1466,6 +1469,7 @@ impl<'a> TypeLowering<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
+                                    is_string_named: false,
                                 });
                             }
                         }
@@ -1512,6 +1516,7 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
+                                is_string_named: false,
                             });
                         }
                     } else {
@@ -1539,6 +1544,7 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
+                                is_string_named: false,
                             });
                         }
                     }
@@ -1879,6 +1885,7 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: order,
+                                is_string_named: false,
                             }));
                         }
                     }
@@ -1914,6 +1921,7 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: order,
+                                is_string_named: false,
                             }));
                         }
                     }
@@ -2017,6 +2025,7 @@ impl<'a> TypeLowering<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: forward_order.unwrap_or(methods.declaration_order),
+                    is_string_named: false,
                 });
             } else if let PropertyMerge::Property(mut prop) = entry {
                 if let Some(order) = forward_order {
@@ -2233,6 +2242,7 @@ impl<'a> TypeLowering<'a> {
                 visibility,
                 parent_id: None, // Type literals don't have parent_id
                 declaration_order: 0,
+                is_string_named: false,
             })
         } else {
             None

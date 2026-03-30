@@ -432,6 +432,7 @@ fn test_classify_element_indexable_preserves_union_members() {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        is_string_named: false,
     }]);
 
     // Member 2: object with string index { [s: string]: number }
@@ -495,6 +496,7 @@ fn test_object_with_string_props_assignable_to_dual_index_target() {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }],
         string_index: None,
         number_index: None,

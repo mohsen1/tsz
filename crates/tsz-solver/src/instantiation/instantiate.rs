@@ -302,6 +302,7 @@ impl<'a> TypeInstantiator<'a> {
                 visibility: p.visibility,
                 parent_id: p.parent_id,
                 declaration_order: p.declaration_order,
+                is_string_named: p.is_string_named,
             })
             .collect()
     }

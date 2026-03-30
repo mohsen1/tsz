@@ -264,6 +264,7 @@ impl<'a> CheckerState<'a> {
                             visibility,
                             parent_id: current_sym,
                             declaration_order: 0,
+                            is_string_named: false,
                         });
                     }
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -323,6 +324,7 @@ impl<'a> CheckerState<'a> {
                             visibility,
                             parent_id: current_sym,
                             declaration_order: 0,
+                            is_string_named: false,
                         });
                     }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -364,6 +366,7 @@ impl<'a> CheckerState<'a> {
                                 visibility,
                                 parent_id: current_sym,
                                 declaration_order: 0,
+                                is_string_named: false,
                             });
                         }
                     }
@@ -479,6 +482,7 @@ impl<'a> CheckerState<'a> {
                             visibility,
                             parent_id: current_sym,
                             declaration_order: 0,
+                            is_string_named: false,
                         };
                         let mut partial_props: Vec<PropertyInfo> =
                             properties.values().cloned().collect();
@@ -578,6 +582,7 @@ impl<'a> CheckerState<'a> {
                             visibility,
                             parent_id: current_sym,
                             declaration_order: 0,
+                            is_string_named: false,
                         },
                     );
                 }
@@ -697,6 +702,7 @@ impl<'a> CheckerState<'a> {
                                 visibility,
                                 parent_id: current_sym,
                                 declaration_order: 0,
+                                is_string_named: false,
                             },
                         );
                     }
@@ -891,6 +897,7 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: current_sym,
                             declaration_order: 0,
+                            is_string_named: false,
                         });
                     }
                 }
@@ -908,6 +915,7 @@ impl<'a> CheckerState<'a> {
                         visibility: deferred.visibility,
                         parent_id: current_sym,
                         declaration_order: 0,
+                        is_string_named: false,
                     });
                 }
             }
@@ -1034,6 +1042,7 @@ impl<'a> CheckerState<'a> {
                     visibility: method.visibility,
                     parent_id: current_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 });
             }
             let partial_type = factory.object_with_index(ObjectShape {
@@ -1158,6 +1167,7 @@ impl<'a> CheckerState<'a> {
                     visibility: accessor.visibility,
                     parent_id: current_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 },
             );
         }
@@ -1200,6 +1210,7 @@ impl<'a> CheckerState<'a> {
                     visibility: method.visibility,
                     parent_id: current_sym,
                     declaration_order: 0,
+                    is_string_named: false,
                 },
             );
         }
@@ -1223,6 +1234,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                is_string_named: false,
             });
         }
 

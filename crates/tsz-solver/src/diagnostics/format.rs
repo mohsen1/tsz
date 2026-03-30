@@ -1946,6 +1946,7 @@ mod tests {
             visibility: crate::types::Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         };
         let obj = db.object(vec![prop]);
         let mut fmt = TypeFormatter::new(&db);
@@ -3630,6 +3631,7 @@ mod tests {
             visibility: crate::types::Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }]);
         let result = fmt.format(obj);
         assert_eq!(
@@ -3656,6 +3658,7 @@ mod tests {
             visibility: crate::types::Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }]);
         let result = fmt.format(obj);
         assert_eq!(
@@ -3682,6 +3685,7 @@ mod tests {
             visibility: crate::types::Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            is_string_named: false,
         }]);
         let result = fmt.format(obj);
         assert_eq!(
