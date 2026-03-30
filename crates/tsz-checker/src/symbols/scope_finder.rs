@@ -622,6 +622,12 @@ impl<'a> CheckerState<'a> {
             if callee_type == TypeId::ERROR {
                 break;
             }
+            tracing::trace!(
+                ?callee_type,
+                arg_index,
+                arg_count = args.nodes.len(),
+                "checking callee for contextual this"
+            );
 
             let param_type = self
                 .contextual_parameter_type_for_call_with_env_from_expected(
@@ -652,6 +658,40 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
             }
+
+            // Fallback: directly check if any call signature of the callee has a
+            // parameter at this position whose type provides a `this` type.
+            // This catches overloaded methods like `filter<TContext>(fn: (this: TContext, ...) => ..., context: TContext)`
+            // where the contextual parameter type chain may not fully resolve the callback type.
+            if let Some(sigs) =
+                tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type)
+            {
+                for sig in &sigs {
+                    let sig_arity = sig.params.len();
+                    if args.nodes.len() > sig_arity {
+                        continue;
+                    }
+                    if let Some(param) = sig.params.get(arg_index) {
+                        // Resolve the parameter type through type environment
+                        // (handles type alias applications like FilterFn<TContext>)
+                        let resolved = self.evaluate_type_with_env(param.type_id);
+                        let param_ctx = tsz_solver::ContextualTypeContext::with_expected(
+                            self.ctx.types,
+                            resolved,
+                        );
+                        if param_ctx.get_this_type().is_some() {
+                            return true;
+                        }
+                        // Check if the resolved type is a function with a this_type
+                        if tsz_solver::type_queries::get_function_shape(self.ctx.types, resolved)
+                            .is_some_and(|shape| shape.this_type.is_some())
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
             break;
         }
 
