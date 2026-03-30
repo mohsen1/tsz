@@ -409,7 +409,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.emit_node(elem.name);
                             }
                         }
-                        self.write(" }");
+                        if pattern.elements.has_trailing_comma {
+                            self.write(", }");
+                        } else {
+                            self.write(" }");
+                        }
                     }
                 }
             }
