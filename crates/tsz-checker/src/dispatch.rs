@@ -173,26 +173,30 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             idx,
                                             diagnostic_messages::CANNOT_USE_THIS_IN_A_STATIC_PROPERTY_INITIALIZER_OF_A_DECORATED_CLASS,
                                             diagnostic_codes::CANNOT_USE_THIS_IN_A_STATIC_PROPERTY_INITIALIZER_OF_A_DECORATED_CLASS,
-                                        );
+                            );
                         }
                     }
                 }
                 if let Some(this_type) = self.checker.current_this_type() {
-                    // If `this` is inside a nested regular function, the this_type_stack
-                    // from the enclosing class member doesn't apply — the function creates
-                    // its own `this` binding.
-                    if !self.checker.is_this_in_nested_function_inside_class(idx) {
+                    // A nested regular function creates its own `this` binding.
+                    // Ignore any outer contextual/class `this` unless the
+                    // function itself owns that binding.
+                    if !self
+                        .checker
+                        .is_this_in_nested_function_without_own_this_binding(idx)
+                    {
                         return self.checker.apply_flow_narrowing(idx, this_type);
                     }
                     // Fall through — the nested function has its own `this`
                 }
+                let has_intermediate_function = self
+                    .checker
+                    .is_this_in_nested_function_without_own_this_binding(idx);
                 if let Some(ref class_info) = self.checker.ctx.enclosing_class {
                     // Inside a class but no explicit this type on stack -
                     // return the class instance/constructor type depending on static context.
                     // BUT: if `this` is inside a nested regular function (not a class member),
                     // that function creates its own `this` binding, so don't use the class type.
-                    let has_intermediate_function =
-                        self.checker.is_this_in_nested_function_inside_class(idx);
                     // Walk the AST to determine static context — can't rely on
                     // in_static_member flag since it's only set during check_class_member.
                     let is_in_static = self.checker.is_this_in_static_class_member(idx);
@@ -231,9 +235,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         }
                         TypeId::ANY
                     }
-                } else if self.checker.this_has_contextual_owner(idx).is_some() {
+                } else if self.checker.this_has_contextual_owner(idx).is_some()
+                    && !self
+                        .checker
+                        .is_this_in_nested_function_without_own_this_binding(idx)
+                {
                     // `this` in a class or object literal member but enclosing_class
                     // not yet set. Suppress TS2683 - `this` is contextually typed.
+                    TypeId::ANY
+                } else if self.checker.ctx.no_implicit_this()
+                    && !self.checker.is_js_file()
+                    && self.checker.is_this_in_global_capturing_arrow(idx)
+                {
+                    // TS7041: `this` in an arrow chain with no enclosing
+                    // function/class/object `this` binder captures globalThis.
+                    // Prefer this over the generic TS2683 path.
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
+                        diagnostic_codes::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
+                    );
                     TypeId::ANY
                 } else if self.checker.ctx.no_implicit_this()
                     && !self.checker.is_js_file()
@@ -264,20 +286,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         );
                         TypeId::ANY
                     }
-                } else if self.checker.ctx.no_implicit_this()
-                    && !self.checker.is_js_file()
-                    && self.checker.is_this_in_global_capturing_arrow(idx)
-                {
-                    // TS7041: 'this' in a top-level arrow function captures globalThis.
-                    // Fires when noImplicitThis is on, `this` is inside an arrow function,
-                    // and there is no enclosing class/object/function providing local `this`.
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.checker.error_at_node(
-                        idx,
-                        diagnostic_messages::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
-                        diagnostic_codes::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
-                    );
-                    TypeId::ANY
                 } else if self.checker.ctx.no_implicit_this()
                     && !self.checker.is_js_file()
                     && self

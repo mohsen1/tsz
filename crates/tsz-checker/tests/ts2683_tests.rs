@@ -280,3 +280,31 @@ class C {
 
     assert!(has_error(src, 2683));
 }
+
+#[test]
+fn nested_regular_function_inside_contextual_object_method_emits_ts2683() {
+    let src = r#"
+interface Options<Context, Data> {
+    context: Context;
+    produce(this: Context): Data;
+}
+
+declare function defineOptions<Context, Data>(options: Options<Context, Data>): [Context, Data];
+
+defineOptions({
+    context: { value: 5 },
+    produce() {
+        function inner() {
+            return this;
+        }
+        return inner();
+    },
+});
+"#;
+
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected TS2683, got diagnostics: {diags:?}"
+    );
+}

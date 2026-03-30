@@ -4,6 +4,7 @@ use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Scope Finding Methods
@@ -234,6 +235,83 @@ impl<'a> CheckerState<'a> {
         fn_node.kind == FUNCTION_EXPRESSION || fn_node.kind == FUNCTION_DECLARATION
     }
 
+    /// Returns true when the nearest non-arrow function is a regular function
+    /// that creates its own `this` binding, but does not define what that
+    /// binding should be.
+    ///
+    /// This lets callers ignore an outer contextual/class `this` while still
+    /// respecting regular functions that *do* own their `this` through an
+    /// explicit `this` parameter, contextual `this`, or object-literal receiver
+    /// semantics.
+    pub(crate) fn is_this_in_nested_function_without_own_this_binding(
+        &mut self,
+        idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_DECLARATION, FUNCTION_EXPRESSION};
+
+        let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
+            Some(f) => f,
+            None => return false,
+        };
+        let Some(fn_node) = self.ctx.arena.get(enclosing_fn) else {
+            return false;
+        };
+
+        if fn_node.kind != FUNCTION_EXPRESSION && fn_node.kind != FUNCTION_DECLARATION {
+            return false;
+        }
+
+        if fn_node.kind == FUNCTION_DECLARATION {
+            // Function declarations always create a fresh `this` binding and are
+            // never contextually typed by an object-literal receiver. Only an
+            // explicit `this` parameter or JS receiver inference should suppress
+            // TS2683 for the inner declaration.
+            if self.enclosing_function_has_explicit_this_parameter(idx) {
+                return false;
+            }
+            return !self.is_js_file();
+        }
+
+        if self.this_has_contextual_owner(idx).is_some()
+            || self.enclosing_function_has_explicit_this_parameter(idx)
+            || self.enclosing_function_has_contextual_this_type(idx)
+        {
+            return false;
+        }
+
+        if fn_node.kind == FUNCTION_EXPRESSION {
+            let mut current = enclosing_fn;
+            for _ in 0..3 {
+                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                    break;
+                };
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    break;
+                };
+                if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                    current = parent;
+                    continue;
+                }
+                if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                    && binary.right == current
+                    && self.is_assignment_operator(binary.operator_token)
+                {
+                    return false;
+                }
+                break;
+            }
+        }
+
+        // JS constructor/prototype receiver inference also owns the function's
+        // `this`, even though it is not modelled as an explicit parameter.
+        if self.is_js_file() {
+            return false;
+        }
+
+        true
+    }
+
     /// Find the nearest enclosing class declaration/expression by walking parents.
     pub(crate) fn nearest_enclosing_class(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
@@ -460,7 +538,11 @@ impl<'a> CheckerState<'a> {
     /// the `this` type is contextually provided. TS2683 should be suppressed because
     /// the contextual typing pass will properly type `this`.
     pub(crate) fn enclosing_function_has_contextual_this_type(&mut self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
+        use crate::call_checker::CallableContext;
+        use tsz_parser::parser::syntax_kind_ext::{
+            CALL_EXPRESSION, FUNCTION_EXPRESSION, NEW_EXPRESSION, PARENTHESIZED_EXPRESSION,
+            VARIABLE_DECLARATION,
+        };
 
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
             Some(f) => f,
@@ -503,6 +585,74 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Function expressions used as call/new arguments can receive a contextual
+        // `this` type from the parameter signature, e.g. `$.each(xs, function() {})`.
+        let mut current = enclosing_fn;
+        for _ in 0..3 {
+            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                break;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            if parent_node.kind == PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+
+            let call = if parent_node.kind == CALL_EXPRESSION || parent_node.kind == NEW_EXPRESSION {
+                let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
+                    break;
+                };
+                call
+            } else {
+                break;
+            };
+            let Some(args) = call.arguments.as_ref() else {
+                break;
+            };
+
+            let Some(arg_index) = args.nodes.iter().position(|&arg| arg == current) else {
+                break;
+            };
+
+            let callee_type = self.get_type_of_node(call.expression);
+            if callee_type == TypeId::ERROR {
+                break;
+            }
+
+            let param_type = self
+                .contextual_parameter_type_for_call_with_env_from_expected(
+                    callee_type,
+                    arg_index,
+                    args.nodes.len(),
+                )
+                .or_else(|| {
+                    let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+                        self.ctx.types,
+                        callee_type,
+                        self.ctx.compiler_options.no_implicit_any,
+                    );
+                    helper.get_parameter_type_for_call(arg_index, args.nodes.len())
+                });
+
+            let expected = self.contextual_type_option_for_call_argument_at(
+                param_type,
+                enclosing_fn,
+                Some(arg_index),
+                Some(args.nodes.len()),
+                CallableContext::new(callee_type),
+            );
+            if let Some(expected) = expected {
+                let ctx =
+                    tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, expected);
+                if ctx.get_this_type().is_some() {
+                    return true;
+                }
+            }
+            break;
+        }
+
         if self.is_js_file()
             && let Some(jsdoc_callable_type) =
                 self.jsdoc_callable_type_annotation_for_function(enclosing_fn)
@@ -539,8 +689,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_this_in_global_capturing_arrow(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, FUNCTION_DECLARATION,
-            FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION,
-            SET_ACCESSOR,
+            FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION, SET_ACCESSOR,
         };
         let mut found_arrow = false;
         let mut current = idx;
@@ -562,8 +711,7 @@ impl<'a> CheckerState<'a> {
                         || k == GET_ACCESSOR
                         || k == SET_ACCESSOR
                         || k == CLASS_DECLARATION
-                        || k == CLASS_EXPRESSION
-                        || k == OBJECT_LITERAL_EXPRESSION =>
+                        || k == CLASS_EXPRESSION =>
                     {
                         // Any of these provide a local `this` binding — not global capture
                         return false;
@@ -790,38 +938,48 @@ impl<'a> CheckerState<'a> {
             CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, FUNCTION_EXPRESSION, GET_ACCESSOR,
             METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION, PROPERTY_ASSIGNMENT, SET_ACCESSOR,
         };
-        let enclosing_fn = self.find_enclosing_non_arrow_function(idx)?;
-        let fn_node = self.ctx.arena.get(enclosing_fn)?;
-
-        // Direct class/object literal members: getter, setter, method, constructor
-        if fn_node.kind == GET_ACCESSOR
-            || fn_node.kind == SET_ACCESSOR
-            || fn_node.kind == METHOD_DECLARATION
-            || fn_node.kind == CONSTRUCTOR
-        {
-            let parent = self.ctx.arena.get_extended(enclosing_fn)?.parent;
-            let parent_node = self.ctx.arena.get(parent)?;
-            if parent_node.kind == CLASS_DECLARATION
-                || parent_node.kind == CLASS_EXPRESSION
-                || parent_node.kind == OBJECT_LITERAL_EXPRESSION
-            {
-                return Some(parent);
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
             }
-        }
 
-        // Function expression as value of an object literal property:
-        //   { foo: function() { this; } }
-        // Chain: FUNCTION_EXPRESSION → PROPERTY_ASSIGNMENT → OBJECT_LITERAL_EXPRESSION
-        if fn_node.kind == FUNCTION_EXPRESSION {
-            let parent = self.ctx.arena.get_extended(enclosing_fn)?.parent;
-            let parent_node = self.ctx.arena.get(parent)?;
-            if parent_node.kind == PROPERTY_ASSIGNMENT {
-                let grandparent = self.ctx.arena.get_extended(parent)?.parent;
-                let gp_node = self.ctx.arena.get(grandparent)?;
-                if gp_node.kind == OBJECT_LITERAL_EXPRESSION {
-                    return Some(grandparent);
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                k if k == GET_ACCESSOR
+                    || k == SET_ACCESSOR
+                    || k == METHOD_DECLARATION
+                    || k == CONSTRUCTOR =>
+                {
+                    let parent = self.ctx.arena.get_extended(current)?.parent;
+                    let parent_node = self.ctx.arena.get(parent)?;
+                    if parent_node.kind == CLASS_DECLARATION
+                        || parent_node.kind == CLASS_EXPRESSION
+                        || parent_node.kind == OBJECT_LITERAL_EXPRESSION
+                    {
+                        return Some(parent);
+                    }
+                    return None;
                 }
+                k if k == FUNCTION_EXPRESSION => {
+                    let parent = self.ctx.arena.get_extended(current)?.parent;
+                    let parent_node = self.ctx.arena.get(parent)?;
+                    if parent_node.kind == PROPERTY_ASSIGNMENT {
+                        let grandparent = self.ctx.arena.get_extended(parent)?.parent;
+                        let gp_node = self.ctx.arena.get(grandparent)?;
+                        if gp_node.kind == OBJECT_LITERAL_EXPRESSION {
+                            return Some(grandparent);
+                        }
+                    }
+                    return None;
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => return None,
+                _ => {}
             }
+
+            current = self.ctx.arena.get_extended(current)?.parent;
         }
 
         None
