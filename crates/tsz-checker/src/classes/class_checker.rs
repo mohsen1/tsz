@@ -514,6 +514,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // tsc does not suggest for very short names (≤ 3 chars) because the
+        // edit distance threshold is too loose to produce meaningful matches.
+        if name_len <= 3 {
+            return None;
+        }
+
         let maximum_length_difference = if name_len * 34 / 100 > 2 {
             name_len * 34 / 100
         } else {
@@ -1384,15 +1390,21 @@ impl<'a> CheckerState<'a> {
                     } else {
                         &base_instance_member_names
                     };
-                    if !is_jsdoc_override
-                        && let Some(suggestion) =
-                            self.find_override_name_suggestion(suggestion_names, &member_name)
+                    if let Some(suggestion) =
+                        self.find_override_name_suggestion(suggestion_names, &member_name)
                     {
                         // TS4117 (keyword) or TS4123 (JSDoc): "Did you mean ...?"
-                        let (msg, code) = (
-                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
-                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
-                        );
+                        let (msg, code) = if is_jsdoc_override {
+                            (
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D_2,
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D_2,
+                            )
+                        } else {
+                            (
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                            )
+                        };
                         self.error_at_node(
                             member_name_idx,
                             &crate::diagnostics::format_message(

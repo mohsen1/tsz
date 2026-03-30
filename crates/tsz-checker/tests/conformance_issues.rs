@@ -2087,6 +2087,43 @@ class C {
 }
 
 #[test]
+fn test_jsdoc_override_tag_did_you_mean_emits_ts4123() {
+    // When a JSDoc @override member has a close spelling match in the base class,
+    // tsc emits TS4123 ("Did you mean 'X'?") instead of TS4122 (no suggestion).
+    // This only fires for names longer than 3 characters.
+    let source = r#"
+class A {
+    doSomething() {}
+}
+
+class B extends A {
+    /** @override  */
+    doSomethang() {}
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_override: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 4123),
+        "Expected TS4123 for JSDoc @override typo with suggestion. Diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 4122),
+        "Should emit TS4123 (with suggestion), not TS4122 (without). Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_template_brace_form_reports_ts1069_and_ts2304() {
     let source = r#"
 /** @template {T} */
