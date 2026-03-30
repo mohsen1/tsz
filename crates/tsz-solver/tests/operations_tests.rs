@@ -10784,3 +10784,115 @@ fn test_call_generic_intersection_param_inference() {
         ),
     }
 }
+
+/// Tests that the trivial single-type-param fast path preserves literal types
+/// when a contextual return type contains those literals.
+///
+/// Reproduces: `let v: 'A' | 'B' = identity('A')` where `identity<T>(x: T): T`.
+/// Without the fix, `T` is inferred as `string` (widened from `"A"`), causing
+/// a spurious TS2322. With the fix, the contextual type `'A' | 'B'` prevents
+/// widening, keeping `T = "A"`.
+#[test]
+fn test_trivial_identity_preserves_literal_with_contextual_type() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // type DooDad = 'SOMETHING' | 'ELSE'
+    let lit_something = interner.literal_string("SOMETHING");
+    let lit_else = interner.literal_string("ELSE");
+    let doodad = interner.union(vec![lit_something, lit_else]);
+
+    // declare function identity<T>(x: T): T
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param.clone());
+    let identity = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call identity("ELSE") with contextual type DooDad
+    evaluator.set_contextual_type(Some(doodad));
+    let result = evaluator.resolve_call(identity, &[lit_else]);
+
+    match result {
+        CallResult::Success(ret) => {
+            // The return type should be "ELSE" (the literal), not string.
+            // With the contextual type DooDad, the solver should preserve the
+            // literal instead of widening to string.
+            assert_ne!(
+                ret,
+                TypeId::STRING,
+                "identity('ELSE') with contextual DooDad should NOT widen to string"
+            );
+            assert_eq!(
+                ret, lit_else,
+                "identity('ELSE') with contextual DooDad should return literal \"ELSE\""
+            );
+        }
+        other => panic!("Expected success for identity call with contextual type, got {other:?}"),
+    }
+}
+
+/// Tests that without a contextual type, the identity fast path widens literals.
+/// `identity('ELSE')` without context should infer T = string (normal widening).
+#[test]
+fn test_trivial_identity_widens_literal_without_contextual_type() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let lit_else = interner.literal_string("ELSE");
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param.clone());
+    let identity = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call identity("ELSE") WITHOUT contextual type
+    let result = evaluator.resolve_call(identity, &[lit_else]);
+
+    match result {
+        CallResult::Success(ret) => {
+            // Without contextual type, the literal should be widened to string
+            assert_eq!(
+                ret,
+                TypeId::STRING,
+                "identity('ELSE') without context should widen to string"
+            );
+        }
+        other => panic!("Expected success for identity call without context, got {other:?}"),
+    }
+}
