@@ -340,6 +340,9 @@ pub struct CompilerOptions {
     /// Preserve const enum declarations in emitted code.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub preserve_const_enums: Option<bool>,
+    /// Only allow syntax that can be fully erased (no runtime emit).
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub erasable_syntax_only: Option<bool>,
     /// Specify the maximum folder depth used for checking JavaScript files from `node_modules`.
     /// Only applicable with 'allowJs'. Defaults to 0.
     #[serde(default)]
@@ -924,6 +927,10 @@ pub fn resolve_compiler_options(
 
     if let Some(preserve) = options.preserve_const_enums {
         resolved.checker.preserve_const_enums = preserve;
+    }
+
+    if let Some(erasable) = options.erasable_syntax_only {
+        resolved.checker.erasable_syntax_only = erasable;
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {
