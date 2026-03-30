@@ -281,7 +281,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn collect_return_context_substitution(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
         tracked_type_params: &FxHashSet<tsz_common::Atom>,
@@ -297,9 +297,42 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
             && substitution.get(tp.name).is_none()
+            // Don't insert if target contains untracked type parameters from
+            // nested generic signatures (e.g., Promise.catch's TResult parameter
+            // when matching through .then()). These would contaminate inference.
+            && !self.target_contains_untracked_type_params(target, tracked_type_params)
+            // Don't insert if target contains OTHER tracked type parameters.
+            // This prevents incorrect mappings when both TResult1 and TResult2
+            // from a source union would be mapped to the same target that
+            // references both of them.
+            && !self.type_references_other_tracked_params(target, tp.name, tracked_type_params)
         {
             substitution.insert(tp.name, target);
             return;
+        }
+
+        // Source union decomposition: when the source return type is a union
+        // like TResult1 | TResult2, decompose it and match each non-nullish
+        // member against the target. This is essential for matching Application
+        // type args (e.g., Promise<TResult1 | TResult2> vs Promise<DooDad>).
+        if let Some(source_members) =
+            crate::type_queries::get_union_members(self.interner.as_type_database(), source)
+        {
+            for member in source_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+            {
+                self.collect_return_context_substitution(
+                    member,
+                    target,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+            if !substitution.is_empty() {
+                return;
+            }
         }
 
         if let Some(target_members) =
@@ -491,11 +524,268 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     visited,
                 );
             }
+            return;
+        }
+
+        // When Application-Application matching fails (e.g., the contextual type
+        // was pre-evaluated to an Object form losing its Application structure),
+        // try structural Object matching through properties. This handles cases
+        // like Promise<TResult1 | TResult2> vs the Object form of Promise<DooDad>:
+        // method return types on the evaluated Objects may preserve Application
+        // forms that can be decomposed (e.g., `.catch()` returns
+        // Promise<TResult1 | TResult2 | TResult> vs Promise<DooDad | TResult>).
+        if let Some((_, source_args)) =
+            crate::type_queries::get_application_info(self.interner.as_type_database(), source)
+        {
+            // If the source Application has type args that reference tracked type
+            // params, evaluate both sides and match structurally through Object
+            // properties. This enables the substitution to discover Application
+            // pairs nested in method signatures.
+            let source_refs_params = source_args
+                .iter()
+                .any(|arg| self.type_references_tracked_params(*arg, tracked_type_params));
+            // Use the checker's evaluate_type which has a full resolver context
+            // (TypeEnvironment) that can expand Application types with type
+            // parameter arguments. The standalone interner.evaluate_type uses
+            // NoopResolver which can't resolve type parameters.
+            let checker_source_eval = self.checker.evaluate_type(source);
+            let checker_target_eval = if target_eval == target {
+                self.checker.evaluate_type(target)
+            } else {
+                target_eval
+            };
+            if source_refs_params && checker_source_eval != source {
+                self.collect_return_context_substitution_structural(
+                    checker_source_eval,
+                    checker_target_eval,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+        }
+    }
+
+    /// Structurally match two evaluated Object types through their properties
+    /// to discover type parameter substitutions. This is used when Application
+    /// types have been evaluated to Objects and the Application structure was
+    /// lost in the contextual type.
+    fn collect_return_context_substitution_structural(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+        substitution: &mut TypeSubstitution,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) {
+        // Try function matching first (common for callable types)
+        let source_fn = Self::get_contextual_signature(self.interner.as_type_database(), source);
+        let target_fn = Self::get_contextual_signature(self.interner.as_type_database(), target);
+        if let (Some(source_fn), Some(target_fn)) = (source_fn, target_fn)
+            && source_fn.params.len() <= target_fn.params.len()
+        {
+            for (sp, tp) in source_fn.params.iter().zip(target_fn.params.iter()) {
+                self.collect_return_context_substitution(
+                    sp.type_id,
+                    tp.type_id,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+            self.collect_return_context_substitution(
+                source_fn.return_type,
+                target_fn.return_type,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
+        // Match Object properties structurally
+        let source_shape =
+            crate::type_queries::data::get_object_shape(self.interner.as_type_database(), source);
+        let target_shape =
+            crate::type_queries::data::get_object_shape(self.interner.as_type_database(), target);
+        if let (Some(source_shape), Some(target_shape)) = (source_shape, target_shape) {
+            for source_prop in &source_shape.properties {
+                if let Some(target_prop) = target_shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == source_prop.name)
+                {
+                    // For Callable property types (e.g., Promise.then, Promise.catch),
+                    // iterate through matching call signatures to find type param
+                    // substitutions. get_contextual_signature returns None for generic
+                    // overloaded Callables, so we match individual signatures directly.
+                    self.match_callable_return_context(
+                        source_prop.type_id,
+                        target_prop.type_id,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                    if !substitution.is_empty() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Match two types for return context substitution, with special handling
+    /// for Callable types that have multiple (possibly generic) signatures.
+    fn match_callable_return_context(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+        substitution: &mut TypeSubstitution,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) {
+        let db = self.interner.as_type_database();
+        let source_callable = match db.lookup(source) {
+            Some(TypeData::Callable(id)) => Some(db.callable_shape(id)),
+            _ => None,
+        };
+        let target_callable = match db.lookup(target) {
+            Some(TypeData::Callable(id)) => Some(db.callable_shape(id)),
+            _ => None,
+        };
+
+        if let (Some(source_callable), Some(target_callable)) = (source_callable, target_callable) {
+            // Match call signatures pairwise. For each source signature,
+            // find a target signature with the same arity and match their
+            // return types to discover type param mappings.
+            for source_sig in &source_callable.call_signatures {
+                for target_sig in &target_callable.call_signatures {
+                    if source_sig.params.len() == target_sig.params.len() {
+                        // Match return types. Source-union decomposition in
+                        // collect_return_context_substitution handles cases like
+                        // Promise<TResult1 | TResult2> vs Promise<DooDad>.
+                        self.collect_return_context_substitution(
+                            source_sig.return_type,
+                            target_sig.return_type,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                        if !substitution.is_empty() {
+                            return;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Not both Callables - use the regular path
+            self.collect_return_context_substitution(
+                source,
+                target,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+        }
+    }
+
+    /// Check if a type references any tracked type parameters.
+    fn type_references_tracked_params(
+        &self,
+        type_id: TypeId,
+        tracked: &FxHashSet<tsz_common::Atom>,
+    ) -> bool {
+        if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(type_id) {
+            return tracked.contains(&tp.name);
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Union(members_id) | TypeData::Intersection(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                members
+                    .iter()
+                    .any(|&m| self.type_references_tracked_params(m, tracked))
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                app.args
+                    .iter()
+                    .any(|&arg| self.type_references_tracked_params(arg, tracked))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type contains or IS a literal type (directly or in unions).
+    fn type_contains_literals(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Literal(_)) => true,
+            Some(TypeData::Union(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                members.iter().any(|&m| self.type_contains_literals(m))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type references tracked type parameters OTHER than `exclude_name`.
+    fn type_references_other_tracked_params(
+        &self,
+        type_id: TypeId,
+        exclude_name: tsz_common::Atom,
+        tracked: &FxHashSet<tsz_common::Atom>,
+    ) -> bool {
+        if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(type_id) {
+            return tp.name != exclude_name && tracked.contains(&tp.name);
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Union(members_id) | TypeData::Intersection(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                members
+                    .iter()
+                    .any(|&m| self.type_references_other_tracked_params(m, exclude_name, tracked))
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                app.args.iter().any(|&arg| {
+                    self.type_references_other_tracked_params(arg, exclude_name, tracked)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type contains TypeParameter references that are NOT in the
+    /// tracked set. These are "foreign" type params from nested generic signatures
+    /// (e.g., Promise.catch's TResult when matching through .then()).
+    fn target_contains_untracked_type_params(
+        &self,
+        type_id: TypeId,
+        tracked: &FxHashSet<tsz_common::Atom>,
+    ) -> bool {
+        if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(type_id) {
+            return !tracked.contains(&tp.name);
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Union(members_id) | TypeData::Intersection(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                members
+                    .iter()
+                    .any(|&m| self.target_contains_untracked_type_params(m, tracked))
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                app.args
+                    .iter()
+                    .any(|&arg| self.target_contains_untracked_type_params(arg, tracked))
+            }
+            _ => false,
         }
     }
 
     fn compute_return_context_substitution(
-        &self,
+        &mut self,
         func: &FunctionShape,
         contextual_type: Option<TypeId>,
     ) -> TypeSubstitution {
@@ -1012,6 +1302,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let structural_return_subst =
             self.compute_return_context_substitution(func, self.contextual_type);
+        // Add literal-containing upper bounds from the return context
+        // substitution to prevent incorrect widening. When TResult1 has a
+        // return context of DooDad = "SOMETHING" | "ELSE", the literal "ELSE"
+        // from the callback should NOT be widened to string.
+        if !structural_return_subst.is_empty() {
+            for (&name, &ty) in structural_return_subst.map().iter() {
+                if self.type_contains_literals(ty) {
+                    if let Some(tp_idx) = func.type_params.iter().position(|tp| tp.name == name) {
+                        let var = type_param_vars[tp_idx];
+                        infer_ctx.add_upper_bound(var, ty);
+                    }
+                }
+            }
+        }
         if has_context_sensitive_args && !structural_return_subst.is_empty() {
             for (&name, &ty) in structural_return_subst.map().iter() {
                 substitution.insert(name, ty);
