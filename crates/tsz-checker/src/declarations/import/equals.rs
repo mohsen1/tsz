@@ -151,6 +151,19 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1294: erasableSyntaxOnly — import equals declarations are not erasable.
+        if self.ctx.compiler_options.erasable_syntax_only
+            && !self.ctx.is_ambient_declaration(stmt_idx)
+        {
+            self.ctx.error(
+                node.pos,
+                node.end - node.pos,
+                diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                    .to_string(),
+                diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+            );
+        }
+
         if let Some(name_node) = self.ctx.arena.get(import.import_clause)
             && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
             && is_strict_mode_reserved_name(&name_ident.escaped_text)

@@ -21656,3 +21656,86 @@ const cfg = pluginImportX.configs["stage-0"];
         "Namespace import should expose `configs` from `export = typeof import(...)`; got: {diagnostics:#?}"
     );
 }
+
+// ============================================================
+// TS1294: erasableSyntaxOnly
+// ============================================================
+
+#[test]
+fn test_ts1294_erasable_syntax_only_enums() {
+    let mut options = CheckerOptions::default();
+    options.erasable_syntax_only = true;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+enum NotLegal { A = 1 }
+declare enum Legal { B = 1 }
+"#,
+        options,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 1,
+        "Expected exactly 1 TS1294 for non-ambient enum, got {ts1294_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts1294_erasable_syntax_only_parameter_properties() {
+    let mut options = CheckerOptions::default();
+    options.erasable_syntax_only = true;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Foo {
+    constructor(public x: number) {}
+}
+"#,
+        options,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 1,
+        "Expected exactly 1 TS1294 for parameter property, got {ts1294_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts1294_erasable_syntax_only_instantiated_namespace() {
+    let mut options = CheckerOptions::default();
+    options.erasable_syntax_only = true;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+namespace Instantiated { export const x = 1; }
+namespace NotInstantiated { export interface I {} }
+"#,
+        options,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 1,
+        "Expected exactly 1 TS1294 for instantiated namespace, got {ts1294_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts1294_erasable_syntax_only_not_enabled() {
+    // When erasableSyntaxOnly is false (default), no TS1294 should be emitted
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+enum OK { A = 1 }
+class Foo { constructor(public x: number) {} }
+namespace NS { export const x = 1; }
+"#,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 0,
+        "Expected 0 TS1294 when erasableSyntaxOnly is disabled. Got: {diagnostics:#?}"
+    );
+}

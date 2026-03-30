@@ -2160,6 +2160,20 @@ impl<'a> CheckerState<'a> {
                     export_assignment_indices.push(stmt_idx);
 
                     if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
+                        // TS1294: erasableSyntaxOnly — export = is not erasable.
+                        if export_data.is_export_equals
+                            && self.ctx.compiler_options.erasable_syntax_only
+                            && !self.ctx.is_ambient_declaration(stmt_idx)
+                        {
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                                    .to_string(),
+                                diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                            );
+                        }
+
                         // TS1282/TS1283: VMS checks for export = <type>
                         if export_data.is_export_equals
                             && self.ctx.compiler_options.verbatim_module_syntax
