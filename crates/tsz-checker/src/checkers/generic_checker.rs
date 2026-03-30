@@ -1829,7 +1829,7 @@ impl<'a> CheckerState<'a> {
     /// against function signature constraints.
     fn type_parameter_has_callable_constraint(&self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
-        if let Some(tsz_solver::TypeData::TypeParameter(tp)) = db.lookup(type_id) {
+        if let Some(tp) = tsz_solver::type_queries::get_type_parameter_info(db, type_id) {
             if let Some(constraint) = tp.constraint {
                 return query::is_callable_type(db, constraint)
                     || self.is_function_constraint(constraint);
