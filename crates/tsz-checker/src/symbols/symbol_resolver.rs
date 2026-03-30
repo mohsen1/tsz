@@ -35,65 +35,92 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         name: &str,
     ) -> Option<SymbolId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
         let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        // Track whether we've passed through a ComputedPropertyName. If so,
+        // the enclosing class member's type parameters must be skipped because
+        // computed property names are evaluated in the class scope, not the
+        // method scope. In `[foo<T>(a)]<T>(a: T) {}`, `T` inside `[...]`
+        // must NOT resolve to the method's own type parameter.
+        let mut inside_computed_property_name = false;
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
             };
 
-            let type_params = self
-                .ctx
-                .arena
-                .get_function(parent_node)
-                .and_then(|data| data.type_parameters.as_ref())
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_class(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_interface(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_type_alias(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_signature(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_method_decl(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_accessor(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_constructor(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                })
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_function_type(parent_node)
-                        .and_then(|data| data.type_parameters.as_ref())
-                });
+            if parent_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                inside_computed_property_name = true;
+            }
+
+            // Skip type parameters of class members when inside their computed property name
+            let skip_type_params = inside_computed_property_name
+                && matches!(
+                    parent_node.kind,
+                    k if k == syntax_kind_ext::METHOD_DECLARATION
+                        || k == syntax_kind_ext::CONSTRUCTOR
+                        || k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR
+                );
+
+            let type_params = if skip_type_params {
+                // Clear the flag once we've skipped the class member
+                inside_computed_property_name = false;
+                None
+            } else {
+                self.ctx
+                    .arena
+                    .get_function(parent_node)
+                    .and_then(|data| data.type_parameters.as_ref())
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_class(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_interface(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_type_alias(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_signature(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_method_decl(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_accessor(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_constructor(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_function_type(parent_node)
+                            .and_then(|data| data.type_parameters.as_ref())
+                    })
+            };
 
             if let Some(type_params) = type_params {
                 for &param_idx in &type_params.nodes {
