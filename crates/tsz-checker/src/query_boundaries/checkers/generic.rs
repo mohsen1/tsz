@@ -68,6 +68,12 @@ pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
 
+/// Check if a type has call signatures (not just construct signatures).
+/// Returns false for class constructor types that only have `new` signatures.
+pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::has_call_signatures(db, type_id)
+}
+
 /// Check if a type is structurally the Function interface (has apply/call/bind).
 pub(crate) fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_function_interface_structural(db, type_id)
