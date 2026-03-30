@@ -202,6 +202,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Check module specifier for unresolved modules (TS2792)
             if export_decl.module_specifier.is_some() {
                 self.check_export_module_specifier(export_idx);
+                // TS2498: export * from a module that uses export =
+                self.check_export_star_of_export_equals_module(export_idx);
             }
 
             // Check the wrapped declaration
