@@ -205,6 +205,7 @@ impl<'a> CheckerContext<'a> {
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
             def_fallback_count: Cell::new(0),
+            local_caches_warmed: Cell::new(false),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),

@@ -1205,6 +1205,12 @@ pub struct CheckerContext<'a> {
     /// Use `def_fallback_count()` to read the value.
     pub def_fallback_count: Cell<u32>,
 
+    /// Whether `warm_local_caches_from_shared_store` has already completed.
+    /// Avoids redundant iteration over all symbol mappings when the method
+    /// is called multiple times (e.g., once in the constructor and again in
+    /// `check_source_file`).
+    pub local_caches_warmed: Cell<bool>,
+
     /// Abstract constructor types (`TypeIds`) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
 
