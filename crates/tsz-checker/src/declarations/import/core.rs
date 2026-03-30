@@ -2161,9 +2161,14 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
                         // TS1294: erasableSyntaxOnly — export = is not erasable.
+                        // Exception: `export = x` is allowed in .cts/.cjs files because
+                        // it's the standard CJS export syntax and compiles to `module.exports = x`.
+                        let is_cts_file = self.ctx.file_name.ends_with(".cts")
+                            || self.ctx.file_name.ends_with(".cjs");
                         if export_data.is_export_equals
                             && self.ctx.compiler_options.erasable_syntax_only
                             && !self.ctx.is_ambient_declaration(stmt_idx)
+                            && !is_cts_file
                         {
                             self.ctx.error(
                                 node.pos,
