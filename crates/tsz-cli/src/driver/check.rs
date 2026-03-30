@@ -2091,6 +2091,57 @@ const elem = <div className={class1, class2}/>;
     }
 
     #[test]
+    fn jsx_invalid_namespace_start_keeps_colon_ts1109_in_bind_results() {
+        let source = "declare var React: any;\nvar x = <:a attr={\"value\"} />;\n";
+        let result = parallel::parse_and_bind_single("file.tsx".to_string(), source.to_string());
+        let less_than_pos = source.find('<').expect("opening angle") as u32;
+        let colon_pos = source[less_than_pos as usize + 1..]
+            .find(':')
+            .map(|offset| less_than_pos + 1 + offset as u32)
+            .expect("colon");
+        let expr_expected_positions: Vec<u32> = result
+            .parse_diagnostics
+            .iter()
+            .filter(|diag| diag.code == 1109)
+            .map(|diag| diag.start)
+            .collect();
+
+        assert!(
+            expr_expected_positions.contains(&less_than_pos),
+            "expected TS1109 at '<', got: {expr_expected_positions:?}"
+        );
+        assert!(
+            expr_expected_positions.contains(&colon_pos),
+            "expected TS1109 at ':', got: {expr_expected_positions:?}"
+        );
+    }
+
+    #[test]
+    fn jsx_invalid_namespace_start_keeps_colon_ts1109_in_cli_diagnostics() {
+        let source = "declare var React: any;\nvar x = <:a attr={\"value\"} />;\n";
+        let diagnostics = collect_test_diagnostics(&[("file.tsx", source)]);
+        let less_than_pos = source.find('<').expect("opening angle") as u32;
+        let colon_pos = source[less_than_pos as usize + 1..]
+            .find(':')
+            .map(|offset| less_than_pos + 1 + offset as u32)
+            .expect("colon");
+        let expr_expected_positions: Vec<u32> = diagnostics
+            .iter()
+            .filter(|diag| diag.code == 1109)
+            .map(|diag| diag.start)
+            .collect();
+
+        assert!(
+            expr_expected_positions.contains(&less_than_pos),
+            "expected CLI TS1109 at '<', got: {diagnostics:?}"
+        );
+        assert!(
+            expr_expected_positions.contains(&colon_pos),
+            "expected CLI TS1109 at ':', got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn test_collect_diagnostics_preserves_mapped_type_nullish_indexed_reads() {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");
