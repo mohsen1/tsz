@@ -1212,23 +1212,62 @@ impl<'a> CheckerState<'a> {
             // `declare class` + `function` is a valid merge in TypeScript (ambient class).
             // Only non-ambient class + function triggers these errors.
             {
-                let has_class = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
-                    conflicts.contains(decl_idx) && (flags & symbol_flags::CLASS) != 0
-                });
-                let has_function = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
-                    conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
-                });
-
-                if has_class && has_function {
-                    // Check if ALL class declarations in conflicts are ambient
-                    let all_classes_ambient =
-                        declarations.iter().all(|(decl_idx, flags, _, _, _)| {
-                            !conflicts.contains(decl_idx)
-                                || (flags & symbol_flags::CLASS) == 0
-                                || self.is_ambient_declaration(*decl_idx)
+                let local_class_merge_conflicts: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(decl_idx, flags, is_local, _, _)| {
+                        *is_local
+                            && conflicts.contains(decl_idx)
+                            && ((flags & symbol_flags::CLASS) != 0
+                                || (flags & symbol_flags::FUNCTION) != 0
+                                || ((flags & symbol_flags::VARIABLE) != 0
+                                    && self
+                                        .declaration_is_checked_js_constructor_value_declaration(
+                                            sym_id, *decl_idx,
+                                        )))
+                    })
+                    .map(|(idx, _, _, _, _)| *idx)
+                    .collect();
+                let has_class_partner =
+                    declarations
+                        .iter()
+                        .any(|(decl_idx, flags, is_local, _, _)| {
+                            ((*is_local && conflicts.contains(decl_idx)) || !*is_local)
+                                && (flags & symbol_flags::CLASS) != 0
+                        });
+                let has_function_partner =
+                    declarations
+                        .iter()
+                        .any(|(decl_idx, flags, is_local, _, _)| {
+                            ((*is_local && conflicts.contains(decl_idx)) || !*is_local)
+                                && (flags & symbol_flags::FUNCTION) != 0
+                        });
+                let has_js_constructor_value_partner =
+                    declarations
+                        .iter()
+                        .any(|(decl_idx, flags, is_local, _, _)| {
+                            ((*is_local && conflicts.contains(decl_idx)) || !*is_local)
+                                && (flags & symbol_flags::VARIABLE) != 0
+                                && self.declaration_is_checked_js_constructor_value_declaration(
+                                    sym_id, *decl_idx,
+                                )
                         });
 
-                    if !all_classes_ambient {
+                if !local_class_merge_conflicts.is_empty()
+                    && has_class_partner
+                    && (has_function_partner || has_js_constructor_value_partner)
+                {
+                    // Check if ALL class declarations in conflicts are ambient
+                    let all_classes_ambient =
+                        declarations
+                            .iter()
+                            .all(|(decl_idx, flags, is_local, _, _)| {
+                                !(((*is_local && conflicts.contains(decl_idx)) || !*is_local)
+                                    && (flags & symbol_flags::CLASS) != 0)
+                                    || (flags & symbol_flags::CLASS) == 0
+                                    || self.is_ambient_declaration(*decl_idx)
+                            });
+
+                    if has_function_partner && !all_classes_ambient {
                         // Non-ambient class + function: emit TS2813/TS2814
                         let name = symbol.escaped_name.clone();
                         for &(decl_idx, flags, is_local, _, _) in &declarations {
@@ -1267,18 +1306,9 @@ impl<'a> CheckerState<'a> {
 
                     // Determine if there are other conflicting declarations
                     // beyond the class+function pair (e.g. var in a 3-way conflict).
-                    let class_function_indices: Vec<NodeIndex> = declarations
-                        .iter()
-                        .filter(|(decl_idx, flags, _, _, _)| {
-                            conflicts.contains(decl_idx)
-                                && ((flags & symbol_flags::CLASS) != 0
-                                    || (flags & symbol_flags::FUNCTION) != 0)
-                        })
-                        .map(|(idx, _, _, _, _)| *idx)
-                        .collect();
                     let has_other_conflicts = conflicts
                         .iter()
-                        .any(|idx| !class_function_indices.contains(idx));
+                        .any(|idx| !local_class_merge_conflicts.contains(idx));
 
                     if has_other_conflicts {
                         // 3-way+ conflict: keep class+function in conflicts so
@@ -1286,7 +1316,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // Pure 2-way class+function: remove from conflicts.
                         // Ambient case = valid merge, non-ambient = TS2813/2814 only.
-                        for idx in class_function_indices {
+                        for idx in local_class_merge_conflicts {
                             conflicts.remove(&idx);
                         }
                         continue;
