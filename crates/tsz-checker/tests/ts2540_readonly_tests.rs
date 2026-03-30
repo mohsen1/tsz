@@ -449,6 +449,55 @@ v[2] = 1;
 }
 
 // =========================================================================
+// String primitive readonly index signature
+// =========================================================================
+
+#[test]
+fn test_string_primitive_element_access_assignment_emits_ts2542() {
+    // The `string` primitive has an implicit readonly number index signature.
+    // Assigning via bracket notation (e.g., `s[0] = "x"`) should emit TS2542.
+    let source = r#"
+declare var s: string;
+s[0] = "x";
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2542),
+        "Should emit TS2542 for assigning to string element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_string_union_element_access_assignment_emits_ts2542() {
+    // A union containing `string` has a readonly number index at the union level
+    // because `string` has a readonly implicit number index.
+    let source = r#"
+interface Obj { [n: number]: string; }
+declare var x: string | Obj;
+x[0] = "y";
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2542),
+        "Should emit TS2542 for assigning to union with string member, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_string_reading_element_access_no_ts2542() {
+    // Reading from a string via bracket notation should NOT emit TS2542.
+    let source = r#"
+declare var s: string;
+let c = s[0];
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2542),
+        "Should NOT emit TS2542 for reading from string element, got: {diags:?}"
+    );
+}
+
+// =========================================================================
 // TS1354: readonly type modifier on non-array/tuple types
 // =========================================================================
 
