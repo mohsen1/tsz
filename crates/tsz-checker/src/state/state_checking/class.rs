@@ -244,7 +244,10 @@ impl<'a> CheckerState<'a> {
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .map(|id| id.escaped_text.to_string());
         if let Some(ref name) = class_name_str {
-            self.check_type_parameters_for_missing_names_with_enclosing(&class.type_parameters, name);
+            self.check_type_parameters_for_missing_names_with_enclosing(
+                &class.type_parameters,
+                name,
+            );
         } else {
             self.check_type_parameters_for_missing_names(&class.type_parameters);
         }
