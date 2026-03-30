@@ -333,8 +333,28 @@ impl<'a> CheckerState<'a> {
         // declaration — if it isn't, the index came from a different arena.
         let is_multi_file = self.ctx.all_arenas.is_some();
 
-        // Get the declaration position
-        let mut decl_idx = if symbol.value_declaration.is_some() {
+        // Get the declaration position.
+        // For merged symbols (e.g., namespace A + class A), the value_declaration
+        // may point to the namespace rather than the class. For CLASS symbols, we
+        // must find the actual class declaration to get the correct TDZ position.
+        let mut decl_idx = if symbol.flags & symbol_flags::CLASS != 0 {
+            // Prefer the CLASS_DECLARATION among all declarations
+            let class_decl = symbol.declarations.iter().find(|&&d| {
+                self.ctx
+                    .arena
+                    .get(d)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+            });
+            if let Some(&class_d) = class_decl {
+                class_d
+            } else if symbol.value_declaration.is_some() {
+                symbol.value_declaration
+            } else if let Some(&first_decl) = symbol.declarations.first() {
+                first_decl
+            } else {
+                return false;
+            }
+        } else if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl
