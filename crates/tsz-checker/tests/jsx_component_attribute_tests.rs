@@ -1909,6 +1909,91 @@ const Test = () => {{
 }
 
 #[test]
+fn test_generic_jsx_children_body_callbacks_use_inferred_props() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<T = any> {{}}
+}}
+
+declare const TestComponentWithChildren: <T, TParam>(props: {{
+  state: T;
+  selector?: (state: NoInfer<T>) => TParam;
+  children?: (state: NoInfer<TParam>) => React.ReactElement<any> | null;
+}}) => React.ReactElement<any>;
+
+declare const TestComponentWithoutChildren: <T, TParam>(props: {{
+  state: T;
+  selector?: (state: NoInfer<T>) => TParam;
+  notChildren?: (state: NoInfer<TParam>) => React.ReactElement<any> | null;
+}}) => React.ReactElement<any>;
+
+<TestComponentWithChildren state={{{{ foo: 123 }}}} selector={{state => state.foo}}>
+  {{selected => {{
+    const check: number = selected;
+    return <div>{{check}}</div>;
+  }}}}
+</TestComponentWithChildren>;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "Generic JSX body children should reuse inferred props for callback contextual typing, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Generic JSX body children inference should not fall back to TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_jsx_children_defaulted_type_param_infers_from_selector() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<T = any> {{}}
+}}
+
+interface State {{
+    value: boolean;
+}}
+
+declare const Subscribe: <TSelected = State>(props: {{
+  selector?: (state: State) => TSelected;
+  children: (state: TSelected) => void;
+}}) => React.ReactElement<any>;
+
+<Subscribe selector={{state => [state.value]}}>
+  {{([value = false]) => {{
+      const check: boolean = value;
+  }}}}
+</Subscribe>;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "Defaulted generic JSX children should get callback contextual typing from selector inference, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+        ),
+        "Defaulted generic JSX children destructuring should stay on the request path, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Defaulted generic JSX children inference should not emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_children_presence_narrows_union_component_type_for_body_children() {
     let source = format!(
         r#"

@@ -1276,7 +1276,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 });
                             if has_function_context {
                                 self.checker
-                                    .get_type_of_node_with_request(child, &children_request)
+                                    .ctx
+                                    .implicit_any_contextual_closures
+                                    .insert(expr_data.expression);
+                                self.checker
+                                    .ctx
+                                    .implicit_any_checked_closures
+                                    .insert(expr_data.expression);
+                                self.checker.invalidate_function_like_for_contextual_retry(
+                                    expr_data.expression,
+                                );
+                                self.checker
+                                    .get_type_of_node_with_request(
+                                        expr_data.expression,
+                                        &children_request,
+                                    )
                             } else {
                                 // Still process the arrow/function expression to emit
                                 // diagnostics (e.g., TS7006 for unannotated parameters).
