@@ -1674,8 +1674,8 @@ fn from_semantic_defs_resolves_heritage() {
     );
 }
 
-/// TypeEnvironment::get_lazy_type_params should fall back to the DefinitionStore
-/// when type params are not in the local cache. This mirrors how get_def falls
+/// `TypeEnvironment::get_lazy_type_params` should fall back to the `DefinitionStore`
+/// when type params are not in the local cache. This mirrors how `get_def` falls
 /// back to the store for type bodies.
 #[test]
 fn test_type_environment_get_lazy_type_params_definition_store_fallback() {
@@ -1693,7 +1693,7 @@ fn test_type_environment_get_lazy_type_params_definition_store_fallback() {
         default: None,
         is_const: false,
     };
-    let info = DefinitionInfo::type_alias(name, vec![t_param.clone()], TypeId::NUMBER);
+    let info = DefinitionInfo::type_alias(name, vec![t_param], TypeId::NUMBER);
     let def_id = store.register(info);
 
     // Create a TypeEnvironment with the store but DON'T insert params locally
