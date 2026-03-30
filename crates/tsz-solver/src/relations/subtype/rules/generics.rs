@@ -387,7 +387,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             def_id,
                         )
                     });
-
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
                     if variances.len() == s_app.args.len() {
