@@ -1982,6 +1982,59 @@ mod tests {
         resolved
     }
 
+    #[test]
+    fn jsx_attribute_comma_expression_survives_into_bind_results() {
+        let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}
+
+const class1 = "foo";
+const class2 = "bar";
+const elem = <div className={class1, class2}/>;
+"#;
+
+        let result =
+            parallel::parse_and_bind_single("file.tsx".to_string(), source.to_string());
+        let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            codes.contains(&18007),
+            "expected TS18007 in bind-result parse diagnostics, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn jsx_attribute_comma_expression_reports_ts18007_in_cli_diagnostics() {
+        let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}
+
+const class1 = "foo";
+const class2 = "bar";
+const elem = <div className={class1, class2}/>;
+"#;
+
+        let diagnostics = collect_test_diagnostics(&[("file.tsx", source)]);
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            codes.contains(&18007),
+            "expected CLI diagnostics to include TS18007, got: {diagnostics:?}"
+        );
+        assert!(
+            codes.contains(&2695),
+            "expected CLI diagnostics to include TS2695, got: {diagnostics:?}"
+        );
+    }
+
     fn resolved_options_for_esnext_strict_test() -> ResolvedCompilerOptions {
         let mut args = default_cli_args_for_test();
         args.ignore_config = true;
