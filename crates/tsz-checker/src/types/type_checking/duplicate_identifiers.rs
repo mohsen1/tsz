@@ -1110,6 +1110,22 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // In checked JS, a value declaration can intentionally pick up
+                    // a cross-file class shape from a TS/.d.ts declaration. Treating
+                    // that as a duplicate blocks the real semantic check and produces
+                    // TS2451 where tsc reports a constructor-side assignability error
+                    // (for example salsa/jsContainerMergeTsDeclaration3.ts).
+                    let checked_js_value_merges_remote_class = self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && (decl_is_local != other_is_local)
+                        && (((decl_flags & symbol_flags::VARIABLE) != 0
+                            && (other_flags & symbol_flags::CLASS) != 0)
+                            || ((other_flags & symbol_flags::VARIABLE) != 0
+                                && (decl_flags & symbol_flags::CLASS) != 0));
+                    if checked_js_value_merges_remote_class {
+                        continue;
+                    }
+
                     if Self::declarations_conflict(decl_flags, other_flags) {
                         propagate_type_alias_conflict_to_namespaces |=
                             (decl_flags & symbol_flags::TYPE_ALIAS) != 0
