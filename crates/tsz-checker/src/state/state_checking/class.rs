@@ -1467,7 +1467,7 @@ impl<'a> CheckerState<'a> {
             // tsc resolves these to the correct specific return type; our resolution
             // currently produces the union. Since all constituent types in such
             // unions are valid object types, suppress TS2509 for unions.
-            if let Some(tsz_solver::TypeData::Union(_)) = self.ctx.types.lookup(base_type) {
+            if crate::query_boundaries::common::is_union_type(self.ctx.types, base_type) {
                 continue;
             }
 
