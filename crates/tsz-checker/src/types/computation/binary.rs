@@ -1417,16 +1417,27 @@ impl<'a> CheckerState<'a> {
                 let (left_display, right_display) = if left_base == right_base {
                     // Same primitive family: preserve all literals
                     (left_narrow, right_narrow)
-                } else if left_base == left_narrow || right_base == right_narrow {
-                    // One side is non-literal (type parameter, object, etc.):
-                    // preserve both as-is. tsc only widens when both sides are
-                    // literals from different primitive families.
-                    (left_narrow, right_narrow)
                 } else {
-                    // Different families, both literal: widen to primitive types.
-                    // tsc widens both sides (e.g., '"foo"' → 'string', '0' → 'number')
-                    // when the operands are from different primitive families.
-                    (left_base, right_base)
+                    // Different families: decide whether to widen based on what kind
+                    // of types are involved.
+                    //
+                    // tsc widens literal types to their primitive forms when comparing
+                    // across different primitive families (e.g., `false` → `boolean`
+                    // vs `symbol`). But when one side is a named/compound type (enum,
+                    // type alias, intersection, etc.), literals are preserved as-is.
+                    //
+                    // The key distinction: if the "unchanged" side (where widening
+                    // was a no-op) is an intrinsic primitive type, the other literal
+                    // should still be widened. If it's a named type, preserve both.
+                    let left_is_named = left_base == left_narrow && !left_narrow.is_intrinsic();
+                    let right_is_named = right_base == right_narrow && !right_narrow.is_intrinsic();
+                    if left_is_named || right_is_named {
+                        // One side is a named/non-primitive type: preserve literals
+                        (left_narrow, right_narrow)
+                    } else {
+                        // Both sides are primitives or literals: widen to primitive
+                        (left_base, right_base)
+                    }
                 };
                 let (left_str, right_str) = self.format_type_pair(left_display, right_display);
                 let message = format_message(
