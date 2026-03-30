@@ -1891,18 +1891,28 @@ impl<'a> CheckerState<'a> {
         let Some(sf) = target_arena.source_files.first() else {
             return false;
         };
-        // Extract the filename portion from the specifier (e.g., "foo.ts" from "./foo.ts").
+        // Extract the stem (without extension) from the specifier basename.
         let spec_file = specifier
             .rsplit_once('/')
             .map_or(specifier, |(_, file)| file);
-        // Extract the filename portion from the resolved path.
+        let spec_stem = spec_file.rfind('.').map_or(spec_file, |i| &spec_file[..i]);
+        // Extract the stem from the resolved file's basename.
+        // For declaration files like "foo.d.ts", strip all declaration
+        // suffixes to get the base stem "foo".
         let resolved_file = sf
             .file_name
             .rsplit_once('/')
             .map_or(sf.file_name.as_str(), |(_, file)| file);
-        // If the resolved file's basename differs from the specifier's basename,
-        // the resolution went through directory probing (e.g., resolved to index.ts).
-        resolved_file != spec_file
+        let resolved_stem = resolved_file
+            .strip_suffix(".d.ts")
+            .or_else(|| resolved_file.strip_suffix(".d.mts"))
+            .or_else(|| resolved_file.strip_suffix(".d.cts"))
+            .or_else(|| resolved_file.rfind('.').map(|i| &resolved_file[..i]))
+            .unwrap_or(resolved_file);
+        // If the stems match, the resolution used the TS extension directly
+        // (e.g., ./obj.ts → obj.d.ts). If stems differ, it went through
+        // directory probing (e.g., ./foo.ts → foo.ts/index.d.ts).
+        resolved_stem != spec_stem
     }
 
     /// Returns a relative display path for the resolved target of `specifier`,
