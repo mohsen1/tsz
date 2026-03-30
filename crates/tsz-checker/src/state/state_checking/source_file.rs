@@ -83,17 +83,24 @@ impl<'a> CheckerState<'a> {
                 self.ctx.resolve_cross_batch_heritage();
             }
 
-            // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
-            // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
-            // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
-            let populated_env = self.build_type_environment();
-            *self.ctx.type_env.borrow_mut() = populated_env.clone();
+            // Build TypeEnvironment with all type-defining symbols.
+            // This populates both ctx.type_env and ctx.type_environment in-place
+            // via get_type_of_symbol -> compute_type_of_symbol -> register_def_in_envs.
+            self.build_type_environment();
+
             // Wire up DefinitionStore so TypeEnvironment::get_def_kind can fall
             // back to it when the local def_kinds map is incomplete.
             self.ctx.ensure_type_env_has_definition_store();
-            // CRITICAL: Also populate type_environment (Rc-wrapped) for FlowAnalyzer
-            // This ensures type alias narrowing works during control flow analysis
-            *self.ctx.type_environment.borrow_mut() = populated_env;
+
+            // Sync type_environment from type_env to ensure FlowAnalyzer has the
+            // complete environment (including the DefinitionStore wired above).
+            // register_def_in_envs writes to both envs, but some paths may fail
+            // try_borrow_mut on type_environment during recursive resolution.
+            // A single clone here ensures consistency.
+            {
+                let env_snapshot = self.ctx.type_env.borrow().clone();
+                *self.ctx.type_environment.borrow_mut() = env_snapshot;
+            }
 
             // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
             // This enables primitive property access to use lib definitions instead of hardcoded lists
