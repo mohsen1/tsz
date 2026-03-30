@@ -539,6 +539,24 @@ impl<'a> CheckerState<'a> {
                 .index_access(pre_resolution_object_type, index_type);
         }
 
+        // For non-receiver generic composites, keep the canonical indexed-access
+        // shell in write position as well. Alias/application/intersection targets
+        // like `Errors<T>[keyof T]` otherwise decompose into structural artifacts
+        // before diagnostics render them.
+        if skip_flow_narrowing
+            && !is_generic_receiver
+            && self.should_preserve_generic_indexed_write_target(
+                pre_resolution_object_type,
+                index_type,
+            )
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(pre_resolution_object_type, index_type);
+        }
+
         // TS2476: A const enum member can only be accessed using a string literal.
         let const_enum_sym = self
             .resolve_identifier_symbol(access.expression)

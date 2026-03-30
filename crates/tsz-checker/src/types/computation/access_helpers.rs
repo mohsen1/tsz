@@ -224,6 +224,56 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Preserve deferred indexed-access identity for generic write targets whose
+    /// semantic shape still depends on type parameters. Eagerly resolving these
+    /// targets through property/index lookup destroys the canonical `Obj[K]`
+    /// form and yields structural artifacts like `({ all: ... }[keyof T] & string) | undefined`
+    /// in TS2322 messages.
+    pub(crate) fn should_preserve_generic_indexed_write_target(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        use tsz_solver::visitor;
+
+        let index_mentions_keyof = visitor::keyof_inner_type(self.ctx.types, index_type).is_some()
+            || crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+                .is_some_and(|members| {
+                    members
+                        .iter()
+                        .copied()
+                        .any(|member| visitor::keyof_inner_type(self.ctx.types, member).is_some())
+                });
+
+        if !index_mentions_keyof
+            || !crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                object_type,
+            )
+        {
+            return false;
+        }
+
+        if visitor::is_index_access_type(self.ctx.types, object_type)
+            || tsz_solver::is_generic_application(self.ctx.types, object_type)
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+        {
+            return members.iter().copied().any(|member| {
+                visitor::is_index_access_type(self.ctx.types, member)
+                    || tsz_solver::is_generic_application(self.ctx.types, member)
+                    || tsz_solver::mapped_type_id(self.ctx.types, member).is_some()
+            });
+        }
+
+        let resolved = self.resolve_lazy_type(object_type);
+        tsz_solver::mapped_type_id(self.ctx.types, resolved).is_some()
+    }
+
     /// Check if an index type is known to be a valid key for a given type parameter.
     ///
     /// Returns true for:
