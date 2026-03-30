@@ -304,12 +304,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // JS constructor/prototype receiver inference also owns the function's
-        // `this`, even though it is not modelled as an explicit parameter.
-        if self.is_js_file() {
+        if self.is_js_file()
+            && self
+                .ctx
+                .arena
+                .get_extended(enclosing_fn)
+                .map(|ext| ext.parent)
+                .is_some_and(|parent| {
+                    self.ctx.arena.get(parent).is_some_and(|node| {
+                        node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                    })
+                })
+        {
+            // Top-level/variable-declared JS function expressions participate in
+            // constructor-style receiver inference elsewhere in the checker.
             return false;
         }
 
+        // JS files do not get a blanket exemption here. A regular nested
+        // function still creates its own `this` binding unless one of the
+        // explicit/contextual receiver checks above already claimed ownership.
         true
     }
 

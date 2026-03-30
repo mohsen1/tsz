@@ -260,15 +260,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     );
                     TypeId::ANY
                 } else if self.checker.ctx.no_implicit_this()
-                    && !self.checker.is_js_file()
                     && self
                         .checker
                         .find_enclosing_non_arrow_function(idx)
                         .is_some()
+                    && (!self.checker.is_js_file()
+                        || self
+                            .checker
+                            .is_this_in_nested_function_without_own_this_binding(idx))
                 {
                     // TS2683: 'this' implicitly has type 'any'
-                    // Suppressed in JS files: tsc infers `this` for constructor/prototype
-                    // patterns and JSDoc-typed functions.
+                    // In JS files, only nested regular functions with a fresh,
+                    // unowned `this` binding reach this path. Constructor/prototype
+                    // patterns and explicit/contextual/JSDoc-owned receivers are
+                    // filtered out before this branch.
                     // Suppress if the enclosing function has an explicit `this` parameter
                     // or a contextual `this` type from a parent type annotation
                     if self

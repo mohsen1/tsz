@@ -89,36 +89,39 @@ fn test_this_in_function_call_js_emits_ts2683_for_unannotated_callbacks_only() {
         r#"
 class Test {
     constructor() {
-        /** @type {number[]} */
-        this.data = [1, 2, 3];
+        this.data = { length: 3 };
+    }
+
+    invoke(callback) {
+        return callback;
     }
 
     finderRaw() {
-        this.data.find(function (d) {
+        return this.invoke(function (d) {
             return d === this.data.length;
         });
     }
 
     forEacherRaw() {
-        this.data.forEach(function (d) {
-            console.log(d === this.data.length);
+        return this.invoke(function (d) {
+            return d === this.data.length;
         });
     }
 
     forEacher() {
-        this.data.forEach(
-        /** @this {Test} */
-        function (d) {
-            console.log(d === this.data.length);
-        }, this);
-    }
-
-    finder() {
-        this.data.find(
+        return this.invoke(
         /** @this {Test} */
         function (d) {
             return d === this.data.length;
-        }, this);
+        });
+    }
+
+    finder() {
+        return this.invoke(
+        /** @this {Test} */
+        function (d) {
+            return d === this.data.length;
+        });
     }
 }
 "#,
@@ -135,6 +138,35 @@ class Test {
     assert_eq!(
         ts2683_count, 2,
         "Expected exactly two TS2683 diagnostics for the raw callbacks, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_js_iife_annotated_inner_function_still_emits_ts2683() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "index.js",
+        r#"
+(function (importScripts) {
+    /**
+     * @param {...unknown} rest
+     */
+    return function () {
+        return this;
+    };
+})(function () {});
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2683),
+        "Expected TS2683 for the returned JS function without a `this` annotation, got: {diagnostics:#?}"
     );
 }
 
