@@ -3375,6 +3375,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Stub: Check if a JS variable declaration looks like a class-like pattern
     /// and emit an appropriate declaration. Returns true if handled.
+    #[allow(dead_code)]
     const fn emit_js_class_like_heuristic_if_needed(
         &mut self,
         _decl_name: NodeIndex,
