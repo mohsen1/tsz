@@ -178,6 +178,19 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
+            // Arrow functions capture `this`/`super` lazily — they are defined before
+            // super() but execute after, so super property access inside them is fine.
+            // Regular functions create a new scope, so also stop there.
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                return false;
+            }
+
             if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
                 let Some(ctor) = self.ctx.arena.get_constructor(parent_node) else {
                     return false;
