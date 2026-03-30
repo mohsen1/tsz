@@ -710,7 +710,7 @@ impl BinderState {
     /// Returns true if the node kind is a class member that creates its own function scope
     /// (method, constructor, accessor). These scopes must be skipped for names inside
     /// computed property names.
-    fn is_class_member_kind(kind: u16) -> bool {
+    const fn is_class_member_kind(kind: u16) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         kind == syntax_kind_ext::METHOD_DECLARATION
             || kind == syntax_kind_ext::CONSTRUCTOR
