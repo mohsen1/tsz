@@ -1472,7 +1472,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check if the base type is a valid base type
-            if !tsz_solver::type_queries::data::is_valid_base_type(self.ctx.types, base_type) {
+            if !crate::query_boundaries::class::is_valid_base_type(self.ctx.types, base_type) {
                 let type_name = self.format_type(base_type);
                 let message = format_message(
                     diagnostic_messages::BASE_CONSTRUCTOR_RETURN_TYPE_IS_NOT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYP,
