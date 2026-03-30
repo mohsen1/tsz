@@ -716,8 +716,27 @@ impl<'a> CheckerState<'a> {
                     target_index += 1;
                     target_param.type_id
                 };
+                // When the source param is a type alias Application (e.g.,
+                // Either<E, A>) and the target param is its evaluated form
+                // (e.g., Left<string> | Right<number>), evaluate the source
+                // param first so both sides are at the same level. Without
+                // this, the Application vs union mismatch causes incorrect
+                // decomposition (e.g., A → Left<string> instead of A → number).
+                let source_param_type =
+                    if common::application_info(self.ctx.types, source_param.type_id).is_some()
+                        && common::union_members(self.ctx.types, target_type).is_some()
+                    {
+                        let evaluated = self.evaluate_type_with_env(source_param.type_id);
+                        if evaluated != source_param.type_id {
+                            evaluated
+                        } else {
+                            source_param.type_id
+                        }
+                    } else {
+                        source_param.type_id
+                    };
                 self.collect_return_context_substitution(
-                    source_param.type_id,
+                    source_param_type,
                     target_type,
                     tracked_type_params,
                     substitution,
