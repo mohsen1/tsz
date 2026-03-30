@@ -305,6 +305,42 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Check whether a target module uses `export =`, by examining both the
+    /// binder's export tables and the target file's AST for any export assignment
+    /// with `is_export_equals: true`.
+    ///
+    /// This is more comprehensive than `module_has_export_equals` which only
+    /// detects `export = <identifier>` patterns. This also handles
+    /// `export = {}`, `export = expr()`, etc.
+    pub(crate) fn target_module_has_export_equals(&self, module_specifier: &str) -> bool {
+        // Fast path: check binder tables (works for identifier-based export =)
+        if self.module_has_export_equals(module_specifier) {
+            return true;
+        }
+
+        // Slow path: resolve the target file and scan its AST for export = statements
+        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(sf) = target_arena.source_files.first() else {
+            return false;
+        };
+        for &stmt_idx in &sf.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_ASSIGNMENT {
+                if let Some(assign) = target_arena.get_export_assignment(stmt_node) {
+                    if assign.is_export_equals {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Validate that named re-exports exist in the target module.
     ///
     /// For `export { foo, bar as baz } from './module'`, validates that
