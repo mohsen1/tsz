@@ -712,10 +712,61 @@ pub fn get_overload_call_signatures(
     if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id) {
         let shape = db.callable_shape(shape_id);
         if shape.call_signatures.len() > 1 {
-            return Some(shape.call_signatures.clone());
+            return Some(reorder_overload_candidates(db, &shape.call_signatures));
         }
     }
     None
+}
+
+/// Reorder overload candidates so that specialized signatures (those with literal
+/// type parameters) come before non-specialized signatures.
+///
+/// This matches tsc's `reorderCandidates` behavior (TypeScript GH#1133). Without
+/// this reordering, catch-all `string`/`number` parameter overloads inherited from
+/// base types can shadow more specific literal overloads from derived types in
+/// diamond inheritance scenarios.
+fn reorder_overload_candidates(
+    db: &dyn TypeDatabase,
+    signatures: &[crate::types::CallSignature],
+) -> Vec<crate::types::CallSignature> {
+    let mut has_specialized = false;
+    let mut has_non_specialized = false;
+    for sig in signatures {
+        if signature_has_literal_types(db, sig) {
+            has_specialized = true;
+        } else {
+            has_non_specialized = true;
+        }
+        if has_specialized && has_non_specialized {
+            break;
+        }
+    }
+    // Only reorder if there's a mix of specialized and non-specialized
+    if !has_specialized || !has_non_specialized {
+        return signatures.to_vec();
+    }
+    let mut specialized = Vec::new();
+    let mut non_specialized = Vec::new();
+    for sig in signatures {
+        if signature_has_literal_types(db, sig) {
+            specialized.push(sig.clone());
+        } else {
+            non_specialized.push(sig.clone());
+        }
+    }
+    specialized.extend(non_specialized);
+    specialized
+}
+
+/// Check if a call signature has any parameters with literal types.
+/// This matches tsc's `signatureHasLiteralTypes` flag.
+fn signature_has_literal_types(db: &dyn TypeDatabase, sig: &crate::types::CallSignature) -> bool {
+    sig.params.iter().any(|p| {
+        matches!(
+            db.lookup(p.type_id),
+            Some(crate::types::TypeData::Literal(_))
+        )
+    })
 }
 
 /// Get the symbol associated with an object type's shape.
