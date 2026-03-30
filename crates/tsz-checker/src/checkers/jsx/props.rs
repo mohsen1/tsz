@@ -1514,8 +1514,21 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     // Assignability check — tsc anchors at the attribute NAME.
+                    //
+                    // When either the actual or expected type contains unresolved type
+                    // parameters (e.g., from a deferred conditional like
+                    // `ExtractValueType<WrappedProps>`), skip per-attribute type checking.
+                    // tsc's "applicability" mechanism is more lenient for generic
+                    // components with complex signatures — it defers the real check to
+                    // instantiation time. Without this, we emit false TS2322 for valid
+                    // JSX like:
+                    //   <ReactSelectClass<ExtractValueType<WrappedProps>> value={props.value} />
+                    // where the conditional type in `props.value` can't yet be resolved.
+                    let attr_has_unresolved_type_params = props_has_type_params
+                        || tsz_solver::contains_type_parameters(self.ctx.types, actual_type);
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR
+                        && !attr_has_unresolved_type_params
                         && !self.check_assignable_or_report_at(
                             actual_type,
                             expected_type,
