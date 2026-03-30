@@ -2648,9 +2648,12 @@ impl ParserState {
 
                 // In class member computed property names, keywords such as `public`
                 // and `yield` should emit TS1213.
+                // Skip the check for generator method names (`* [yield]()`) — tsc does
+                // not emit TS1213 for `yield` in computed property names of generators.
                 if self.in_class_member_name()
                     && !self.in_generator_context()
                     && !self.is_computed_class_member_yield_expression()
+                    && (self.context_flags & super::state::CONTEXT_FLAG_GENERATOR_MEMBER_NAME) == 0
                 {
                     self.check_illegal_binding_identifier();
                 }

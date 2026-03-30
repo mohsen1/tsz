@@ -70,6 +70,10 @@ pub const CONTEXT_FLAG_CLASS_FIELD_INITIALIZER: u32 = 32768;
 /// Context flag: parsing inside a tuple element where `?` is an optional marker.
 /// When set, postfix `?` should NOT be treated as JSDoc nullable (TS17019).
 pub const CONTEXT_FLAG_IN_TUPLE_ELEMENT: u32 = 65536;
+/// Context flag: parsing the property name of a generator method (`* [name]`).
+/// Suppresses TS1213 for `yield` in computed property names of generator methods
+/// (tsc does not emit TS1213 in this position).
+pub const CONTEXT_FLAG_GENERATOR_MEMBER_NAME: u32 = 131072;
 
 // =============================================================================
 // Parse Diagnostic
