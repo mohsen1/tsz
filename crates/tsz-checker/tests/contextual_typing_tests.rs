@@ -993,11 +993,8 @@ const r = apply(42, x => x);
 /// properties and a non-fresh source shares NO properties with it, tsc
 /// emits TS2559. (For fresh object literals, EPC/TS2353 takes priority.)
 ///
-/// NOTE: tsz currently emits TS2345 instead of TS2559 — weak-type detection
-/// is not yet fully implemented. This test documents the current behavior and
-/// should be updated to expect TS2559 once the Lawyer layer implements it.
+/// The Lawyer layer's weak-type detection now correctly emits TS2559.
 #[test]
-#[ignore = "TS2559 weak-type detection not yet implemented — currently emits TS2345"]
 fn test_weak_type_detection_ts2559_for_non_fresh_source() {
     let source = r#"
 interface Options {
@@ -1015,7 +1012,6 @@ configure(obj);
 
     // tsc: TS2559: Type '{ unknown: boolean; }' has no properties in common
     // with type 'Options'.
-    // tsz (current): TS2345 argument not assignable.
     let ts2559_errors: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2559)
