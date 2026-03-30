@@ -164,7 +164,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check ordering: O(1) flag/length guards first, then O(n) shape scan, then O(m+n) merge.
         // tsc skips this check when the source is ALSO a weak type (`!isWeakType(source)`).
         // Two weak types with no common properties are still compatible.
+        // Skip weak type enforcement when checking against individual intersection
+        // members. The source may have no common properties with one weak-type member
+        // but still be assignable to the combined intersection (e.g., ITreeItem <:
+        // ITreeItem & { Id?: number } where { Id?: number } is a weak type).
         if self.enforce_weak_types
+            && !self.in_intersection_member_check
             && !source.properties.is_empty()
             && Self::is_weak_type_shape(target)
             && !Self::is_weak_type_shape(source)
