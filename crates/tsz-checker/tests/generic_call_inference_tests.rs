@@ -1100,3 +1100,117 @@ traverse(tree, (node) => {
         "Recursive generic callback should not overflow. Diagnostics: {diags:#?}"
     );
 }
+
+// ─── TS2454 does not suppress downstream type errors ────────────────
+
+#[test]
+fn ts2454_does_not_suppress_ts2322_on_generic_constraint() {
+    // When a variable is used before assignment (TS2454), tsc still type-checks
+    // the expression using the declared type. Property-level mismatches like
+    // TS2322 must still be emitted alongside TS2454.
+    // Regression: genericConstraintSatisfaction1.ts
+    let source = r#"
+interface I<S> {
+   f: <T extends S>(x: T) => void
+}
+
+var x: I<{s: string}>
+declare var x: I<{s: string}>
+x.f({s: 1})
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2454),
+        "Should emit TS2454 for variable used before assignment. Got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "Should also emit TS2322 for property type mismatch. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn ts2454_does_not_suppress_property_access_errors() {
+    // Even with TS2454, property accesses on the declared type should
+    // still produce type errors when used in incompatible contexts.
+    let source = r#"
+var x: {s: string}
+x.f({s: 1})
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2454),
+        "Should emit TS2454. Got: {diags:#?}"
+    );
+    // x.f doesn't exist on {s: string}, so TS2339 should fire
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2339),
+        "Should also emit TS2339 for missing property. Got: {diags:#?}"
+    );
+}
+
+// ─── Union type predicates must not narrow when non-predicate members
+//     return general boolean ──────────────────────────────────────────
+
+#[test]
+fn union_this_predicate_with_boolean_member_does_not_narrow() {
+    // Regression: typePredicatesInUnion3.ts
+    // When a union method has a `this` type predicate on one member and plain
+    // boolean on another, the call is NOT a type predicate. The receiver must
+    // NOT be narrowed.
+    let source = r#"
+type HasAttribute<T> = T & { attribute: number };
+
+class Type1 {
+    attribute: number | null = null;
+    predicate(): this is HasAttribute<Type1> {
+        return true;
+    }
+}
+
+class Type2 {
+    attribute: number | null = null;
+    predicate(): boolean {
+        return true;
+    }
+}
+
+function assertType<T>(_val: T) {
+}
+
+declare const val: Type1 | Type2;
+
+if (val.predicate()) {
+    assertType<number>(val.attribute);  // Error: number | null not assignable to number
+}
+"#;
+    let diags = compile_and_get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "Should emit TS2345 because val is not narrowed by union predicate. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn this_predicate_union_with_false_returning_member_narrows() {
+    // When ALL non-predicate union members return exclusively `false`,
+    // the union IS a valid type predicate. The predicate narrows the
+    // receiver and non-predicate members are impossible in the true branch.
+    let source = r#"
+class Entry {
+    c: number = 1;
+    guard(): this is Entry { return true; }
+}
+class Group {
+    d: string = "no";
+    guard(): false { return false; }
+}
+declare var chunk: Entry | Group;
+let x = chunk.guard() ? chunk.c : chunk.d;
+"#;
+    let diags = compile_and_get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2339),
+        "Should NOT emit TS2339 - chunk.c should be accessible after guard(). Got: {diags:#?}"
+    );
+}
