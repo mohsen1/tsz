@@ -2083,19 +2083,118 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut best_def: Option<JsdocTypedefInfo> = None;
+        let anchor_pos = self.ctx.jsdoc_typedef_anchor_pos.get();
+
+        // Pre-compute the brace depth of the anchor position from file start.
+        let anchor_depth = if anchor_pos != u32::MAX && (anchor_pos as usize) <= source_text.len() {
+            let mut d: i32 = 0;
+            for ch in source_text[..anchor_pos as usize].bytes() {
+                match ch {
+                    b'{' => d += 1,
+                    b'}' => d -= 1,
+                    _ => {}
+                }
+            }
+            Some(d)
+        } else {
+            None
+        };
+
+        // Two-pass approach for typedef scoping:
+        // Pass 1: Collect same-scope matches and count deeper-scope matches.
+        // Pass 2: If no same-scope match, use a deeper-scope match only if
+        // there's exactly one (unambiguous). Multiple deeper-scope typedefs
+        // with the same name are ambiguous → return None so the name falls
+        // through to other resolution paths (matching TSC behavior where
+        // function-scoped typedefs with duplicate names are not visible
+        // at the module level).
+        let mut same_scope_def: Option<JsdocTypedefInfo> = None;
+        let mut deeper_defs: Vec<JsdocTypedefInfo> = Vec::new();
+
         for comment in comments {
             if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
+
+            let (is_same_scope, is_deeper) = if let Some(a_depth) = anchor_depth {
+                let comment_pos = comment.pos as usize;
+                if comment_pos <= source_text.len() {
+                    let mut c_depth: i32 = 0;
+                    for ch in source_text[..comment_pos].bytes() {
+                        match ch {
+                            b'{' => c_depth += 1,
+                            b'}' => c_depth -= 1,
+                            _ => {}
+                        }
+                    }
+                    if c_depth > a_depth {
+                        (false, true) // deeper scope
+                    } else if c_depth == a_depth {
+                        // Same depth: check if in same contiguous scope
+                        let (lo, hi) = if comment_pos < anchor_pos as usize {
+                            (comment_pos, anchor_pos as usize)
+                        } else {
+                            (anchor_pos as usize, comment_pos)
+                        };
+                        let slice = &source_text[lo..hi];
+                        let mut depth: i32 = 0;
+                        let mut crossed = false;
+                        for ch in slice.bytes() {
+                            match ch {
+                                b'{' => depth += 1,
+                                b'}' => {
+                                    depth -= 1;
+                                    if depth < 0 {
+                                        crossed = true;
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        if !crossed && depth == 0 {
+                            (true, false) // same scope
+                        } else {
+                            (false, false) // same depth but different scope (sibling functions)
+                        }
+                    } else {
+                        (false, false) // shallower scope — visible
+                    }
+                } else {
+                    (false, false)
+                }
+            } else {
+                (true, false)
+            };
+
             let content = get_jsdoc_content(comment, source_text);
             for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
                 if name != type_expr {
                     continue;
                 }
-                best_def = Some(typedef_info);
+                if is_same_scope {
+                    same_scope_def = Some(typedef_info);
+                } else if is_deeper {
+                    deeper_defs.push(typedef_info);
+                } else {
+                    // Shallower or same-depth-different-scope: use as fallback
+                    // (last one wins, matching original behavior)
+                    if same_scope_def.is_none() {
+                        same_scope_def = Some(typedef_info);
+                    }
+                }
             }
         }
+
+        // Prefer same-scope match. Fall back to deeper-scope only if unambiguous.
+        let best_def = if same_scope_def.is_some() {
+            same_scope_def
+        } else if deeper_defs.len() == 1 {
+            deeper_defs.into_iter().next()
+        } else {
+            // Multiple deeper-scope defs → ambiguous, or no defs at all
+            None
+        };
         let typedef_info = best_def?;
 
         // Mark this typedef as being resolved to prevent re-entrancy.
