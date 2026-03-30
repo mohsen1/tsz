@@ -21138,3 +21138,118 @@ function other<T>(arg: T) {
         "Expected TS2413 for unconstrained T vs Object index signature. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_instanceof_conflicting_properties_narrows_to_never() {
+    // When an interface and a class have a common property with incompatible types
+    // (e.g., x: string vs x: number), instanceof narrowing should produce `never`
+    // because the intersection is uninhabitable.
+    let opts = CheckerOptions {
+        strict_null_checks: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+class Foo { x: number = 1; y: number = 2; }
+interface Bar { x: string; }
+declare var b: Bar;
+
+if (b instanceof Foo) {
+    let test: never = b; // should work: b is narrowed to never (conflicting x types)
+}
+"#,
+        opts,
+    );
+    // If b is correctly narrowed to never, assigning to `never` should not error.
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Expected no TS2322: b should be narrowed to never due to conflicting property types. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_instanceof_interface_narrows_to_never_when_incompatible() {
+    // From conformance/expressions/typeGuards/typeGuardsWithInstanceOf.ts
+    // When `result` is `I = { global: string }` and we check `result instanceof RegExp`,
+    // the true branch should narrow to `never` because I.global is `string` but
+    // RegExp.global is `boolean` — the types are structurally incompatible.
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+interface I { global: string; }
+var result!: I;
+var result2!: I;
+
+if (!(result instanceof RegExp)) {
+    result = result2;
+} else if (!result.global) {
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    // tsc expects: TS2339 "Property 'global' does not exist on type 'never'."
+    let ts2339_count = diagnostics.iter().filter(|(c, _)| *c == 2339).count();
+    assert!(
+        ts2339_count >= 1,
+        "Expected at least 1 TS2339 for accessing property on never after instanceof narrowing. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+#[ignore = "CFA flow merge after instanceof doesn't preserve the class type in the union - separate issue from instanceof narrowing"]
+fn test_instanceof_class_narrows_union_at_merge_point() {
+    // From conformance/expressions/typeGuards/typeGuardsWithInstanceOf.ts (#31155 repro)
+    // After `if (v instanceof C) { ... }`, the type of `v` should be
+    // `C | (Validator & Partial<OnChanges>)` at the merge point, so accessing
+    // `v.onChanges` should error because `onChanges` doesn't exist on `C`.
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+interface OnChanges {
+    onChanges(changes: Record<string, unknown>): void
+}
+interface Validator {
+    validate(): null | Record<string, unknown>;
+}
+
+class C {
+    validate() {
+        return {}
+    }
+}
+
+function foo() {
+    let v: Validator & Partial<OnChanges> = null as any;
+    if (v instanceof C) {
+        v
+    }
+    v
+
+    if (v.onChanges) {
+        v.onChanges({});
+    }
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    // tsc expects: two TS2339 errors for v.onChanges on lines accessing it
+    let ts2339_msgs: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(
+        ts2339_msgs.len() >= 2,
+        "Expected at least 2 TS2339 for 'onChanges' on union type. Got: {diagnostics:?}"
+    );
+}

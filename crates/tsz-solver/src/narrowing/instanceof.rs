@@ -194,15 +194,22 @@ impl<'a> NarrowingContext<'a> {
                         continue;
                     }
 
-                    // Interface overlap: both are object-like but not assignable
-                    // Use intersection to preserve properties from both
+                    // Interface overlap: both are object-like but not assignable.
+                    // Only create intersection if the types don't have conflicting
+                    // properties (e.g., same property name with incompatible types).
                     if self.are_object_like(member) && self.are_object_like(instance_type) {
+                        if self.are_instanceof_types_overlapping(member, instance_type) {
+                            trace!(
+                                "Interface overlap between {} and {}, using intersection",
+                                member.0, instance_type.0
+                            );
+                            filtered_members.push(self.db.intersection2(member, instance_type));
+                            continue;
+                        }
                         trace!(
-                            "Interface overlap between {} and {}, using intersection",
+                            "Conflicting properties between {} and {}, excluding",
                             member.0, instance_type.0
                         );
-                        filtered_members.push(self.db.intersection2(member, instance_type));
-                        continue;
                     }
 
                     trace!("Union member {} excluded by instanceof check", member.0);
@@ -213,11 +220,12 @@ impl<'a> NarrowingContext<'a> {
                 // Non-union type: use standard narrowing with intersection fallback
                 let narrowed = self.narrow_to_type(resolved_source, instance_type);
 
-                // If that returns NEVER, try intersection approach for interface vs class cases
-                // In TypeScript, instanceof on an interface narrows to intersection, not NEVER
+                // If that returns NEVER, try intersection approach for interface vs class cases.
+                // Only create intersection if the types don't have conflicting properties.
                 if narrowed == TypeId::NEVER && resolved_source != TypeId::NEVER {
-                    // Check for interface overlap before using intersection
-                    if self.are_object_like(resolved_source) && self.are_object_like(instance_type)
+                    if self.are_object_like(resolved_source)
+                        && self.are_object_like(instance_type)
+                        && self.are_instanceof_types_overlapping(resolved_source, instance_type)
                     {
                         trace!("Interface vs class detected, using intersection instead of NEVER");
                         self.db.intersection2(resolved_source, instance_type)
@@ -463,9 +471,14 @@ impl<'a> NarrowingContext<'a> {
             if self.is_assignable_to(instance_type, resolved_source) {
                 return instance_type;
             }
-            // Non-primitive types may still be instances at runtime.
-            // Neither direction holds — create intersection per tsc semantics.
-            // This handles cases like `interface I {}` narrowed by `instanceof RegExp`.
+            // Neither direction of assignability holds. Check if the types have
+            // conflicting properties (e.g., `{ x: string }` vs `{ x: number }`).
+            // If they do, the intersection would be uninhabitable → return NEVER.
+            // Otherwise, create the intersection per tsc semantics.
+            if !self.are_instanceof_types_overlapping(resolved_source, instance_type) {
+                trace!("Types have conflicting properties, returning NEVER");
+                return TypeId::NEVER;
+            }
             return self.db.intersection2(source_type, instance_type);
         }
         // Primitives can never pass instanceof
@@ -723,5 +736,28 @@ impl<'a> NarrowingContext<'a> {
             return resolver.defs_are_equivalent(member_base_def, instance_def);
         }
         false
+    }
+
+    /// Check if two types have overlapping (non-conflicting) properties for instanceof narrowing.
+    ///
+    /// Returns `false` if the types have a common property whose types are incompatible
+    /// (e.g., `{ x: string }` vs `{ x: number }`), meaning their intersection would be
+    /// uninhabitable and instanceof should narrow to `never`.
+    ///
+    /// Returns `true` if the types are compatible or if we can't determine compatibility
+    /// (conservative approach — prefer creating an intersection over incorrectly returning `never`).
+    pub(crate) fn are_instanceof_types_overlapping(
+        &self,
+        source: TypeId,
+        instance_type: TypeId,
+    ) -> bool {
+        // Resolve Lazy types using our TypeResolver before overlap detection.
+        // The SubtypeChecker's overlap check needs concrete Object types to
+        // detect property conflicts (e.g., { x: string } vs { x: number }).
+        let resolved_source = self.resolve_type(source);
+        let resolved_instance = self.resolve_type(instance_type);
+
+        let checker = SubtypeChecker::new(self.db.as_type_database()).with_query_db(self.db);
+        checker.are_types_overlapping(resolved_source, resolved_instance)
     }
 }
