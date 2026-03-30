@@ -561,7 +561,9 @@ impl<'a> CheckerState<'a> {
         // TS2405: For for-in, also check that the LHS type is string or any.
         // This applies only to valid LHS forms (identifiers and property/element access).
         // Skip if we already emitted TS2491 (destructuring) or TS2406 (invalid form).
+        // Also skip for optional chain accesses — TS2777 already covers those.
         if !is_for_of
+            && !self.is_optional_chain_access(initializer)
             && let Some(_init_node) = self.ctx.arena.get(initializer)
             && {
                 let unwrapped = self
