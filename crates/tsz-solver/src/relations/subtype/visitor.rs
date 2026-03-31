@@ -722,6 +722,28 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // S[I] <: T[J]  <=>  S <: T  AND  I <: J
         // This handles deferred index access types (usually involving type parameters).
         if let Some((t_obj, t_idx)) = index_access_parts(self.checker.interner, self.target) {
+            // CRITICAL FIX: Check if both keys are type parameters with different names.
+            // Even if they have the same constraint, different type parameters should not
+            // be considered subtypes of each other. This fixes cases like:
+            //   JSX.IntrinsicElements[T1] <: JSX.IntrinsicElements[T2]
+            // where T1 and T2 are both `extends keyof JSX.IntrinsicElements` but different params.
+            if let Some(s_param) = type_param_info(self.checker.interner, key_type) {
+                if let Some(t_param) = type_param_info(self.checker.interner, t_idx) {
+                    // Both keys are type parameters with different names - not subtypes
+                    if s_param.name != t_param.name {
+                        if let Some(tracer) = &mut self.checker.tracer
+                            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                                source_type: self.source,
+                                target_type: self.target,
+                            })
+                        {
+                            return SubtypeResult::False;
+                        }
+                        return SubtypeResult::False;
+                    }
+                }
+            }
+
             // Coinductive check: delegate back to check_subtype for both parts
             if self.checker.check_subtype(object_type, t_obj).is_true()
                 && self.checker.check_subtype(key_type, t_idx).is_true()
