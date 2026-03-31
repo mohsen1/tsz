@@ -7902,6 +7902,33 @@ class B extends A {
     );
 }
 
+#[test]
+fn test_ts2416_type_level_base_class_constructor_call_type_arguments() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+// @strictPropertyInitialization: false
+type T1 = { n: number };
+type Constructor<T> = new () => T;
+declare function Constructor<T>(): Constructor<T>;
+
+class Base extends Constructor<T1>() {
+    n = '';
+}
+",
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant_diagnostics, 2416),
+        "Should emit TS2416 when constructor-call base type args are applied to derived class instances.\nActual errors: {relevant_diagnostics:#?}"
+    );
+}
+
 /// TS2416 alongside TS2426 when method overrides accessor with incompatible type.
 ///
 /// tsc emits both TS2426 (kind mismatch: accessor -> method) and TS2416 (type incompatibility)
