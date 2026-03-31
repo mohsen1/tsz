@@ -9806,8 +9806,8 @@ namespace myModule {
         "Expected TS1147 for import = require inside namespace. Actual: {diagnostics:#?}"
     );
     assert!(
-        !has_error(&diagnostics, 2307),
-        "Should NOT emit TS2307 when TS1147 is emitted for namespace import (tsc only emits TS1147). Actual: {diagnostics:#?}"
+        has_error(&diagnostics, 2307),
+        "Expected TS2307 for unresolved module in namespace import. Actual: {diagnostics:#?}"
     );
 }
 
