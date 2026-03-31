@@ -454,12 +454,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // mapped types like `{ [K in keyof T]: T[K] }`) that make
                             // the structural check succeed even though the variance
                             // check on the raw type parameter fails.
-                            let source_has_type_param = s_app.args.iter().any(|arg| {
-                                matches!(
-                                    self.interner.lookup(*arg),
-                                    Some(TypeData::TypeParameter(_))
-                                )
-                            });
+                            let source_has_type_param = s_app
+                                .args
+                                .iter()
+                                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
                             if !source_has_type_param {
                                 return SubtypeResult::False;
                             }
@@ -700,7 +698,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let source_has_type_param = s_app
                 .args
                 .iter()
-                .any(|arg| matches!(self.interner.lookup(*arg), Some(TypeData::TypeParameter(_))));
+                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
             if !source_has_type_param {
                 return Some(SubtypeResult::False);
             }
