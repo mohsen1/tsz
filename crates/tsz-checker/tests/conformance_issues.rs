@@ -7707,11 +7707,13 @@ class DerivedInterface implements Base {
         .cloned()
         .collect();
 
-    // tsc emits TS2416 for each incompatible member even when implementing a
-    // class (not interface). TS2720 is only for missing members or private members.
+    // When member-by-member checking finds incompatible members (TS2416),
+    // the type-level assignability check is skipped.  TS2720 is only emitted
+    // when member-by-member finds no issues but the whole-type check fails
+    // (e.g., inherited member type mismatch after generic instantiation).
     assert!(
         !has_error(&relevant_diagnostics, 2720),
-        "Should NOT emit TS2720 for incompatible public members.\nActual errors: {relevant_diagnostics:#?}"
+        "Should NOT emit TS2720 when member-by-member check already found incompatibilities.\nActual errors: {relevant_diagnostics:#?}"
     );
 
     let ts2416_count = relevant_diagnostics
@@ -7722,6 +7724,39 @@ class DerivedInterface implements Base {
     assert!(
         ts2416_count >= 2,
         "Expected TS2416 for each incompatible member (n and fn).\nActual errors: {relevant_diagnostics:#?}"
+    );
+}
+
+/// When a class extends C<string> but implements C<number>, the inherited
+/// member types (after instantiation) are incompatible with the target.
+/// tsc emits TS2720 for the implements-class failure.
+#[test]
+fn test_class_extends_and_implements_same_generic_class_emits_ts2720() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class C<T> {
+    foo: number;
+    bar(): T { return null as any; }
+}
+class D extends C<string> implements C<number> {
+    baz() { }
+}
+"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        has_error(&diagnostics, 2720),
+        "Expected TS2720 for 'class D extends C<string> implements C<number>'. Got codes: {codes:?}"
+    );
+    // Verify the message includes type arguments (C<number>, not just C)
+    let ts2720_msg = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2720)
+        .map(|(_, msg)| msg.as_str())
+        .unwrap();
+    assert!(
+        ts2720_msg.contains("C<number>"),
+        "TS2720 message should reference 'C<number>' with type args, got: {ts2720_msg}"
     );
 }
 
