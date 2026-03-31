@@ -826,6 +826,18 @@ impl<'a> CheckerState<'a> {
         sigs.len() >= 2
     }
 
+    /// Check if a component type has multiple construct signatures (including generic ones)
+    /// that should go through overload resolution. This handles class components like
+    /// `React.Component` which typically have 2 construct overloads.
+    pub(super) fn has_multi_construct_overloads(&self, component_type: TypeId) -> bool {
+        let Some(sigs) =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
+        else {
+            return false;
+        };
+        sigs.len() >= 2
+    }
+
     /// Check if a component type has generic call or construct signatures.
     pub(super) fn is_generic_jsx_component(&self, component_type: TypeId) -> bool {
         if let Some(shape) =
@@ -859,6 +871,14 @@ impl<'a> CheckerState<'a> {
         let sigs =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
         if sigs.is_empty() {
+            return None;
+        }
+
+        // Skip multi-overload class components — they should go through JSX
+        // overload resolution (TS2769) instead of picking a single signature.
+        // This matches tsc's behavior for classes like React.Component which
+        // have 2 construct overloads.
+        if sigs.len() >= 2 {
             return None;
         }
 

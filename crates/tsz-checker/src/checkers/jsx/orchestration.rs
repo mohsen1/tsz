@@ -1433,7 +1433,8 @@ impl<'a> CheckerState<'a> {
             };
             let uses_jsx_overload_resolution = recovered_props.is_none()
                 && (self.is_overloaded_sfc(resolved_component_type)
-                    || self.has_multi_signature_overloads(resolved_component_type));
+                    || self.has_multi_signature_overloads(resolved_component_type)
+                    || self.has_multi_construct_overloads(resolved_component_type));
 
             // Extract props type from the component and check attributes.
             // TS2607/TS2608 are emitted within props extraction when applicable.

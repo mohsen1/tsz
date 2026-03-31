@@ -49,15 +49,17 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
     ) {
-        let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-        else {
+        // Try call signatures first (SFC overloads), then construct signatures
+        // (class component overloads like React.Component with 2 constructors).
+        let sigs = tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+            .filter(|s| s.len() >= 2)
+            .or_else(|| {
+                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
+                    .filter(|s| s.len() >= 2)
+            });
+        let Some(sigs) = sigs else {
             return;
         };
-
-        if sigs.len() < 2 {
-            return;
-        }
 
         // Speculative attribute collection: save diagnostic checkpoint so side-effect
         // diagnostics (e.g. TS7006 from callback params without contextual typing) are
@@ -300,10 +302,10 @@ impl<'a> CheckerState<'a> {
 
         let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
         else {
-            // Can't resolve shape — use assignability fallback
-            if info.attrs.is_empty() && !info.has_spread {
-                return true;
-            }
+            // Can't resolve shape — use assignability fallback.
+            // Always check assignability even with empty attrs: an empty object `{}`
+            // is not assignable to type parameters like `P`, so we can't just assume
+            // empty attrs match when the shape can't be resolved.
             let attrs_type = self.build_attrs_object_type_from_info(&info.attrs);
             return self.is_assignable_to(attrs_type, props_type);
         };
