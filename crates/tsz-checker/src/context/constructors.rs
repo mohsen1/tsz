@@ -59,6 +59,7 @@ impl<'a> CheckerContext<'a> {
             file_is_esm: None,
             file_is_esm_map: None,
             spelling_suggestions_emitted: 0,
+            name_resolution_reported_nodes: FxHashSet::default(),
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
             symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
