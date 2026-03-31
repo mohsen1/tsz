@@ -1373,13 +1373,11 @@ impl<'a> CheckerState<'a> {
             self.ctx.this_type_stack.push(tt);
             self.ctx.function_owned_this_stack.push(idx);
             pushed_this_type_early = true;
-            // Track closures with contextual this types
+            // Track closures with contextual this types.
+            // Any non-None implicit_this for a closure comes from a contextual source
+            // (parameter type with this, JS constructor, prototype owner, or prototype assignment).
             if is_closure {
-                if let Some(ref helper) = ctx_helper {
-                    if helper.get_this_type().is_some() {
-                        self.ctx.closures_with_contextual_this_type.insert(idx);
-                    }
-                }
+                self.ctx.closures_with_contextual_this_type.insert(idx);
             }
         }
 

@@ -1,6 +1,6 @@
 //! Core implementation for class instance type resolution.
 
-use crate::context::{compiler_options, EnclosingClassInfo};
+use crate::context::{is_js_file_name, EnclosingClassInfo};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
@@ -717,7 +717,7 @@ impl<'a> CheckerState<'a> {
                     // annotated properties are still collected.
                     let class_is_in_js_file = self
                         .source_file_data_for_node(class_idx)
-                        .map(|sf| crate::context::compiler_options::is_js_file_name(&sf.name))
+                        .map(|sf| is_js_file_name(&sf.file_name))
                         .unwrap_or(false);
                     if class_is_in_js_file {
                         self.collect_js_constructor_this_properties(
