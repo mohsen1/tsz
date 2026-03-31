@@ -82,6 +82,18 @@ pub trait AssignabilityChecker {
     fn type_resolver(&self) -> Option<&dyn crate::TypeResolver> {
         None
     }
+
+    /// Check if two types are structurally identical (tsc's `compareTypesIdentical`).
+    ///
+    /// Used for union signature compatibility where `this` types must be identical
+    /// across union members. The default uses mutual assignability, but checkers
+    /// should override to use their full type environment for Lazy type resolution.
+    fn are_types_identical(&mut self, a: TypeId, b: TypeId) -> bool {
+        if a == b {
+            return true;
+        }
+        self.is_assignable_to(a, b) && self.is_assignable_to(b, a)
+    }
 }
 
 // =============================================================================
@@ -537,10 +549,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Phase 2: If only ONE member has multiple overloads, use that member's
         // overloads as the base and combine each with the single-signature members.
+        // But first verify that each single-overload member is compatible with at
+        // least one of the multi-overload member's signatures (per tsc's
+        // intersectSignatureSets). If not, the union is not callable.
         if multi_overload_count == 1
             && let Some(master_idx) = single_overload_with_multi_idx
         {
             let (_, master_sigs) = &sig_lists[master_idx];
+
+            // Verify each single-overload member has a compatible match
+            // in the multi-overload member's signatures.
+            for (other_idx, (_, other_sigs)) in sig_lists.iter().enumerate() {
+                if other_idx == master_idx {
+                    continue;
+                }
+                if let Some(other_sig) = other_sigs.first() {
+                    let has_match = master_sigs
+                        .iter()
+                        .any(|ms| self.are_signatures_compatible_for_union(other_sig, ms));
+                    if !has_match {
+                        // Single-overload member is incompatible with all
+                        // overloads of the multi-overload member → not callable.
+                        return None;
+                    }
+                }
+            }
+
             let mut combined_results: Vec<CallSignature> = master_sigs.clone();
 
             for (other_idx, (_, other_sigs)) in sig_lists.iter().enumerate() {
@@ -1764,6 +1798,71 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return CallResult::NotCallable {
                         type_id: union_type,
                     };
+                }
+            }
+        } else if has_multi_overload_members == 1 {
+            // One member has multiple overloads, others have one each.
+            // Per tsc's getUnionSignatures/intersectSignatureSets: each single-overload
+            // member's signature must be compatible with at least one overload from the
+            // multi-overload member. If any single-overload member has no compatible
+            // match, the union is not callable (TS2349).
+            //
+            // Use TypeId equality for `this` types (safe, no side effects) plus the
+            // None-matches-any rule from tsc's compareSignaturesIdentical.
+            let multi_idx = sig_lists.iter().position(|(_, sigs)| sigs.len() > 1);
+            if let Some(multi_idx) = multi_idx {
+                let multi_sigs = &sig_lists[multi_idx].1;
+                let mut all_compatible = true;
+                for (idx, (_, sigs)) in sig_lists.iter().enumerate() {
+                    if idx == multi_idx {
+                        continue;
+                    }
+                    if let Some(single_sig) = sigs.first() {
+                        // Check if this single-overload sig is compatible with ANY
+                        // overload from the multi-overload member.
+                        let has_match = multi_sigs.iter().any(|multi_sig| {
+                            // Skip generic signatures
+                            if !single_sig.type_params.is_empty()
+                                || !multi_sig.type_params.is_empty()
+                            {
+                                return false;
+                            }
+                            // Check required param count
+                            let s_req =
+                                single_sig.params.iter().filter(|p| p.is_required()).count();
+                            let m_req = multi_sig.params.iter().filter(|p| p.is_required()).count();
+                            if s_req != m_req {
+                                return false;
+                            }
+                            // Check param types
+                            let min_total = single_sig.params.len().min(multi_sig.params.len());
+                            for i in 0..min_total {
+                                if single_sig.params[i].type_id != multi_sig.params[i].type_id {
+                                    return false;
+                                }
+                            }
+                            // Check this types (None matches any per tsc)
+                            match (single_sig.this_type, multi_sig.this_type) {
+                                (Some(a), Some(b)) => a == b,
+                                _ => true,
+                            }
+                        });
+                        if !has_match {
+                            all_compatible = false;
+                            break;
+                        }
+                    }
+                }
+                if !all_compatible {
+                    let all_non_generic = sig_lists
+                        .iter()
+                        .filter(|(_, sigs)| sigs.len() > 1)
+                        .all(|(_, sigs)| sigs.iter().all(|s| s.type_params.is_empty()));
+                    if all_non_generic {
+                        return CallResult::NotCallable {
+                            type_id: union_type,
+                        };
+                    }
                 }
             }
         }
