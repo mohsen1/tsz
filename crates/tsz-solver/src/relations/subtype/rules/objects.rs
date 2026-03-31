@@ -174,6 +174,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !source.properties.is_empty()
             && Self::is_weak_type_shape(target)
             && !Self::is_weak_type_shape(source)
+            && !self.is_global_object_shape(source)
             && !crate::utils::has_common_property_name(&source.properties, &target.properties)
         {
             return SubtypeResult::False;
@@ -1240,5 +1241,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && shape.string_index.is_none()
             && shape.number_index.is_none()
             && shape.properties.iter().all(|p| p.optional)
+    }
+
+    /// Check if an object shape is the global `Object` interface from lib.d.ts.
+    ///
+    /// The global `Object` type is exempt from weak type checks because in tsc,
+    /// all object types implicitly inherit `Object`'s properties (`toString`,
+    /// `valueOf`, `constructor`, etc.). When tsc checks `hasCommonProperties`
+    /// for the weak type rule, the target type's apparent type includes these
+    /// inherited members, so `Object` and any weak type always share common
+    /// properties. Our shapes don't include inherited members, so we exempt
+    /// `Object` explicitly to match tsc behavior (see TypeScript PR #16047).
+    fn is_global_object_shape(&self, shape: &ObjectShape) -> bool {
+        // Object interface has exactly 7 properties: constructor, toString,
+        // toLocaleString, valueOf, hasOwnProperty, isPrototypeOf,
+        // propertyIsEnumerable. Use a tight cap to avoid matching derived
+        // types like Boolean (8+ props) or Number (~10 props).
+        if shape.properties.len() > 7 {
+            return false;
+        }
+        let constructor = self.interner.intern_string("constructor");
+        let has_own = self.interner.intern_string("hasOwnProperty");
+        let is_proto = self.interner.intern_string("isPrototypeOf");
+        shape.properties.iter().any(|p| p.name == constructor)
+            && shape.properties.iter().any(|p| p.name == has_own)
+            && shape.properties.iter().any(|p| p.name == is_proto)
     }
 }
