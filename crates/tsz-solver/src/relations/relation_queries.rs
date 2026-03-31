@@ -467,6 +467,52 @@ pub fn check_application_variance<R: TypeResolver>(
     Some(false)
 }
 
+/// Check if two type parameters are assignable to each other.
+///
+/// This is a helper function for checking type parameter assignability in contexts
+/// where we need to ensure that different unconstrained type parameters (e.g., T vs U)
+/// are not considered assignable to each other.
+///
+/// Returns true if source is assignable to target, false otherwise.
+pub fn are_type_params_assignable(
+    interner: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    // If both are type parameters, check their relationship
+    if let Some(s_info) = crate::visitor::type_param_info(interner, source) {
+        if let Some(t_info) = crate::visitor::type_param_info(interner, target) {
+            // Same name means same type parameter (or shadowed, treat as same for assignability)
+            if s_info.name == t_info.name {
+                return true;
+            }
+
+            // Different names - check if there's a constraint relationship
+            // If source has constraint that's assignable to target, they're related
+            if let Some(s_constraint) = s_info.constraint {
+                if s_constraint == target {
+                    return true;
+                }
+            }
+
+            // If target has constraint that source is assignable to, they're related
+            if let Some(t_constraint) = t_info.constraint {
+                if t_constraint == source {
+                    return true;
+                }
+            }
+
+            // Different unconstrained type parameters are NOT assignable
+            return false;
+        }
+    }
+
+    // If only one is a type parameter, or neither, fall back to general assignability
+    // This shouldn't happen when this function is called correctly, but handle it gracefully
+    let mut checker = CompatChecker::new(interner);
+    checker.is_assignable(source, target)
+}
+
 #[cfg(test)]
 #[path = "../../tests/relation_queries_tests.rs"]
 mod tests;

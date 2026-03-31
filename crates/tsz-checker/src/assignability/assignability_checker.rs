@@ -658,12 +658,17 @@ impl<'a> CheckerState<'a> {
             // scope), the incompatibility is real and must NOT be suppressed.
             // Skip when both sides have their own signature-level type parameters —
             // the solver handles generic-to-generic comparison correctly via alpha-renaming.
+            // Also skip when only the source has type parameters and target is concrete —
+            // this is a real mismatch (e.g., <T>(x: T) => T vs (x: string) => boolean).
             || (is_callable_or_function(source)
                 && is_callable_or_function(target)
                 && contains_type_parameters(source)
                 && !self.callable_types_have_disjoint_type_parameters(source, target)
                 && !(has_own_signature_type_params(source)
-                    && has_own_signature_type_params(target)))
+                    && has_own_signature_type_params(target))
+                && !(has_own_signature_type_params(source)
+                    && !has_own_signature_type_params(target)
+                    && !contains_type_parameters(target)))
     }
 
     /// Targeted suppression for member type compatibility checks (TS2416).
