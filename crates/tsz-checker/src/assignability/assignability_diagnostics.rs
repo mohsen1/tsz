@@ -711,10 +711,7 @@ impl<'a> CheckerState<'a> {
         // This handles cases like JSDoc @enum types where the callback parameter
         // should be contextually typed but the assignability check happens before
         // contextual typing is fully resolved.
-        if tsz_solver::type_queries::is_callable_type(self.ctx.types, source)
-            && tsz_solver::type_queries::is_callable_type(self.ctx.types, target)
-            && self.arg_is_callback_with_unannotated_params(arg_idx)
-        {
+        if self.arg_is_callback_with_unannotated_params(arg_idx) {
             return true;
         }
         self.error_argument_not_assignable_at(source, target, arg_idx);
