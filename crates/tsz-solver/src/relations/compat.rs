@@ -1568,6 +1568,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
+        // An intersection that includes a non-object member (e.g. `string & { p?: T }`)
+        // is NOT a weak type in tsc. The apparent type of the intersection includes
+        // properties from the primitive's prototype, so the weak-type overlap check
+        // would always find common properties. Skip the weak type check entirely.
+        if let Some(TypeData::Intersection(members_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(members_id);
+            let mut test_extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+            let has_non_object_member =
+                members.iter().any(|&m| test_extractor.extract(m).is_none());
+            if has_non_object_member {
+                return false;
+            }
+        }
+
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
 
         let Some(target_shape_id) = extractor.extract(target) else {
