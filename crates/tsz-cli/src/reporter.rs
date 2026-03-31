@@ -565,7 +565,8 @@ impl Reporter {
     fn ensure_source(&mut self, file: &str) -> Option<()> {
         if !self.sources.contains_key(file) {
             let path = Path::new(file);
-            let contents = std::fs::read_to_string(path).ok()?;
+            let bytes = std::fs::read(path).ok()?;
+            let contents = decode_source_bytes(&bytes)?;
             self.sources.insert(file.to_string(), contents);
         }
         Some(())
@@ -610,5 +611,85 @@ impl Reporter {
     /// the translated message. Otherwise returns the original message.
     fn translate_message(&self, code: u32, message: &str) -> String {
         locale::translate(code, message)
+    }
+}
+
+/// Decode raw file bytes to a UTF-8 string, handling UTF-16 BOM-encoded files.
+///
+/// TypeScript test files may be encoded as UTF-16 LE or UTF-16 BE with a BOM.
+/// `std::fs::read_to_string` only handles UTF-8, so files with other encodings
+/// would fail to load, causing the reporter to omit position info from diagnostics.
+fn decode_source_bytes(bytes: &[u8]) -> Option<String> {
+    if bytes.len() >= 2 {
+        // UTF-16 LE BOM
+        if bytes[0] == 0xFF && bytes[1] == 0xFE {
+            let u16_words: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+            return Some(String::from_utf16_lossy(&u16_words));
+        }
+        // UTF-16 BE BOM
+        if bytes[0] == 0xFE && bytes[1] == 0xFF {
+            let u16_words: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .collect();
+            return Some(String::from_utf16_lossy(&u16_words));
+        }
+    }
+    // UTF-8 (with or without BOM)
+    String::from_utf8(bytes.to_vec()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_utf8() {
+        let text = "hello world";
+        assert_eq!(
+            decode_source_bytes(text.as_bytes()),
+            Some("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn decode_utf16_le_bom() {
+        let text = "AB";
+        let mut bytes = vec![0xFF, 0xFE]; // UTF-16 LE BOM
+        for ch in text.encode_utf16() {
+            bytes.extend_from_slice(&ch.to_le_bytes());
+        }
+        assert_eq!(decode_source_bytes(&bytes), Some("AB".to_string()));
+    }
+
+    #[test]
+    fn decode_utf16_be_bom() {
+        let text = "AB";
+        let mut bytes = vec![0xFE, 0xFF]; // UTF-16 BE BOM
+        for ch in text.encode_utf16() {
+            bytes.extend_from_slice(&ch.to_be_bytes());
+        }
+        assert_eq!(decode_source_bytes(&bytes), Some("AB".to_string()));
+    }
+
+    #[test]
+    fn decode_invalid_utf8_returns_none() {
+        let bytes = vec![0xFF, 0x00, 0x80]; // Invalid UTF-8 without BOM
+        assert_eq!(decode_source_bytes(&bytes), None);
+    }
+
+    #[test]
+    fn decode_utf16_le_multiline() {
+        let text = "line1\nline2\nline3";
+        let mut bytes = vec![0xFF, 0xFE];
+        for ch in text.encode_utf16() {
+            bytes.extend_from_slice(&ch.to_le_bytes());
+        }
+        let decoded = decode_source_bytes(&bytes).unwrap();
+        assert_eq!(decoded.lines().count(), 3);
+        assert_eq!(decoded, text);
     }
 }
