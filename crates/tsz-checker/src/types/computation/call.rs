@@ -2445,10 +2445,9 @@ impl<'a> CheckerState<'a> {
             && !forced_block_body_callback_mismatch
             && !forced_binding_pattern_unknown_context_mismatch
             && fallback_return != TypeId::ERROR
-            && allow_contextual_mismatch_deferral
-            && self.should_defer_contextual_argument_mismatch(actual, expected)
         {
-            result = CallResult::Success(fallback_return);
+            // Keep the ArgumentTypeMismatch result to ensure TS2345 is emitted
+            // Deferral logic removed to fix missing TS2345 errors
         }
 
         let call_context = CallResultContext {
