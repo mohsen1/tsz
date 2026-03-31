@@ -522,9 +522,32 @@ impl<'a> CheckerState<'a> {
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {
+                // When the source is NOT a fresh object literal (e.g., class instance),
+                // emit TS2322 instead of TS2741. TSC reports general assignability errors
+                // for class/interface mismatches, not missing property errors.
+                let is_fresh = tsz_solver::relations::freshness::is_fresh_object_type(self.ctx.types, source);
+                
                 let src_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
                 let tgt_str = self.format_assignability_type_for_message(target, source);
+                
+                if !is_fresh {
+                    // Emit TS2322 for non-fresh sources (class instances, etc.)
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    self.emit_render_request_at_anchor(
+                        anchor,
+                        DiagnosticRenderRequest::simple(
+                            DiagnosticAnchorKind::Exact,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            message,
+                        ),
+                    );
+                    return;
+                }
+                
                 let (message, code) = if missing_props.len() == 1 {
                     let prop_name = self
                         .ctx

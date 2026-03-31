@@ -8,6 +8,7 @@ use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
+use crate::type_queries::data::get_object_symbol;
 use crate::types::{
     FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo,
     TupleElement, TypeId, Visibility,
@@ -610,16 +611,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // checking property type compatibility.
         // Collect with declaration_order so we can sort by source order (tsc lists
         // missing properties in declaration order, not Atom/hash order).
-        let mut missing_with_order: Vec<(tsz_common::interner::Atom, u32)> = Vec::new();
+        // For class inheritance, we need to show own properties first, then inherited.
+        let target_symbol = get_object_symbol(self.interner, target);
+        let mut missing_with_order: Vec<(tsz_common::interner::Atom, u32, Option<tsz_binder::SymbolId>)> = Vec::new();
         for t_prop in target_props {
             if !t_prop.optional {
                 let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
                 if s_prop.is_none() {
-                    missing_with_order.push((t_prop.name, t_prop.declaration_order));
+                    missing_with_order.push((t_prop.name, t_prop.declaration_order, t_prop.parent_id));
                 }
             }
         }
-        missing_with_order.sort_by(|(left_name, left_order), (right_name, right_order)| {
+        missing_with_order.sort_by(|(left_name, left_order, left_parent), (right_name, right_order, right_parent)| {
+            // For class types, own properties (where parent_id matches the target symbol)
+            // should come before inherited properties
+            let left_is_own = target_symbol.is_some() && *left_parent == target_symbol;
+            let right_is_own = target_symbol.is_some() && *right_parent == target_symbol;
+            
+            match (left_is_own, right_is_own) {
+                (true, false) => return std::cmp::Ordering::Less,
+                (false, true) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
+            
+            // Then sort by declaration_order
             match (*left_order > 0, *right_order > 0) {
                 (true, true) => left_order.cmp(right_order),
                 (true, false) => std::cmp::Ordering::Less,
@@ -633,7 +648,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let non_symbol_missing: Vec<_> = missing_with_order
             .iter()
             .copied()
-            .filter(|(name, _)| !self.is_late_bound_symbol_property_name(*name))
+            .filter(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name))
             .collect();
         if non_symbol_missing.is_empty() {
             // All missing properties are late-bound symbols (e.g. [Symbol.iterator]).
@@ -645,7 +660,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order
             .into_iter()
-            .map(|(name, _)| name)
+            .map(|(name, _, _)| name)
             .collect();
 
         if missing_props.len() > 1 {
