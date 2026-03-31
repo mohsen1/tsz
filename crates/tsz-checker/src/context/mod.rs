@@ -824,6 +824,11 @@ pub struct CheckerContext<'a> {
     /// their own `module.exports` shape while the same shape is still pending.
     pub js_export_surface_resolution_set: FxHashSet<usize>,
 
+    /// Recursion guard for JS expando property reads.
+    /// Prevents `NS.K = class { return new NS.K() }`-style self-reference loops
+    /// from recursively re-evaluating the same expando property via the RHS.
+    pub expando_property_resolution_set: FxHashSet<String>,
+
     /// Maps `file_id` -> module specifier for import-qualified type display.
     /// When a type is defined in a module file, the formatter qualifies its name
     /// as `import("specifier").TypeName` to match tsc's behavior.

@@ -1547,6 +1547,54 @@ fn test_resolver_invalid_types_field_falls_back_to_main_declaration() {
 }
 
 #[test]
+fn test_resolver_empty_types_field_uses_types_versions() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_empty_types_field");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules").join("a").join("ts3.1")).unwrap();
+
+    fs::write(dir.join("app.ts"), "import { a } from \"a\";").unwrap();
+    fs::write(
+        dir.join("node_modules")
+            .join("a")
+            .join("ts3.1")
+            .join("index.d.ts"),
+        "export const a = 0;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("a").join("package.json"),
+        r#"{
+            "name": "a",
+            "types": "",
+            "typesVersions": {
+                ">=3.1": { "*": ["ts3.1/*"] }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let options = crate::config::ResolvedCompilerOptions {
+        module_resolution: Some(crate::config::ModuleResolutionKind::Node),
+        types_versions_compiler_version: Some("3.1.0".to_string()),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("a", &dir.join("app.ts"), Span::new(0, 1));
+
+    let resolved = result.expect("empty package.json types field should be ignored");
+    assert_eq!(
+        resolved.resolved_path,
+        dir.join("node_modules")
+            .join("a")
+            .join("ts3.1")
+            .join("index.d.ts")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_missing_file() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_missing");

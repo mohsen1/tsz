@@ -586,21 +586,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         source_eval,
                     )
                 })
+            && source_args.len() == 1
+            && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source_args[0])
+            && tracked_type_params.contains(&tp.name)
+            && substitution.get(tp.name).is_none()
+            && !self.target_contains_untracked_type_params(target, tracked_type_params)
         {
-            if source_args.len() == 1 {
-                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source_args[0])
-                    && tracked_type_params.contains(&tp.name)
-                    && substitution.get(tp.name).is_none()
-                    && !self.target_contains_untracked_type_params(target, tracked_type_params)
-                {
-                    // Verify: Application(Base, [target]) should evaluate to target
-                    // for the substitution to be correct.
-                    let test_app = self.interner.application(source_base, vec![target]);
-                    let evaluated = self.interner.evaluate_type(test_app);
-                    if evaluated == target {
-                        substitution.insert(tp.name, target);
-                    }
-                }
+            // Verify: Application(Base, [target]) should evaluate to target
+            // for the substitution to be correct.
+            let test_app = self.interner.application(source_base, vec![target]);
+            let evaluated = self.interner.evaluate_type(test_app);
+            if evaluated == target {
+                substitution.insert(tp.name, target);
             }
         }
     }

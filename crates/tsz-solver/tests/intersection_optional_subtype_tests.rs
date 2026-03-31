@@ -1,8 +1,8 @@
 //! Tests for intersection types with optional properties in subtype checking.
 //! Regression tests for weak type check (TS2559) not applying to individual
-//! intersection members. When checking A <: A & WeakType, the check against
-//! the WeakType member alone should succeed even if A has no common properties
-//! with WeakType, because the overall intersection check passes.
+//! intersection members. When checking A <: A & `WeakType`, the check against
+//! the `WeakType` member alone should succeed even if A has no common properties
+//! with `WeakType`, because the overall intersection check passes.
 
 use super::*;
 use crate::intern::TypeInterner;
@@ -115,8 +115,8 @@ fn test_object_subtype_of_two_optional() {
 }
 
 /// Regression test: weak type check should NOT reject individual intersection members.
-/// When checking {Parent?: T} <: {Parent?: T} & {Id?: number}, the SubtypeChecker
-/// with enforce_weak_types=true used to reject {Parent?: T} <: {Id?: number} because
+/// When checking {Parent?: T} <: {Parent?: T} & {Id?: number}, the `SubtypeChecker`
+/// with `enforce_weak_types=true` used to reject {Parent?: T} <: {Id?: number} because
 /// they have no common properties and {Id?: number} is a weak type. But the overall
 /// check should pass because {Parent?: T} <: {Parent?: T} is trivially true, and
 /// weak type checks should not apply to individual intersection members.

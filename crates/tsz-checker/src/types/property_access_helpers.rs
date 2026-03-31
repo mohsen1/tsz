@@ -627,6 +627,14 @@ impl<'a> CheckerState<'a> {
         let read_node = self.ctx.arena.get(property_access_idx)?;
         let obj_key = Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)?;
         let expected_key = format!("{obj_key}.{property_name}");
+        let recursion_key = format!("{}:{expected_key}", self.ctx.current_file_idx);
+        if !self
+            .ctx
+            .expando_property_resolution_set
+            .insert(recursion_key.clone())
+        {
+            return None;
+        }
         let source_file = self
             .ctx
             .arena
@@ -645,16 +653,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((_, ty)) = best_match {
+            self.ctx
+                .expando_property_resolution_set
+                .remove(&recursion_key);
             return Some(ty);
         }
 
         let root_keys = self.expando_read_root_keys(object_expr_idx);
         let preferred_file_idx = self.expando_root_js_file_idx(object_expr_idx);
-        self.js_expando_property_read_type_from_all_files(
+        let result = self.js_expando_property_read_type_from_all_files(
             &root_keys,
             property_name,
             preferred_file_idx,
-        )
+        );
+        self.ctx
+            .expando_property_resolution_set
+            .remove(&recursion_key);
+        result
     }
 
     pub(super) fn refine_expando_property_read_type(
