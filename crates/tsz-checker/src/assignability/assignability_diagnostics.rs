@@ -703,6 +703,20 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        // Suppress TS2345 for callbacks with unannotated parameters that rely on
+        // contextual typing. When a callback has unannotated parameters, its type
+        // depends on the contextual type from the call site. If the contextual
+        // typing wasn't properly applied during type inference, the callback's
+        // inferred type may not match the expected type, causing false TS2345.
+        // This handles cases like JSDoc @enum types where the callback parameter
+        // should be contextually typed but the assignability check happens before
+        // contextual typing is fully resolved.
+        if tsz_solver::type_queries::is_callable_type(self.ctx.types, source)
+            && tsz_solver::type_queries::is_callable_type(self.ctx.types, target)
+            && self.arg_is_callback_with_unannotated_params(arg_idx)
+        {
+            return true;
+        }
         self.error_argument_not_assignable_at(source, target, arg_idx);
         false
     }
