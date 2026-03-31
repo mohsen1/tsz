@@ -67,9 +67,9 @@ interface I1 {
         "Expected at least one TS2344 for Fail<string> in interface setter, got {ts2344_count}. Diagnostics: {diagnostics:?}"
     );
 
-    let has_constraint_msg = diagnostics.iter().any(|(code, msg)| {
-        *code == 2344 && msg.contains("does not satisfy the constraint")
-    });
+    let has_constraint_msg = diagnostics
+        .iter()
+        .any(|(code, msg)| *code == 2344 && msg.contains("does not satisfy the constraint"));
     assert!(
         has_constraint_msg,
         "Expected TS2344 message about constraint violation. Diagnostics: {diagnostics:?}"
