@@ -941,6 +941,15 @@ impl<'a> CheckerState<'a> {
                         is_valid_rhs = true;
                     }
 
+                    if !is_valid_rhs
+                        && self.ctx.is_js_file()
+                        && self
+                            .synthesize_js_constructor_instance_type(right_idx, eval_right, &[])
+                            .is_some()
+                    {
+                        is_valid_rhs = true;
+                    }
+
                     // TypeScript also allows types with [Symbol.hasInstance] as valid instanceof RHS.
                     // This is checked even when the standard callable/Function checks fail.
                     if !is_valid_rhs {

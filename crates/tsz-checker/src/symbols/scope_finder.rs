@@ -4,6 +4,7 @@ use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Scope Finding Methods
@@ -268,6 +269,13 @@ impl<'a> CheckerState<'a> {
             if self.enclosing_function_has_explicit_this_parameter(idx)
                 || self.enclosing_function_has_contextual_this_type(idx)
             {
+                return false;
+            }
+            // In JS files, function declarations that have `this.prop = value`
+            // assignments in their body are constructor functions. `this` inside
+            // them is typed as the constructed instance, not `any`, so TS2683
+            // must be suppressed.
+            if self.is_js_file() && self.function_body_has_this_property_assignments(enclosing_fn) {
                 return false;
             }
             return true;
@@ -554,7 +562,9 @@ impl<'a> CheckerState<'a> {
     /// the `this` type is contextually provided. TS2683 should be suppressed because
     /// the contextual typing pass will properly type `this`.
     pub(crate) fn enclosing_function_has_contextual_this_type(&mut self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_DECLARATION, FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
+        use tsz_parser::parser::syntax_kind_ext::{
+            FUNCTION_DECLARATION, FUNCTION_EXPRESSION, VARIABLE_DECLARATION,
+        };
 
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
             Some(f) => f,
@@ -605,6 +615,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self
+            .contextual_this_type_for_call_argument_function(enclosing_fn)
+            .is_some()
+        {
+            return true;
+        }
+
         if self.is_js_file()
             && let Some(jsdoc_callable_type) =
                 self.jsdoc_callable_type_annotation_for_function(enclosing_fn)
@@ -626,6 +643,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.is_js_file()
+            && self
+                .js_constructor_body_instance_type_for_function(enclosing_fn)
+                .is_some()
+        {
+            return true;
+        }
+
         // Check if the function is passed as a callback argument with a contextual this type.
         // When a function is passed as an argument (e.g., `arr.filter(function(x) { this.y })`),
         // the expected parameter type may have a `this` type that should be contextually
@@ -639,6 +664,58 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn contextual_this_type_for_call_argument_function(
+        &mut self,
+        fn_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CALL_EXPRESSION, FUNCTION_EXPRESSION, NEW_EXPRESSION, PARENTHESIZED_EXPRESSION,
+        };
+
+        let fn_node = self.ctx.arena.get(fn_idx)?;
+        if fn_node.kind != FUNCTION_EXPRESSION {
+            return None;
+        }
+
+        let mut current = fn_idx;
+        loop {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+
+            if parent_node.kind == PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+
+            if parent_node.kind != CALL_EXPRESSION && parent_node.kind != NEW_EXPRESSION {
+                return None;
+            }
+
+            let call = self.ctx.arena.get_call_expr(parent_node)?;
+            let args = call.arguments.as_ref()?;
+            let arg_index = args.nodes.iter().position(|&arg| arg == current)?;
+
+            let callee_type = self.get_type_of_node(call.expression);
+            let callee_type = self.evaluate_application_type(callee_type);
+            let callee_type = self.resolve_lazy_type(callee_type);
+            let callee_type = self.evaluate_contextual_type(callee_type);
+
+            let ctx = tsz_solver::ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                callee_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            let param_type = ctx.get_parameter_type_for_call(arg_index, args.nodes.len())?;
+            let param_ctx = tsz_solver::ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                param_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+
+            return param_ctx.get_this_type();
+        }
     }
 
     /// Check if an `arguments` reference is directly inside an arrow function.
@@ -2069,6 +2146,72 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        false
+    }
+
+    /// Check if a function's body contains `this.property = value` assignments,
+    /// which in JS files indicates a constructor function pattern. When a function
+    /// has such assignments, tsc types `this` as the constructed instance and
+    /// does not emit TS2683.
+    fn function_body_has_this_property_assignments(&self, func_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            BINARY_EXPRESSION, EXPRESSION_STATEMENT, PROPERTY_ACCESS_EXPRESSION,
+        };
+
+        let Some(fn_node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        let body_idx = if let Some(func) = self.ctx.arena.get_function(fn_node) {
+            func.body
+        } else {
+            return false;
+        };
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let Some(lhs_node) = self.ctx.arena.get(binary.left) else {
+                continue;
+            };
+            if lhs_node.kind != PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = self.ctx.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            let Some(base_node) = self.ctx.arena.get(access.expression) else {
+                continue;
+            };
+            if base_node.kind == SyntaxKind::ThisKeyword as u16 {
+                return true;
+            }
+        }
+
         false
     }
 }

@@ -566,3 +566,50 @@ const x = a = b;"#;
         a_offset, diag.start
     );
 }
+
+#[test]
+fn generic_construct_signature_return_type_mismatch_ts2322() {
+    // Generic construct signatures must not suppress TS2322 when comparing
+    // incompatible return types. The `has_own_signature_type_params` check
+    // must include construct_signatures, not just call_signatures.
+    let source = r#"
+        declare var a: new <T>(x: T) => void;
+        declare var b: new <T>(x: T) => T;
+        b = a;
+    "#;
+
+    let diagnostics = diagnostics_for(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        1,
+        "expected 1 TS2322 for assigning new <T>(x: T) => void to new <T>(x: T) => T, got {ts2322_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_construct_signature_different_arity_ts2322() {
+    // When source has fewer type params than target (1 vs 2), the source is
+    // more restrictive and should not be assignable.
+    let source = r#"
+        declare var a: new <T>(x: { a: T; b: T }) => T[];
+        declare var b: new <U, V>(x: { a: U; b: V }) => U[];
+        b = a;
+    "#;
+
+    let diagnostics = diagnostics_for(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        1,
+        "expected 1 TS2322 for different type param arity construct signatures, got {ts2322_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

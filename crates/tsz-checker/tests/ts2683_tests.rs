@@ -333,3 +333,104 @@ $.each(lines, function () {
         "Expected contextual generic callback `this` to suppress TS2683, got: {diags:?}"
     );
 }
+
+// =========================================================================
+// JS constructor function tests
+// =========================================================================
+
+fn get_js_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_this: true,
+            no_implicit_any: true,
+            check_js: true,
+            allow_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+#[test]
+fn js_constructor_function_with_this_assignments_no_ts2683() {
+    // In JS files, function declarations with `this.prop = value` are constructor
+    // functions. tsc types `this` as the constructed instance and does NOT emit
+    // TS2683 even with noImplicitThis.
+    let src = r#"
+function Instance() {
+    this.i = 'simple'
+}
+var i = new Instance();
+"#;
+
+    let diags = get_js_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "Expected JS constructor function to suppress TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn js_constructor_function_with_prototype_no_ts2683() {
+    // Constructor function with both `this.prop` assignments and prototype methods
+    // should not emit TS2683.
+    let src = r#"
+function A() {
+    this.x = 1
+}
+A.prototype.z = function f(n) {
+    return n + this.x
+}
+var a = new A()
+"#;
+
+    let diags = get_js_diagnostics(src);
+    let ts2683_diags: Vec<_> = diags.iter().filter(|d| d.0 == 2683).collect();
+    assert!(
+        ts2683_diags.is_empty(),
+        "Expected JS constructor with prototype method to suppress TS2683, got: {ts2683_diags:?}"
+    );
+}
+
+#[test]
+fn js_nested_function_without_constructor_pattern_emits_ts2683() {
+    // A nested regular function inside a class that uses `this` should get TS2683,
+    // since the nested function creates its own `this` binding.
+    let src = r#"
+class Foo {
+    bar() {
+        function inner() {
+            return this.toString()
+        }
+    }
+}
+"#;
+
+    // Use TS mode since TS2683 for nested functions in classes is the primary case
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected nested function in class method to emit TS2683, got: {diags:?}"
+    );
+}

@@ -1080,16 +1080,31 @@ impl Runner {
                     // diagnostics like TS5107 for `target: es5`.
                     let parsed_directives = parse_test_file(&decoded_text)?;
                     let options = parsed_directives.directives.options;
-                    let ext = path
+                    let original_ext = path
                         .extension()
                         .and_then(|e| e.to_str())
-                        .unwrap_or("ts")
-                        .to_string();
+                        .map(std::string::ToString::to_string);
+                    // Use the decoded text through the normal prepare_test_dir path
+                    // (which strips directive comments) instead of writing raw UTF-16
+                    // bytes. This ensures line numbers match tsc's expectations.
+                    let filenames = parsed_directives.directives.filenames;
+                    let key_order = parsed_directives.directives.option_order;
+                    let expected_error_codes = tsc_result.error_codes.clone();
                     let prepared = tokio::task::spawn_blocking({
-                        let bytes = original_bytes.clone();
-                        let ext = ext.clone();
+                        let text = decoded_text.clone();
                         let options = options.clone();
-                        move || tsz_wrapper::prepare_binary_test_dir(&bytes, &ext, &options)
+                        let ext = original_ext.clone();
+                        let key_order = key_order.clone();
+                        move || {
+                            tsz_wrapper::prepare_test_dir(
+                                &text,
+                                &filenames,
+                                &options,
+                                ext.as_deref(),
+                                &key_order,
+                                Some(&expected_error_codes),
+                            )
+                        }
                     })
                     .await??;
 

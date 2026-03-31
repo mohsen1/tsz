@@ -624,6 +624,30 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         if object_type == TypeId::ERROR
+            && index_type != TypeId::ERROR
+            && index_type != TypeId::NEVER
+            && let Some(object_node) = self.ctx.arena.get(data.object_type)
+            && self
+                .ctx
+                .arena
+                .get_indexed_access_type(object_node)
+                .is_some()
+            && let Some(object_type_str) = self.node_text(data.object_type)
+        {
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &object_type_str],
+            );
+            self.error_at_node(
+                node_idx,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+
+        if object_type == TypeId::ERROR
             || index_type == TypeId::ERROR
             || object_type == TypeId::ANY
             || index_type == TypeId::NEVER
@@ -815,8 +839,26 @@ impl<'a> CheckerState<'a> {
                 },
             )
         };
+        let is_self_derived_keyof_space = |candidate: TypeId| {
+            crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+                .and_then(|target| {
+                    tsz_solver::type_queries::get_index_access_types(self.ctx.types, target)
+                })
+                .is_some_and(|(derived_object, derived_index)| {
+                    crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        index_type,
+                    ) && !crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        derived_object,
+                    ) && (derived_index == index_type
+                        || same_type_param_name(self.ctx.types, derived_index, index_type))
+                })
+        };
         if is_self_derived_key_space(keyof_object)
             || is_self_derived_key_space(self.evaluate_type_with_env(keyof_object))
+            || is_self_derived_keyof_space(keyof_object)
+            || is_self_derived_keyof_space(self.evaluate_type_with_env(keyof_object))
         {
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
@@ -895,9 +937,6 @@ impl<'a> CheckerState<'a> {
                     object_type,
                     object_type_for_check,
                 )
-                || tsz_solver::is_conditional_type(self.ctx.types, next_evaluated)
-                || tsz_solver::is_generic_application(self.ctx.types, next_evaluated)
-                || tsz_solver::is_generic_application(self.ctx.types, next_constraint)
             {
                 return;
             }
@@ -954,49 +993,76 @@ impl<'a> CheckerState<'a> {
 
                 let nested_index_type =
                     self.get_type_from_type_node(nested_indexed_access.index_type);
-                let constrained_object_type = if let Some(prop_atom) =
-                    tsz_solver::type_queries::get_string_literal_value(
+                let constrained_base_keyof = self.ctx.types.evaluate_keyof(constrained_base_type);
+                let nested_index_for_check = self.evaluate_type_with_env(nested_index_type);
+                let nested_index_constraint_matches =
+                    crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
+                        nested_index_for_check,
+                    )
+                    .is_some_and(|constraint| {
+                        let constraint = self.evaluate_type_with_env(constraint);
+                        self.is_assignable_to(constraint, constrained_base_keyof)
+                    });
+                let nested_index_matches_constrained_base = self
+                    .is_assignable_to(nested_index_for_check, constrained_base_keyof)
+                    || nested_index_constraint_matches
+                    || self.is_keyof_for_current_object(
                         nested_index_type,
-                    ) {
-                    let property_name = self.ctx.types.resolve_atom(prop_atom);
-                    match self
-                        .resolve_property_access_with_env(constrained_base_type, &property_name)
-                    {
-                        tsz_solver::operations::property::PropertyAccessResult::Success {
-                            type_id,
-                            ..
-                        } => type_id,
-                        _ => self.evaluate_type_with_env(
-                            self.ctx
-                                .types
-                                .factory()
-                                .index_access(constrained_base_type, nested_index_type),
-                        ),
-                    }
-                } else {
-                    // When the nested index is a type parameter (e.g., k in a mapped
-                    // type), the solver can't resolve `constraint[k]` directly.
-                    // First try index signature lookup, then fall back to evaluation.
-                    let evaluated_base = self.evaluate_type_with_env(constrained_base_type);
-                    let index_info = self.ctx.types.get_index_signatures(evaluated_base);
-                    if let Some(ref sig) = index_info.string_index {
-                        sig.value_type
+                        constrained_base_type,
+                        constrained_base_type,
+                    )
+                    || self.is_keyof_for_current_object(
+                        nested_index_for_check,
+                        constrained_base_type,
+                        constrained_base_type,
+                    );
+                if nested_index_matches_constrained_base {
+                    let constrained_object_type = if let Some(prop_atom) =
+                        tsz_solver::type_queries::get_string_literal_value(
+                            self.ctx.types,
+                            nested_index_type,
+                        ) {
+                        let property_name = self.ctx.types.resolve_atom(prop_atom);
+                        match self
+                            .resolve_property_access_with_env(constrained_base_type, &property_name)
+                        {
+                            tsz_solver::operations::property::PropertyAccessResult::Success {
+                                type_id,
+                                ..
+                            } => type_id,
+                            _ => self.evaluate_type_with_env(
+                                self.ctx
+                                    .types
+                                    .factory()
+                                    .index_access(constrained_base_type, nested_index_type),
+                            ),
+                        }
                     } else {
-                        self.evaluate_type_with_env(
-                            self.ctx
-                                .types
-                                .factory()
-                                .index_access(constrained_base_type, nested_index_type),
-                        )
-                    }
-                };
-                // When the constrained object is still a deferred indexed access,
-                // try evaluating it further. If it resolves to a concrete type,
-                // use that for validation. Otherwise, check if the evaluated type
-                // has index signatures or properties that validate the index.
-                let constrained_object_type =
-                    if tsz_solver::is_index_access_type(self.ctx.types, constrained_object_type) {
+                        // When the nested index is a type parameter (e.g., k in a mapped
+                        // type), the solver can't resolve `constraint[k]` directly.
+                        // First try index signature lookup, then fall back to evaluation.
+                        let evaluated_base = self.evaluate_type_with_env(constrained_base_type);
+                        let index_info = self.ctx.types.get_index_signatures(evaluated_base);
+                        if let Some(ref sig) = index_info.string_index {
+                            sig.value_type
+                        } else {
+                            self.evaluate_type_with_env(
+                                self.ctx
+                                    .types
+                                    .factory()
+                                    .index_access(constrained_base_type, nested_index_type),
+                            )
+                        }
+                    };
+                    // When the constrained object is still a deferred indexed access,
+                    // try evaluating it further. If it resolves to a concrete type,
+                    // use that for validation. Otherwise, check if the evaluated type
+                    // has index signatures or properties that validate the index.
+                    let constrained_object_type = if tsz_solver::is_index_access_type(
+                        self.ctx.types,
+                        constrained_object_type,
+                    ) {
                         let evaluated =
                             self.evaluate_type_for_assignability(constrained_object_type);
                         if evaluated != TypeId::ERROR
@@ -1009,54 +1075,56 @@ impl<'a> CheckerState<'a> {
                     } else {
                         constrained_object_type
                     };
-                if constrained_object_type != TypeId::ERROR
-                    // When the constrained object is still a deferred indexed access
-                    // (e.g., T[keyof T] where T is unconstrained), or resolves to
-                    // `any` (recursive/circular constraints), property lookups may
-                    // spuriously succeed. Skip this block so the error is caught
-                    // by the deferred-suppression or final error path below.
-                    && constrained_object_type != TypeId::ANY
-                    && !tsz_solver::is_index_access_type(
-                        self.ctx.types,
-                        constrained_object_type,
-                    )
-                {
-                    // Check broad index types (string/number/symbol)
-                    if is_broad_index_type(self.ctx.types, index_type_for_check)
-                        && let Some((wants_string, wants_number)) =
-                            self.get_index_key_kind(index_type_for_check)
-                        && self.is_element_indexable(
+                    if constrained_object_type != TypeId::ERROR
+                        // When the constrained object is still a deferred indexed access
+                        // (e.g., T[keyof T] where T is unconstrained), or resolves to
+                        // `any` (recursive/circular constraints), property lookups may
+                        // spuriously succeed. Skip this block so the error is caught
+                        // by the deferred-suppression or final error path below.
+                        && constrained_object_type != TypeId::ANY
+                        && !tsz_solver::is_index_access_type(
+                            self.ctx.types,
                             constrained_object_type,
-                            wants_string,
-                            wants_number,
                         )
                     {
-                        return;
-                    }
-                    // Check string literal indices via property access on the
-                    // resolved constraint type. This handles generic class instances
-                    // (e.g., ZodType<any>) where evaluate_keyof doesn't enumerate
-                    // class members.
-                    if let Some(prop_atom) = tsz_solver::type_queries::get_string_literal_value(
-                        self.ctx.types,
-                        index_type_for_check,
-                    ) {
-                        let property_name = self.ctx.types.resolve_atom(prop_atom);
-                        let prop_result = self.resolve_property_access_with_env(
-                            constrained_object_type,
-                            &property_name,
-                        );
-                        if matches!(
-                            prop_result,
-                            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
-                        ) {
+                        // Check broad index types (string/number/symbol)
+                        if is_broad_index_type(self.ctx.types, index_type_for_check)
+                            && let Some((wants_string, wants_number)) =
+                                self.get_index_key_kind(index_type_for_check)
+                            && self.is_element_indexable(
+                                constrained_object_type,
+                                wants_string,
+                                wants_number,
+                            )
+                        {
                             return;
                         }
-                    }
-                    // Fall back to keyof check for non-literal indices.
-                    let constrained_keyof = self.ctx.types.evaluate_keyof(constrained_object_type);
-                    if self.is_assignable_to(index_type_for_check, constrained_keyof) {
-                        return;
+                        // Check string literal indices via property access on the
+                        // resolved constraint type. This handles generic class instances
+                        // (e.g., ZodType<any>) where evaluate_keyof doesn't enumerate
+                        // class members.
+                        if let Some(prop_atom) = tsz_solver::type_queries::get_string_literal_value(
+                            self.ctx.types,
+                            index_type_for_check,
+                        ) {
+                            let property_name = self.ctx.types.resolve_atom(prop_atom);
+                            let prop_result = self.resolve_property_access_with_env(
+                                constrained_object_type,
+                                &property_name,
+                            );
+                            if matches!(
+                                prop_result,
+                                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                            ) {
+                                return;
+                            }
+                        }
+                        // Fall back to keyof check for non-literal indices.
+                        let constrained_keyof =
+                            self.ctx.types.evaluate_keyof(constrained_object_type);
+                        if self.is_assignable_to(index_type_for_check, constrained_keyof) {
+                            return;
+                        }
                     }
                 }
             }
@@ -1087,6 +1155,13 @@ impl<'a> CheckerState<'a> {
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
                     || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
             };
+            let key_space_is_unresolved = |ty: TypeId| -> bool {
+                ty == TypeId::ERROR
+                    || ty == TypeId::ANY
+                    || tsz_solver::is_conditional_type(self.ctx.types, ty)
+                    || tsz_solver::is_generic_application(self.ctx.types, ty)
+                    || tsz_solver::is_index_access_type(self.ctx.types, ty)
+            };
             let mut is_deferred_index_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
                     || tsz_solver::is_conditional_type(self.ctx.types, ty)
@@ -1097,15 +1172,21 @@ impl<'a> CheckerState<'a> {
             // error, index-access). tsc defers these checks to instantiation time.
             if is_deferred_index_type(index_type_for_check)
                 || is_deferred_index_type(index_type)
-                || (is_deferred_object_type(object_type_for_check) && !index_is_concrete_literal)
-                || (is_deferred_object_type(object_type) && !index_is_concrete_literal)
+                || (is_deferred_object_type(object_type_for_check)
+                    && key_space_is_unresolved(keyof_object)
+                    && !index_is_concrete_literal)
+                || (is_deferred_object_type(object_type)
+                    && key_space_is_unresolved(keyof_object)
+                    && !index_is_concrete_literal)
                 || (self.is_deferred_indexed_access_object(object_type_for_check)
+                    && key_space_is_unresolved(keyof_object)
                     && !index_is_concrete_literal)
                 // Only fall back to checking the pre-resolution object_type when the
                 // resolved type is also still an indexed access. If constraint resolution
                 // produced a concrete type (e.g., T['value'] → number), trust it.
                 || (tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
                     && self.is_deferred_indexed_access_object(object_type)
+                    && key_space_is_unresolved(keyof_object)
                     && !index_is_concrete_literal)
                 || tsz_solver::is_index_access_type(self.ctx.types, index_type_for_check)
                 || tsz_solver::is_index_access_type(self.ctx.types, index_type)
@@ -1143,7 +1224,16 @@ impl<'a> CheckerState<'a> {
                     &property_name,
                     object_type_for_check,
                 ) {
-                    let object_type_str = self.format_type(object_type);
+                    let object_type_str = self
+                        .node_text(data.object_type)
+                        .map(|text| {
+                            let trimmed = text.trim();
+                            let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
+                            let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+                            trimmed.trim().to_string()
+                        })
+                        .filter(|text| !text.is_empty())
+                        .unwrap_or_else(|| self.format_type(object_type));
                     let message = format_message(
                         diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                         &[property_name.as_str(), &object_type_str],

@@ -69,13 +69,25 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check if any parameter lacks a type annotation (relies on contextual typing)
+        // Check if any parameter lacks a type annotation AND is a simple identifier
+        // (relies on contextual typing). Binding-pattern parameters (destructuring)
+        // derive their type from the pattern structure, not from contextual typing,
+        // so they should NOT suppress the TS2345 error. For example:
+        //   trans<T>(f: (x: T) => string): T defaults to unknown
+        //   trans(({a}) => a) → param type is {a: any} from pattern, NOT from context
+        //   TS2345 is correct because {a: any} is not assignable from unknown.
         func.parameters.nodes.iter().any(|&param_idx| {
             self.ctx
                 .arena
                 .get(param_idx)
                 .and_then(|pn| self.ctx.arena.get_parameter(pn))
-                .is_some_and(|p| p.type_annotation.is_none())
+                .is_some_and(|p| {
+                    p.type_annotation.is_none()
+                        && self.ctx.arena.get(p.name).is_some_and(|name_node| {
+                            name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                && name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        })
+                })
         })
     }
 
@@ -588,31 +600,48 @@ impl<'a> CheckerState<'a> {
         // Check if a type contains an error application (e.g., error<any>)
         // This happens when type resolution fails for qualified names like React.ReactElement
         // in function return type positions. Suppress the false positive TS2322.
-        let contains_error_application = |type_id: TypeId| {
-            Self::type_contains_error_application(self.ctx.types, type_id)
+        let contains_error_application =
+            |type_id: TypeId| Self::type_contains_error_application(self.ctx.types, type_id);
+
+        // Suppress TS2322 for callable types with generic type parameters from outer
+        // context. Skip the suppression when both sides have their own signature-level
+        // type params — the solver handles generic-to-generic comparison correctly.
+        let is_callable_or_function = |type_id: TypeId| {
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).is_some()
+                || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
+                    .is_some_and(|app| {
+                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base)
+                            .is_some()
+                            || tsz_solver::type_queries::get_function_shape(
+                                self.ctx.types,
+                                app.base,
+                            )
+                            .is_some()
+                    })
         };
-        
-        // Suppress TS2322 for callable application types with generic type parameters.
-        // This handles cases like inferenceExactOptionalProperties2 where the return type
-        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable 
-        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the 
-        // type parameters weren't fully inferred from the context.
-        let is_callable_application = |type_id: TypeId| {
-            // Check if it's an application of a callable type
-            if let Some(app) = tsz_solver::type_queries::get_type_application(self.ctx.types, type_id) {
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base).is_some()
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, app.base).is_some()
-            } else {
-                // Also check if it's directly a callable/function type
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).is_some()
+
+        let has_own_signature_type_params = |type_id: TypeId| -> bool {
+            if let Some(shape) =
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+            {
+                return shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| !sig.type_params.is_empty());
             }
+            if let Some(shape) =
+                tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+            {
+                return !shape.type_params.is_empty();
+            }
+            false
         };
-        
-        let contains_type_parameters = |type_id: TypeId| {
-            tsz_solver::contains_type_parameters(self.ctx.types, type_id)
-        };
-        
+
+        let contains_type_parameters =
+            |type_id: TypeId| tsz_solver::contains_type_parameters(self.ctx.types, type_id);
+
         matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
@@ -620,84 +649,61 @@ impl<'a> CheckerState<'a> {
             || (source == TypeId::ANY && target != TypeId::NEVER)
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
             // while they are still present creates contextual false positives.
-            // Evaluate types before checking: conditional types like
-            // `X extends Y<infer V> ? V : never` contain structural `infer` patterns
-            // that are resolved during evaluation. Without evaluation, the visitor
-            // would find these structural infers and incorrectly suppress the diagnostic.
-            //
-            // Use contains_free_infer_types instead of contains_infer_types to avoid
-            // walking into TypeParameter constraints where structural `infer` patterns
-            // from type alias definitions (e.g., `type Foo = X extends Bar<infer V> ? V : never`)
-            // would cause false suppression of real assignability errors.
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
-            // Suppress TS2322 for callable application types where the source contains
-            // generic type parameters that may not have been fully inferred from context.
-            // This handles cases like inferenceExactOptionalProperties2 where contextual
-            // typing should allow the assignment but the type parameters weren't resolved.
-            // However, do NOT suppress when the source has stricter constraints than target
-            // (e.g., source has `S extends T` but target has no constraint on `S`).
-            || (is_callable_application(source) 
-                && is_callable_application(target) 
+            // Suppress TS2322 for callable types where the source contains generic type
+            // parameters that may not have been fully inferred from context. When both
+            // source and target contain type parameters that are COMPLETELY disjoint
+            // at the signature level (e.g., () => T vs () => U from an outer `<T, U>`
+            // scope), the incompatibility is real and must NOT be suppressed.
+            // Skip when both sides have their own signature-level type parameters —
+            // the solver handles generic-to-generic comparison correctly via alpha-renaming.
+            || (is_callable_or_function(source)
+                && is_callable_or_function(target)
                 && contains_type_parameters(source)
-                && !self.source_has_stricter_constraints_than_target_simple(source, target))
+                && !self.callable_types_have_disjoint_type_parameters(source, target)
+                && !(has_own_signature_type_params(source)
+                    && has_own_signature_type_params(target)))
     }
-    
-    /// Simple check if source callable has stricter constraints than target (no is_assignable_to needed).
-    /// This only checks the simple case: source has constraint but target doesn't.
-    fn source_has_stricter_constraints_than_target_simple(
-        &self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        // Get callable shapes for both types
-        let source_callable = tsz_solver::type_queries::get_callable_shape(self.ctx.types, source)
-            .or_else(|| {
-                tsz_solver::type_queries::get_type_application(self.ctx.types, source)
-                    .and_then(|app| tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base))
-            });
-        
-        let target_callable = tsz_solver::type_queries::get_callable_shape(self.ctx.types, target)
-            .or_else(|| {
-                tsz_solver::type_queries::get_type_application(self.ctx.types, target)
-                    .and_then(|app| tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base))
-            });
-        
-        // Also check function shapes
-        let source_fn = tsz_solver::type_queries::get_function_shape(self.ctx.types, source);
-        let target_fn = tsz_solver::type_queries::get_function_shape(self.ctx.types, target);
-        
-        // Check function type parameters
-        if let (Some(src_fn), Some(tgt_fn)) = (&source_fn, &target_fn) {
-            if src_fn.type_params.len() == tgt_fn.type_params.len() {
-                for (src_tp, tgt_tp) in src_fn.type_params.iter().zip(tgt_fn.type_params.iter()) {
-                    // Simple check: source has constraint but target doesn't
-                    if src_tp.constraint.is_some() && tgt_tp.constraint.is_none() {
-                        return true;
+
+    /// Check if two callable types have completely disjoint outer type parameters
+    /// at their immediate signature level (parameters and return type only).
+    ///
+    /// Returns true when both source and target function shapes directly reference
+    /// type parameters in their parameter/return positions and those type parameters
+    /// are entirely different. This is a conservative check that only looks at the
+    /// shallow signature level to avoid false positives from type parameters buried
+    /// in generic utility types.
+    fn callable_types_have_disjoint_type_parameters(&self, source: TypeId, target: TypeId) -> bool {
+        let get_direct_type_params = |type_id: TypeId| -> Vec<TypeId> {
+            let mut params = Vec::new();
+            if let Some(shape) =
+                tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+            {
+                if tsz_solver::visitor::is_type_parameter(self.ctx.types, shape.return_type) {
+                    params.push(shape.return_type);
+                }
+                for p in &shape.params {
+                    if tsz_solver::visitor::is_type_parameter(self.ctx.types, p.type_id) {
+                        params.push(p.type_id);
                     }
                 }
             }
+            params
+        };
+
+        let source_params = get_direct_type_params(source);
+        let target_params = get_direct_type_params(target);
+
+        // Both must have direct type params for them to be disjoint
+        if source_params.is_empty() || target_params.is_empty() {
+            return false;
         }
-        
-        // Check callable signatures
-        if let (Some(src_call), Some(tgt_call)) = (&source_callable, &target_callable) {
-            for src_sig in &src_call.call_signatures {
-                for tgt_sig in &tgt_call.call_signatures {
-                    if src_sig.type_params.len() == tgt_sig.type_params.len() {
-                        for (src_tp, tgt_tp) in src_sig.type_params.iter().zip(tgt_sig.type_params.iter()) {
-                            // Simple check: source has constraint but target doesn't
-                            if src_tp.constraint.is_some() && tgt_tp.constraint.is_none() {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        false
+
+        // Disjoint = no overlap at all
+        !source_params.iter().any(|s| target_params.contains(s))
     }
-    
+
     /// Check if a type contains an error application (recursively).
     fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
         // Check if it's a direct error application
@@ -706,7 +712,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
         }
-        
+
         // Check if it's a union type containing an error application
         if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
             for member in members {
@@ -715,7 +721,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        
+
         // Check if it's an intersection type containing an error application
         if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
             for member in members {
@@ -724,14 +730,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        
+
         // Check if it's a function type with error return
         if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
             if Self::type_contains_error_application(db, fn_shape.return_type) {
                 return true;
             }
         }
-        
+
         // Check if it's a callable type with error return
         if let Some(callable) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
             for sig in &callable.call_signatures {
@@ -740,7 +746,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        
+
         false
     }
 
@@ -1275,7 +1281,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_concrete_source_to_deferred_keyof_index_access(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
@@ -1288,19 +1294,115 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
+        if crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
+        {
             return false;
         }
 
-        let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) else {
-            return false;
-        };
-
-        if keyof_operand != object_type {
+        if !self.is_deferred_generic_index_for_object(index_type, object_type) {
             return false;
         }
 
-        !crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
+        let mut candidate_types = Vec::new();
+        self.collect_deferred_index_access_candidate_types(object_type, &mut candidate_types);
+
+        if candidate_types.is_empty() {
+            return crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                object_type,
+            );
+        }
+
+        candidate_types
+            .into_iter()
+            .any(|candidate| !self.ctx.types.is_assignable_to(source, candidate))
+    }
+
+    fn is_deferred_generic_index_for_object(
+        &self,
+        index_type: TypeId,
+        object_type: TypeId,
+    ) -> bool {
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+        {
+            return members
+                .iter()
+                .copied()
+                .any(|member| self.is_deferred_generic_index_for_object(member, object_type));
+        }
+
+        if let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) {
+            return keyof_operand == object_type;
+        }
+
+        if let Some(param_info) = tsz_solver::visitor::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+            && let Some(keyof_operand) = get_keyof_type(self.ctx.types, constraint)
+        {
+            return keyof_operand == object_type;
+        }
+
+        false
+    }
+
+    fn collect_deferred_index_access_candidate_types(
+        &mut self,
+        object_type: TypeId,
+        candidate_types: &mut Vec<TypeId>,
+    ) {
+        if let Some(param_info) = tsz_solver::visitor::type_param_info(self.ctx.types, object_type)
+            && let Some(constraint) = param_info.constraint
+        {
+            self.collect_deferred_index_access_candidate_types(constraint, candidate_types);
+            return;
+        }
+
+        self.ensure_relation_input_ready(object_type);
+        let evaluated = self.evaluate_type_for_assignability(object_type);
+        if evaluated != object_type && evaluated != TypeId::ERROR {
+            self.collect_deferred_index_access_candidate_types(evaluated, candidate_types);
+            if !candidate_types.is_empty() {
+                return;
+            }
+        }
+
+        if let Some(members) = crate::query_boundaries::common::union_members(
+            self.ctx.types,
+            object_type,
+        )
+        .or_else(|| {
+            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+        }) {
+            for member in members.iter().copied() {
+                self.collect_deferred_index_access_candidate_types(member, candidate_types);
+            }
+            return;
+        }
+
+        let shape_id =
+            tsz_solver::visitor::object_shape_id(self.ctx.types, object_type).or_else(|| {
+                tsz_solver::visitor::object_with_index_shape_id(self.ctx.types, object_type)
+            });
+
+        if let Some(shape_id) = shape_id {
+            let shape = self.ctx.types.object_shape(shape_id);
+            candidate_types.extend(shape.properties.iter().map(|prop| {
+                if prop.optional {
+                    self.ctx.types.union2(prop.type_id, TypeId::UNDEFINED)
+                } else {
+                    prop.type_id
+                }
+            }));
+        }
+
+        let index_info = self.ctx.types.get_index_signatures(object_type);
+        if let Some(string_index) = index_info.string_index {
+            candidate_types.push(string_index.value_type);
+        }
+        if let Some(number_index) = index_info.number_index {
+            candidate_types.push(number_index.value_type);
+        }
     }
 
     /// Like `is_assignable_to`, but skips weak type checks (TS2559).

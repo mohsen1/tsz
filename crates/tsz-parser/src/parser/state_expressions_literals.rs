@@ -1004,17 +1004,30 @@ impl ParserState {
             .map(|body_end| regex_range_order_errors(&raw_text, body_end))
             .unwrap_or_default();
 
+        // Capture the regex token end before consuming it so missing-token diagnostics
+        // anchor to the actual regex literal location, not the following token.
+        let regex_end_pos = self.token_end();
+        let regex_body_end = regex_body_end(&raw_text);
+
         self.parse_expected(SyntaxKind::RegularExpressionLiteral);
-        let end_pos = self.token_end();
 
         if let Some(missing) = self.missing_regex_closing_token(&text) {
+            // Position the missing-token message at the end of the regex body (the
+            // slash/flag boundary), matching tsc behavior for malformed character
+            // classes and groups.
+            let missing_pos = if let Some(body_end) = regex_body_end {
+                start_pos + body_end as u32
+            } else {
+                regex_end_pos.saturating_sub(1)
+            };
+
             let message = if missing == b']' {
                 "']' expected."
             } else {
                 "')' expected."
             };
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at(end_pos, 1, message, diagnostic_codes::EXPECTED);
+            self.parse_error_at(missing_pos, 1, message, diagnostic_codes::EXPECTED);
         }
 
         // Emit errors for all regex flag issues detected by scanner
@@ -1053,7 +1066,7 @@ impl ParserState {
         self.arena.add_literal(
             SyntaxKind::RegularExpressionLiteral as u16,
             start_pos,
-            end_pos,
+            regex_end_pos,
             LiteralData {
                 text,
                 raw_text: Some(raw_text),

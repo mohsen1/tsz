@@ -83,6 +83,20 @@ fn is_callable_application_type(db: &dyn tsz_solver::TypeDatabase, type_id: Type
     }
 }
 
+/// Check if a callable/function type has its own signature-level type parameters.
+fn has_own_signature_type_params(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(shape) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
+        return shape
+            .call_signatures
+            .iter()
+            .any(|sig| !sig.type_params.is_empty());
+    }
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+        return !shape.type_params.is_empty();
+    }
+    false
+}
+
 impl<'a> CheckerState<'a> {
     /// Check if the assignment failure is due to exact optional property types.
     ///
@@ -494,19 +508,16 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        
-        // Suppress TS2322 for callable application types with generic type parameters.
-        // This handles cases like inferenceExactOptionalProperties2 where the return type
-        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable 
-        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the 
-        // type parameters weren't fully inferred from the context.
+
+        // Suppress TS2322 for callable types with generic type parameters from outer
+        // context. Skip the suppression when both sides have their own signature-level
+        // type params — the solver handles generic-to-generic comparison correctly.
         let src_callable = is_callable_application_type(self.ctx.types, source);
         let tgt_callable = is_callable_application_type(self.ctx.types, target);
         let has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, source);
-        tracing::debug!(src_callable, tgt_callable, has_type_params, source=?source, target=?target, "callable application suppression check");
-        if src_callable && tgt_callable && has_type_params
-        {
-            tracing::info!("Suppressing TS2322 for callable application types");
+        let both_have_own_sig_params = has_own_signature_type_params(self.ctx.types, source)
+            && has_own_signature_type_params(self.ctx.types, target);
+        if src_callable && tgt_callable && has_type_params && !both_have_own_sig_params {
             return;
         }
 
@@ -522,32 +533,10 @@ impl<'a> CheckerState<'a> {
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {
-                // When the source is NOT a fresh object literal (e.g., class instance),
-                // emit TS2322 instead of TS2741. TSC reports general assignability errors
-                // for class/interface mismatches, not missing property errors.
-                let is_fresh = tsz_solver::relations::freshness::is_fresh_object_type(self.ctx.types, source);
-                
                 let src_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-                let tgt_str = self.format_assignability_type_for_message(target, source);
-                
-                if !is_fresh {
-                    // Emit TS2322 for non-fresh sources (class instances, etc.)
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str],
-                    );
-                    self.emit_render_request_at_anchor(
-                        anchor,
-                        DiagnosticRenderRequest::simple(
-                            DiagnosticAnchorKind::Exact,
-                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            message,
-                        ),
-                    );
-                    return;
-                }
-                
+                let tgt_str =
+                    self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
                 let (message, code) = if missing_props.len() == 1 {
                     let prop_name = self
                         .ctx
@@ -631,7 +620,8 @@ impl<'a> CheckerState<'a> {
 
             let src_str =
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let tgt_str =
+                self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
 
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
