@@ -717,6 +717,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     }
     fn visit_index_access(&mut self, object_type: TypeId, key_type: TypeId) -> Self::Output {
         use crate::visitor::index_access_parts;
+        use crate::visitor::type_param_info;
 
         // S[I] <: T[J]  <=>  S <: T  AND  I <: J
         // This handles deferred index access types (usually involving type parameters).
@@ -726,6 +727,22 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 && self.checker.check_subtype(key_type, t_idx).is_true()
             {
                 return SubtypeResult::True;
+            }
+
+            // Special case: if both source and target have the same object type,
+            // but both keys are different type parameters, they should NOT be
+            // considered subtypes even if they have the same constraint. The upper
+            // bound check below would incorrectly return true because both resolve
+            // to the same constraint type.
+            if object_type == t_obj {
+                if let Some(s_param) = type_param_info(self.checker.interner, key_type) {
+                    if let Some(t_param) = type_param_info(self.checker.interner, t_idx) {
+                        // Both keys are type parameters with different names - they are not subtypes
+                        if s_param.name != t_param.name {
+                            return SubtypeResult::False;
+                        }
+                    }
+                }
             }
         }
 
