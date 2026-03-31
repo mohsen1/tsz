@@ -50,6 +50,42 @@ pub(crate) fn should_report_member_type_mismatch(
     true
 }
 
+/// Check if a DIRECT (own) member type mismatch should be reported (TS2416).
+///
+/// Unlike `should_report_member_type_mismatch`, this variant uses a targeted
+/// suppression that does NOT suppress callable types whose source contains
+/// type parameters from the class scope. For class's own members, the type
+/// parameters are fully declared and their constraints must be checked
+/// eagerly against the interface member types, matching tsc behavior.
+///
+/// The regular `should_report_member_type_mismatch` should still be used for
+/// inherited members, where base class type parameters may not have been
+/// instantiated and the callable suppression is needed.
+pub(crate) fn should_report_own_member_type_mismatch(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+    node_idx: NodeIndex,
+) -> bool {
+    let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    if checker.should_suppress_member_assignability(source, target) {
+        return false;
+    }
+    if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
+        return false;
+    }
+    if checker.is_assignable_to_no_erase_generics(source, target) {
+        return false;
+    }
+    if checker.should_skip_weak_union_error(source, target, node_idx) {
+        return false;
+    }
+    if is_coinductive_return_type_cycle(checker, source, target) {
+        return false;
+    }
+    true
+}
+
 /// Check if two function types differ only in return types that form a coinductive
 /// cycle through the class hierarchy (class extends another class that implements
 /// the interface defining the target return type).

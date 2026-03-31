@@ -4,6 +4,7 @@
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
+    should_report_own_member_type_mismatch,
 };
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::state::CheckerState;
@@ -1076,7 +1077,7 @@ impl<'a> CheckerState<'a> {
                                 && class_member_type != tsz_solver::TypeId::ANY
                                 && interface_member_type != tsz_solver::TypeId::ERROR
                                 && class_member_type != tsz_solver::TypeId::ERROR
-                                && should_report_member_type_mismatch(
+                                && should_report_own_member_type_mismatch(
                                     self,
                                     class_member_type,
                                     interface_member_type,

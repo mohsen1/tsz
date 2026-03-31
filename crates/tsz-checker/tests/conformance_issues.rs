@@ -22202,3 +22202,38 @@ fn test_type_parameter_function_return_type_not_equivalent() {
         "Same type param should be assignable, got: {d:?}"
     );
 }
+
+/// TS2416: class method `f(a: T): void` is not compatible with interface
+/// property `f: (a: { a: number }) => void` because T extends { a: string }
+/// and { a: number } is not assignable to { a: string }.
+#[test]
+fn test_generic_type_with_non_generic_base_mismatch_ts2416() {
+    let source = r#"
+interface I {
+    f: (a: { a: number }) => void
+}
+class X<T extends { a: string }> implements I {
+    f(a: T): void { }
+}
+var x = new X<{ a: string }>();
+var i: I = x;
+"#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        strict_function_types: true,
+        ..CheckerOptions::default()
+    };
+    let d = compile_and_get_diagnostics_with_options(source, options);
+    let ts2416_count = d.iter().filter(|(c, _)| *c == 2416).count();
+    assert!(
+        ts2416_count >= 1,
+        "Expected TS2416 for property 'f' incompatibility, got: {d:?}"
+    );
+    // Should also emit TS2322 for the assignment `var i: I = x`
+    let ts2322_count = d.iter().filter(|(c, _)| *c == 2322).count();
+    assert!(
+        ts2322_count >= 1,
+        "Expected TS2322 for incompatible assignment, got: {d:?}"
+    );
+}

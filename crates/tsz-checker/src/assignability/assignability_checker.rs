@@ -666,6 +666,29 @@ impl<'a> CheckerState<'a> {
                     && has_own_signature_type_params(target)))
     }
 
+    /// Targeted suppression for member type compatibility checks (TS2416).
+    ///
+    /// Unlike `should_suppress_assignability_diagnostic`, this does NOT suppress
+    /// callable types whose source contains type parameters from an outer context.
+    /// For implements/extends member checking, class-level type parameters are fully
+    /// declared and their constraints must be checked eagerly — suppressing them
+    /// causes false negatives where incompatible method signatures are accepted.
+    pub(crate) fn should_suppress_member_assignability(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let contains_error_application =
+            |type_id: TypeId| Self::type_contains_error_application(self.ctx.types, type_id);
+
+        matches!(source, TypeId::ERROR)
+            || matches!(target, TypeId::ERROR | TypeId::ANY)
+            || contains_error_application(target)
+            || (source == TypeId::ANY && target != TypeId::NEVER)
+            || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
+            || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
+    }
+
     /// Check if two callable types have completely disjoint outer type parameters
     /// at their immediate signature level (parameters and return type only).
     ///
