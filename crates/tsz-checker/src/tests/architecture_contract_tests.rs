@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::ParserState;
+use tsz_parser::parser::node::NodeArena;
 use tsz_solver::def::DefinitionStore;
 use tsz_solver::{
     CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId, TypeInterner,
