@@ -1179,12 +1179,19 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // Check index signature compatibility (TS2420).
-                    // When an interface has an index signature that the class
-                    // doesn't satisfy, tsc emits TS2420.  We perform a full
-                    // type-level assignability check of the class instance type
-                    // against the interface type to catch this.
-                    if interface_has_index_signature
+                    // Type-level assignability check (TS2420/TS2720).
+                    //
+                    // When the member-by-member check finds no issues but the
+                    // class instance type is still not assignable to the target,
+                    // emit the appropriate diagnostic:
+                    //   - TS2720 when implementing a class
+                    //   - TS2420 when implementing an interface with index signatures
+                    //
+                    // This catches cases that member-by-member checking misses:
+                    //   - Index signature incompatibilities
+                    //   - Inherited member type mismatches after generic instantiation
+                    //     (e.g., `class D extends C<string> implements C<number>`)
+                    if (is_class || interface_has_index_signature)
                         && missing_members.is_empty()
                         && incompatible_members.is_empty()
                     {
@@ -1193,7 +1200,7 @@ impl<'a> CheckerState<'a> {
                         if !self.is_assignable_to(class_instance_type, interface_type) {
                             let message = if is_class {
                                 format!(
-                                    "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
+                                    "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
                                 )
                             } else {
                                 format!(
