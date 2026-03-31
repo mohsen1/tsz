@@ -591,25 +591,39 @@ impl<'a> CheckerState<'a> {
         let contains_error_application =
             |type_id: TypeId| Self::type_contains_error_application(self.ctx.types, type_id);
 
-        // Suppress TS2322 for callable application types with generic type parameters.
-        // This handles cases like inferenceExactOptionalProperties2 where the return type
-        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable
-        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the
-        // type parameters weren't fully inferred from the context.
-        let is_callable_application = |type_id: TypeId| {
-            // Check if it's an application of a callable type
-            if let Some(app) =
-                tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
+        // Suppress TS2322 for callable types with generic type parameters from outer
+        // context. Skip the suppression when both sides have their own signature-level
+        // type params — the solver handles generic-to-generic comparison correctly.
+        let is_callable_or_function = |type_id: TypeId| {
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).is_some()
+                || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
+                    .is_some_and(|app| {
+                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base)
+                            .is_some()
+                            || tsz_solver::type_queries::get_function_shape(
+                                self.ctx.types,
+                                app.base,
+                            )
+                            .is_some()
+                    })
+        };
+
+        let has_own_signature_type_params = |type_id: TypeId| -> bool {
+            if let Some(shape) =
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
             {
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base).is_some()
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, app.base)
-                        .is_some()
-            } else {
-                // Also check if it's directly a callable/function type
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
-                        .is_some()
+                return shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| !sig.type_params.is_empty());
             }
+            if let Some(shape) =
+                tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+            {
+                return !shape.type_params.is_empty();
+            }
+            false
         };
 
         let contains_type_parameters =
@@ -622,24 +636,17 @@ impl<'a> CheckerState<'a> {
             || (source == TypeId::ANY && target != TypeId::NEVER)
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
             // while they are still present creates contextual false positives.
-            // Evaluate types before checking: conditional types like
-            // `X extends Y<infer V> ? V : never` contain structural `infer` patterns
-            // that are resolved during evaluation. Without evaluation, the visitor
-            // would find these structural infers and incorrectly suppress the diagnostic.
-            //
-            // Use contains_free_infer_types instead of contains_infer_types to avoid
-            // walking into TypeParameter constraints where structural `infer` patterns
-            // from type alias definitions (e.g., `type Foo = X extends Bar<infer V> ? V : never`)
-            // would cause false suppression of real assignability errors.
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
-            // Suppress TS2322 for callable application types where the source contains
-            // generic type parameters that may not have been fully inferred from context.
-            // This handles cases like inferenceExactOptionalProperties2 where contextual
-            // typing should allow the assignment but the type parameters weren't resolved.
-            || (is_callable_application(source) 
-                && is_callable_application(target) 
-                && contains_type_parameters(source))
+            // Suppress TS2322 for callable types where the source contains generic type
+            // parameters that may not have been fully inferred from context. Skip when
+            // both source and target have their own signature-level type parameters —
+            // the solver handles generic-to-generic comparison correctly via alpha-renaming.
+            || (is_callable_or_function(source)
+                && is_callable_or_function(target)
+                && contains_type_parameters(source)
+                && !(has_own_signature_type_params(source)
+                    && has_own_signature_type_params(target)))
     }
 
     /// Check if a type contains an error application (recursively).

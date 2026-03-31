@@ -3113,3 +3113,22 @@ fn primitive_still_emits_ts2559_not_ts2560() {
         "Should not emit TS2560 for non-callable primitives. Got: {diagnostics:?}"
     );
 }
+
+/// Regression: genericFunctionCallSignatureReturnTypeMismatch.ts
+/// `{ <S>(): S[] }` assigned to `{ <T>(x: T): T }` should emit TS2322
+/// because the return types are incompatible (S[] is not assignable to type param S).
+#[test]
+fn test_generic_callable_return_type_mismatch_emits_ts2322() {
+    let source = r#"
+        declare var f: { <T>(x: T): T; };
+        declare var g: { <S>(): S[]; };
+        f = g;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    assert!(
+        has_ts2322,
+        "Expected TS2322 for incompatible generic callable assignment. Got: {diagnostics:?}"
+    );
+}

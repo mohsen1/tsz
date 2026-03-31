@@ -1471,3 +1471,69 @@ fn test_nongeneric_construct_sig_assignable_to_generic_target() {
     checker.erase_generics = true;
     assert!(checker.check_subtype(source, target).is_true());
 }
+
+/// Regression test for genericFunctionCallSignatureReturnTypeMismatch.ts (TS2322)
+///
+/// `{ <S>(): S[] }` should NOT be a subtype of `{ <T>(x: T): T }` because:
+/// - After alpha-renaming T → S, target becomes `(x: S) => S`
+/// - Source is `() => S[]`
+/// - Return type: S[] is NOT assignable to S (concrete type not assignable to type param)
+#[test]
+fn test_generic_callable_return_type_mismatch_not_assignable() {
+    let interner = TypeInterner::new();
+
+    let s_param = TypeParamInfo {
+        name: interner.intern_string("S"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let s_type = interner.type_param(s_param);
+    let s_array = interner.array(s_type);
+    let source = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![s_param],
+            params: vec![],
+            this_type: None,
+            return_type: s_array,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let target = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![t_param],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: t_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "generic callable with incompatible return type should not be a subtype"
+    );
+}
