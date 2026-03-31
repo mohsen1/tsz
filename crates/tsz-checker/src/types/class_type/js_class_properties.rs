@@ -244,10 +244,7 @@ impl CheckerState<'_> {
     /// Force resolve a direct leading JSDoc `@type` annotation, bypassing the
     /// should_resolve_jsdoc() check. Used for JS constructor property assignments
     /// where type information should be available to consuming TS files.
-    fn jsdoc_type_annotation_for_node_direct_force(
-        &mut self,
-        idx: NodeIndex,
-    ) -> Option<TypeId> {
+    fn jsdoc_type_annotation_for_node_direct_force(&mut self, idx: NodeIndex) -> Option<TypeId> {
         let sf = self.source_file_data_for_node(idx)?;
         // Fast path: no comments in file means no JSDoc possible.
         if sf.comments.is_empty() {

@@ -263,7 +263,7 @@ impl<'a> CheckerState<'a> {
         if fn_node.kind == FUNCTION_DECLARATION {
             // Function declarations always create a fresh `this` binding and are
             // never contextually typed by an object-literal receiver. Only an
-            // explicit `this` parameter, contextual `this` type, or JS receiver 
+            // explicit `this` parameter, contextual `this` type, or JS receiver
             // inference should suppress TS2683 for the inner declaration.
             if self.enclosing_function_has_explicit_this_parameter(idx)
                 || self.enclosing_function_has_contextual_this_type(idx)
@@ -624,7 +624,11 @@ impl<'a> CheckerState<'a> {
         // When a function is passed as an argument (e.g., `arr.filter(function(x) { this.y })`),
         // the expected parameter type may have a `this` type that should be contextually
         // applied to the callback function.
-        if self.ctx.closures_with_contextual_this_type.contains(&enclosing_fn) {
+        if self
+            .ctx
+            .closures_with_contextual_this_type
+            .contains(&enclosing_fn)
+        {
             return true;
         }
 
