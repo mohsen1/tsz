@@ -243,7 +243,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
+    pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
         let typedef_pos = jsdoc.find("@typedef");
         let mut tag_pos = jsdoc.find("@type");
         while let Some(pos) = tag_pos {
