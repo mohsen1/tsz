@@ -1298,12 +1298,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // as `never` or any non-nullable type. The structural subtype check
         // at core.rs:830-889 correctly rejects concrete <: TypeParam, so we
         // must not short-circuit here.
+        // Additionally, `null` is not assignable to `void` even without
+        // strictNullChecks — only `undefined` is (via the intrinsic rule).
         if !self.strict_null_checks
             && source.is_nullish()
             && !matches!(
                 self.interner.lookup(target),
                 Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
             )
+            && !(source == TypeId::NULL && target == TypeId::VOID)
         {
             return Some(true);
         }
@@ -1364,13 +1367,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         // Without strictNullChecks, null/undefined are assignable to all types
-        // EXCEPT type parameters (which are opaque and could be any type).
+        // EXCEPT type parameters and null-to-void (only undefined <: void).
         if !self.strict_null_checks
             && source.is_nullish()
             && !matches!(
                 self.interner.lookup(target),
                 Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
             )
+            && !(source == TypeId::NULL && target == TypeId::VOID)
         {
             return true;
         }
@@ -1432,6 +1436,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 self.interner.lookup(target),
                 Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
             )
+            && !(source == TypeId::NULL && target == TypeId::VOID)
         {
             return None;
         }
