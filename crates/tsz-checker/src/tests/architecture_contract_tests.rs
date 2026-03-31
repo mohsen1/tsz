@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
-use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
+use tsz_parser::ParserState;
 use tsz_solver::def::DefinitionStore;
 use tsz_solver::{
     CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId, TypeInterner,
@@ -4086,7 +4086,7 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
         "checkers/iterable_checker.rs",
         "flow/control_flow/core.rs",
         "flow/control_flow/references.rs",
-        // "flow/control_flow/narrowing.rs", // TODO: re-add after migrating solver calls to query_boundaries
+        "flow/control_flow/narrowing.rs",
         "flow/reachability_checker.rs",
         "state/type_analysis/computed_helpers.rs",
         "state/type_analysis/computed_helpers_private.rs",

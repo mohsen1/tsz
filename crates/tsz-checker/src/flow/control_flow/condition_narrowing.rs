@@ -4,8 +4,9 @@
 //! typeof/instanceof/in guards, and boolean comparison narrowing.
 
 use super::FlowAnalyzer;
+use crate::query_boundaries::common::{is_union_type, union_members};
 use crate::query_boundaries::flow as flow_boundary;
-use crate::query_boundaries::{common::union_members, flow_analysis::is_unit_type};
+use crate::query_boundaries::flow_analysis::is_unit_type;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
@@ -851,8 +852,7 @@ impl<'a> FlowAnalyzer<'a> {
                     // Readonly<P> where P is a type parameter).  tsc does not
                     // narrow non-union base types by property truthiness, so
                     // fall through instead of collapsing to NEVER.
-                    if narrowed != TypeId::NEVER
-                        || tsz_solver::is_union_type(self.interner, type_id)
+                    if narrowed != TypeId::NEVER || is_union_type(self.interner, type_id)
                     {
                         return narrowed;
                     }
