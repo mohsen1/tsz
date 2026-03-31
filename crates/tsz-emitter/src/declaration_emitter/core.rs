@@ -3499,7 +3499,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_type(func.type_annotation);
         true
     }
-    }
 
     fn emit_js_object_literal_namespace_if_possible(
         &mut self,
