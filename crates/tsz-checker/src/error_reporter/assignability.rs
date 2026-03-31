@@ -494,18 +494,17 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        
+
         // Suppress TS2322 for callable application types with generic type parameters.
         // This handles cases like inferenceExactOptionalProperties2 where the return type
-        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable 
-        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the 
+        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable
+        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the
         // type parameters weren't fully inferred from the context.
         let src_callable = is_callable_application_type(self.ctx.types, source);
         let tgt_callable = is_callable_application_type(self.ctx.types, target);
         let has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, source);
         tracing::debug!(src_callable, tgt_callable, has_type_params, source=?source, target=?target, "callable application suppression check");
-        if src_callable && tgt_callable && has_type_params
-        {
+        if src_callable && tgt_callable && has_type_params {
             tracing::info!("Suppressing TS2322 for callable application types");
             return;
         }

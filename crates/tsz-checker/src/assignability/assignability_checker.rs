@@ -588,31 +588,33 @@ impl<'a> CheckerState<'a> {
         // Check if a type contains an error application (e.g., error<any>)
         // This happens when type resolution fails for qualified names like React.ReactElement
         // in function return type positions. Suppress the false positive TS2322.
-        let contains_error_application = |type_id: TypeId| {
-            Self::type_contains_error_application(self.ctx.types, type_id)
-        };
-        
+        let contains_error_application =
+            |type_id: TypeId| Self::type_contains_error_application(self.ctx.types, type_id);
+
         // Suppress TS2322 for callable application types with generic type parameters.
         // This handles cases like inferenceExactOptionalProperties2 where the return type
-        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable 
-        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the 
+        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable
+        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the
         // type parameters weren't fully inferred from the context.
         let is_callable_application = |type_id: TypeId| {
             // Check if it's an application of a callable type
-            if let Some(app) = tsz_solver::type_queries::get_type_application(self.ctx.types, type_id) {
+            if let Some(app) =
+                tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
+            {
                 tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base).is_some()
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, app.base).is_some()
+                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, app.base)
+                        .is_some()
             } else {
                 // Also check if it's directly a callable/function type
                 tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).is_some()
+                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+                        .is_some()
             }
         };
-        
-        let contains_type_parameters = |type_id: TypeId| {
-            tsz_solver::contains_type_parameters(self.ctx.types, type_id)
-        };
-        
+
+        let contains_type_parameters =
+            |type_id: TypeId| tsz_solver::contains_type_parameters(self.ctx.types, type_id);
+
         matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
@@ -639,7 +641,7 @@ impl<'a> CheckerState<'a> {
                 && is_callable_application(target) 
                 && contains_type_parameters(source))
     }
-    
+
     /// Check if a type contains an error application (recursively).
     fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
         // Check if it's a direct error application
@@ -648,7 +650,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
         }
-        
+
         // Check if it's a union type containing an error application
         if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
             for member in members {
@@ -657,7 +659,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        
+
         // Check if it's an intersection type containing an error application
         if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
             for member in members {
@@ -666,14 +668,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        
+
         // Check if it's a function type with error return
         if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
             if Self::type_contains_error_application(db, fn_shape.return_type) {
                 return true;
             }
         }
-        
+
         // Check if it's a callable type with error return
         if let Some(callable) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
             for sig in &callable.call_signatures {
@@ -682,7 +684,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        
+
         false
     }
 

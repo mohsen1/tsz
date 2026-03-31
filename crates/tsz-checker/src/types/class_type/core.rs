@@ -1,6 +1,6 @@
 //! Core implementation for class instance type resolution.
 
-use crate::context::{is_js_file_name, EnclosingClassInfo};
+use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
