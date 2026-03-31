@@ -296,7 +296,11 @@ fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
         .filter(|d| d.code == diagnostic_codes::EXPECTED && d.message == "')' expected.")
         .collect::<Vec<_>>();
 
-    assert_eq!(ts1005.len(), 1, "Expected exactly one missing ')' diagnostic: {diagnostics:?}");
+    assert_eq!(
+        ts1005.len(),
+        1,
+        "Expected exactly one missing ')' diagnostic: {diagnostics:?}"
+    );
     assert_eq!(ts1005[0].start, expected_pos);
 }
 
@@ -1596,7 +1600,9 @@ type T = Foo<?>;
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        diagnostics.contains(&diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS),
+        diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
         "Expected TS8020 for `Foo<?>`, got {:?}",
         parser.get_diagnostics(),
     );
@@ -1619,7 +1625,9 @@ type T = Foo<?string>;
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        diagnostics.contains(&diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS),
+        diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
         "Expected TS8020 for `Foo<?string>`, got {:?}",
         parser.get_diagnostics(),
     );
@@ -1641,7 +1649,9 @@ type T = Array.<string>;
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        diagnostics.contains(&diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS),
+        diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
         "Expected TS8020 for `Array.<string>`, got {:?}",
         parser.get_diagnostics(),
     );
@@ -1675,10 +1685,13 @@ function hof2(f: function(this: number, string): string) {
 
     let ts8020_count = diagnostics
         .iter()
-        .filter(|code| **code == diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS)
+        .filter(|code| {
+            **code == diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        })
         .count();
     assert_eq!(
-        ts8020_count, 2,
+        ts8020_count,
+        2,
         "Expected TS8020 for both legacy function types, got {:?}",
         parser.get_diagnostics()
     );
@@ -1690,7 +1703,9 @@ function hof2(f: function(this: number, string): string) {
     );
 
     assert!(
-        !diagnostics.iter().any(|code| *code == 1003 || *code == 1005 || *code == 1109),
+        !diagnostics
+            .iter()
+            .any(|code| *code == 1003 || *code == 1005 || *code == 1109),
         "Did not expect parser-level recovery diagnostics for legacy function types, got {:?}",
         parser.get_diagnostics()
     );
@@ -2806,9 +2821,13 @@ fn test_trailing_decimal_numeric_literal_recovery_matches_conformance_shape() {
 }
 
 #[test]
-fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_at_end_of_type_token() {
+fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_at_end_of_type_token()
+ {
     let source = "@<[[import(obju2c77,\n";
-    let mut parser = ParserState::new("parseUnmatchedTypeAssertion.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new(
+        "parseUnmatchedTypeAssertion.ts".to_string(),
+        source.to_string(),
+    );
     let _root = parser.parse_source_file();
 
     let diagnostics = parser.get_diagnostics();

@@ -542,7 +542,7 @@ impl ModuleResolver {
                             ),
                         );
                     }
-                    
+
                     // NEW: Validate that the fallback path actually exists before treating it
                     // as a successful resolution. The fallback resolver may return a path that
                     // doesn't actually exist on the filesystem (e.g., a path to a directory
@@ -559,7 +559,7 @@ impl ModuleResolver {
                             ),
                         );
                     }
-                    
+
                     return ModuleLookupResult::resolved(fallback_path);
                 }
 

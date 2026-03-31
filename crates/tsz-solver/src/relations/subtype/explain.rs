@@ -613,38 +613,48 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // missing properties in declaration order, not Atom/hash order).
         // For class inheritance, we need to show own properties first, then inherited.
         let target_symbol = get_object_symbol(self.interner, target);
-        let mut missing_with_order: Vec<(tsz_common::interner::Atom, u32, Option<tsz_binder::SymbolId>)> = Vec::new();
+        let mut missing_with_order: Vec<(
+            tsz_common::interner::Atom,
+            u32,
+            Option<tsz_binder::SymbolId>,
+        )> = Vec::new();
         for t_prop in target_props {
             if !t_prop.optional {
                 let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
                 if s_prop.is_none() {
-                    missing_with_order.push((t_prop.name, t_prop.declaration_order, t_prop.parent_id));
+                    missing_with_order.push((
+                        t_prop.name,
+                        t_prop.declaration_order,
+                        t_prop.parent_id,
+                    ));
                 }
             }
         }
-        missing_with_order.sort_by(|(left_name, left_order, left_parent), (right_name, right_order, right_parent)| {
-            // For class types, own properties (where parent_id matches the target symbol)
-            // should come before inherited properties
-            let left_is_own = target_symbol.is_some() && *left_parent == target_symbol;
-            let right_is_own = target_symbol.is_some() && *right_parent == target_symbol;
-            
-            match (left_is_own, right_is_own) {
-                (true, false) => return std::cmp::Ordering::Less,
-                (false, true) => return std::cmp::Ordering::Greater,
-                _ => {}
-            }
-            
-            // Then sort by declaration_order
-            match (*left_order > 0, *right_order > 0) {
-                (true, true) => left_order.cmp(right_order),
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                (false, false) => self
-                    .interner
-                    .resolve_atom_ref(*left_name)
-                    .cmp(&self.interner.resolve_atom_ref(*right_name)),
-            }
-        });
+        missing_with_order.sort_by(
+            |(left_name, left_order, left_parent), (right_name, right_order, right_parent)| {
+                // For class types, own properties (where parent_id matches the target symbol)
+                // should come before inherited properties
+                let left_is_own = target_symbol.is_some() && *left_parent == target_symbol;
+                let right_is_own = target_symbol.is_some() && *right_parent == target_symbol;
+
+                match (left_is_own, right_is_own) {
+                    (true, false) => return std::cmp::Ordering::Less,
+                    (false, true) => return std::cmp::Ordering::Greater,
+                    _ => {}
+                }
+
+                // Then sort by declaration_order
+                match (*left_order > 0, *right_order > 0) {
+                    (true, true) => left_order.cmp(right_order),
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    (false, false) => self
+                        .interner
+                        .resolve_atom_ref(*left_name)
+                        .cmp(&self.interner.resolve_atom_ref(*right_name)),
+                }
+            },
+        );
         let non_symbol_missing: Vec<_> = missing_with_order
             .iter()
             .copied()
