@@ -992,25 +992,24 @@ impl<'a> CheckerState<'a> {
 
         // Merge heritage (extends) from lib interface declarations.
         // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
-        //
-        // CRITICAL: Insert the pre-heritage type into the cache BEFORE merging heritage.
-        // merge_lib_interface_heritage calls resolve_lib_type_by_name recursively for base
-        // types. Without this early cache insertion, recursive calls redo all lowering work
-        // for types already being resolved, causing O(n!) blowup on deep heritage chains
-        // (e.g., es5.d.ts where Array extends ReadonlyArray, etc.).
-        // The recursive call gets the un-merged type (missing inherited members), which is
-        // still correct for breaking cycles. The final cache update below overwrites with
-        // the fully-merged type.
+        // Merge heritage (extends) from lib interface declarations.
+        // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
         if let Some(ty) = lib_type_id {
-            self.ctx
-                .lib_type_resolution_cache
-                .insert(name.to_string(), Some(ty));
             lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
         }
 
         // Merge global augmentations (declare global { interface X { ... } }).
         if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
             lib_type_id = Some(merged);
+        }
+
+        // CRITICAL: Update cache AFTER merging global augmentations.
+        // The cache must contain the fully merged type including augmentations,
+        // otherwise subsequent calls will return the un-augmented type.
+        if let Some(ty) = lib_type_id {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(name.to_string(), Some(ty));
         }
 
         // Process heritage clauses from global augmentations.
