@@ -213,7 +213,10 @@ impl<'a> CheckerState<'a> {
                     param.type_id = jsdoc_type;
                 }
 
-                param.optional = param.optional || jsdoc_optional;
+                // For JSDoc overload signatures, only use JSDoc-specified optionality.
+                // Don't inherit the JS implicit-optional from the base signature, since
+                // overload params are defined by JSDoc alone.
+                param.optional = jsdoc_optional;
             }
 
             let overload_type = self.ctx.types.factory().callable(CallableShape {
@@ -248,8 +251,26 @@ impl<'a> CheckerState<'a> {
         let class_node = self.ctx.arena.get(class_idx)?;
         let class = self.ctx.arena.get_class(class_node)?;
         let instance_type = self.get_class_instance_type(class_idx, class);
-        let sig =
+        let mut sig =
             self.call_signature_from_constructor(ctor, ctor_idx, instance_type, &class_type_params);
+
+        // In JS files, `extract_params_from_parameter_list` marks untyped params as
+        // implicitly optional. For overload compatibility, TSC uses the actual AST
+        // parameter properties: a param is required only if it lacks both `?` and a
+        // default initializer, regardless of whether it has a type annotation.
+        // Reset the optional flags to match TSC's overload compatibility semantics.
+        if self.is_js_file() {
+            for (i, &param_idx) in ctor.parameters.nodes.iter().enumerate() {
+                if i >= sig.params.len() {
+                    break;
+                }
+                if let Some(param_node) = self.ctx.arena.get(param_idx)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    sig.params[i].optional = param.question_token || param.initializer.is_some();
+                }
+            }
+        }
 
         Some(self.ctx.types.factory().function(FunctionShape {
             type_params: sig.type_params,
