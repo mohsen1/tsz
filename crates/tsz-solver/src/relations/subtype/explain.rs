@@ -93,6 +93,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.explain_failure_inner(source, target)
     }
 
+    /// Resolve a `TypeQuery(SymbolRef)` type to its structural form for explain.
+    ///
+    /// Delegates to `resolve_type_query_symbol` (defined in generics.rs) which
+    /// resolves via `resolve_ref` (value-space / constructor type) first, then
+    /// falls back to `resolve_lazy` for non-class symbols (e.g., namespaces).
+    fn resolve_type_query_for_explain(&self, type_id: TypeId) -> TypeId {
+        if let Some(sym_ref) =
+            crate::type_queries::get_type_query_symbol_ref(self.interner, type_id)
+        {
+            self.resolve_type_query_symbol(sym_ref)
+                .map(|resolved| self.resolve_lazy_type(resolved))
+                .unwrap_or(type_id)
+        } else {
+            type_id
+        }
+    }
+
     fn explain_failure_inner(
         &mut self,
         source: TypeId,
@@ -103,6 +120,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
         let mut resolved_source = self.resolve_lazy_type(source);
         let mut resolved_target = self.resolve_lazy_type(target);
+
+        // Resolve TypeQuery types (typeof X) to their value-space structural forms.
+        // Without this, `typeof Namespace` types remain as TypeQuery(SymbolRef) and
+        // skip property comparison, preventing TS2741 from being emitted.
+        resolved_source = self.resolve_type_query_for_explain(resolved_source);
+        resolved_target = self.resolve_type_query_for_explain(resolved_target);
 
         // Expand applications (like Array<number>, MyGeneric<string>) to structural forms
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_source)
