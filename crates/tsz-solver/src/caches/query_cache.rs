@@ -650,6 +650,15 @@ impl<'a> QueryCache<'a> {
                     })
                     .collect()
             }
+            TypeData::TypeParameter(info) => {
+                // For type parameters with constraints (e.g. `T extends { x: number }`),
+                // collect properties from the constraint. Required properties in the
+                // constraint are guaranteed to exist on any value of type T.
+                if let Some(constraint) = info.constraint {
+                    return self.collect_object_spread_properties_inner(constraint, visited);
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         };
 
