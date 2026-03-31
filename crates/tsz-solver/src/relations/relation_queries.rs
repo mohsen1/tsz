@@ -4,7 +4,6 @@
 //! overlap) behind one API so checker code can call Solver queries instead
 //! of wiring checker internals directly to concrete checker engines.
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::classes::inheritance::InheritanceGraph;
 use crate::operations::AssignabilityChecker;
@@ -13,6 +12,7 @@ use crate::relations::compat::{
 };
 use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{RelationCacheKey, SymbolRef, TypeId};
+use crate::TypeDatabase;
 
 /// Relation categories supported by the unified query API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -381,9 +381,13 @@ pub fn check_application_variance<R: TypeResolver>(
         checker.set_query_db(qdb);
     }
 
+    // When variance is empty/unknown for some parameters, we still need to check
+    // type argument assignability to catch cases where different type parameters
+    // (like T vs U) are not assignable to each other.
     let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
     let mut all_ok = true;
     let mut any_checked = false;
+    let mut has_empty_variance = false;
     for (i, variance) in variances.iter().enumerate() {
         let s_arg = s_app.args[i];
         let t_arg = t_app.args[i];
@@ -403,6 +407,19 @@ pub fn check_application_variance<R: TypeResolver>(
         } else if variance.is_contravariant() {
             any_checked = true;
             if !checker.is_assignable(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_independent() {
+            // Independent variance means the type parameter is not used in any
+            // variance position (covariant or contravariant). This is often the case
+            // for phantom type parameters. However, we should still check if the type
+            // arguments are assignable to catch cases where different unconstrained
+            // type parameters (e.g., T vs U) should not be assignable.
+            // We do an invariant check (both directions) to be safe.
+            has_empty_variance = true;
+            any_checked = true;
+            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
                 all_ok = false;
                 break;
             }
