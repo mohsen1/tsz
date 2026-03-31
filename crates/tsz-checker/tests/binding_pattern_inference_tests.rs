@@ -59,3 +59,37 @@ const [e1, e2] = f();
         "Expected TypeScript-style unknown destructuring diagnostics. Actual diagnostics: {relevant:#?}"
     );
 }
+
+/// When a generic function's type parameter has no inference candidates (no constraint,
+/// no default, and the only argument is a callback with a binding-pattern parameter),
+/// T falls back to `unknown`. The callback's binding-pattern type (`{a: any}`) is NOT
+/// assignable from `unknown` (the instantiated parameter type), so TS2345 must be emitted.
+///
+/// This is the `fallbackToBindingPatternForTypeInference` conformance test from TypeScript.
+#[test]
+fn test_binding_pattern_callback_does_not_infer_generic_parameter() {
+    let source = r#"
+declare function trans<T>(f: (x: T) => string): number;
+trans(({a}) => a);
+trans(([b,c]) => 'foo');
+trans(({d: [e,f]}) => 'foo');
+trans(([{g},{h}]) => 'foo');
+trans(({a, b = 10}) => a);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 5,
+        "Expected 5 TS2345 errors for binding-pattern callbacks with uninferred T. \
+         Got {} TS2345 errors. All diagnostics: {diagnostics:#?}",
+        ts2345_count
+    );
+}

@@ -69,13 +69,25 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check if any parameter lacks a type annotation (relies on contextual typing)
+        // Check if any parameter lacks a type annotation AND is a simple identifier
+        // (relies on contextual typing). Binding-pattern parameters (destructuring)
+        // derive their type from the pattern structure, not from contextual typing,
+        // so they should NOT suppress the TS2345 error. For example:
+        //   trans<T>(f: (x: T) => string): T defaults to unknown
+        //   trans(({a}) => a) → param type is {a: any} from pattern, NOT from context
+        //   TS2345 is correct because {a: any} is not assignable from unknown.
         func.parameters.nodes.iter().any(|&param_idx| {
             self.ctx
                 .arena
                 .get(param_idx)
                 .and_then(|pn| self.ctx.arena.get_parameter(pn))
-                .is_some_and(|p| p.type_annotation.is_none())
+                .is_some_and(|p| {
+                    p.type_annotation.is_none()
+                        && self.ctx.arena.get(p.name).is_some_and(|name_node| {
+                            name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                && name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        })
+                })
         })
     }
 
