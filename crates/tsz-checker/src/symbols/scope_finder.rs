@@ -270,6 +270,13 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
+            // In JS files, function declarations that have `this.prop = value`
+            // assignments in their body are constructor functions. `this` inside
+            // them is typed as the constructed instance, not `any`, so TS2683
+            // must be suppressed.
+            if self.is_js_file() && self.function_body_has_this_property_assignments(enclosing_fn) {
+                return false;
+            }
             return true;
         }
 
@@ -554,7 +561,9 @@ impl<'a> CheckerState<'a> {
     /// the `this` type is contextually provided. TS2683 should be suppressed because
     /// the contextual typing pass will properly type `this`.
     pub(crate) fn enclosing_function_has_contextual_this_type(&mut self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_DECLARATION, FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
+        use tsz_parser::parser::syntax_kind_ext::{
+            FUNCTION_DECLARATION, FUNCTION_EXPRESSION, VARIABLE_DECLARATION,
+        };
 
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
             Some(f) => f,
@@ -2069,6 +2078,72 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        false
+    }
+
+    /// Check if a function's body contains `this.property = value` assignments,
+    /// which in JS files indicates a constructor function pattern. When a function
+    /// has such assignments, tsc types `this` as the constructed instance and
+    /// does not emit TS2683.
+    fn function_body_has_this_property_assignments(&self, func_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            BINARY_EXPRESSION, EXPRESSION_STATEMENT, PROPERTY_ACCESS_EXPRESSION,
+        };
+
+        let Some(fn_node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        let body_idx = if let Some(func) = self.ctx.arena.get_function(fn_node) {
+            func.body
+        } else {
+            return false;
+        };
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let Some(lhs_node) = self.ctx.arena.get(binary.left) else {
+                continue;
+            };
+            if lhs_node.kind != PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = self.ctx.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            let Some(base_node) = self.ctx.arena.get(access.expression) else {
+                continue;
+            };
+            if base_node.kind == SyntaxKind::ThisKeyword as u16 {
+                return true;
+            }
+        }
+
         false
     }
 }
