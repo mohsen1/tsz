@@ -803,7 +803,23 @@ impl Runner {
                                         return Ok((TestResult::Crashed, file_preview.take()));
                                     }
                                     BatchOutcome::Timeout => {
-                                        return Ok((TestResult::Timeout, file_preview.take()));
+                                        match Self::compile_with_subprocess(
+                                            &tsz_binary,
+                                            &prepared.project_dir,
+                                            prepared.temp_dir.path(),
+                                            variant,
+                                            timeout_secs.saturating_mul(2).max(60),
+                                        )
+                                        .await?
+                                        {
+                                            Some(result) => result,
+                                            None => {
+                                                return Ok((
+                                                    TestResult::Timeout,
+                                                    file_preview.take(),
+                                                ));
+                                            }
+                                        }
                                     }
                                 }
                             } else {
@@ -1070,9 +1086,7 @@ impl Runner {
                         .unwrap_or("ts")
                         .to_string();
                     let prepared = tokio::task::spawn_blocking({
-                        // Write decoded UTF-8 text, not original UTF-16 bytes.
-                        // Our compiler assumes UTF-8 input; tsc also decodes internally.
-                        let bytes = decoded_text.as_bytes().to_vec();
+                        let bytes = original_bytes.clone();
                         let ext = ext.clone();
                         let options = options.clone();
                         move || tsz_wrapper::prepare_binary_test_dir(&bytes, &ext, &options)
@@ -1095,7 +1109,18 @@ impl Runner {
                                 return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
-                                return Ok((TestResult::Timeout, file_preview.take()));
+                                match Self::compile_with_subprocess(
+                                    &tsz_binary,
+                                    &prepared.project_dir,
+                                    prepared.temp_dir.path(),
+                                    options,
+                                    timeout_secs.saturating_mul(2).max(60),
+                                )
+                                .await?
+                                {
+                                    Some(result) => result,
+                                    None => return Ok((TestResult::Timeout, file_preview.take())),
+                                }
                             }
                         }
                     } else {
@@ -1258,7 +1283,18 @@ impl Runner {
                                 return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
-                                return Ok((TestResult::Timeout, file_preview.take()));
+                                match Self::compile_with_subprocess(
+                                    &tsz_binary,
+                                    &prepared.project_dir,
+                                    prepared.temp_dir.path(),
+                                    options,
+                                    timeout_secs.saturating_mul(2).max(60),
+                                )
+                                .await?
+                                {
+                                    Some(result) => result,
+                                    None => return Ok((TestResult::Timeout, file_preview.take())),
+                                }
                             }
                         }
                     } else {
@@ -1381,6 +1417,41 @@ impl Runner {
                 }
             }
         }
+    }
+
+    async fn compile_with_subprocess(
+        tsz_binary: &str,
+        project_dir: &Path,
+        temp_dir: &Path,
+        options: HashMap<String, String>,
+        timeout_secs: u64,
+    ) -> anyhow::Result<Option<tsz_wrapper::CompilationResult>> {
+        let child = tokio::process::Command::new(tsz_binary)
+            .arg("--project")
+            .arg(project_dir)
+            .arg("--noEmit")
+            .arg("--pretty")
+            .arg("false")
+            .current_dir(project_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+
+        let output = if timeout_secs > 0 {
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
+                .await
+            {
+                Ok(result) => result?,
+                Err(_) => return Ok(None),
+            }
+        } else {
+            child.wait_with_output().await?
+        };
+
+        Ok(Some(tsz_wrapper::parse_tsz_output(
+            &output, temp_dir, options,
+        )))
     }
 }
 

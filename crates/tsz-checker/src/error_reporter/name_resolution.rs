@@ -747,7 +747,11 @@ impl<'a> CheckerState<'a> {
         // tsc increments suggestionCount unconditionally for every name resolution
         // failure, not just when a suggestion is found. This ensures the cap of 10
         // counts all resolution attempts, matching tsc's behavior.
-        self.ctx.spelling_suggestions_emitted += 1;
+        // Only increment for unique node indices to prevent counter inflation from
+        // repeated resolution of the same type reference (e.g., in generic contexts).
+        if self.ctx.name_resolution_reported_nodes.insert(idx) {
+            self.ctx.spelling_suggestions_emitted += 1;
+        }
 
         // Fall back to standard error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
@@ -784,7 +788,10 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         }
 
-        let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10;
+        // Only suppress suggestions when the cap is reached AND this is a new node.
+        // Repeated resolution of already-counted nodes should still get suggestions.
+        let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10
+            && !self.ctx.name_resolution_reported_nodes.contains(&idx);
         if reached_max_suggestions {
             return Vec::new();
         }
@@ -957,7 +964,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // tsc caps spelling suggestions at 10 per file.
-        if self.ctx.spelling_suggestions_emitted >= 10 {
+        // Only count unique node indices towards the cap to prevent inflation
+        // from repeated resolution of the same type reference.
+        if self.ctx.spelling_suggestions_emitted >= 10
+            && !self.ctx.name_resolution_reported_nodes.contains(&idx)
+        {
             self.error_at_node(
                 idx,
                 &format!("Cannot find name '{name}'."),
@@ -965,7 +976,9 @@ impl<'a> CheckerState<'a> {
             );
             return;
         }
-        self.ctx.spelling_suggestions_emitted += 1;
+        if self.ctx.name_resolution_reported_nodes.insert(idx) {
+            self.ctx.spelling_suggestions_emitted += 1;
+        }
 
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors that were added to the AST for error recovery.

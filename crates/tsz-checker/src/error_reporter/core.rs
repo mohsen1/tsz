@@ -3,6 +3,7 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -287,18 +288,69 @@ impl<'a> CheckerState<'a> {
         if depth >= 10 {
             return ty;
         }
+
         DEPTH.set(depth + 1);
-        let result = self.normalize_assignability_display_type_inner(ty);
+        let mut visiting = FxHashSet::default();
+        let result = self.normalize_assignability_display_type_inner(ty, &mut visiting, 0);
         DEPTH.set(depth);
         result
     }
 
-    fn normalize_assignability_display_type_inner(&mut self, ty: TypeId) -> TypeId {
+    fn should_truncate_assignability_display_type(&self, ty: TypeId, depth: usize) -> bool {
+        if depth < 3 {
+            return false;
+        }
+
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
+            || tsz_solver::function_shape_id(self.ctx.types, ty).is_some()
+            || tsz_solver::callable_shape_id(self.ctx.types, ty).is_some()
+        {
+            return true;
+        }
+
+        if depth < 5 {
+            return false;
+        }
+
+        if query::type_application(self.ctx.types, ty).is_some() {
+            return true;
+        }
+
+        if query::union_members(self.ctx.types, ty).is_some_and(|members| members.len() > 4)
+            || query::intersection_members(self.ctx.types, ty)
+                .is_some_and(|members| members.len() > 3)
+        {
+            return true;
+        }
+
+        tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some_and(|shape| {
+            shape.properties.len() > 6
+                || shape.string_index.is_some()
+                || shape.number_index.is_some()
+        })
+    }
+
+    fn normalize_assignability_display_type_inner(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut FxHashSet<TypeId>,
+        depth: usize,
+    ) -> TypeId {
+        const MAX_ASSIGNABILITY_DISPLAY_DEPTH: usize = 12;
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
 
-        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+        if depth >= MAX_ASSIGNABILITY_DISPLAY_DEPTH || !visiting.insert(ty) {
+            return ty;
+        }
+
+        if self.should_truncate_assignability_display_type(ty, depth) {
+            visiting.remove(&ty);
+            return ty;
+        }
+
+        let result = if let Some(members) = query::intersection_members(self.ctx.types, ty) {
             let has_undefined = members.contains(&TypeId::UNDEFINED);
             let has_null = members.contains(&TypeId::NULL);
             let generic_scaffolding_only = members.iter().all(|&member| {
@@ -315,157 +367,360 @@ impl<'a> CheckerState<'a> {
             });
             if generic_scaffolding_only {
                 if has_undefined {
-                    return TypeId::UNDEFINED;
+                    TypeId::UNDEFINED
+                } else if has_null {
+                    TypeId::NULL
+                } else {
+                    ty
                 }
-                if has_null {
-                    return TypeId::NULL;
+            } else if let Some(members) = query::union_members(self.ctx.types, ty) {
+                let normalized: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        self.normalize_assignability_display_type_inner(member, visiting, depth + 1)
+                    })
+                    .collect();
+                if normalized == members {
+                    ty
+                } else {
+                    self.ctx.types.factory().union_preserve_members(normalized)
+                }
+            } else {
+                let evaluated =
+                    if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
+                        && crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            ty,
+                        )
+                    {
+                        ty
+                    } else {
+                        self.evaluate_type_for_assignability(ty)
+                    };
+
+                if self.should_truncate_assignability_display_type(evaluated, depth) {
+                    visiting.remove(&ty);
+                    return evaluated;
+                }
+
+                if let Some(app) = query::type_application(self.ctx.types, evaluated) {
+                    let args: Vec<_> = app
+                        .args
+                        .iter()
+                        .map(|&arg| {
+                            self.normalize_assignability_display_type_inner(
+                                arg,
+                                visiting,
+                                depth + 1,
+                            )
+                        })
+                        .collect();
+                    if args == app.args {
+                        evaluated
+                    } else {
+                        self.ctx.types.factory().application(app.base, args)
+                    }
+                } else if let Some(shape) = query::function_shape(self.ctx.types, evaluated) {
+                    let params: Vec<_> = shape
+                        .params
+                        .iter()
+                        .map(|param| tsz_solver::ParamInfo {
+                            type_id: self.normalize_assignability_display_type_inner(
+                                param.type_id,
+                                visiting,
+                                depth + 1,
+                            ),
+                            ..*param
+                        })
+                        .collect();
+                    let return_type = self.normalize_assignability_display_type_inner(
+                        shape.return_type,
+                        visiting,
+                        depth + 1,
+                    );
+                    let return_type =
+                        crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
+                    if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
+                        && return_type == shape.return_type
+                    {
+                        evaluated
+                    } else {
+                        self.ctx
+                            .types
+                            .factory()
+                            .function(tsz_solver::FunctionShape {
+                                type_params: shape.type_params.clone(),
+                                params,
+                                this_type: shape.this_type,
+                                return_type,
+                                type_predicate: shape.type_predicate,
+                                is_constructor: shape.is_constructor,
+                                is_method: shape.is_method,
+                            })
+                    }
+                } else if let Some(shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
+                {
+                    let mut shape = shape.as_ref().clone();
+                    let mut changed = false;
+                    for prop in &mut shape.properties {
+                        let normalized_read = self.normalize_assignability_display_type_inner(
+                            prop.type_id,
+                            visiting,
+                            depth + 1,
+                        );
+                        let normalized_write = self.normalize_assignability_display_type_inner(
+                            prop.write_type,
+                            visiting,
+                            depth + 1,
+                        );
+                        changed |=
+                            normalized_read != prop.type_id || normalized_write != prop.write_type;
+                        prop.type_id = normalized_read;
+                        prop.write_type = normalized_write;
+                    }
+                    if let Some(index) = shape.string_index.as_mut() {
+                        let normalized = self.normalize_assignability_display_type_inner(
+                            index.value_type,
+                            visiting,
+                            depth + 1,
+                        );
+                        changed |= normalized != index.value_type;
+                        index.value_type = normalized;
+                    }
+                    if let Some(index) = shape.number_index.as_mut() {
+                        let normalized = self.normalize_assignability_display_type_inner(
+                            index.value_type,
+                            visiting,
+                            depth + 1,
+                        );
+                        changed |= normalized != index.value_type;
+                        index.value_type = normalized;
+                    }
+                    if changed {
+                        let new_ty = self.ctx.types.factory().object_with_index(shape);
+                        if let Some(display_props) =
+                            self.ctx.types.get_display_properties(evaluated)
+                        {
+                            self.ctx
+                                .types
+                                .store_display_properties(new_ty, display_props.as_ref().clone());
+                        }
+                        new_ty
+                    } else {
+                        evaluated
+                    }
+                } else if let Some(members) = query::union_members(self.ctx.types, evaluated) {
+                    self.ctx.types.factory().union_preserve_members(
+                        members
+                            .iter()
+                            .map(|&member| {
+                                self.normalize_assignability_display_type_inner(
+                                    member,
+                                    visiting,
+                                    depth + 1,
+                                )
+                            })
+                            .collect(),
+                    )
+                } else if let Some(members) = query::intersection_members(self.ctx.types, evaluated)
+                {
+                    self.ctx.types.factory().intersection(
+                        members
+                            .iter()
+                            .map(|&member| {
+                                self.normalize_assignability_display_type_inner(
+                                    member,
+                                    visiting,
+                                    depth + 1,
+                                )
+                            })
+                            .collect(),
+                    )
+                } else {
+                    evaluated
                 }
             }
-        }
-
-        // For union types, normalize each member individually rather than
-        // evaluating the union as a whole. evaluate_type can collapse unions
-        // of Application types (e.g., I1<number> | I2<number>) into a single
-        // evaluated object, losing the nominal type names that tsc preserves
-        // in error messages.
-        if let Some(members) = query::union_members(self.ctx.types, ty) {
+        } else if let Some(members) = query::union_members(self.ctx.types, ty) {
             let normalized: Vec<_> = members
                 .iter()
-                .map(|&member| self.normalize_assignability_display_type(member))
+                .map(|&member| {
+                    self.normalize_assignability_display_type_inner(member, visiting, depth + 1)
+                })
                 .collect();
             if normalized == members {
-                return ty;
+                ty
+            } else {
+                self.ctx.types.factory().union_preserve_members(normalized)
             }
-            return self.ctx.types.factory().union_preserve_members(normalized);
-        }
-
-        // Preserve Application types with named bases (Lazy(DefId)) for display.
-        // When a named generic type like `Dictionary<string>` is evaluated, it loses
-        // its alias identity (becoming e.g. `{ [index: string]: string }`). By
-        // preserving the Application form, the formatter can display `Dictionary<string>`
-        // using the Application path which resolves the base DefId name + args.
-        if let Some(app) = query::type_application(self.ctx.types, ty) {
+        } else if let Some(app) = query::type_application(self.ctx.types, ty) {
             if query::preserves_named_application_base(self.ctx.types, app.base) {
                 let args: Vec<_> = app
                     .args
                     .iter()
-                    .map(|&arg| self.normalize_assignability_display_type(arg))
+                    .map(|&arg| {
+                        self.normalize_assignability_display_type_inner(arg, visiting, depth + 1)
+                    })
                     .collect();
-                return if args == app.args {
+                if args == app.args {
                     ty
                 } else {
                     self.ctx.types.factory().application(app.base, args)
-                };
-            }
-        }
-
-        let ty = if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
-            && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
-        {
-            ty
-        } else {
-            self.evaluate_type_for_assignability(ty)
-        };
-
-        if let Some(app) = query::type_application(self.ctx.types, ty) {
-            let args: Vec<_> = app
-                .args
-                .iter()
-                .map(|&arg| self.normalize_assignability_display_type(arg))
-                .collect();
-            if args == app.args {
-                ty
+                }
             } else {
-                self.ctx.types.factory().application(app.base, args)
+                let evaluated =
+                    if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
+                        && crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            ty,
+                        )
+                    {
+                        ty
+                    } else {
+                        self.evaluate_type_for_assignability(ty)
+                    };
+
+                if self.should_truncate_assignability_display_type(evaluated, depth) {
+                    visiting.remove(&ty);
+                    return evaluated;
+                }
+                self.normalize_assignability_display_type_inner(evaluated, visiting, depth + 1)
             }
-        } else if let Some(shape) = query::function_shape(self.ctx.types, ty) {
-            let params: Vec<_> = shape
-                .params
-                .iter()
-                .map(|param| tsz_solver::ParamInfo {
-                    type_id: self.normalize_assignability_display_type(param.type_id),
-                    ..*param
-                })
-                .collect();
-            // tsc widens literal return types in error messages:
-            // `(x: number) => number` not `(x: number) => 1`.
-            // `(foo: number) => boolean` not `(foo: number) => true`.
-            // This matches tsc's getWidenedLiteralType behavior in
-            // getReturnTypeFromBody. Use full widen_type (not
-            // widen_type_for_display) to also widen boolean literals
-            // (true → boolean, false → boolean) in return position.
-            let return_type = self.normalize_assignability_display_type(shape.return_type);
-            let return_type =
-                crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
-            if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
-                && return_type == shape.return_type
+        } else {
+            let evaluated = if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
+                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
             {
                 ty
             } else {
-                self.ctx
-                    .types
-                    .factory()
-                    .function(tsz_solver::FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params,
-                        this_type: shape.this_type,
-                        return_type,
-                        type_predicate: shape.type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
+                self.evaluate_type_for_assignability(ty)
+            };
+
+            if self.should_truncate_assignability_display_type(evaluated, depth) {
+                visiting.remove(&ty);
+                return evaluated;
+            }
+
+            if let Some(app) = query::type_application(self.ctx.types, evaluated) {
+                let args: Vec<_> = app
+                    .args
+                    .iter()
+                    .map(|&arg| {
+                        self.normalize_assignability_display_type_inner(arg, visiting, depth + 1)
                     })
-            }
-        } else if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty) {
-            let mut shape = shape.as_ref().clone();
-            let mut changed = false;
-            for prop in &mut shape.properties {
-                let normalized_read = self.normalize_assignability_display_type(prop.type_id);
-                let normalized_write = self.normalize_assignability_display_type(prop.write_type);
-                let stripped_read = normalized_read;
-                let stripped_write = normalized_write;
-                changed |= stripped_read != prop.type_id || stripped_write != prop.write_type;
-                prop.type_id = stripped_read;
-                prop.write_type = stripped_write;
-            }
-            if let Some(index) = shape.string_index.as_mut() {
-                let normalized = self.normalize_assignability_display_type(index.value_type);
-                changed |= normalized != index.value_type;
-                index.value_type = normalized;
-            }
-            if let Some(index) = shape.number_index.as_mut() {
-                let normalized = self.normalize_assignability_display_type(index.value_type);
-                changed |= normalized != index.value_type;
-                index.value_type = normalized;
-            }
-            if changed {
-                let new_ty = self.ctx.types.factory().object_with_index(shape);
-                // Carry forward display properties from the original TypeId.
-                if let Some(display_props) = self.ctx.types.get_display_properties(ty) {
+                    .collect();
+                if args == app.args {
+                    evaluated
+                } else {
+                    self.ctx.types.factory().application(app.base, args)
+                }
+            } else if let Some(shape) = query::function_shape(self.ctx.types, evaluated) {
+                let params: Vec<_> = shape
+                    .params
+                    .iter()
+                    .map(|param| tsz_solver::ParamInfo {
+                        type_id: self.normalize_assignability_display_type_inner(
+                            param.type_id,
+                            visiting,
+                            depth + 1,
+                        ),
+                        ..*param
+                    })
+                    .collect();
+                let return_type = self.normalize_assignability_display_type_inner(
+                    shape.return_type,
+                    visiting,
+                    depth + 1,
+                );
+                let return_type =
+                    crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
+                if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
+                    && return_type == shape.return_type
+                {
+                    evaluated
+                } else {
                     self.ctx
                         .types
-                        .store_display_properties(new_ty, display_props.as_ref().clone());
+                        .factory()
+                        .function(tsz_solver::FunctionShape {
+                            type_params: shape.type_params.clone(),
+                            params,
+                            this_type: shape.this_type,
+                            return_type,
+                            type_predicate: shape.type_predicate,
+                            is_constructor: shape.is_constructor,
+                            is_method: shape.is_method,
+                        })
                 }
-                new_ty
+            } else if let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
+            {
+                let mut shape = shape.as_ref().clone();
+                let mut changed = false;
+                for prop in &mut shape.properties {
+                    let normalized_read = self.normalize_assignability_display_type_inner(
+                        prop.type_id,
+                        visiting,
+                        depth + 1,
+                    );
+                    let normalized_write = self.normalize_assignability_display_type_inner(
+                        prop.write_type,
+                        visiting,
+                        depth + 1,
+                    );
+                    changed |=
+                        normalized_read != prop.type_id || normalized_write != prop.write_type;
+                    prop.type_id = normalized_read;
+                    prop.write_type = normalized_write;
+                }
+                if let Some(index) = shape.string_index.as_mut() {
+                    let normalized = self.normalize_assignability_display_type_inner(
+                        index.value_type,
+                        visiting,
+                        depth + 1,
+                    );
+                    changed |= normalized != index.value_type;
+                    index.value_type = normalized;
+                }
+                if let Some(index) = shape.number_index.as_mut() {
+                    let normalized = self.normalize_assignability_display_type_inner(
+                        index.value_type,
+                        visiting,
+                        depth + 1,
+                    );
+                    changed |= normalized != index.value_type;
+                    index.value_type = normalized;
+                }
+                if changed {
+                    let new_ty = self.ctx.types.factory().object_with_index(shape);
+                    if let Some(display_props) = self.ctx.types.get_display_properties(evaluated) {
+                        self.ctx
+                            .types
+                            .store_display_properties(new_ty, display_props.as_ref().clone());
+                    }
+                    new_ty
+                } else {
+                    evaluated
+                }
+            } else if let Some(members) = query::intersection_members(self.ctx.types, evaluated) {
+                self.ctx.types.factory().intersection(
+                    members
+                        .iter()
+                        .map(|&member| {
+                            self.normalize_assignability_display_type_inner(
+                                member,
+                                visiting,
+                                depth + 1,
+                            )
+                        })
+                        .collect(),
+                )
             } else {
-                ty
+                evaluated
             }
-        } else if let Some(members) = query::union_members(self.ctx.types, ty) {
-            self.ctx.types.factory().union_preserve_members(
-                members
-                    .iter()
-                    .map(|&member| self.normalize_assignability_display_type(member))
-                    .collect(),
-            )
-        } else if let Some(members) = query::intersection_members(self.ctx.types, ty) {
-            self.ctx.types.factory().intersection(
-                members
-                    .iter()
-                    .map(|&member| self.normalize_assignability_display_type(member))
-                    .collect(),
-            )
-        } else {
-            ty
-        }
+        };
+
+        visiting.remove(&ty);
+        result
     }
 
     fn split_optional_object_for_excess_display(&self, ty: TypeId) -> TypeId {

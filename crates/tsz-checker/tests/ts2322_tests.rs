@@ -2717,6 +2717,78 @@ fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined
 }
 
 #[test]
+fn test_ts2322_constructor_default_value_diagnostics_do_not_timeout() {
+    let source = r#"
+class C {
+    constructor(x);
+    constructor(public x: string = 1) {
+        var y = x;
+    }
+}
+
+class D<T, U> {
+    constructor(x: T, y: U);
+    constructor(x: T = 1, public y: U = x) {
+        var z = x;
+    }
+}
+
+class E<T extends Date> {
+    constructor(x);
+    constructor(x: T = new Date()) {
+        var y = x;
+    }
+}
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        4,
+        "Expected four TS2322 diagnostics for constructor parameter defaults, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'number' is not assignable to type 'string'")),
+        "Expected string default initializer TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'number' is not assignable to type 'T'")),
+        "Expected generic T default initializer TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'T' is not assignable to type 'U'")),
+        "Expected generic parameter-property TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|(_, msg)| {
+            msg.ends_with("is not assignable to type 'T'.")
+                && !msg.contains("Type 'number' is not assignable to type 'T'.")
+        }),
+        "Expected constrained default initializer TS2322 for T, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 #[ignore = "Requires deferred indexed access evaluation for intersections with type parameters - see conformance test compiler/indexedAccessRelation.ts"]
 fn indexed_access_on_intersection_preserves_deferred_constraints() {
     // Repro from TypeScript#14723 / conformance test indexedAccessRelation.ts.
@@ -2821,8 +2893,7 @@ fn nested_weak_type_in_intersection_target_emits_ts2322() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         has_ts2322 || has_ts2559,
-        "Expected TS2322 or TS2559 for nested weak type mismatch in intersection target. Got: {:?}",
-        diagnostics
+        "Expected TS2322 or TS2559 for nested weak type mismatch in intersection target. Got: {diagnostics:?}"
     );
 }
 
@@ -2840,8 +2911,7 @@ fn flat_weak_type_in_intersection_target_emits_ts2559() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         has_ts2559,
-        "Expected TS2559 for flat weak type mismatch in intersection target. Got: {:?}",
-        diagnostics
+        "Expected TS2559 for flat weak type mismatch in intersection target. Got: {diagnostics:?}"
     );
 }
 
@@ -2866,8 +2936,7 @@ fn intersection_member_weak_type_suppression_still_works() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         !has_ts2322 && !has_ts2559,
-        "ITreeItem should be assignable to ITreeItem & IDecl without error. Got: {:?}",
-        diagnostics
+        "ITreeItem should be assignable to ITreeItem & IDecl without error. Got: {diagnostics:?}"
     );
 }
 
@@ -2889,8 +2958,7 @@ fn primitive_number_literal_vs_weak_type_emits_ts2559() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         has_ts2559,
-        "Expected TS2559 for number literal assigned to weak type. Got: {:?}",
-        diagnostics
+        "Expected TS2559 for number literal assigned to weak type. Got: {diagnostics:?}"
     );
 }
 
@@ -2910,8 +2978,7 @@ fn primitive_string_literal_vs_weak_type_emits_ts2559() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         has_ts2559,
-        "Expected TS2559 for string literal assigned to weak type. Got: {:?}",
-        diagnostics
+        "Expected TS2559 for string literal assigned to weak type. Got: {diagnostics:?}"
     );
 }
 
@@ -2931,8 +2998,7 @@ fn primitive_boolean_literal_vs_weak_type_emits_ts2559() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         has_ts2559,
-        "Expected TS2559 for boolean literal assigned to weak type. Got: {:?}",
-        diagnostics
+        "Expected TS2559 for boolean literal assigned to weak type. Got: {diagnostics:?}"
     );
 }
 
@@ -2950,8 +3016,7 @@ fn enum_member_vs_weak_type_emits_ts2559() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         has_ts2559,
-        "Expected TS2559 for enum member assigned to weak type. Got: {:?}",
-        diagnostics
+        "Expected TS2559 for enum member assigned to weak type. Got: {diagnostics:?}"
     );
 }
 
@@ -2967,8 +3032,7 @@ fn primitive_with_matching_property_passes_weak_type() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         !has_ts2559,
-        "String should not trigger TS2559 for weak type with 'length' property. Got: {:?}",
-        diagnostics
+        "String should not trigger TS2559 for weak type with 'length' property. Got: {diagnostics:?}"
     );
 }
 
@@ -2995,13 +3059,11 @@ fn callable_value_to_weak_type_emits_ts2560_not_ts2559() {
     let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
     assert!(
         has_ts2560,
-        "Expected TS2560 for callable value assigned to weak type. Got: {:?}",
-        diagnostics
+        "Expected TS2560 for callable value assigned to weak type. Got: {diagnostics:?}"
     );
     assert!(
         !has_ts2559,
-        "Should emit TS2560, not TS2559, for callable value. Got: {:?}",
-        diagnostics
+        "Should emit TS2560, not TS2559, for callable value. Got: {diagnostics:?}"
     );
 }
 
@@ -3022,8 +3084,7 @@ fn arrow_function_to_weak_type_emits_ts2560() {
     let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
     assert!(
         has_ts2560,
-        "Expected TS2560 for arrow function assigned to weak type. Got: {:?}",
-        diagnostics
+        "Expected TS2560 for arrow function assigned to weak type. Got: {diagnostics:?}"
     );
 }
 
@@ -3045,12 +3106,10 @@ fn primitive_still_emits_ts2559_not_ts2560() {
     let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
     assert!(
         has_ts2559,
-        "Expected TS2559 for primitives assigned to weak type. Got: {:?}",
-        diagnostics
+        "Expected TS2559 for primitives assigned to weak type. Got: {diagnostics:?}"
     );
     assert!(
         !has_ts2560,
-        "Should not emit TS2560 for non-callable primitives. Got: {:?}",
-        diagnostics
+        "Should not emit TS2560 for non-callable primitives. Got: {diagnostics:?}"
     );
 }

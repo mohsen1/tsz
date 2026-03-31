@@ -22,6 +22,7 @@ use tsz_common::interner::Atom;
 
 /// Maximum depth for recursive type instantiation.
 pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
+const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
 
 /// A substitution map from type parameter names to concrete types.
 #[derive(Clone, Debug, Default)]
@@ -649,13 +650,24 @@ impl<'a> TypeInstantiator<'a> {
                         if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
                         {
                             let inner = self.interner.tuple_list(inner_elems);
-                            for ie in inner.iter() {
+                            if instantiated.len().saturating_add(inner.len())
+                                > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS
+                            {
                                 instantiated.push(TupleElement {
-                                    type_id: ie.type_id,
-                                    name: ie.name,
-                                    optional: ie.optional,
-                                    rest: ie.rest,
+                                    type_id: inst_type,
+                                    name: e.name,
+                                    optional: e.optional,
+                                    rest: true,
                                 });
+                            } else {
+                                for ie in inner.iter() {
+                                    instantiated.push(TupleElement {
+                                        type_id: ie.type_id,
+                                        name: ie.name,
+                                        optional: ie.optional,
+                                        rest: ie.rest,
+                                    });
+                                }
                             }
                         } else {
                             instantiated.push(TupleElement {

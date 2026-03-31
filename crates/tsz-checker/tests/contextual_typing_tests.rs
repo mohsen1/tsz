@@ -1524,7 +1524,7 @@ let xx: DooDad = invoke(() => 'ELSE');
     );
 }
 
-/// Same as above but through Promise.resolve().then() chain — the contextual
+/// Same as above but through `Promise.resolve().then()` chain — the contextual
 /// return type `Promise<DooDad>` should flow through the generic `.then()` call
 /// and prevent literal widening in the callback.
 #[test]

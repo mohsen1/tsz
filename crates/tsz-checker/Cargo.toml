@@ -180,6 +180,10 @@ name = "call_resolution_regression_tests"
 path = "tests/call_resolution_regression_tests.rs"
 
 [[test]]
+name = "signature_assignability_regression_tests"
+path = "tests/signature_assignability_regression_tests.rs"
+
+[[test]]
 name = "enum_recursion_tests"
 path = "tests/enum_recursion_tests.rs"
 
