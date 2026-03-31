@@ -2016,6 +2016,8 @@ impl<'a> CheckerState<'a> {
                     // Also handle intersections containing type parameters (e.g.,
                     // `Data & Readonly<Props> & Instance` from
                     // `ThisType<Data & Readonly<Props> & Instance>` before inference).
+                    // Only suppress when `this` doesn't have an explicit type context
+                    // to ensure we still emit TS2339 for regular object literal methods.
                     let this_owner_is_object_literal = self
                         .this_has_contextual_owner(access.expression)
                         .and_then(|owner_idx| self.ctx.arena.get(owner_idx))
@@ -2024,6 +2026,7 @@ impl<'a> CheckerState<'a> {
                         });
                     if is_this_access
                         && this_owner_is_object_literal
+                        && !has_explicit_this_context
                         && self.ctx.this_type_stack.last().is_some_and(|&top| {
                             access_query::is_this_type(self.ctx.types, top)
                                 || crate::query_boundaries::state::checking::is_type_parameter_like(

@@ -1,6 +1,6 @@
 //! Core implementation for class instance type resolution.
 
-use crate::context::EnclosingClassInfo;
+use crate::context::{compiler_options, EnclosingClassInfo};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
@@ -711,7 +711,15 @@ impl<'a> CheckerState<'a> {
                     // assignments serve as property declarations.
                     // Scan the constructor body for these patterns and add
                     // them to the class instance type.
-                    if self.ctx.is_js_file() {
+                    // Check if the class is defined in a JS file, not just if the
+                    // current file being processed is a JS file. This ensures that
+                    // when a TS file references a class from a JS file, the JSDoc
+                    // annotated properties are still collected.
+                    let class_is_in_js_file = self
+                        .source_file_data_for_node(class_idx)
+                        .map(|sf| crate::context::compiler_options::is_js_file_name(&sf.name))
+                        .unwrap_or(false);
+                    if class_is_in_js_file {
                         self.collect_js_constructor_this_properties(
                             ctor.body,
                             &mut properties,
