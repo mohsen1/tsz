@@ -1731,3 +1731,73 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
             .collect::<Vec<_>>()
     );
 }
+
+/// Regression test: generic overloads with ThisType markers should not produce
+/// false TS2339 on `this` property accesses inside object literal methods.
+///
+/// The issue was that during overload resolution, the first-pass argument
+/// collection uses union-contextual types with unresolved type parameters.
+/// The ThisType<Data & Readonly<Props> & Instance> marker extracted from the
+/// callable had uninstantiated Data/Props, causing `this.bar` to fail. The
+/// fix defers the hard-error rejection for generic overloads until after the
+/// instantiated retry, which re-evaluates with concrete types.
+#[test]
+fn vue_like_this_type_inference_no_false_ts2339() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Instance {
+    _instanceBrand: never
+}
+
+type DataDef<Data, Props> = (this: Readonly<Props> & Instance) => Data
+
+type PropsDefinition<T> = {
+    [K in keyof T]: T[K]
+}
+
+interface Options<
+    Data = ((this: Instance) => object),
+    PropsDef = {}
+    > {
+    data?: Data
+    props?: PropsDef
+    watch?: Record<string, WatchHandler<any>>
+}
+
+type WatchHandler<T> = (val: T, oldVal: T) => void;
+
+type ThisTypedOptions<Data, Props> =
+    Options<DataDef<Data, Props>, PropsDefinition<Props>> &
+    ThisType<Data & Readonly<Props> & Instance>
+
+declare function test<Data, Props>(fn: ThisTypedOptions<Data, Props>): void;
+declare function test(fn: Options): void;
+
+test({
+    props: {
+        foo: ''
+    },
+
+    data(): { bar: boolean } {
+        return {
+            bar: true
+        }
+    },
+
+    watch: {
+        foo(newVal: string, oldVal: string): void {
+            this.bar = false
+        }
+    }
+})
+"#,
+    );
+
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for Vue-like ThisType inference, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
