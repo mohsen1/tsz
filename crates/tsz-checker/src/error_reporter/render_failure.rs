@@ -436,22 +436,29 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                // Use unwidened type for TS2559 — tsc preserves literal types
+                // Use unwidened type for TS2559/TS2560 — tsc preserves literal types
                 // (e.g., "12" not "number", "'false'" not "boolean") in
                 // "has no properties in common" messages.
                 let source_str = self.format_type_diagnostic(source);
                 let target_str = self.format_type_for_assignability_message(target);
-                let message = format_message(
-                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                    &[&source_str, &target_str],
-                );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                )
+
+                // If the source is callable/constructable and calling it would fix
+                // the mismatch, emit TS2560 ("did you mean to call it?") instead.
+                let (msg_template, code) = if self
+                    .should_suggest_calling_for_weak_type(source, target)
+                {
+                    (
+                            diagnostic_messages::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                            diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                        )
+                } else {
+                    (
+                        diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                        diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    )
+                };
+                let message = format_message(msg_template, &[&source_str, &target_str]);
+                Diagnostic::error(file_name, start, length, message, code)
             }
 
             SubtypeFailureReason::TypeMismatch {
