@@ -1643,10 +1643,21 @@ impl<'a> CheckerState<'a> {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
                     }
-                    if self.overload_candidate_has_hard_non_callback_arg_errors(
-                        args,
-                        &overload_snap.diag,
-                    ) {
+                    // For generic overloads that will undergo an instantiated retry,
+                    // defer the hard-error check. The first-pass argument collection
+                    // uses unresolved type parameters, which can cause false errors
+                    // (e.g., TS2339 for `this.bar` when ThisType<Data & ...> has
+                    // uninstantiated Data). The retry re-evaluates with concrete
+                    // types, eliminating these false positives.
+                    let will_do_instantiated_retry = !sig.type_params.is_empty()
+                        && !contextual_refresh_args.is_empty()
+                        && instantiated_params.is_some();
+                    if !will_do_instantiated_retry
+                        && self.overload_candidate_has_hard_non_callback_arg_errors(
+                            args,
+                            &overload_snap.diag,
+                        )
+                    {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
                     }
@@ -1674,7 +1685,27 @@ impl<'a> CheckerState<'a> {
                         self.ctx.node_types = Default::default();
                         refresh_all_args(self);
 
-                        let sig_callable_ctx = CallableContext::new(func_type);
+                        // Build an instantiated callable context so that the
+                        // ThisType<T> fallback extraction in
+                        // collect_call_argument_types_with_context uses the
+                        // instantiated parameter types (with concrete type args)
+                        // rather than the original uninstantiated ones. Without
+                        // this, ThisType<Data & Readonly<Props> & Instance> keeps
+                        // unresolved Data/Props, causing false TS2339 on `this`
+                        // property accesses in methods (e.g., Vue Options API).
+                        let sig_callable_ctx = {
+                            let instantiated_func =
+                                self.ctx.types.factory().function(FunctionShape {
+                                    params: instantiated_params.clone(),
+                                    return_type,
+                                    this_type: sig.this_type,
+                                    type_params: vec![],
+                                    type_predicate: sig.type_predicate,
+                                    is_constructor: false,
+                                    is_method: sig.is_method,
+                                });
+                            CallableContext::new(instantiated_func)
+                        };
                         // When contextual_type is available, also compute return-context
                         // substitution from the overload's return type. This handles
                         // cases like Object.freeze<T>(o: T): Readonly<T> where the
@@ -1779,6 +1810,21 @@ impl<'a> CheckerState<'a> {
                     if did_instantiated_retry
                         && self
                             .overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
+                    {
+                        self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                        continue;
+                    }
+
+                    // After the instantiated retry, re-check hard non-callback
+                    // argument errors. The pre-retry check was skipped for generic
+                    // overloads because first-pass errors (e.g., false TS2339 from
+                    // unresolved ThisType markers) might be resolved by the retry.
+                    // If hard errors persist after the retry, reject the overload.
+                    if did_instantiated_retry
+                        && self.overload_candidate_has_hard_non_callback_arg_errors(
+                            args,
+                            &overload_snap.diag,
+                        )
                     {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
