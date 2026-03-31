@@ -762,6 +762,16 @@ impl<'a> CheckerState<'a> {
     }
 
     fn current_file_commonjs_module_name(&self, preserve_js_extension: bool) -> String {
+        if !preserve_js_extension
+            && let Some(specifier) = self.current_file_explicit_js_module_specifier()
+        {
+            return specifier
+                .rsplit(|ch| ['/', '\\'].contains(&ch))
+                .next()
+                .unwrap_or(specifier)
+                .to_string();
+        }
+
         let file_name = self
             .ctx
             .arena
@@ -779,6 +789,21 @@ impl<'a> CheckerState<'a> {
             .next()
             .unwrap_or(stripped)
             .to_string()
+    }
+
+    fn current_file_explicit_js_module_specifier(&self) -> Option<&str> {
+        let paths = self.ctx.resolved_module_paths.as_ref()?;
+        paths.iter().find_map(|((_, specifier), &target_idx)| {
+            (target_idx == self.ctx.current_file_idx
+                && matches!(
+                    specifier,
+                    s if s.ends_with(".js")
+                        || s.ends_with(".jsx")
+                        || s.ends_with(".mjs")
+                        || s.ends_with(".cjs")
+                ))
+            .then_some(specifier.as_str())
+        })
     }
 
     fn strip_known_module_extension(path: &str) -> &str {
@@ -983,7 +1008,11 @@ impl<'a> CheckerState<'a> {
             ty,
         );
         ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
-        ty = crate::query_boundaries::common::widen_type(checker.ctx.types, ty);
+        ty = if crate::query_boundaries::common::is_unique_symbol_type(checker.ctx.types, ty) {
+            ty
+        } else {
+            crate::query_boundaries::common::widen_type(checker.ctx.types, ty)
+        };
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
     }

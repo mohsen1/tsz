@@ -539,6 +539,24 @@ impl<'a> CheckerState<'a> {
                 .index_access(pre_resolution_object_type, index_type);
         }
 
+        // For non-receiver generic composites, keep the canonical indexed-access
+        // shell in write position as well. Alias/application/intersection targets
+        // like `Errors<T>[keyof T]` otherwise decompose into structural artifacts
+        // before diagnostics render them.
+        if skip_flow_narrowing
+            && !is_generic_receiver
+            && self.should_preserve_generic_indexed_write_target(
+                pre_resolution_object_type,
+                index_type,
+            )
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(pre_resolution_object_type, index_type);
+        }
+
         // TS2476: A const enum member can only be accessed using a string literal.
         let const_enum_sym = self
             .resolve_identifier_symbol(access.expression)
@@ -1089,7 +1107,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let used_generic_element_resolution = result_type.is_none();
         let mut result_type = result_type.unwrap_or_else(|| {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
                 && self.is_generic_index_type(index_type)
@@ -1203,22 +1220,14 @@ impl<'a> CheckerState<'a> {
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
 
-        if used_generic_element_resolution
-            && literal_index.is_none()
-            && self.ctx.no_unchecked_indexed_access()
-            && !skip_flow_narrowing
-            && result_type != TypeId::ERROR
-            && result_type != TypeId::ANY
-            && result_type != TypeId::UNKNOWN
-            && result_type != TypeId::NEVER
-            && self.split_nullish_type(result_type).1.is_none()
-        {
-            result_type = self
-                .ctx
-                .types
-                .factory()
-                .union2(result_type, TypeId::UNDEFINED);
-        }
+        // NOTE: noUncheckedIndexedAccess `| undefined` addition is handled by
+        // the solver's evaluate_index_access_with_options (called via
+        // resolve_element_access_type). The solver adds `| undefined` exactly
+        // when the access goes through an index signature (string/number), and
+        // omits it for known-property-only access (e.g., T[K] where K extends
+        // "a" | "b" — known keys). The split_nullish_type guard in the solver
+        // prevents double-counting. We do NOT add `| undefined` here because
+        // doing so would incorrectly penalize accesses through known properties.
 
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index

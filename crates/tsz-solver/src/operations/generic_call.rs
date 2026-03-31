@@ -528,17 +528,79 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         if let Some(((source_base, source_args), (target_base, target_args))) = app_info
-            && source_base == target_base
             && source_args.len() == target_args.len()
         {
-            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                self.collect_return_context_substitution(
-                    *source_arg,
-                    *target_arg,
-                    tracked_type_params,
-                    substitution,
-                    visited,
-                );
+            if source_base == target_base {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                return;
+            }
+            // When bases differ (e.g., AssignAction<TActor> vs ActionFunction<ConcreteType>),
+            // match type arguments positionally if any source arg is a tracked type parameter.
+            // This handles branded-property patterns where different interfaces share
+            // structural positions for their type parameters (e.g., _out_TActor?: TActor).
+            let has_tracked_source_arg = source_args.iter().any(|&arg| {
+                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(arg) {
+                    tracked_type_params.contains(&tp.name)
+                } else {
+                    false
+                }
+            });
+            if has_tracked_source_arg {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
+            }
+        }
+
+        // Fallback: when source is an Application wrapping a single tracked type
+        // parameter (e.g., Awaited<T>) and no structural match was found above,
+        // try inferring the type parameter directly. This handles return context
+        // inference for Promise.all where the return type contains Awaited<T> and
+        // the contextual type is a concrete non-thenable type.
+        // Guard: verify by evaluating Application(Base, [target]) and checking
+        // it equals target — this ensures the alias is "transparent" (like
+        // Awaited<X> = X for non-thenables) and not a structural wrapper (like
+        // Task<X> which wraps X in a function type).
+        if let Some((source_base, source_args)) =
+            crate::type_queries::get_application_info(self.interner.as_type_database(), source)
+                .or_else(|| {
+                    crate::type_queries::get_application_info(
+                        self.interner.as_type_database(),
+                        source_eval,
+                    )
+                })
+        {
+            if source_args.len() == 1 {
+                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source_args[0])
+                    && tracked_type_params.contains(&tp.name)
+                    && substitution.get(tp.name).is_none()
+                    && !self.target_contains_untracked_type_params(target, tracked_type_params)
+                {
+                    // Verify: Application(Base, [target]) should evaluate to target
+                    // for the substitution to be correct.
+                    let test_app = self.interner.application(source_base, vec![target]);
+                    let evaluated = self.interner.evaluate_type(test_app);
+                    if evaluated == target {
+                        substitution.insert(tp.name, target);
+                    }
+                }
             }
         }
     }

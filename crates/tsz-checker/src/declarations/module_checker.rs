@@ -42,6 +42,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let resolution_mode =
+            self.requested_resolution_mode(export_decl.attributes, export_decl.is_type_only);
+
         // Get module specifier string
         let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier) else {
             return;
@@ -85,7 +88,11 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
-            self.check_export_target_is_module(export_decl.module_specifier, module_name);
+            self.check_export_target_is_module(
+                export_decl.module_specifier,
+                module_name,
+                resolution_mode,
+            );
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
@@ -94,14 +101,18 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
-            self.validate_reexported_members(export_decl, module_name);
+            self.validate_reexported_members(export_decl, module_name, resolution_mode);
             self.ctx.import_resolution_stack.pop();
             return;
         }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
-            self.check_export_target_is_module(export_decl.module_specifier, module_name);
+            self.check_export_target_is_module(
+                export_decl.module_specifier,
+                module_name,
+                resolution_mode,
+            );
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
@@ -110,7 +121,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
-            self.validate_reexported_members(export_decl, module_name);
+            self.validate_reexported_members(export_decl, module_name, resolution_mode);
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -140,7 +151,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.get_resolution_error(module_name).is_some() {
+        if self
+            .ctx
+            .get_resolution_error_with_mode(module_name, resolution_mode)
+            .is_some()
+        {
             let (message, code) = self.module_not_found_diagnostic(module_name);
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx.modules_with_ts2307_emitted.insert(module_key);
@@ -266,10 +281,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_specifier_idx: NodeIndex,
         module_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        let Some(target_idx) = self.ctx.resolve_import_target(module_name) else {
+        let target_idx = if let Some(mode) = resolution_mode {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                Some(mode),
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+        let Some(target_idx) = target_idx else {
             return;
         };
         let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
@@ -352,6 +377,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
         module_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_parser::parser::syntax_kind_ext;
@@ -375,7 +401,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the module's canonical export surface.
-        let module_exports = self.resolve_effective_module_exports(module_name);
+        let module_exports =
+            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
         // TSC includes source-level quotes in module diagnostic messages
         let quoted_module = format!("\"{module_name}\"");
 
@@ -1285,6 +1312,145 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    // =========================================================================
+    // CommonJS Circular Alias Detection (TS2303)
+    // =========================================================================
+
+    /// Detects circular aliases in CommonJS export property assignments.
+    ///
+    /// In JS files, `exports.X = exports.Y` creates an alias from X to Y on
+    /// the same module. tsc emits TS2303 when:
+    /// - The alias chain is explicitly circular (X -> Y -> X)
+    /// - The alias target doesn't resolve to a concrete (non-alias) value
+    ///   (e.g., `exports.blah = exports.someProp` where someProp is not defined)
+    pub(crate) fn check_commonjs_circular_aliases(&mut self, statements: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        // alias_map: property_name -> (target_property_name, lhs_node_index)
+        // for `exports.X = exports.Y` patterns
+        let mut alias_map: FxHashMap<String, (String, NodeIndex)> = FxHashMap::default();
+        // concrete_props: properties assigned a concrete (non-exports-ref) value
+        // e.g., `exports.foo = 42` or `exports.bar = someFunction`
+        let mut concrete_props: FxHashSet<String> = FxHashSet::default();
+
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(bin) = self.ctx.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            // Check LHS is `exports.X`
+            let Some(lhs_prop) = self.get_exports_property_name(bin.left) else {
+                continue;
+            };
+
+            // Check if RHS is `exports.Y` (alias) or a concrete value
+            if let Some(rhs_prop) = self.get_exports_property_name(bin.right) {
+                alias_map.insert(lhs_prop, (rhs_prop, bin.left));
+            } else {
+                concrete_props.insert(lhs_prop);
+            }
+        }
+
+        // For each alias, follow the chain. If it resolves to a concrete
+        // property, it's not circular. If it cycles or reaches a name that
+        // has no definition (neither alias nor concrete), it's circular.
+        let mut reported: FxHashSet<String> = FxHashSet::default();
+        for start_name in alias_map.keys().cloned().collect::<Vec<_>>() {
+            if reported.contains(&start_name) {
+                continue;
+            }
+
+            let mut visited = FxHashSet::default();
+            let mut current = start_name.clone();
+            let mut is_circular = false;
+
+            loop {
+                // If we reach a concrete property, chain is resolved
+                if concrete_props.contains(&current) {
+                    break;
+                }
+                if !visited.insert(current.clone()) {
+                    // Visited this name before → cycle detected
+                    is_circular = true;
+                    break;
+                }
+                match alias_map.get(&current) {
+                    Some((next, _)) => current = next.clone(),
+                    None => {
+                        // Target doesn't exist as alias or concrete → unresolvable
+                        is_circular = true;
+                        break;
+                    }
+                }
+            }
+
+            if is_circular {
+                if let Some((_, error_node)) = alias_map.get(&start_name) {
+                    let message = format_message(
+                        diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                        &[&start_name],
+                    );
+                    self.error_at_node(
+                        *error_node,
+                        &message,
+                        diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                    );
+                    for name in &visited {
+                        reported.insert(name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Helper: if `idx` points to `exports.X` (property access where the
+    /// object is `exports`), return `Some("X")`. Otherwise `None`.
+    fn get_exports_property_name(&self, idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+
+        // Check that the object is `exports`
+        let obj_node = self.ctx.arena.get(access.expression)?;
+        if obj_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let obj_ident = self.ctx.arena.get_identifier(obj_node)?;
+        if obj_ident.escaped_text != "exports" {
+            return None;
+        }
+
+        // Get the property name
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let name_ident = self.ctx.arena.get_identifier(name_node)?;
+        Some(name_ident.escaped_text.clone())
     }
 
     // =========================================================================

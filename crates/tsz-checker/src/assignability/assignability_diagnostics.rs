@@ -211,15 +211,17 @@ impl<'a> CheckerState<'a> {
             let (ps, pt) = self.prepare_assignability_inputs(source, target);
             let request = RelationRequest::assign(ps, pt);
             let outcome = self.execute_relation_request(&request);
-            if outcome.weak_union_violation
-                || self.should_skip_weak_union_error_with_outcome(
-                    source,
-                    target,
-                    source_idx,
-                    Some(&outcome),
-                )
-            {
+            if self.should_skip_weak_union_error_with_outcome(
+                source,
+                target,
+                source_idx,
+                Some(&outcome),
+            ) {
                 return true;
+            }
+            if outcome.weak_union_violation {
+                self.error_no_common_properties(source, target, diag_idx);
+                return false;
             }
         }
 
@@ -473,15 +475,19 @@ impl<'a> CheckerState<'a> {
 
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
-        if outcome.weak_union_violation
-            || self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            )
-        {
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
             return true;
+        }
+        // Weak union violation for non-object-literal sources → emit TS2559
+        // instead of the general TS2322/TS2345 error.
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
         if !skip_source_elaboration
             && self.try_elaborate_assignment_source_error(source_idx, target)
@@ -575,15 +581,17 @@ impl<'a> CheckerState<'a> {
             RelationRequest::assign(ps, pt)
         };
         let outcome = self.execute_relation_request(&request);
-        if outcome.weak_union_violation
-            || self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            )
-        {
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
             return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         if self.try_elaborate_assignment_source_error(source_idx, target) {
@@ -624,15 +632,17 @@ impl<'a> CheckerState<'a> {
             RelationRequest::assign(ps, pt)
         };
         let outcome = self.execute_relation_request(&request);
-        if outcome.weak_union_violation
-            || self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            )
-        {
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
             return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         self.error_type_not_assignable_generic_at(source, target, diag_idx);
@@ -989,6 +999,96 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
         self.analyze_assignability_failure(source, target)
             .weak_union_violation
+    }
+
+    /// Emit TS2559 ("Type 'X' has no properties in common with type 'Y'")
+    /// or TS2560 ("Value of type 'X' has no properties in common with type 'Y'. Did you mean to call it?")
+    /// at the given node. Used for variable assignment and parameter sites
+    /// where the solver detected a weak type violation.
+    ///
+    /// When the source type is callable or constructable and calling/constructing
+    /// it would produce a type that is assignable to the target, tsc emits TS2560
+    /// instead of TS2559 to suggest calling the value.
+    pub(crate) fn error_no_common_properties(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        if source == TypeId::ERROR
+            || target == TypeId::ERROR
+            || source == TypeId::ANY
+            || target == TypeId::ANY
+        {
+            return;
+        }
+
+        let source_str = self.format_type_diagnostic(source);
+        let target_str = self.format_type_diagnostic(target);
+
+        // Check if the source is callable/constructable and calling/constructing
+        // would produce a type assignable to the target (TS2560 instead of TS2559).
+        if self.should_suggest_calling_for_weak_type(source, target) {
+            self.error_at_node_msg(
+                idx,
+                crate::diagnostics::diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                &[&source_str, &target_str],
+            );
+            return;
+        }
+
+        self.error_at_node_msg(
+            idx,
+            crate::diagnostics::diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+            &[&source_str, &target_str],
+        );
+    }
+
+    /// Check whether a "did you mean to call it?" suggestion is appropriate
+    /// for a weak type violation. Returns true when the source type has call
+    /// or construct signatures and the return type would be assignable to
+    /// the target (i.e., calling/constructing would fix the type mismatch).
+    pub(crate) fn should_suggest_calling_for_weak_type(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        // Evaluate the source type to resolve Lazy(DefId) → concrete type form.
+        // This is needed because interfaces like `CtorOnly { new(s: string): T }`
+        // start as Lazy types that must be evaluated before signature extraction.
+        let resolved_source = self.evaluate_type_for_assignability(source);
+
+        // Check call signatures first
+        if let Some(return_type) =
+            tsz_solver::type_queries::get_return_type(self.ctx.types, resolved_source)
+        {
+            if return_type != TypeId::VOID
+                && return_type != TypeId::UNDEFINED
+                && return_type != TypeId::NEVER
+                && self.is_assignable_to(return_type, target)
+            {
+                return true;
+            }
+        }
+
+        // Check construct signatures — use get_construct_signatures directly
+        // which handles Callable types and intersections.
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, resolved_source)
+        {
+            if let Some(first_sig) = sigs.first() {
+                let construct_return = first_sig.return_type;
+                if construct_return != TypeId::VOID
+                    && construct_return != TypeId::UNDEFINED
+                    && construct_return != TypeId::NEVER
+                    && self.is_assignable_to(construct_return, target)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     pub(crate) const fn checker_only_assignability_failure_reason(

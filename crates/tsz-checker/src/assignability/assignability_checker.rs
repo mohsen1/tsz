@@ -725,7 +725,20 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         let kind = classify_for_assignability_eval(self.ctx.types, type_id);
         let mut evaluated = match kind {
-            AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
+            AssignabilityEvalKind::Application => {
+                let result = self.evaluate_type_with_resolution(type_id);
+                // Guard: if evaluation degraded a valid type to ERROR (e.g., due to
+                // stack overflow protection tripping during deep recursive type
+                // resolution), preserve the original type. ERROR is treated as
+                // assignable to/from everything by the subtype checker, which would
+                // silently suppress real type errors like TS2322. Keeping the original
+                // Lazy type allows the compat checker's resolver to resolve it from the
+                // type environment (populated during earlier successful resolution).
+                if result == TypeId::ERROR && type_id != TypeId::ERROR {
+                    return type_id;
+                }
+                result
+            }
             AssignabilityEvalKind::NeedsEnvEval => {
                 // For TypeQuery (typeof), resolve the value type directly from
                 // get_type_of_symbol. The TypeEnvironment's types map may contain
@@ -1040,8 +1053,27 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let source = self.evaluate_type_for_assignability(source);
-        let target = self.evaluate_type_for_assignability(target);
+        let source_eval = self.evaluate_type_for_assignability(source);
+        let target_eval = self.evaluate_type_for_assignability(target);
+
+        // Guard: if evaluation degraded a valid type to ERROR (e.g., due to the
+        // stack overflow protection tripping during deep recursive type resolution),
+        // preserve the pre-evaluation type. ERROR is treated as assignable to/from
+        // everything by the subtype checker, which would silently suppress real type
+        // errors (like TS2322 for property mismatches in object literals with
+        // recursive interface targets). Keeping the original Lazy type allows the
+        // compat checker's resolver to resolve it from the type environment, which
+        // was populated during earlier successful resolution.
+        let source = if source_eval == TypeId::ERROR && source != TypeId::ERROR {
+            source
+        } else {
+            source_eval
+        };
+        let target = if target_eval == TypeId::ERROR && target != TypeId::ERROR {
+            target
+        } else {
+            target_eval
+        };
 
         let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
 

@@ -60,6 +60,10 @@ mod duplicate_label_tests;
 mod jsx_unclosed_tag_tests;
 
 #[cfg(test)]
+#[path = "../../tests/jsx_namespace_recovery_tests.rs"]
+mod jsx_namespace_recovery_tests;
+
+#[cfg(test)]
 #[path = "../../tests/state_expression_tests.rs"]
 mod state_expression_tests;
 

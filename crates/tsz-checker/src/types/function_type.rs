@@ -254,7 +254,7 @@ impl<'a> CheckerState<'a> {
         if !is_function_declaration && !is_method_or_constructor {
             // Check for required parameters following optional parameters (TS1016)
             self.check_parameter_ordering(parameters, Some(idx));
-            self.check_binding_pattern_optionality(&parameters.nodes, body.is_some());
+            self.check_binding_pattern_optionality(&parameters.nodes, body.is_some(), Some(idx));
             // Check that rest parameters have array types (TS2370)
             self.check_rest_parameter_types(&parameters.nodes);
             self.check_strict_mode_reserved_parameter_names(
@@ -1371,6 +1371,7 @@ impl<'a> CheckerState<'a> {
         let mut pushed_this_type_early = false;
         if let Some(tt) = implicit_this {
             self.ctx.this_type_stack.push(tt);
+            self.ctx.function_owned_this_stack.push(idx);
             pushed_this_type_early = true;
         }
 
@@ -2265,6 +2266,7 @@ impl<'a> CheckerState<'a> {
         // Pop this_type that was pushed before parameter initializer checks
         if pushed_this_type_early {
             self.ctx.this_type_stack.pop();
+            self.ctx.function_owned_this_stack.pop();
         }
 
         // In JS files, functions that reference `arguments` in their body should accept

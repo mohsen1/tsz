@@ -250,7 +250,11 @@ impl<'a> CheckerState<'a> {
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&func.parameters, Some(func_idx));
-        self.check_binding_pattern_optionality(&func.parameters.nodes, func.body.is_some());
+        self.check_binding_pattern_optionality(
+            &func.parameters.nodes,
+            func.body.is_some(),
+            Some(func_idx),
+        );
 
         // Check that rest parameters have array types (TS2370)
         self.check_rest_parameter_types(&func.parameters.nodes);
@@ -482,6 +486,7 @@ impl<'a> CheckerState<'a> {
             if is_this && param.type_annotation.is_some() {
                 let this_type = self.get_type_from_type_node(param.type_annotation);
                 self.ctx.this_type_stack.push(this_type);
+                self.ctx.function_owned_this_stack.push(func_idx);
                 pushed_this_type = true;
             }
         }
@@ -497,6 +502,7 @@ impl<'a> CheckerState<'a> {
             );
             if let Some(this_type) = ctx_helper.get_this_type() {
                 self.ctx.this_type_stack.push(this_type);
+                self.ctx.function_owned_this_stack.push(func_idx);
                 pushed_this_type = true;
             }
         }
@@ -719,6 +725,7 @@ impl<'a> CheckerState<'a> {
 
         if pushed_this_type {
             self.ctx.this_type_stack.pop();
+            self.ctx.function_owned_this_stack.pop();
         }
         if let Some(outer_this) = masked_outer_this {
             self.ctx.this_type_stack.push(outer_this);

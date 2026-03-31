@@ -565,6 +565,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         parameters: &[NodeIndex],
         has_body: bool,
+        func_idx: Option<NodeIndex>,
     ) {
         if !has_body {
             return;
@@ -581,7 +582,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if param.initializer.is_none() && param.question_token {
+            if param.initializer.is_none()
+                && self.parameter_has_optional_binding_pattern_marker(param_idx, param, func_idx)
+            {
                 let Some(name_node) = self.ctx.arena.get(param.name) else {
                     continue;
                 };
@@ -597,6 +600,18 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn parameter_has_optional_binding_pattern_marker(
+        &self,
+        param_idx: NodeIndex,
+        param: &tsz_parser::parser::node::ParameterData,
+        func_idx: Option<NodeIndex>,
+    ) -> bool {
+        param.question_token
+            || func_idx
+                .or_else(|| self.enclosing_function_like_for_parameter(param_idx))
+                .is_some_and(|idx| self.jsdoc_marks_parameter_optional(idx, param_idx, param.name))
     }
 
     // =========================================================================
@@ -981,6 +996,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // TS2463 owns optional binding-pattern parameters in implementation
+            // signatures. Once that grammar error is reported, do not also run the
+            // binding-pattern property/default checker and emit cascaded TS2339.
+            if param.initializer.is_none()
+                && self.parameter_has_optional_binding_pattern_marker(param_idx, param, None)
+            {
+                continue;
+            }
+
             // Get the parameter type: from type annotation or from cached symbol type
             let param_type = if param.type_annotation.is_some() {
                 let t = self.get_type_from_type_node(param.type_annotation);
@@ -1140,7 +1164,7 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod binding_pattern_defaults_tests {
-    use crate::test_utils::check_source_codes;
+    use crate::test_utils::{check_js_source_diagnostics, check_source_codes};
 
     /// Positive test: arrow function default correctly typed via contextual type.
     /// `v => v.toString()` returns string, matching `(x: number) => string`.
@@ -1235,6 +1259,72 @@ mod binding_pattern_defaults_tests {
         assert!(
             !codes.contains(&2322),
             "Should not emit TS2322 for matching nested default: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn optional_binding_pattern_parameter_reports_ts2463_without_ts2339() {
+        let codes = check_source_codes(
+            "function f({ x }?: { x: number }) {
+                 return x;
+             }",
+        );
+        assert!(
+            codes.contains(&2463),
+            "Expected TS2463 for optional binding-pattern parameter, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&2339),
+            "Optional binding-pattern parameter should not cascade into TS2339: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn arrow_optional_binding_pattern_parameter_reports_ts2463_without_ts2339() {
+        let codes = check_source_codes("const f = ({ x }?: { x: number }) => x;");
+        assert!(
+            codes.contains(&2463),
+            "Expected TS2463 for arrow optional binding-pattern parameter, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&2339),
+            "Arrow optional binding-pattern parameter should not cascade into TS2339: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn typed_binding_pattern_parameter_default_object_literal_suppresses_ts2339() {
+        let codes = check_source_codes(
+            "function f({ x }: { x?: number } = {}) {
+                 return x;
+             }",
+        );
+        assert!(
+            !codes.contains(&2339),
+            "Typed parameter default object literal should not trigger TS2339: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn jsdoc_optional_binding_pattern_parameter_reports_ts2463_without_ts2339() {
+        let diagnostics = check_js_source_diagnostics(
+            "/**
+              * @typedef Foo
+              * @property {string} a
+              */
+             /**
+              * @param {Foo} [options]
+              */
+             function f({ a = \"a\" }) {}",
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+        assert!(
+            codes.contains(&2463),
+            "Expected TS2463 for JSDoc-optional binding-pattern parameter, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&2339),
+            "JSDoc-optional binding-pattern parameter should not cascade into TS2339: {codes:?}"
         );
     }
 }

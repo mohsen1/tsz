@@ -783,7 +783,8 @@ impl<'a> TypeFormatter<'a> {
         let readonly = if prop.readonly { "readonly " } else { "" };
         let raw_name = self.atom(prop.name);
         let name = if needs_property_name_quotes(&raw_name) {
-            format!("\"{raw_name}\"")
+            let escaped = raw_name.replace('\\', "\\\\").replace('\'', "\\'");
+            format!("'{escaped}'")
         } else {
             raw_name.to_string()
         };
@@ -1036,6 +1037,20 @@ impl<'a> TypeFormatter<'a> {
             return collapsed;
         }
 
+        let nullish_suffix_len = usize::from(has_null) + usize::from(has_undefined);
+        let sortable_len = ordered.len().saturating_sub(nullish_suffix_len);
+        if sortable_len > 1
+            && let Some(mut named_keys) = ordered[..sortable_len]
+                .iter()
+                .map(|&m| self.named_union_member_display_key(m).map(|key| (m, key)))
+                .collect::<Option<Vec<_>>>()
+        {
+            named_keys.sort_by(|(_, left), (_, right)| left.cmp(right));
+            for (idx, (member, _)) in named_keys.into_iter().enumerate() {
+                ordered[idx] = member;
+            }
+        }
+
         if ordered.len() > self.max_union_members {
             let first: Vec<String> = ordered
                 .iter()
@@ -1049,6 +1064,41 @@ impl<'a> TypeFormatter<'a> {
             .map(|&m| self.format_union_member(m))
             .collect();
         formatted.join(" | ")
+    }
+
+    fn named_union_member_display_key(&mut self, type_id: TypeId) -> Option<String> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
+                .interner
+                .object_shape(shape_id)
+                .symbol
+                .map(|_| self.format(type_id).into_owned())
+                .filter(|rendered| !rendered.starts_with('{')),
+            Some(TypeData::Callable(shape_id)) => self
+                .interner
+                .callable_shape(shape_id)
+                .symbol
+                .map(|_| self.format(type_id).into_owned())
+                .filter(|rendered| {
+                    !rendered.starts_with('{')
+                        && !rendered.starts_with('(')
+                        && !rendered.starts_with("new ")
+                        && !rendered.starts_with("abstract new ")
+                }),
+            Some(TypeData::Lazy(_) | TypeData::TypeQuery(_)) => {
+                Some(self.format(type_id).into_owned())
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                match self.interner.lookup(app.base) {
+                    Some(TypeData::Lazy(_) | TypeData::TypeQuery(_)) => {
+                        Some(self.format(type_id).into_owned())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     fn collapse_same_enum_members_for_display(&mut self, members: &[TypeId]) -> Option<String> {
@@ -1373,10 +1423,15 @@ impl<'a> TypeFormatter<'a> {
         }
 
         let formatted = self.format(id);
-        let needs_parens = matches!(
-            self.interner.lookup(id),
-            Some(TypeData::Intersection(_) | TypeData::Function(_) | TypeData::Callable(_))
-        );
+        let needs_parens = match self.interner.lookup(id) {
+            Some(TypeData::Intersection(_) | TypeData::Function(_)) => true,
+            Some(TypeData::Callable(_)) => {
+                formatted.starts_with('(')
+                    || formatted.starts_with("new ")
+                    || formatted.starts_with("abstract new ")
+            }
+            _ => false,
+        };
         if needs_parens {
             format!("({formatted})")
         } else {
@@ -1468,6 +1523,19 @@ impl<'a> TypeFormatter<'a> {
             && let Some(sym_id) = shape.symbol
             && let Some(name) = self.format_symbol_name(sym_id)
         {
+            if let Some(arena) = self.symbol_arena
+                && let Some(sym) = arena.get(sym_id)
+            {
+                use tsz_binder::symbol_flags;
+                let is_namespace =
+                    sym.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
+                let is_enum = sym.has_any_flags(symbol_flags::ENUM);
+                let is_class = sym.has_flags(symbol_flags::CLASS);
+                let is_interface = sym.has_any_flags(symbol_flags::INTERFACE);
+                if is_interface || (!is_namespace && !is_enum && !is_class) {
+                    return name;
+                }
+            }
             return format!("typeof {name}");
         }
 
@@ -2144,6 +2212,37 @@ mod tests {
         assert!(result.contains("\"a\""));
         assert!(result.contains("\"b\""));
         assert!(result.contains(" | "));
+    }
+
+    #[test]
+    fn format_union_named_construct_callable_without_parentheses() {
+        let db = TypeInterner::new();
+        let mut symbols = tsz_binder::SymbolArena::new();
+        let sym_id = symbols.alloc(tsz_binder::symbol_flags::INTERFACE, "ConstructableA".into());
+
+        let constructable = db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: None,
+                return_type: TypeId::ANY,
+                type_predicate: None,
+                is_method: false,
+            }],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: Some(sym_id),
+            is_abstract: false,
+        });
+
+        let union = db.union2(constructable, TypeId::STRING);
+        let mut fmt = TypeFormatter::with_symbols(&db, &symbols);
+        let rendered = fmt.format(union);
+        assert!(rendered.contains("ConstructableA"));
+        assert!(rendered.contains("string"));
+        assert!(!rendered.contains("(ConstructableA)"));
     }
 
     #[test]
@@ -3279,6 +3378,33 @@ mod tests {
             result.contains("{") && result.contains("}"),
             "Multiple sigs should use object format, got: {result}"
         );
+    }
+
+    #[test]
+    fn format_construct_only_interface_callable_uses_type_name() {
+        let db = TypeInterner::new();
+        let mut symbols = tsz_binder::SymbolArena::new();
+        let sym_id = symbols.alloc(tsz_binder::symbol_flags::INTERFACE, "ConstructableA".into());
+
+        let callable = db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: None,
+                return_type: TypeId::ANY,
+                type_predicate: None,
+                is_method: false,
+            }],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: Some(sym_id),
+            is_abstract: false,
+        });
+
+        let mut fmt = TypeFormatter::with_symbols(&db, &symbols);
+        assert_eq!(fmt.format(callable), "ConstructableA");
     }
 
     // =================================================================

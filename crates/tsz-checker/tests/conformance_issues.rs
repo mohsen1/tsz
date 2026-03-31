@@ -83,6 +83,73 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_invokable_union_assignments_keep_both_ts2322_diagnostics() {
+    let source = r#"
+interface ConstructableA {
+  new(): { somePropA: any };
+}
+
+interface IDirectiveLinkFn<TScope> {
+    (scope: TScope): void;
+}
+
+interface IDirectivePrePost<TScope> {
+    pre?: IDirectiveLinkFn<TScope>;
+    post?: IDirectiveLinkFn<TScope>;
+}
+
+export let blah: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = (x: string) => {}
+
+export let ctor: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = class {
+    someUnaccountedProp: any;
+}
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    let blah_start = source.find("blah:").unwrap() as u32;
+    let ctor_start = source.find("ctor:").unwrap() as u32;
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected both union assignment failures to report TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| {
+            diag.start == blah_start
+                && diag.message_text.contains(
+                    "Type '(x: string) => void' is not assignable to type 'ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number>'."
+                )
+        }),
+        "Expected the function assignment diagnostic to preserve the construct-interface display. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| {
+            diag.start == ctor_start
+                && diag.message_text.contains(
+                    "Type 'typeof ctor' is not assignable to type 'ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number>'."
+                )
+        }),
+        "Expected the class assignment diagnostic to stay anchored on `ctor`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|diag| !diag.message_text.contains("typeof ConstructableA")),
+        "Construct-only interfaces should display as type-space names, not value-space `typeof` names. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_this_in_function_call_js_emits_ts2683_for_unannotated_callbacks_only() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "a.js",
@@ -167,6 +234,51 @@ fn test_js_iife_annotated_inner_function_still_emits_ts2683() {
     assert!(
         has_error(&diagnostics, 2683),
         "Expected TS2683 for the returned JS function without a `this` annotation, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_contextual_generic_callback_this_survives_ts2454_receiver_reads() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+// @target: es2015
+interface JQuery {
+    each<T>(
+        collection: T[], callback: (this: T, dit: T) => T
+    ): T[];
+}
+
+let $: JQuery;
+let lines: string[];
+$.each(lines, function(dit) {
+    return dit.charAt(0) + this.charAt(1);
+});
+"#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts2454_count = semantic_errors
+        .iter()
+        .filter(|(code, _)| *code == 2454)
+        .count();
+
+    assert_eq!(
+        ts2454_count, 2,
+        "Expected both receiver reads to keep TS2454. Actual diagnostics: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2683),
+        "Contextual generic callback `this` should survive TS2454 receiver reads. Actual diagnostics: {semantic_errors:#?}"
     );
 }
 
@@ -3438,63 +3550,44 @@ fn test_exported_variable_typeof_block_local_value_emits_ts4025() {
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.esnext.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.esnext.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/lib.dom.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/lib.dom.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+    let lib_roots = [
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+    ];
+    let lib_names = [
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "dom.d.ts",
+        "dom.generated.d.ts",
+        "dom.iterable.d.ts",
+        "esnext.d.ts",
     ];
 
     let mut lib_files = Vec::new();
     let mut seen_files = FxHashSet::default();
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("lib.d.ts")
-                .to_string();
-            if !seen_files.insert(file_name.clone()) {
-                continue;
+    for file_name in lib_names {
+        for root in &lib_roots {
+            let lib_path = root.join(file_name);
+            if lib_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&lib_path)
+            {
+                if !seen_files.insert(file_name.to_string()) {
+                    break;
+                }
+                let lib_file = LibFile::from_source(file_name.to_string(), content);
+                lib_files.push(Arc::new(lib_file));
+                break;
             }
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
         }
     }
     lib_files
@@ -5771,6 +5864,56 @@ class C {}
     assert!(
         !has_ts2506,
         "Did not expect TS2506 for non-cyclic before-declaration extends. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_new_expression_class_used_before_declaration() {
+    // `new C()` before `class C` must emit TS2449.
+    // The fast path for `new` expressions with identifier targets was
+    // previously bypassing the TDZ check in get_type_of_identifier.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+let a = new C();
+class C { id: string = ''; }
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2449),
+        "Expected TS2449 for `new C()` before class declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_new_expression_class_after_declaration_no_tdz() {
+    // `new C()` after `class C` must NOT emit TS2449.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C { id: string = ''; }
+let a = new C();
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2449),
+        "Did not expect TS2449 for `new C()` after class declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_new_expression_merged_namespace_class_tdz() {
+    // `new A()` inside a namespace body that merges with a class declared
+    // after the namespace must emit TS2449.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+namespace A {
+    export var Instance = new A();
+}
+class A { id: string = ''; }
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2449),
+        "Expected TS2449 for `new A()` inside namespace before class declaration. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -15598,6 +15741,44 @@ class D14<T extends U, U extends V, V extends Date> extends C3<Date> {
     );
 }
 
+/// Mutually recursive class hierarchy: X extends L<X>, where L<RT> extends T<RT[RT['a']]>.
+/// The inherited property `a` from T<A> should be properly instantiated through the chain:
+/// A → RT[RT['a']] → X[X['a']] = X['a' | 'b'] = ('a'|'b') | number.
+/// Since X.a is 'a'|'b' which is assignable to 'a'|'b'|number, no TS2416 should be emitted.
+#[test]
+fn test_no_false_ts2416_for_mutually_recursive_class_hierarchy() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class T<A> {
+    a: A;
+    b: any
+}
+class L<RT extends { a: 'a' | 'b', b: any }> extends T<RT[RT['a']]> {
+    m() { this.a }
+}
+class X extends L<X> {
+    a: 'a' | 'b'
+    b: number
+    m2() {
+        this.a
+    }
+}
+        "#,
+    );
+
+    let ts2416: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect();
+
+    assert!(
+        ts2416.is_empty(),
+        "Should not emit false TS2416 for mutually recursive class hierarchy where inherited \
+         property types are compatible after full substitution chain.\n\
+         Actual TS2416 diagnostics: {ts2416:?}"
+    );
+}
+
 /// TS2416 for interface method with type parameters instantiated from the interface level.
 /// After `IFoo<number>`, the method `foo(x: T): T` becomes `foo(x: number): number`.
 /// The class method `foo(x: string): string` is incompatible.
@@ -16627,6 +16808,35 @@ function f<T extends Item, K extends keyof T>(obj: T, k: K) {
             *code == 2322 && message.contains("Type 'number' is not assignable to type 'T[K]'")
         }),
         "Expected widened source display for generic indexed write TS2322.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_assignment_diagnostic_preserves_generic_mapped_intersection_index_access_target() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Errors<T> = { [P in keyof T]: string | undefined } & { all: string | undefined };
+
+function foo<T>() {
+    let obj!: Errors<T>;
+    let x!: keyof T;
+    obj[x] = undefined;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    .contains("Type 'undefined' is not assignable to type 'Errors<T>[keyof T]'.")
+        }),
+        "Expected TS2322 to preserve generic mapped intersection indexed-access display.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -21520,5 +21730,211 @@ fn test_export_type_star_as_namespace_emits_ts1362_in_value_context() {
     assert!(
         has_ts1362,
         "Expected TS1362 for type-only namespace export used as value. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_export_equals_typeof_import_namespace_import_exposes_referenced_named_exports() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "pkg/index.d.ts",
+                r#"
+declare const pluginImportX: typeof import("./lib/index");
+export = pluginImportX;
+"#,
+            ),
+            (
+                "pkg/lib/index.d.ts",
+                r#"
+interface PluginConfig {
+    parser?: string | null;
+}
+declare const configs: {
+    "stage-0": PluginConfig;
+};
+declare const _default: {
+    configs: {
+        "stage-0": PluginConfig;
+    };
+};
+export default _default;
+export { configs };
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import * as pluginImportX from "./pkg/index";
+const cfg = pluginImportX.configs["stage-0"];
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2020,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2339 || *code == 2551),
+        "Namespace import should expose `configs` from `export = typeof import(...)`; got: {diagnostics:#?}"
+    );
+}
+
+// ============================================================
+// TS1294: erasableSyntaxOnly
+// ============================================================
+
+#[test]
+fn test_ts1294_erasable_syntax_only_enums() {
+    let options = CheckerOptions {
+        erasable_syntax_only: true,
+        ..Default::default()
+    };
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+enum NotLegal { A = 1 }
+declare enum Legal { B = 1 }
+"#,
+        options,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 1,
+        "Expected exactly 1 TS1294 for non-ambient enum, got {ts1294_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts1294_erasable_syntax_only_parameter_properties() {
+    let options = CheckerOptions {
+        erasable_syntax_only: true,
+        ..Default::default()
+    };
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Foo {
+    constructor(public x: number) {}
+}
+"#,
+        options,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 1,
+        "Expected exactly 1 TS1294 for parameter property, got {ts1294_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts1294_erasable_syntax_only_instantiated_namespace() {
+    let options = CheckerOptions {
+        erasable_syntax_only: true,
+        ..Default::default()
+    };
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+namespace Instantiated { export const x = 1; }
+namespace NotInstantiated { export interface I {} }
+"#,
+        options,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 1,
+        "Expected exactly 1 TS1294 for instantiated namespace, got {ts1294_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts1294_erasable_syntax_only_not_enabled() {
+    // When erasableSyntaxOnly is false (default), no TS1294 should be emitted
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+enum OK { A = 1 }
+class Foo { constructor(public x: number) {} }
+namespace NS { export const x = 1; }
+"#,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 0,
+        "Expected 0 TS1294 when erasableSyntaxOnly is disabled. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_setter_parameter_type_constraint_ts2344_in_interface_and_object_literal() {
+    // divergentAccessorsTypes6.ts: tsc eagerly checks setter parameter type annotations
+    // even when the setter is never observed (getter returns early in type computation).
+    // `Fail<string>` where `type Fail<T extends never> = T` should emit TS2344 because
+    // `string` does not satisfy `never`.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Fail<T extends never> = T;
+
+// Interface setter — parameter type must be validated
+interface I1 {
+    get x(): number;
+    set x(value: Fail<string>);
+}
+
+// Object literal setter — parameter type must be validated
+const o1 = {
+    get x(): number { return 0; },
+    set x(value: Fail<string>) {}
+}
+"#,
+    );
+
+    let ts2344_count = diagnostics.iter().filter(|(c, _)| *c == 2344).count();
+    assert_eq!(
+        ts2344_count, 2,
+        "Expected 2 TS2344 errors (one for interface setter, one for object literal setter). Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_setter_parameter_type_constraint_ts2344_with_lib_files() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+export {};
+type Fail<T extends never> = T;
+interface I1 {
+    get x(): number;
+    set x(value: Fail<string>);
+}
+const o1 = {
+    get x(): number { return 0; },
+    set x(value: Fail<string>) {}
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2344_count = diagnostics.iter().filter(|(c, _)| *c == 2344).count();
+    assert_eq!(
+        ts2344_count, 2,
+        "Expected 2 TS2344 errors with lib files. Actual diagnostics: {diagnostics:#?}"
     );
 }

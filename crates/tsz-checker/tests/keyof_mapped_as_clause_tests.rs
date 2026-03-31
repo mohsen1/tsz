@@ -140,3 +140,62 @@ const m: MyMap = { x: { value: "x" }, y: { value: "y" } };
         "Expected no TS2322 for non-homomorphic mapped type with template, got: {codes:?}"
     );
 }
+
+#[test]
+fn mapped_type_as_clause_over_object_union_constraint() {
+    // Mapped type with `as` clause where the constraint is a union of objects
+    // (not string literals). The solver must iterate over the object members,
+    // evaluate the `as` clause for each, and produce a concrete object type.
+    //
+    // This fixes a false TS2536 in patterns like:
+    //   type Baz = { [K in keyof Lookup]: Lookup[K]['name'] }
+    // where Lookup is a mapped type with key remapping over an object union.
+    let code = r#"
+type Lookup = { [Item in ({readonly name: "a"} | {readonly name: "b"}) as Item['name']]: Item };
+type Baz = { [K in keyof Lookup]: Lookup[K]['name'] };
+    "#;
+
+    let codes = check_and_get_codes(code);
+    let ts2536_count = codes.iter().filter(|&&c| c == 2536).count();
+    assert_eq!(
+        ts2536_count, 0,
+        "Expected no TS2536 for indexing mapped type with as-clause over object union, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn mapped_type_as_clause_over_object_union_produces_concrete_type() {
+    // Verify that the mapped type with `as` clause over an object union produces
+    // a concrete type where property access works correctly.
+    let code = r#"
+type Lookup = { [Item in ({name: "a", value: 1} | {name: "b", value: 2}) as Item['name']]: Item };
+const x: Lookup = { a: { name: "a", value: 1 }, b: { name: "b", value: 2 } };
+const y: { name: "a", value: 1 } = x.a;
+    "#;
+
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for accessing mapped type with as-clause over object union, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2339),
+        "Expected no TS2339 for property access on mapped type with as-clause, got: {codes:?}"
+    );
+}
+
+#[test]
+fn mapped_type_as_clause_never_filter_over_objects() {
+    // When the `as` clause evaluates to `never` for some members, those members
+    // should be filtered out (not produce properties).
+    let code = r#"
+type OnlyA = { [Item in ({name: "a"} | {name: "b"}) as Item extends {name: "a"} ? Item['name'] : never]: Item };
+const x: OnlyA = { a: { name: "a" } };
+    "#;
+
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for filtered mapped type with as-clause, got: {codes:?}"
+    );
+}

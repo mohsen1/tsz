@@ -46,12 +46,20 @@ impl<'a> CheckerState<'a> {
         }?;
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let value_decl = symbol.value_declaration;
+        let value_decl = self
+            .checked_js_constructor_value_declaration(
+                sym_id,
+                symbol.value_declaration,
+                &symbol.declarations,
+            )
+            .unwrap_or(symbol.value_declaration);
         let node = self.ctx.arena.get(value_decl)?;
 
         // Only handle plain JS function constructors (not classes). This includes
         // variable declarations whose initializer is a function expression.
-        if symbol.flags & symbol_flags::CLASS != 0 {
+        if symbol.flags & symbol_flags::CLASS != 0
+            && !self.declaration_is_checked_js_constructor_value_declaration(sym_id, value_decl)
+        {
             return None;
         }
 

@@ -775,7 +775,57 @@ impl<'a> InferenceContext<'a> {
             return self.extends_from(source, target);
         }
 
+        // The empty object type `{}` is a supertype of all primitive types in
+        // TypeScript: string, number, boolean, bigint, and symbol are all assignable
+        // to `{}`. This is critical for inference tournaments: when candidates include
+        // both primitive types and `{}`, the BCT must recognize `{}` as a common
+        // supertype so inference produces `{} | null | undefined` rather than
+        // dropping `{}` via first-wins. We restrict this to primitives and their
+        // unions to avoid broadening assignability for non-primitive types like
+        // classes, which may have their own structural rules.
+        if self.is_empty_object_type(target) && self.is_primitive_or_primitive_union(source) {
+            return true;
+        }
+
         false
+    }
+
+    /// Check if a type is the plain empty object type `{}`.
+    /// This is an Object type with no properties, no index signatures,
+    /// and no nominal symbol (i.e., not a class instance type).
+    /// Class types like `class A {}` have a symbol for nominal identity
+    /// and should NOT be treated as `{}`.
+    fn is_empty_object_type(&self, ty: TypeId) -> bool {
+        match self.interner.lookup(ty) {
+            Some(TypeData::Object(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+                    && shape.symbol.is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type is a primitive type (string, number, boolean, bigint, symbol)
+    /// or a union composed entirely of primitives and/or literals.
+    fn is_primitive_or_primitive_union(&self, ty: TypeId) -> bool {
+        match ty {
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL => {
+                true
+            }
+            _ => match self.interner.lookup(ty) {
+                Some(TypeData::Literal(_)) => true,
+                Some(TypeData::Union(members)) => {
+                    let members = self.interner.type_list(members);
+                    members
+                        .iter()
+                        .all(|&m| self.is_primitive_or_primitive_union(m))
+                }
+                _ => false,
+            },
+        }
     }
 
     fn is_object_keyword_type(&self, source: TypeId) -> bool {

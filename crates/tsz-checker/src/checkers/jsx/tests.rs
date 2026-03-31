@@ -267,6 +267,35 @@ fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
 }
 
 #[test]
+fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface IntrinsicElements {}
+        }
+
+        interface LinkComponent {
+            (props: { className?: string }): { invalid: true };
+            (props: { htmlFor?: string }): { invalid: true };
+        }
+
+        declare const Link: LinkComponent;
+
+        <Link class="bad" />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2769),
+        "Overload prop mismatches should still emit TS2769, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.contains(&2786),
+        "No-overload JSX mismatches should not be pre-empted by TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_generic_sfc_defaulted_props_contextually_type_function_attributes() {
     let diagnostics = check_jsx_codes(
         r#"
@@ -712,5 +741,80 @@ fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
     assert!(
         !diagnostics.contains(&2746),
         "Multiple children should be allowed when children type includes array-like union member, got: {diagnostics:?}"
+    );
+}
+
+/// Intra-expression JSX generic inference: when all attributes are function-valued
+/// (no concrete attrs), bootstrap inference from attrs whose contextual parameter
+/// types are concrete (don't depend on type params being inferred).
+#[test]
+fn jsx_intra_expression_inference_all_function_valued_attrs() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements { div: {}; }
+        }
+
+        interface Props<T> {
+            a: (x: string) => T;
+            b: (arg: T) => void;
+        }
+
+        function Foo<T>(props: Props<T>) {
+            return <div />;
+        }
+
+        <Foo a={() => 10} b={(arg) => { arg.toString(); }} />;
+        <Foo a={(x) => 10} b={(arg) => { arg.toString(); }} />;
+        "#,
+    );
+    let ts18046_count = diagnostics.iter().filter(|&&d| d == 18046).count();
+    assert_eq!(
+        ts18046_count, 0,
+        "Expected no TS18046 for intra-expression JSX inference, got: {diagnostics:?}"
+    );
+}
+
+// NOTE: This test is disabled because it depends on fixing conditional type
+// evaluation with `infer` in React's distributive Defaultize type. The root
+// cause is in the solver: `keyof D` evaluates to `never` when D comes from
+// conditional infer and the check type is a class constructor/callable type.
+// This is a Tier 1 (big3-unification) issue, not a Tier 3 leaf fix.
+#[test]
+#[ignore]
+fn jsx_type_predicate_default_props_no_false_ts2322() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Defaultize<P, D> = P extends any
+            ? string extends keyof P ? P :
+            & Pick<P, Exclude<keyof P, keyof D>>
+            & Partial<Pick<P, Extract<keyof P, keyof D>>>
+            & Partial<Pick<D, Exclude<keyof D, keyof P>>>
+            : never;
+
+        declare class ReactComponent<P = {}, S = {}> {
+            props: P;
+        }
+
+        declare namespace JSX {
+            interface Element extends ReactComponent {}
+            interface IntrinsicElements {}
+            interface ElementAttributesProperty { props: {}; }
+            type LibraryManagedAttributes<C, P> = C extends { defaultProps: infer D; }
+                ? Defaultize<P, D>
+                : P;
+        }
+
+        class SimpleComp extends ReactComponent<{ text: string }> {
+            static defaultProps = { text: "hello" }
+        }
+
+        const Render = () => <SimpleComp />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2322),
+        "Expected no TS2322 for component with defaultProps (React Defaultize), got: {diagnostics:?}"
     );
 }

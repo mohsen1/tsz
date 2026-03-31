@@ -57,6 +57,17 @@ pub(super) fn is_object_prototype_method(name: impl AsRef<str>) -> bool {
     )
 }
 
+/// Subset of Object.prototype methods that should still be reported as missing
+/// when the target is an array-like type. Array types override `toString` and
+/// `toLocaleString` with their own signatures, so these should NOT be filtered
+/// out from TS2739/TS2740 missing property lists for array targets.
+pub(super) fn is_object_prototype_method_for_array_target(name: impl AsRef<str>) -> bool {
+    matches!(
+        name.as_ref(),
+        "valueOf" | "hasOwnProperty" | "isPrototypeOf" | "propertyIsEnumerable" | "constructor"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     /// Check if the assignment failure is due to exact optional property types.
     ///

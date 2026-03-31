@@ -2,8 +2,8 @@
 //! This fires when noImplicitThis is on and `this` is used in a regular function
 //! (not arrow) without a `this:` parameter annotation.
 
-use crate::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::{CheckerOptions, CheckerState};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -20,7 +20,12 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_this: true,
+            ..CheckerOptions::default()
+        },
     );
 
     checker.check_source_file(root);
@@ -306,5 +311,25 @@ defineOptions({
     assert!(
         diags.iter().any(|d| d.0 == 2683),
         "Expected TS2683, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn generic_callback_this_context_suppresses_ts2683() {
+    let src = r#"
+declare let $: {
+    each<T>(items: T[], callback: (this: T, index: number, value: T) => void): void;
+};
+declare let lines: string[];
+
+$.each(lines, function () {
+    this.trim();
+});
+"#;
+
+    let diags = get_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "Expected contextual generic callback `this` to suppress TS2683, got: {diags:?}"
     );
 }
