@@ -21938,3 +21938,137 @@ const o1 = {
         "Expected 2 TS2344 errors with lib files. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+/// Regression test: generic interface variance must reject assignments that
+/// are checked AFTER a successful assignment in the opposite direction.
+///
+/// When `a = b` (Promise<Bar> <: Promise<Foo>) succeeds covariant check,
+/// the subsequent `b = a` (Promise<Foo> <: Promise<Bar>) must still be rejected.
+/// Previously, the coinductive cycle detection in structural comparison
+/// incorrectly assumed compatibility after the first successful check cached
+/// intermediate results.
+#[test]
+#[ignore = "flow analysis evaluates Application types, bypassing variance fast path"]
+fn test_generic_variance_order_independent_rejection() {
+    let source = r#"
+interface MyPromise<T> {
+    then<U>(cb: (x: T) => MyPromise<U>): MyPromise<U>;
+}
+
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var a: MyPromise<Foo>;
+declare var b: MyPromise<Bar>;
+a = b;
+b = a;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for 'b = a' (MyPromise<Foo> not assignable to MyPromise<Bar>). Diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Same as above but with non-recursive interface to isolate the recursion aspect.
+#[test]
+fn test_generic_variance_order_independent_non_recursive() {
+    let source = r#"
+interface Box<T> {
+    get(): T;
+}
+
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var a: Box<Foo>;
+declare var b: Box<Bar>;
+a = b;
+b = a;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for 'b = a' (Box<Foo> not assignable to Box<Bar>). Diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// T in direct method parameter — requires flow analysis to preserve Application
+/// types for annotated variables. Structural comparison is correct (contravariant
+/// params pass), so only variance-based checking can reject this.
+#[test]
+#[ignore = "requires flow analysis to preserve Application types for annotated vars"]
+fn test_generic_variance_method_param_order_independent() {
+    let source = r#"
+interface Setter<T> {
+    set(value: T): void;
+}
+
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var a: Setter<Foo>;
+declare var b: Setter<Bar>;
+a = b;
+b = a;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for 'b = a' (Setter<Foo> not assignable to Setter<Bar>). Diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Sanity check: generic interface variance rejects a single bad assignment.
+#[test]
+fn test_generic_variance_simple_rejection() {
+    let source = r#"
+interface MyPromise<T> {
+    then<U>(cb: (x: T) => MyPromise<U>): MyPromise<U>;
+}
+
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var a: MyPromise<Foo>;
+declare var b: MyPromise<Bar>;
+b = a;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for 'b = a' alone. Diagnostics: {diagnostics:#?}"
+    );
+}
