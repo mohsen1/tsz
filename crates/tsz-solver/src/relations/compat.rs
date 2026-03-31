@@ -1567,17 +1567,40 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.disable_method_bivariance = self.strict_subtype_checking;
     }
 
+    /// Check if a type is a "weak type" in the tsc sense.
+    /// A weak type is an object type with all optional properties, no call/construct
+    /// signatures, and no index signatures. For intersections, ALL members must be
+    /// weak types. Non-object types (primitives, etc.) are never weak.
+    fn is_weak_type(&self, type_id: TypeId) -> bool {
+        // Intersections are weak only if ALL members are weak
+        if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return !members.is_empty() && members.iter().all(|m| self.is_weak_type(*m));
+        }
+
+        // Try to extract object shape
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+        let Some(shape_id) = extractor.extract(type_id) else {
+            return false;
+        };
+        let shape = self
+            .interner
+            .object_shape(crate::types::ObjectShapeId(shape_id));
+
+        // Must have properties, all optional, no index signatures
+        !shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().all(|p| p.optional)
+    }
+
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
-        // An intersection that includes a non-object member (e.g. `string & { p?: T }`)
-        // is NOT a weak type in tsc. The apparent type of the intersection includes
-        // properties from the primitive's prototype, so the weak-type overlap check
-        // would always find common properties. Skip the weak type check entirely.
-        if let Some(TypeData::Intersection(members_id)) = self.interner.lookup(target) {
-            let members = self.interner.type_list(members_id);
-            let mut test_extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
-            let has_non_object_member =
-                members.iter().any(|&m| test_extractor.extract(m).is_none());
-            if has_non_object_member {
+        // For intersection targets, ALL members must be weak types.
+        // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
+        // This matches tsc's isWeakType() which checks every() for intersections.
+        if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(list_id);
+            if members.iter().any(|m| !self.is_weak_type(*m)) {
                 return false;
             }
         }
