@@ -311,6 +311,49 @@ fn test_instantiate_tuple() {
 }
 
 #[test]
+fn test_instantiate_large_tuple_spread_stays_compressed() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let large_inner = interner.tuple(
+        (0..9000)
+            .map(|_| TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            })
+            .collect(),
+    );
+
+    let outer = interner.tuple(vec![TupleElement {
+        type_id: type_param_t,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, large_inner);
+    let result = instantiate_type(&interner, outer, &subst);
+
+    let Some(TypeData::Tuple(tuple_id)) = interner.lookup(result) else {
+        panic!("expected tuple result, got {:?}", interner.lookup(result));
+    };
+    let elements = interner.tuple_list(tuple_id);
+    assert_eq!(elements.len(), 1);
+    assert!(elements[0].rest);
+    assert_eq!(elements[0].type_id, large_inner);
+}
+
+#[test]
 fn test_instantiate_generic_convenience() {
     let interner = TypeInterner::new();
 

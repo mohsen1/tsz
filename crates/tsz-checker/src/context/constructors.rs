@@ -59,6 +59,7 @@ impl<'a> CheckerContext<'a> {
             file_is_esm: None,
             file_is_esm_map: None,
             spelling_suggestions_emitted: 0,
+            name_resolution_reported_nodes: FxHashSet::default(),
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
             symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
@@ -108,6 +109,7 @@ impl<'a> CheckerContext<'a> {
             namespace_module_names: FxHashMap::default(),
             js_export_surface_cache: FxHashMap::default(),
             js_export_surface_resolution_set: FxHashSet::default(),
+            expando_property_resolution_set: FxHashSet::default(),
             module_specifiers: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
@@ -547,6 +549,17 @@ impl<'a> CheckerContext<'a> {
         // causing unbounded mutual recursion through resolve_lib_type_by_name ↔
         // merge_lib_interface_heritage ↔ build_type_environment chains.
         ctx.lib_heritage_in_progress = parent.lib_heritage_in_progress.clone();
+
+        // Propagate JSDoc typedef re-entrancy state across child checkers.
+        // Cross-file JSDoc import/typedef resolution spawns nested CheckerStates;
+        // if the active typedef set is reset at that boundary, cyclic CommonJS
+        // JSDoc graphs can recurse until stack overflow.
+        ctx.jsdoc_typedef_resolving = RefCell::new(parent.jsdoc_typedef_resolving.borrow().clone());
+
+        // Propagate expando-property resolution state so child checkers do not
+        // lose recursion protection while resolving CommonJS/JS property reads
+        // across files.
+        ctx.expando_property_resolution_set = parent.expando_property_resolution_set.clone();
 
         // Propagate depth from parent to prevent infinite recursion across arena boundaries.
         ctx.symbol_resolution_depth = Cell::new(parent.symbol_resolution_depth.get());

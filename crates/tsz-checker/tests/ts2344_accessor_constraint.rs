@@ -4,7 +4,7 @@
 //! When a type reference like `Fail<string>` appears as a setter parameter type
 //! inside an interface or type literal, the checker must validate that the type
 //! argument satisfies the constraint. Previously, `check_type_member_for_missing_names`
-//! did not handle GET_ACCESSOR/SET_ACCESSOR members, so constraint violations in
+//! did not handle `GET_ACCESSOR/SET_ACCESSOR` members, so constraint violations in
 //! accessor parameter types were silently ignored.
 
 use tsz_binder::BinderState;

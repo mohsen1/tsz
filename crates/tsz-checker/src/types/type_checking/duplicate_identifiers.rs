@@ -1231,21 +1231,21 @@ impl<'a> CheckerState<'a> {
                     declarations
                         .iter()
                         .any(|(decl_idx, flags, is_local, _, _)| {
-                            ((*is_local && conflicts.contains(decl_idx)) || !*is_local)
+                            (!*is_local || conflicts.contains(decl_idx))
                                 && (flags & symbol_flags::CLASS) != 0
                         });
                 let has_function_partner =
                     declarations
                         .iter()
                         .any(|(decl_idx, flags, is_local, _, _)| {
-                            ((*is_local && conflicts.contains(decl_idx)) || !*is_local)
+                            (!*is_local || conflicts.contains(decl_idx))
                                 && (flags & symbol_flags::FUNCTION) != 0
                         });
                 let has_js_constructor_value_partner =
                     declarations
                         .iter()
                         .any(|(decl_idx, flags, is_local, _, _)| {
-                            ((*is_local && conflicts.contains(decl_idx)) || !*is_local)
+                            (!*is_local || conflicts.contains(decl_idx))
                                 && (flags & symbol_flags::VARIABLE) != 0
                                 && self.declaration_is_checked_js_constructor_value_declaration(
                                     sym_id, *decl_idx,
@@ -1261,10 +1261,9 @@ impl<'a> CheckerState<'a> {
                         declarations
                             .iter()
                             .all(|(decl_idx, flags, is_local, _, _)| {
-                                !(((*is_local && conflicts.contains(decl_idx)) || !*is_local)
-                                    && (flags & symbol_flags::CLASS) != 0)
-                                    || (flags & symbol_flags::CLASS) == 0
+                                (flags & symbol_flags::CLASS) == 0
                                     || self.is_ambient_declaration(*decl_idx)
+                                    || (*is_local && !conflicts.contains(decl_idx))
                             });
 
                     if has_function_partner && !all_classes_ambient {

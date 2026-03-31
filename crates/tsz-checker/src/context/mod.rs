@@ -641,6 +641,12 @@ pub struct CheckerContext<'a> {
     /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
     pub spelling_suggestions_emitted: u32,
 
+    /// Node indices for which a name resolution failure (TS2304/TS2552) has already
+    /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
+    /// when the same type reference is resolved multiple times (e.g., due to
+    /// re-evaluation in generic/contextual typing contexts).
+    pub name_resolution_reported_nodes: FxHashSet<NodeIndex>,
+
     /// `TypeId`s that represent interfaces extending arrays/tuples.
     /// Used to suppress false TS2559 (weak type) violations for these types,
     /// since they inherit non-optional members from Array.prototype.
@@ -823,6 +829,11 @@ pub struct CheckerContext<'a> {
     /// Prevents self-recursive surface construction for files that inspect
     /// their own `module.exports` shape while the same shape is still pending.
     pub js_export_surface_resolution_set: FxHashSet<usize>,
+
+    /// Recursion guard for JS expando property reads.
+    /// Prevents `NS.K = class { return new NS.K() }`-style self-reference loops
+    /// from recursively re-evaluating the same expando property via the RHS.
+    pub expando_property_resolution_set: FxHashSet<String>,
 
     /// Maps `file_id` -> module specifier for import-qualified type display.
     /// When a type is defined in a module file, the formatter qualifies its name

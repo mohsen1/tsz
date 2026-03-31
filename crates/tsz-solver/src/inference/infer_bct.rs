@@ -541,7 +541,22 @@ impl<'a> InferenceContext<'a> {
             return cached;
         }
 
+        // BCT/bounds validation can recurse through contravariant function
+        // parameters and revisit the same relation pair coinductively before a
+        // cached result exists. Treat those in-progress cycles as tentatively
+        // true, matching the solver's recursive-type handling and avoiding
+        // stack overflows on deeply nested signature comparisons.
+        {
+            let active = self.active_subtype_checks.borrow();
+            if active.contains(&key) || active.contains(&(target, source)) {
+                return true;
+            }
+        }
+
+        self.active_subtype_checks.borrow_mut().insert(key);
+
         let result = self.is_subtype_uncached(source, target);
+        self.active_subtype_checks.borrow_mut().remove(&key);
         self.subtype_cache.borrow_mut().insert(key, result);
         result
     }
