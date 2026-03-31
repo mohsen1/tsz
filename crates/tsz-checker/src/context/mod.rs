@@ -1063,6 +1063,11 @@ pub struct CheckerContext<'a> {
     /// never received contextual parameter types) will have TS7006 re-emitted.
     pub speculative_implicit_any_closures: Vec<NodeIndex>,
 
+    /// Closures (function expressions and arrow functions) that have a contextual
+    /// `this` type from their parent call expression's parameter type.
+    /// Used to suppress TS2683 errors for callback functions with contextual this types.
+    pub closures_with_contextual_this_type: FxHashSet<NodeIndex>,
+
     /// Set of class declaration nodes currently being checked.
     /// Used to prevent infinite recursion in `check_class_declaration` when
     /// class checking triggers type resolution that circles back to the same class.

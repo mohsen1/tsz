@@ -263,9 +263,11 @@ impl<'a> CheckerState<'a> {
         if fn_node.kind == FUNCTION_DECLARATION {
             // Function declarations always create a fresh `this` binding and are
             // never contextually typed by an object-literal receiver. Only an
-            // explicit `this` parameter or JS receiver inference should suppress
-            // TS2683 for the inner declaration.
-            if self.enclosing_function_has_explicit_this_parameter(idx) {
+            // explicit `this` parameter, contextual `this` type, or JS receiver 
+            // inference should suppress TS2683 for the inner declaration.
+            if self.enclosing_function_has_explicit_this_parameter(idx)
+                || self.enclosing_function_has_contextual_this_type(idx)
+            {
                 return false;
             }
             return true;
@@ -564,7 +566,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Only applies to function expressions (closures), not declarations
-        if fn_node.kind != FUNCTION_EXPRESSION {
+        // Exception: In JS files, function declarations can have contextual this types
+        // from @constructor or @this JSDoc annotations
+        if fn_node.kind != FUNCTION_EXPRESSION && !self.is_js_file() {
             return false;
         }
 
@@ -611,8 +615,16 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file()
             && self
                 .get_jsdoc_for_function(enclosing_fn)
-                .is_some_and(|jsdoc| jsdoc.contains("@this"))
+                .is_some_and(|jsdoc| jsdoc.contains("@this") || jsdoc.contains("@constructor"))
         {
+            return true;
+        }
+
+        // Check if the function is passed as a callback argument with a contextual this type.
+        // When a function is passed as an argument (e.g., `arr.filter(function(x) { this.y })`),
+        // the expected parameter type may have a `this` type that should be contextually
+        // applied to the callback function.
+        if self.ctx.closures_with_contextual_this_type.contains(&enclosing_fn) {
             return true;
         }
 
