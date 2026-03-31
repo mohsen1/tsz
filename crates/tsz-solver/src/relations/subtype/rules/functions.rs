@@ -1084,7 +1084,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // - both have constraints: source is stricter if its constraint is narrower
                     let source_has_constraint = source_tp.constraint.is_some();
                     let target_has_constraint = target_tp.constraint.is_some();
-                    
+
                     let source_is_stricter = if source_has_constraint && !target_has_constraint {
                         // Source has constraint, target doesn't → source is stricter
                         true
@@ -1095,7 +1095,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         // Both have constraints: check if source's is stricter
                         // If target's constraint is NOT assignable to source's constraint,
                         // then source is stricter
-                        !self.check_subtype(target_constraint, source_constraint).is_true()
+                        !self
+                            .check_subtype(target_constraint, source_constraint)
+                            .is_true()
                     } else {
                         // Neither has constraint → equal
                         false

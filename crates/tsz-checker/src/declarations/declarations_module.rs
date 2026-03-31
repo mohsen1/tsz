@@ -465,8 +465,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // apply these checks in external modules.
             let module_augmentation_target_exists = if has_declare {
                 if is_string_named {
-                    self
-                        .ctx
+                    self.ctx
                         .arena
                         .get(module.name)
                         .and_then(|n| self.ctx.arena.get_literal(n))
