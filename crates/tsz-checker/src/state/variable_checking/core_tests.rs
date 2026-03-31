@@ -788,4 +788,56 @@ function test<T>(obj: { [K in keyof T]: T[K] }) {
             "TS2339 message should reference 'foo': {ts2339:?}"
         );
     }
+
+    #[test]
+    fn mapped_type_index_access_constraint_exceeds_keyof_reports_ts2322() {
+        // When a mapped type constraint is an indexed access like AB[S] and S's
+        // constraint exceeds keyof AB, tsc emits TS2322 for the mapped type constraint.
+        // This tests that evaluation doesn't mask the issue by eagerly resolving AB[S].
+        let source = r#"
+type AB = {
+    a: 'a'
+    b: 'a'
+};
+type T5<S extends 'a'|'b'|'extra'> = {[key in AB[S]]: true}[S];
+"#;
+
+        let ts2322 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2322.len(),
+            1,
+            "Expected one TS2322 for AB[S] not assignable to string | number | symbol: {ts2322:?}"
+        );
+        assert!(
+            ts2322[0]
+                .message_text
+                .contains("is not assignable to type 'string | number | symbol'"),
+            "TS2322 message mismatch: {ts2322:?}"
+        );
+    }
+
+    #[test]
+    fn mapped_type_index_access_valid_constraint_no_ts2322() {
+        // When S's constraint is within keyof AB, no TS2322 should be emitted.
+        let source = r#"
+type AB = {
+    a: 'a'
+    b: 'a'
+};
+type T7<S extends 'a'|'b', L extends 'a'> = {[key in AB[S]]: true}[L];
+"#;
+
+        let ts2322 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2322.len(),
+            0,
+            "Expected no TS2322 when index constraint is within keyof: {ts2322:?}"
+        );
+    }
 }
