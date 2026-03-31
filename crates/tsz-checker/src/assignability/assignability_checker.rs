@@ -640,14 +640,56 @@ impl<'a> CheckerState<'a> {
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
             // Suppress TS2322 for callable types where the source contains generic type
-            // parameters that may not have been fully inferred from context. Skip when
-            // both source and target have their own signature-level type parameters —
+            // parameters that may not have been fully inferred from context. When both
+            // source and target contain type parameters that are COMPLETELY disjoint
+            // at the signature level (e.g., () => T vs () => U from an outer `<T, U>`
+            // scope), the incompatibility is real and must NOT be suppressed.
+            // Skip when both sides have their own signature-level type parameters —
             // the solver handles generic-to-generic comparison correctly via alpha-renaming.
             || (is_callable_or_function(source)
                 && is_callable_or_function(target)
                 && contains_type_parameters(source)
+                && !self.callable_types_have_disjoint_type_parameters(source, target)
                 && !(has_own_signature_type_params(source)
                     && has_own_signature_type_params(target)))
+    }
+
+    /// Check if two callable types have completely disjoint outer type parameters
+    /// at their immediate signature level (parameters and return type only).
+    ///
+    /// Returns true when both source and target function shapes directly reference
+    /// type parameters in their parameter/return positions and those type parameters
+    /// are entirely different. This is a conservative check that only looks at the
+    /// shallow signature level to avoid false positives from type parameters buried
+    /// in generic utility types.
+    fn callable_types_have_disjoint_type_parameters(&self, source: TypeId, target: TypeId) -> bool {
+        let get_direct_type_params = |type_id: TypeId| -> Vec<TypeId> {
+            let mut params = Vec::new();
+            if let Some(shape) =
+                tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+            {
+                if tsz_solver::visitor::is_type_parameter(self.ctx.types, shape.return_type) {
+                    params.push(shape.return_type);
+                }
+                for p in &shape.params {
+                    if tsz_solver::visitor::is_type_parameter(self.ctx.types, p.type_id) {
+                        params.push(p.type_id);
+                    }
+                }
+            }
+            params
+        };
+
+        let source_params = get_direct_type_params(source);
+        let target_params = get_direct_type_params(target);
+
+        // Both must have direct type params for them to be disjoint
+        if source_params.is_empty() || target_params.is_empty() {
+            return false;
+        }
+
+        // Disjoint = no overlap at all
+        !source_params.iter().any(|s| target_params.contains(s))
     }
 
     /// Check if a type contains an error application (recursively).

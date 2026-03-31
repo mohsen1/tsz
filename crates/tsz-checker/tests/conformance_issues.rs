@@ -22119,3 +22119,38 @@ b = a;
         "Expected TS2322 for 'b = a' alone. Diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_type_parameter_function_return_type_not_equivalent() {
+    // Function types with different type parameter return types should NOT be assignable.
+    // This is the typeParameterArgumentEquivalence conformance test family.
+
+    // () => T is NOT assignable to () => U (and vice versa)
+    let d = compile_and_get_diagnostics(
+        "function f<T,U>() { var x!: () => U; var y!: () => T; x = y; y = x; }",
+    );
+    let ts2322_count = d.iter().filter(|(c, _)| *c == 2322).count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected 2 TS2322 for () => T vs () => U, got: {d:?}"
+    );
+
+    // (a: T) => boolean is NOT assignable to (a: U) => boolean (and vice versa)
+    let d = compile_and_get_diagnostics(
+        "function f<T,U>() { var x!: (a: U) => boolean; var y!: (a: T) => boolean; x = y; y = x; }",
+    );
+    let ts2322_count = d.iter().filter(|(c, _)| *c == 2322).count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected 2 TS2322 for (a:T) vs (a:U), got: {d:?}"
+    );
+
+    // But () => T IS assignable to () => T (same type parameter)
+    let d =
+        compile_and_get_diagnostics("function f<T>() { var x!: () => T; var y!: () => T; x = y; }");
+    let ts2322_count = d.iter().filter(|(c, _)| *c == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Same type param should be assignable, got: {d:?}"
+    );
+}
