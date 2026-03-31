@@ -213,6 +213,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Resolve DefIds to their structural forms
         let s_resolved = self.resolver.resolve_lazy(s_def, self.interner);
         let t_resolved = self.resolver.resolve_lazy(t_def, self.interner);
+
+        // Detect self-referencing Lazy types (namespace circular references).
+        // When a namespace's DefId resolves back to Lazy(same_DefId), it means
+        // the type environment has a circular entry (no structural type available).
+        // In this case, check_resolved_pair_subtype would re-enter check_subtype,
+        // hit the def_guard cycle detection, and return True (coinductive assumption).
+        // This incorrectly treats all namespace types as compatible, suppressing TS2741.
+        //
+        // Fix: if EITHER side resolves to itself (Lazy(same_DefId)), the types
+        // are opaque and not structurally comparable. Since s_def != t_def
+        // (checked above), they represent different semantic entities → not subtypes.
+        let s_is_circular = s_resolved
+            .is_some_and(|r| crate::visitor::lazy_def_id(self.interner, r) == Some(s_def));
+        let t_is_circular = t_resolved
+            .is_some_and(|r| crate::visitor::lazy_def_id(self.interner, r) == Some(t_def));
+        if s_is_circular || t_is_circular {
+            if !already_visiting {
+                self.def_guard.leave(def_pair);
+            }
+            return SubtypeResult::False;
+        }
+
         let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
 
         // Leave def_guard only if we entered it ourselves
@@ -233,7 +255,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// for `Lazy(DefId)` but wrong for `TypeQuery`. We must use `resolve_ref` first
     /// (which looks up `symbol_types` → constructor type), and only fall back to
     /// `resolve_lazy` for non-class symbols (e.g., module namespaces).
-    fn resolve_type_query_symbol(&self, sym: SymbolRef) -> Option<TypeId> {
+    pub(crate) fn resolve_type_query_symbol(&self, sym: SymbolRef) -> Option<TypeId> {
         // First try resolve_ref which returns the value from symbol_types
         // (constructor type for classes, function type for functions, etc.)
         let ref_resolved = self.resolver.resolve_ref(sym, self.interner);

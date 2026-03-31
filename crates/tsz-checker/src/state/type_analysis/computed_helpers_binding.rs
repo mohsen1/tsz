@@ -587,6 +587,13 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Compute the type of a namespace or module symbol.
+    ///
+    /// For pure namespace symbols (not merged with class/function/enum),
+    /// builds a structural object type from the namespace's value exports.
+    /// This is critical for assignability checking between `typeof Namespace`
+    /// types: without a structural type, `resolve_lazy(DefId)` returns
+    /// `Lazy(DefId)` (circular), and the subtype checker's cycle detection
+    /// incorrectly assumes compatibility (TS2741 is suppressed).
     pub(super) fn compute_namespace_symbol_type(
         &mut self,
         sym_id: SymbolId,
@@ -607,7 +614,48 @@ impl<'a> CheckerState<'a> {
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         let factory = self.ctx.types.factory();
-        (factory.lazy(def_id), Vec::new())
+        let lazy = factory.lazy(def_id);
+
+        // Build a structural object type from the namespace's value exports.
+        // Only materialize if the namespace has instantiated value exports.
+        // Type-only namespaces (only interfaces/type aliases) must keep Lazy(DefId)
+        // so property access goes through namespace export resolution.
+        if self.namespace_has_value_exports(sym_id) {
+            let ns_obj = self.merge_namespace_exports_into_object(sym_id, lazy);
+            (ns_obj, Vec::new())
+        } else {
+            (lazy, Vec::new())
+        }
+    }
+
+    /// Check if a namespace has any instantiated value-level exports.
+    fn namespace_has_value_exports(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(exports) = symbol.exports.as_ref() else {
+            return false;
+        };
+        for (_name, member_id) in exports.iter() {
+            let Some(member_symbol) = self.ctx.binder.get_symbol(*member_id) else {
+                continue;
+            };
+            let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+            if (member_symbol.flags & value_flags_except_module) != 0 {
+                return true;
+            }
+            // Namespace-only members: check if instantiated
+            if (member_symbol.flags & symbol_flags::VALUE_MODULE) != 0
+                && (member_symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0
+            {
+                for &decl_idx in &member_symbol.declarations {
+                    if self.is_namespace_declaration_instantiated(decl_idx) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub(super) fn resolve_export_value_wrapper_target_symbol(
