@@ -1226,7 +1226,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_concrete_source_to_deferred_keyof_index_access(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
@@ -1239,19 +1239,115 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
+        if crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
+        {
             return false;
         }
 
-        let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) else {
-            return false;
-        };
-
-        if keyof_operand != object_type {
+        if !self.is_deferred_generic_index_for_object(index_type, object_type) {
             return false;
         }
 
-        !crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
+        let mut candidate_types = Vec::new();
+        self.collect_deferred_index_access_candidate_types(object_type, &mut candidate_types);
+
+        if candidate_types.is_empty() {
+            return crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                object_type,
+            );
+        }
+
+        candidate_types
+            .into_iter()
+            .any(|candidate| !self.ctx.types.is_assignable_to(source, candidate))
+    }
+
+    fn is_deferred_generic_index_for_object(
+        &self,
+        index_type: TypeId,
+        object_type: TypeId,
+    ) -> bool {
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+        {
+            return members
+                .iter()
+                .copied()
+                .any(|member| self.is_deferred_generic_index_for_object(member, object_type));
+        }
+
+        if let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) {
+            return keyof_operand == object_type;
+        }
+
+        if let Some(param_info) = tsz_solver::visitor::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+            && let Some(keyof_operand) = get_keyof_type(self.ctx.types, constraint)
+        {
+            return keyof_operand == object_type;
+        }
+
+        false
+    }
+
+    fn collect_deferred_index_access_candidate_types(
+        &mut self,
+        object_type: TypeId,
+        candidate_types: &mut Vec<TypeId>,
+    ) {
+        if let Some(param_info) = tsz_solver::visitor::type_param_info(self.ctx.types, object_type)
+            && let Some(constraint) = param_info.constraint
+        {
+            self.collect_deferred_index_access_candidate_types(constraint, candidate_types);
+            return;
+        }
+
+        self.ensure_relation_input_ready(object_type);
+        let evaluated = self.evaluate_type_for_assignability(object_type);
+        if evaluated != object_type && evaluated != TypeId::ERROR {
+            self.collect_deferred_index_access_candidate_types(evaluated, candidate_types);
+            if !candidate_types.is_empty() {
+                return;
+            }
+        }
+
+        if let Some(members) = crate::query_boundaries::common::union_members(
+            self.ctx.types,
+            object_type,
+        )
+        .or_else(|| {
+            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+        }) {
+            for member in members.iter().copied() {
+                self.collect_deferred_index_access_candidate_types(member, candidate_types);
+            }
+            return;
+        }
+
+        let shape_id =
+            tsz_solver::visitor::object_shape_id(self.ctx.types, object_type).or_else(|| {
+                tsz_solver::visitor::object_with_index_shape_id(self.ctx.types, object_type)
+            });
+
+        if let Some(shape_id) = shape_id {
+            let shape = self.ctx.types.object_shape(shape_id);
+            candidate_types.extend(shape.properties.iter().map(|prop| {
+                if prop.optional {
+                    self.ctx.types.union2(prop.type_id, TypeId::UNDEFINED)
+                } else {
+                    prop.type_id
+                }
+            }));
+        }
+
+        let index_info = self.ctx.types.get_index_signatures(object_type);
+        if let Some(string_index) = index_info.string_index {
+            candidate_types.push(string_index.value_type);
+        }
+        if let Some(number_index) = index_info.number_index {
+            candidate_types.push(number_index.value_type);
+        }
     }
 
     /// Like `is_assignable_to`, but skips weak type checks (TS2559).

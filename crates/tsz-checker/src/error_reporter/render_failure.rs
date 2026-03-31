@@ -381,7 +381,7 @@ impl<'a> CheckerState<'a> {
                             self.format_type_diagnostic(*source_type)
                         },
                         if use_structural_source_display {
-                            self.format_assignability_type_for_message(target, source)
+                            self.format_assignment_target_type_for_diagnostic(target, source, idx)
                         } else {
                             self.format_type_diagnostic(target)
                         },

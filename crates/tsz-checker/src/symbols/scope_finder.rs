@@ -4,6 +4,7 @@ use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Scope Finding Methods
@@ -614,6 +615,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self
+            .contextual_this_type_for_call_argument_function(enclosing_fn)
+            .is_some()
+        {
+            return true;
+        }
+
         if self.is_js_file()
             && let Some(jsdoc_callable_type) =
                 self.jsdoc_callable_type_annotation_for_function(enclosing_fn)
@@ -635,6 +643,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.is_js_file()
+            && self
+                .js_constructor_body_instance_type_for_function(enclosing_fn)
+                .is_some()
+        {
+            return true;
+        }
+
         // Check if the function is passed as a callback argument with a contextual this type.
         // When a function is passed as an argument (e.g., `arr.filter(function(x) { this.y })`),
         // the expected parameter type may have a `this` type that should be contextually
@@ -648,6 +664,58 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn contextual_this_type_for_call_argument_function(
+        &mut self,
+        fn_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CALL_EXPRESSION, FUNCTION_EXPRESSION, NEW_EXPRESSION, PARENTHESIZED_EXPRESSION,
+        };
+
+        let fn_node = self.ctx.arena.get(fn_idx)?;
+        if fn_node.kind != FUNCTION_EXPRESSION {
+            return None;
+        }
+
+        let mut current = fn_idx;
+        loop {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+
+            if parent_node.kind == PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+
+            if parent_node.kind != CALL_EXPRESSION && parent_node.kind != NEW_EXPRESSION {
+                return None;
+            }
+
+            let call = self.ctx.arena.get_call_expr(parent_node)?;
+            let args = call.arguments.as_ref()?;
+            let arg_index = args.nodes.iter().position(|&arg| arg == current)?;
+
+            let callee_type = self.get_type_of_node(call.expression);
+            let callee_type = self.evaluate_application_type(callee_type);
+            let callee_type = self.resolve_lazy_type(callee_type);
+            let callee_type = self.evaluate_contextual_type(callee_type);
+
+            let ctx = tsz_solver::ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                callee_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            let param_type = ctx.get_parameter_type_for_call(arg_index, args.nodes.len())?;
+            let param_ctx = tsz_solver::ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                param_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+
+            return param_ctx.get_this_type();
+        }
     }
 
     /// Check if an `arguments` reference is directly inside an arrow function.

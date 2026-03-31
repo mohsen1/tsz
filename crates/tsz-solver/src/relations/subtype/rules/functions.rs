@@ -2056,6 +2056,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return has_optionality_mismatch;
         }
 
+        if source_generic && !target_generic {
+            let has_optionality_mismatch = source
+                .params
+                .iter()
+                .zip(target.params.iter())
+                .any(|(sp, tp)| sp.optional != tp.optional);
+            return has_optionality_mismatch
+                || source.type_params.iter().any(|tp| tp.constraint.is_some());
+        }
+
         source.type_params.len() != target.type_params.len()
             || source
                 .type_params

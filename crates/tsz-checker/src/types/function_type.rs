@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn js_constructor_body_instance_type_for_function(
+    pub(crate) fn js_constructor_body_instance_type_for_function(
         &mut self,
         func_idx: NodeIndex,
     ) -> Option<TypeId> {

@@ -261,10 +261,11 @@ impl<'a> CheckerState<'a> {
         let jsdoc_optional = function_idx.is_some()
             && self.jsdoc_marks_parameter_optional(function_idx, param_idx, param.name);
 
-        // Parameter omission/default handling belongs to the parameter itself.
-        // Destructuring inside the body should see the object side, not the
-        // transient `| undefined` wrapper added for call-arity semantics.
-        if param.initializer.is_some() || param.question_token || jsdoc_optional {
+        // Parameter omission handling belongs to the parameter itself.
+        // For binding-pattern parameters with default initializers, tsc still
+        // checks the destructuring site against the original source type, so
+        // preserve `| undefined` there.
+        if param.question_token || jsdoc_optional {
             flow_boundary::narrow_destructuring_default(self.ctx.types, parent_type, true)
         } else {
             parent_type
