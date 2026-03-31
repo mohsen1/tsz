@@ -542,6 +542,24 @@ impl ModuleResolver {
                             ),
                         );
                     }
+                    
+                    // NEW: Validate that the fallback path actually exists before treating it
+                    // as a successful resolution. The fallback resolver may return a path that
+                    // doesn't actually exist on the filesystem (e.g., a path to a directory
+                    // that should contain the module but doesn't have the right structure).
+                    // In such cases, we should emit TS2307 instead of treating it as resolved.
+                    // This fixes cases like:
+                    // - symlinkedWorkspaceDependenciesNoDirectLinkGeneratesNonrelativeName.ts
+                    // - jsDeclarationsTypeReassignmentFromDeclaration.ts
+                    if !fallback_path.exists() {
+                        return ModuleLookupResult::failed(
+                            CANNOT_FIND_MODULE,
+                            format!(
+                                "Cannot find module '{specifier}' or its corresponding type declarations."
+                            ),
+                        );
+                    }
+                    
                     return ModuleLookupResult::resolved(fallback_path);
                 }
 
