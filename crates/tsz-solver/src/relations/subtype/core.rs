@@ -440,15 +440,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Without strictNullChecks, null/undefined are assignable to all types
         // EXCEPT type parameters and null-to-void (only undefined <: void).
-        if !self.strict_null_checks
-            && source.is_nullish()
-            && !matches!(
+        if !self.strict_null_checks && source.is_nullish() {
+            let target_is_type_param = matches!(
                 self.interner.lookup(target),
                 Some(crate::types::TypeData::TypeParameter(_) | crate::types::TypeData::Infer(_))
-            )
-            && !(source == TypeId::NULL && target == TypeId::VOID)
-        {
-            return SubtypeResult::True;
+            );
+            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
+            if !target_is_type_param && !null_to_void {
+                return SubtypeResult::True;
+            }
         }
 
         // Note: Canonicalization-based structural identity (Task #36) was previously

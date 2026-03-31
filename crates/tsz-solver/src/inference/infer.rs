@@ -236,6 +236,9 @@ pub(crate) struct InferenceContext<'a> {
     pub(crate) resolver: Option<&'a dyn crate::TypeResolver>,
     /// Memoized subtype checks used by BCT and bound validation.
     pub(crate) subtype_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
+    /// Active subtype checks used for coinductive cycle breaking in the
+    /// simplified BCT/bounds subtype helper.
+    pub(crate) active_subtype_checks: RefCell<FxHashSet<(TypeId, TypeId)>>,
     /// Unification table for inference variables
     pub(crate) table: InPlaceUnificationTable<InferenceVar>,
     /// Map from type parameter names to inference variables, with const flag
@@ -270,6 +273,7 @@ impl<'a> InferenceContext<'a> {
             interner,
             resolver: None,
             subtype_cache: RefCell::new(FxHashMap::default()),
+            active_subtype_checks: RefCell::new(FxHashSet::default()),
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
@@ -286,6 +290,7 @@ impl<'a> InferenceContext<'a> {
             interner,
             resolver: Some(resolver),
             subtype_cache: RefCell::new(FxHashMap::default()),
+            active_subtype_checks: RefCell::new(FxHashSet::default()),
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),

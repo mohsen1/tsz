@@ -189,7 +189,11 @@ impl ModuleResolver {
         if package_json_path.exists()
             && let Ok(pj) = self.read_package_json(&package_json_path)
         {
-            if let Some(types) = pj.types.or(pj.typings) {
+            if let Some(types) = pj
+                .types
+                .or(pj.typings)
+                .filter(|types| !types.trim().is_empty())
+            {
                 let types_path = path.join(&types);
                 if let Some(resolved) = self.try_types_entry(&types_path) {
                     return Some(resolved);
