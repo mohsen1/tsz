@@ -535,7 +535,8 @@ impl<'a> CheckerState<'a> {
             {
                 let src_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-                let tgt_str = self.format_assignability_type_for_message(target, source);
+                let tgt_str =
+                    self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
                 let (message, code) = if missing_props.len() == 1 {
                     let prop_name = self
                         .ctx
@@ -619,7 +620,8 @@ impl<'a> CheckerState<'a> {
 
             let src_str =
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let tgt_str =
+                self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
 
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.

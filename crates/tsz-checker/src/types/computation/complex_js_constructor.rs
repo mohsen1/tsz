@@ -30,7 +30,8 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::PropertyInfo;
 
         // Resolve the function symbol from the new expression target
-        let expr_kind = self.ctx.arena.get(expr_idx)?.kind;
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        let expr_kind = expr_node.kind;
         let callable_symbol = query::callable_shape_for_type(self.ctx.types, constructor_type)
             .and_then(|shape| shape.symbol);
         let sym_id = if expr_kind == tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -40,8 +41,33 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
                 .or(callable_symbol)
         } else {
-            callable_symbol
-                .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
+            self.ctx
+                .binder
+                .get_node_symbol(expr_idx)
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_function(expr_node)
+                        .and_then(|func| (!func.name.is_none()).then_some(func.name))
+                        .and_then(|name_idx| {
+                            self.ctx
+                                .binder
+                                .resolve_identifier(self.ctx.arena, name_idx)
+                                .or_else(|| self.ctx.binder.get_node_symbol(name_idx))
+                        })
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_variable_declaration(expr_node)
+                        .and_then(|decl| {
+                            self.ctx
+                                .binder
+                                .resolve_identifier(self.ctx.arena, decl.name)
+                                .or_else(|| self.ctx.binder.get_node_symbol(decl.name))
+                        })
+                })
+                .or(callable_symbol)
                 .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
         }?;
 

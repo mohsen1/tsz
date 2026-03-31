@@ -16,6 +16,20 @@ impl<'a> CheckerState<'a> {
             return collapsed;
         }
 
+        if let Some(keyof_inner) = tsz_solver::keyof_inner_type(self.ctx.types, ty) {
+            if let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner) {
+                return format!("keyof {alias_name}");
+            }
+
+            if let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, keyof_inner)
+                && let Some(sym_id) = shape.symbol
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                return format!("keyof {}", symbol.escaped_name);
+            }
+        }
+
         if let Some(enum_name) = self.format_qualified_enum_name_for_message(ty) {
             return enum_name;
         }

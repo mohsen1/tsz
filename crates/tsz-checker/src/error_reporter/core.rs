@@ -1271,6 +1271,53 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(super) fn assignment_target_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = anchor_idx;
+        let mut guard = 0;
+
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                    let bin = self.ctx.arena.get_binary_expr(node)?;
+                    if self.is_assignment_operator(bin.operator_token) {
+                        return Some(bin.left);
+                    }
+                }
+                k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                    let stmt = self.ctx.arena.get_expression_statement(node)?;
+                    let expr = self.ctx.arena.get(stmt.expression)?;
+                    let bin = self.ctx.arena.get_binary_expr(expr)?;
+                    return self
+                        .is_assignment_operator(bin.operator_token)
+                        .then_some(bin.left);
+                }
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.ctx.arena.get_variable_declaration(node)?;
+                    return decl.name.is_some().then_some(decl.name);
+                }
+                k if k == syntax_kind_ext::PARAMETER => {
+                    let param = self.ctx.arena.get_parameter(node)?;
+                    return param.name.is_some().then_some(param.name);
+                }
+                _ => {}
+            }
+
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        None
+    }
+
     pub(crate) fn assignment_source_is_return_expression(&self, anchor_idx: NodeIndex) -> bool {
         let mut current = anchor_idx;
         let mut guard = 0;
@@ -1508,6 +1555,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let annotation = annotation_text.trim();
+        if annotation.contains('&') {
+            return !annotation.starts_with("null |") && !annotation.starts_with("undefined |");
+        }
+
         let display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(expr_type));
         let formatted = self.format_type_for_assignability_message(display_type);
@@ -1526,7 +1578,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let annotation = annotation_text.trim();
         // Don't use annotation text when it starts with `null` or `undefined` in
         // a union — the computed type formatter correctly reorders null/undefined
         // to the end (matching tsc's display), but annotation text preserves
@@ -2040,6 +2091,28 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_assignability_type_for_message(source, target)
+    }
+
+    pub(super) fn format_assignment_target_type_for_diagnostic(
+        &mut self,
+        target: TypeId,
+        source: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> String {
+        let target_expr = self
+            .assignment_target_expression(anchor_idx)
+            .unwrap_or(anchor_idx);
+
+        if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
+            && (display.starts_with("keyof ")
+                || display.starts_with("typeof ")
+                || display.contains("[P in ")
+                || display.contains("[K in "))
+        {
+            return self.format_annotation_like_type(&display);
+        }
+
+        self.format_assignability_type_for_message(target, source)
     }
 
     pub(super) fn format_nested_assignment_source_type_for_diagnostic(

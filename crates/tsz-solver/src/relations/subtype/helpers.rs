@@ -252,16 +252,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Special case: if source is also an index access with the same object type
         // but a different type parameter key, they are not subtypes even if they have
         // the same constraint. This prevents `T1[K] <: T2[K]` when T1 != T2.
-        if let Some((s_obj, s_idx)) = index_access_parts(self.interner, source) {
-            if s_obj == t_obj {
-                if let Some(s_param) = type_param_info(self.interner, s_idx) {
-                    if let Some(t_param) = type_param_info(self.interner, t_idx) {
-                        // Both keys are type parameters with different names - not subtypes
-                        if s_param.name != t_param.name {
-                            return false;
-                        }
-                    }
-                }
+        if let Some((s_obj, s_idx)) = index_access_parts(self.interner, source)
+            && s_obj == t_obj
+            && let Some(s_param) = type_param_info(self.interner, s_idx)
+            && let Some(t_param) = type_param_info(self.interner, t_idx)
+        {
+            // Both keys are type parameters with different names - not subtypes
+            if s_param.name != t_param.name {
+                return false;
             }
         }
 
@@ -331,16 +329,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Special case: if target is also an index access with the same object type
         // but a different type parameter key, they are not subtypes even if they have
         // the same constraint. This prevents `T1[K] <: T2[K]` when T1 != T2.
-        if let Some((t_obj, t_idx)) = index_access_parts(self.interner, target) {
-            if object_type == t_obj {
-                if let Some(s_param) = type_param_info(self.interner, key_type) {
-                    if let Some(t_param) = type_param_info(self.interner, t_idx) {
-                        // Both keys are type parameters with different names - not subtypes
-                        if s_param.name != t_param.name {
-                            return false;
-                        }
-                    }
-                }
+        if let Some((t_obj, t_idx)) = index_access_parts(self.interner, target)
+            && object_type == t_obj
+            && let Some(s_param) = type_param_info(self.interner, key_type)
+            && let Some(t_param) = type_param_info(self.interner, t_idx)
+        {
+            // Both keys are type parameters with different names - not subtypes
+            if s_param.name != t_param.name {
+                return false;
             }
         }
 

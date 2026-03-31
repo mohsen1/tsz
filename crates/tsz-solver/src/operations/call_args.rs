@@ -484,6 +484,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 is_constructor: false,
                                 is_method: sig.is_method,
                             })
+                        } else if let Some(sig) = shape.construct_signatures.first()
+                            && !sig.type_params.is_empty()
+                            && shape.construct_signatures.len() == 1
+                            && shape.call_signatures.is_empty()
+                        {
+                            self.interner.function(crate::types::FunctionShape {
+                                type_params: sig.type_params.clone(),
+                                params: sig.params.clone(),
+                                this_type: sig.this_type,
+                                return_type: sig.return_type,
+                                type_predicate: sig.type_predicate,
+                                is_constructor: true,
+                                is_method: sig.is_method,
+                            })
                         } else {
                             expanded_arg_type
                         }
