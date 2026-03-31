@@ -3042,6 +3042,64 @@ fn test_weak_type_empty_source_accepted() {
 }
 
 #[test]
+fn test_intersection_with_primitive_not_weak_type() {
+    // Reproduces the instantiateContextualTypes.ts false positive.
+    // `string & { attachPayloadTypeHack?: P & never }` is NOT a weak type
+    // because `string` is not a weak type. In tsc, isWeakType() for an
+    // intersection requires ALL members to be weak.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let prop_name = interner.intern_string("attachPayloadTypeHack");
+
+    // Create { attachPayloadTypeHack?: never } — a weak object type
+    let weak_obj = interner.object(vec![PropertyInfo::opt(prop_name, TypeId::NEVER)]);
+
+    // Create string & { attachPayloadTypeHack?: never } — NOT weak because string is not weak
+    let intersection = interner.intersection2(TypeId::STRING, weak_obj);
+
+    // A string literal should be assignable to this intersection (string part matches)
+    let source = interner.literal_string("NON_VOID_ACTION");
+
+    // This should NOT produce a NoCommonProperties failure.
+    // Before the fix, the weak type check incorrectly classified this
+    // intersection as weak because it only looked at the object member.
+    let failure = checker.explain_failure(source, intersection);
+    assert!(
+        !matches!(
+            failure,
+            Some(SubtypeFailureReason::NoCommonProperties { .. })
+        ),
+        "string & {{ weak_object }} should NOT be treated as a weak type; got: {failure:?}"
+    );
+}
+
+#[test]
+fn test_intersection_of_all_weak_types_is_still_weak() {
+    // When ALL members of an intersection are weak types, the intersection IS weak.
+    // e.g., `{ a?: number } & { b?: string }` is still a weak type.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+
+    let weak1 = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+    let weak2 = interner.object(vec![PropertyInfo::opt(b, TypeId::STRING)]);
+
+    let intersection = interner.intersection2(weak1, weak2);
+
+    // Source with no overlapping properties should be rejected (weak type violation)
+    let source = interner.object(vec![PropertyInfo::new(c, TypeId::BOOLEAN)]);
+    assert!(!checker.is_assignable(source, intersection));
+    assert!(matches!(
+        checker.explain_failure(source, intersection),
+        Some(SubtypeFailureReason::NoCommonProperties { .. })
+    ));
+}
+
+#[test]
 fn test_weak_union_with_all_weak_members() {
     // Weak union: union of only weak types
     let interner = TypeInterner::new();

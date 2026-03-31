@@ -546,10 +546,23 @@ impl<'a> CheckerState<'a> {
                             self.check_index_sig_param_type_in_type_literal(&index_sig.parameters);
                             continue;
                         }
-                        if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
-                            && accessor.type_annotation != NodeIndex::NONE
-                        {
-                            self.check_type_node(accessor.type_annotation);
+                        if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                            if accessor.type_annotation != NodeIndex::NONE {
+                                self.check_type_node(accessor.type_annotation);
+                            }
+                            // Also check set accessor parameter type annotations
+                            // for constraint validation (TS2344).
+                            if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                                for &param_idx in &accessor.parameters.nodes {
+                                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                        && let Some(param) =
+                                            self.ctx.arena.get_parameter(param_node)
+                                        && param.type_annotation != NodeIndex::NONE
+                                    {
+                                        self.check_type_node(param.type_annotation);
+                                    }
+                                }
+                            }
                         }
                     }
 

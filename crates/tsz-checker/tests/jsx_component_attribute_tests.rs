@@ -1812,6 +1812,54 @@ var obj7 = { x: 'foo' };
 }
 
 #[test]
+fn test_ts2783_generic_type_parameter_constraint_spread() {
+    // When a generic component spreads a type parameter `T extends { x: number }`,
+    // the required property `x` from the constraint should trigger TS2783 if `x`
+    // was also specified as an explicit attribute before the spread.
+    // This matches tsc behavior for tsxGenericAttributesType1.tsx.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Comp<T extends {{ x: number }}>(props: T) {{ return <div />; }}
+function wrapper<T extends {{ x: number }}>(Component: (props: T) => JSX.Element) {{
+    return (props: T) => <Component x={{2}} {{...props}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+        ),
+        "Should emit TS2783 when generic spread overwrites explicit attribute via constraint, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2783_not_emitted_for_generic_without_constraint() {
+    // When a generic component spreads a type parameter without a constraint,
+    // no TS2783 should be emitted since we don't know the properties.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Comp<T>(props: T) {{ return <div />; }}
+function wrapper<T>(Component: (props: T) => JSX.Element) {{
+    return (props: T) => <Component x={{2}} {{...props}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+        ),
+        "Should NOT emit TS2783 for unconstrained type parameter spread, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_intrinsic_jsx_spread_callback_property_uses_method_signature_context() {
     let source = r#"
 declare namespace JSX {

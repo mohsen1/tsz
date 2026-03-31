@@ -6,6 +6,16 @@ use tsz_common::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    pub(crate) fn look_ahead_next_is_identifier_or_keyword_or_greater_than(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = self.is_identifier_or_keyword() || self.is_token(SyntaxKind::GreaterThanToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
     /// Look ahead to see if ( starts a function type: () => T or (x: T) => U
     /// Determines if `(` starts a function type like `(x: T) => U`.
     /// Matches tsc's `isUnambiguouslyStartOfFunctionType` — only returns true
@@ -1030,8 +1040,6 @@ impl ParserState {
         while !self.is_token(SyntaxKind::GreaterThanToken)
             && !self.is_token(SyntaxKind::SlashToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
-            && !self.is_token(SyntaxKind::SemicolonToken)
-            && !self.is_token(SyntaxKind::LessThanToken)
         {
             if self.is_token(SyntaxKind::OpenBraceToken) {
                 // Spread attribute: {...props}
@@ -1040,10 +1048,11 @@ impl ParserState {
                 // Regular attribute: name="value" or name={expr} or just name
                 properties.push(self.parse_jsx_attribute());
             } else {
-                // Token can't start an attribute — break to avoid consuming tokens
-                // that belong to an outer parsing context (e.g., numeric literals
-                // in `<1234> x` should not be swallowed as attributes).
-                break;
+                // Match tsc's JSX-attribute list recovery: report an identifier
+                // at the unexpected token, consume one token, and keep parsing the
+                // tag until we reach `>` or `/>`.
+                self.error_identifier_expected();
+                self.next_token();
             }
         }
 
@@ -1151,7 +1160,14 @@ impl ParserState {
     pub(crate) fn parse_jsx_spread_attribute(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
-        self.parse_expected(SyntaxKind::DotDotDotToken);
+        if self.is_token(SyntaxKind::DotDotDotToken) {
+            self.next_token();
+        } else {
+            self.parse_error_at_current_token(
+                "'...' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+        }
         let expression = self.parse_expression();
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
@@ -1547,7 +1563,25 @@ impl ParserState {
         self.parse_expected(SyntaxKind::LessThanSlashToken);
         let tag_name = self.parse_jsx_element_name();
         let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::GreaterThanToken);
+        if !self.parse_expected(SyntaxKind::GreaterThanToken)
+            && self.is_token(SyntaxKind::ColonToken)
+        {
+            // Match tsc's malformed namespaced-closing-tag recovery: report
+            // the missing `>` at the stray `:`, then consume the dangling
+            // namespace tail so outer expression recovery resumes at the real
+            // `>`/`;` tokens instead of the extra identifier segment.
+            self.next_token();
+            self.scanner.scan_jsx_identifier();
+            if self.is_identifier_or_keyword() {
+                self.parse_identifier_name();
+            }
+            if self.is_token(SyntaxKind::GreaterThanToken) {
+                self.parse_error_at_current_token(
+                    "',' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                );
+            }
+        }
         self.arena.add_jsx_closing(
             syntax_kind_ext::JSX_CLOSING_ELEMENT,
             start_pos,

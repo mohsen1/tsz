@@ -14,8 +14,10 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 use super::assignability::{
-    is_builtin_wrapper_name, is_object_prototype_method, is_primitive_type_name,
+    is_builtin_wrapper_name, is_object_prototype_method,
+    is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
+use crate::query_boundaries::type_checking_utilities as query_utils;
 
 impl<'a> CheckerState<'a> {
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
@@ -434,20 +436,29 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                let source_str =
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                // Use unwidened type for TS2559/TS2560 — tsc preserves literal types
+                // (e.g., "12" not "number", "'false'" not "boolean") in
+                // "has no properties in common" messages.
+                let source_str = self.format_type_diagnostic(source);
                 let target_str = self.format_type_for_assignability_message(target);
-                let message = format_message(
-                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                    &[&source_str, &target_str],
-                );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                )
+
+                // If the source is callable/constructable and calling it would fix
+                // the mismatch, emit TS2560 ("did you mean to call it?") instead.
+                let (msg_template, code) = if self
+                    .should_suggest_calling_for_weak_type(source, target)
+                {
+                    (
+                            diagnostic_messages::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                            diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                        )
+                } else {
+                    (
+                        diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                        diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    )
+                };
+                let message = format_message(msg_template, &[&source_str, &target_str]);
+                Diagnostic::error(file_name, start, length, message, code)
             }
 
             SubtypeFailureReason::TypeMismatch {
@@ -1027,11 +1038,27 @@ impl<'a> CheckerState<'a> {
         }
 
         // Filter out private brand properties and Object.prototype methods.
+        // For array-like targets, use a narrower filter that keeps `toString` and
+        // `toLocaleString` — Array types override these with their own signatures,
+        // so they should be counted as missing properties when the source lacks them.
+        let is_array_target = matches!(
+            query_utils::classify_array_like(self.ctx.types, target_type),
+            query_utils::ArrayLikeKind::Array(_)
+                | query_utils::ArrayLikeKind::Tuple
+                | query_utils::ArrayLikeKind::Readonly(_)
+        );
         let filtered_names: Vec<_> = property_names
             .iter()
             .filter(|name| {
                 let s = self.ctx.types.resolve_atom_ref(**name);
-                !s.starts_with("__private_brand") && !is_object_prototype_method(&s)
+                if s.starts_with("__private_brand") {
+                    return false;
+                }
+                if is_array_target {
+                    !is_object_prototype_method_for_array_target(&s)
+                } else {
+                    !is_object_prototype_method(&s)
+                }
             })
             .copied()
             .collect();

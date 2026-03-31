@@ -674,6 +674,30 @@ impl<'a> CheckerState<'a> {
             if index_sig.type_annotation.is_some() {
                 self.check_type_for_missing_names(index_sig.type_annotation);
             }
+            return;
+        }
+
+        // Handle get/set accessor members in interfaces and type literals.
+        // Without this, type annotations on accessor parameters (e.g.,
+        // `set x(value: Fail<string>)`) are never visited for constraint
+        // validation, missing TS2344 errors.
+        if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                // Check getter return type annotation
+                if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                    && accessor.type_annotation.is_some()
+                {
+                    self.check_type_for_missing_names(accessor.type_annotation);
+                }
+                // Check setter parameter type annotations
+                if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                    for &param_idx in &accessor.parameters.nodes {
+                        self.check_parameter_type_for_missing_names(param_idx);
+                    }
+                }
+            }
         }
     }
 

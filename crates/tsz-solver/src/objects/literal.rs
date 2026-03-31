@@ -140,6 +140,15 @@ impl<'a> ObjectLiteralBuilder<'a> {
 
                 merged.into_values().collect()
             }
+            TypeData::TypeParameter(info) => {
+                // For type parameters with constraints (e.g. `T extends { x: number }`),
+                // collect properties from the constraint. Required properties in the
+                // constraint are guaranteed to exist on any value of type T.
+                if let Some(constraint) = info.constraint {
+                    return self.extract_properties(constraint);
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         };
 

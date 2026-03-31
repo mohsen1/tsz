@@ -12,6 +12,17 @@ use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Returns `true` if the module specifier looks like it should be rewritten
+/// by `rewriteRelativeImportExtensions`.
+///
+/// Mirrors tsc's `shouldRewriteModuleSpecifier`: the specifier must be a
+/// relative path with a TypeScript file extension (.ts/.tsx/.mts/.cts) that
+/// is NOT a declaration file (.d.ts/.d.mts/.d.cts).
+pub(crate) fn should_rewrite_module_specifier(specifier: &str) -> bool {
+    (specifier.starts_with("./") || specifier.starts_with("../"))
+        && ts_extension_suffix(specifier).is_some()
+}
+
 /// Returns the TypeScript extension suffix (e.g. `".ts"`, `".tsx"`) if the module path
 /// ends with a TS-specific extension that requires `allowImportingTsExtensions`.
 /// Returns `None` for `.d.ts`/`.d.mts`/`.d.cts` (handled separately by TS2846) and
@@ -384,7 +395,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Routes through the environment capability boundary (`check_feature_gate`)
     /// to determine whether a diagnostic should be emitted.
-    pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
+    pub(crate) fn check_import_attributes_module_option(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
         if attributes_idx.is_none() {
             return;
         }
@@ -395,6 +410,7 @@ impl<'a> CheckerState<'a> {
             .capabilities
             .check_feature_gate(FeatureGate::ImportAttributes)
             .is_some()
+            && !self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only)
             && let Some(attr_node) = self.ctx.arena.get(attributes_idx)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -523,6 +539,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let is_type_only_import = self
+            .ctx
+            .arena
+            .get(import.import_clause)
+            .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
+            .is_some_and(|clause| clause.is_type_only);
+
         // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
         // statement has parse errors. Matches TSC: syntax errors take priority.
         use tsz_parser::parser::node_flags;
@@ -554,7 +577,7 @@ impl<'a> CheckerState<'a> {
 
         if !has_parse_errors {
             // TS2823: Import attributes require specific module options
-            self.check_import_attributes_module_option(import.attributes);
+            self.check_import_attributes_module_option(import.attributes, is_type_only_import);
 
             // TS2322: Check import attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(import.attributes);
@@ -601,13 +624,6 @@ impl<'a> CheckerState<'a> {
         let is_side_effect_import = !has_import_clause;
         // Note: side-effect imports may return early in the resolution error check below
         // when no_unchecked_side_effect_imports=false (silently ignoring unresolved modules).
-        let is_type_only_import = self
-            .ctx
-            .arena
-            .get(import_clause_idx)
-            .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
-            .is_some_and(|clause| clause.is_type_only);
-
         if !is_type_only_import && let Some(suggested) = imported_types_package_target(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -701,6 +717,32 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
                 );
+            emitted_extension_diagnostic = true;
+        }
+
+        // TS2876: rewriteRelativeImportExtensions — specifier looks like a file name
+        // (e.g. `./foo.ts`) but actually resolves to a directory index file
+        // (e.g. `./foo.ts/index.ts`), making extension rewriting unsafe.
+        // tsc checks `!resolvedModule.resolvedUsingTsExtension && shouldRewrite`.
+        if !emitted_extension_diagnostic
+            && self.ctx.compiler_options.rewrite_relative_import_extensions
+            && !is_type_only_import
+            && !self.ctx.is_declaration_file()
+            && should_rewrite_module_specifier(module_name)
+            && self.resolved_via_directory_index(module_name)
+        {
+            let resolved_display = self.resolved_file_display_path(module_name);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+                &[&resolved_display],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+            );
             emitted_extension_diagnostic = true;
         }
 
@@ -843,7 +885,7 @@ impl<'a> CheckerState<'a> {
             if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
                 let mut skip_export_checks = false;
                 // Extract data we need before any mutable borrows
-                let (_is_declaration_file_flag, file_info) = {
+                let (_target_is_declaration_file, file_info) = {
                     let arena = self.ctx.get_arena_for_file(target_idx as u32);
                     if let Some(source_file) = arena.source_files.first() {
                         let file_name = source_file.file_name.as_str();
@@ -892,11 +934,13 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // TS1479: Check if CommonJS file is importing an ES module.
-                    // TSC only emits TS1479 for Node16/NodeNext module kinds where the
-                    // CJS/ESM distinction is enforced at runtime. For ESNext, Preserve,
-                    // bundler, and other module kinds, the import interop is handled
-                    // by the bundler/runtime and TS1479 doesn't apply.
-                    let is_node_module_kind = self.ctx.compiler_options.module.is_node_module();
+                    // In TypeScript 6.0+, TSC only emits TS1479 for Node16/Node18
+                    // module kinds. Node20 and NodeNext (targeting Node 22+) support
+                    // `require()` of ESM modules, so the diagnostic is suppressed.
+                    // For ESNext, Preserve, bundler, and other module kinds, the
+                    // import interop is handled by the bundler/runtime.
+                    let is_node_module_kind =
+                        self.ctx.compiler_options.module.is_node16_or_node18();
                     let current_is_commonjs = is_node_module_kind && {
                         let current_file = &self.ctx.file_name;
                         // .cts/.cjs are always CommonJS
@@ -930,11 +974,12 @@ impl<'a> CheckerState<'a> {
                         module_name.starts_with("./") || module_name.starts_with("../");
                     let suppress_for_cjs_relative = is_explicit_cjs_file && is_relative_import;
 
-                    // TS1479 only applies under Node16/NodeNext module kinds where
-                    // CJS/ESM interop boundaries exist at runtime. Bundler resolution
-                    // and pure ESM module kinds handle interop transparently.
+                    // TS1479 only applies under Node16/Node18 module kinds where
+                    // CJS/ESM interop boundaries exist at runtime. Node20/NodeNext,
+                    // bundler resolution, and pure ESM module kinds handle interop
+                    // transparently.
                     let module_has_cjs_esm_boundary =
-                        self.ctx.compiler_options.module.is_node_module();
+                        self.ctx.compiler_options.module.is_node16_or_node18();
 
                     if current_is_commonjs
                         && target_is_esm
@@ -1157,8 +1202,18 @@ impl<'a> CheckerState<'a> {
         &self,
         module_name: &str,
         import_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> bool {
-        if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+        let target_idx = if let Some(mode) = resolution_mode {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                Some(mode),
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+        if let Some(target_idx) = target_idx {
             let mut visited = rustc_hash::FxHashSet::default();
             return self.resolve_import_in_file(target_idx, import_name, &mut visited);
         }
@@ -1796,6 +1851,74 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Returns `true` if `specifier` resolves via directory-index probing rather
+    /// than direct TS-extension file matching.
+    ///
+    /// This mirrors tsc's `!resolvedModule.resolvedUsingTsExtension`:
+    /// if the specifier is `./foo.ts` but the resolved file is
+    /// `foo.ts/index.ts`, the TS extension in the specifier was NOT used to
+    /// find the file — directory probing found it instead.
+    pub(crate) fn resolved_via_directory_index(&self, specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return false;
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return false;
+        };
+        let Some(sf) = target_arena.source_files.first() else {
+            return false;
+        };
+        // Extract the stem (without extension) from the specifier basename.
+        let spec_file = specifier
+            .rsplit_once('/')
+            .map_or(specifier, |(_, file)| file);
+        let spec_stem = spec_file.rfind('.').map_or(spec_file, |i| &spec_file[..i]);
+        // Extract the stem from the resolved file's basename.
+        // For declaration files like "foo.d.ts", strip all declaration
+        // suffixes to get the base stem "foo".
+        let resolved_file = sf
+            .file_name
+            .rsplit_once('/')
+            .map_or(sf.file_name.as_str(), |(_, file)| file);
+        let resolved_stem = resolved_file
+            .strip_suffix(".d.ts")
+            .or_else(|| resolved_file.strip_suffix(".d.mts"))
+            .or_else(|| resolved_file.strip_suffix(".d.cts"))
+            .or_else(|| resolved_file.rfind('.').map(|i| &resolved_file[..i]))
+            .unwrap_or(resolved_file);
+        // If the stems match, the resolution used the TS extension directly
+        // (e.g., ./obj.ts → obj.d.ts). If stems differ, it went through
+        // directory probing (e.g., ./foo.ts → foo.ts/index.d.ts).
+        resolved_stem != spec_stem
+    }
+
+    /// Returns a relative display path for the resolved target of `specifier`,
+    /// suitable for the TS2876 diagnostic message argument.
+    pub(crate) fn resolved_file_display_path(&self, specifier: &str) -> String {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return specifier.to_string();
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return specifier.to_string();
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return specifier.to_string();
+        };
+        let Some(sf) = target_arena.source_files.first() else {
+            return specifier.to_string();
+        };
+        // Return a relative path with "./" prefix, matching tsc's output format.
+        let resolved = &sf.file_name;
+        if resolved.starts_with("./") || resolved.starts_with("../") {
+            resolved.clone()
+        } else {
+            format!("./{resolved}")
         }
     }
 }

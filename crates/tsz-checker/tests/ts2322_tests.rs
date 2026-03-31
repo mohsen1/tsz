@@ -3,6 +3,7 @@
 //! These tests verify that TS2322 "Type 'X' is not assignable to type 'Y'" errors
 //! are properly emitted in various contexts.
 
+use rustc_hash::FxHashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
@@ -16,54 +17,44 @@ use tsz_solver::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.esnext.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.esnext.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/lib.dom.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+    let lib_roots = [
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+    ];
+    let lib_names = [
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "dom.d.ts",
+        "dom.generated.d.ts",
+        "dom.iterable.d.ts",
+        "esnext.d.ts",
     ];
 
     let mut lib_files = Vec::new();
-
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let lib_file = LibFile::from_source("lib.es5.d.ts".to_string(), content);
-            lib_files.push(Arc::new(lib_file));
+    let mut seen_files = FxHashSet::default();
+    for file_name in lib_names {
+        for root in &lib_roots {
+            let lib_path = root.join(file_name);
+            if lib_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&lib_path)
+            {
+                if !seen_files.insert(file_name.to_string()) {
+                    break;
+                }
+                let lib_file = LibFile::from_source(file_name.to_string(), content);
+                lib_files.push(Arc::new(lib_file));
+                break;
+            }
         }
     }
 
@@ -2808,5 +2799,258 @@ fn test_ts2322_array_not_assignable_to_interface_extending_array_with_extra_prop
         !assignability_errors.is_empty(),
         "Expected TS2322/TS2741/TS2739 when assigning string[] to interface extending ReadonlyArray with extra properties. All diagnostics: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn nested_weak_type_in_intersection_target_emits_ts2322() {
+    // When assigning to an intersection target where nested properties are weak types,
+    // the weak type check must still apply to the inner property comparison.
+    // `in_intersection_member_check` should only suppress weak type checks at the
+    // direct intersection member level, not for nested property types.
+    // See: nestedExcessPropertyChecking.ts
+    let source = r#"
+        type A1 = { x: { a?: string } };
+        type B1 = { x: { b?: string } };
+        type C1 = { x: { c: string } };
+        const ab1: A1 & B1 = {} as C1;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2322 || has_ts2559,
+        "Expected TS2322 or TS2559 for nested weak type mismatch in intersection target. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn flat_weak_type_in_intersection_target_emits_ts2559() {
+    // For flat (non-nested) weak types in an intersection, TS2559 should be emitted.
+    let source = r#"
+        type A2 = { a?: string };
+        type B2 = { b?: string };
+        type C2 = { c: string };
+        const ab2: A2 & B2 = {} as C2;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for flat weak type mismatch in intersection target. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn intersection_member_weak_type_suppression_still_works() {
+    // When the source has properties that overlap with one intersection member
+    // but not with a weak-type member, the assignment should still pass.
+    // The weak type suppression during intersection member checking should work
+    // at the DIRECT level but not for nested property types.
+    let source = r#"
+        interface ITreeItem {
+            Parent?: ITreeItem;
+        }
+        interface IDecl {
+            Id?: number;
+        }
+        const x: ITreeItem & IDecl = {} as ITreeItem;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        !has_ts2322 && !has_ts2559,
+        "ITreeItem should be assignable to ITreeItem & IDecl without error. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_number_literal_vs_weak_type_emits_ts2559() {
+    // A number literal assigned to a weak type (all optional properties)
+    // should emit TS2559, not TS2322/TS2345.
+    // See: weakType.ts - `doSomething(12)`
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething(12);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for number literal assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_string_literal_vs_weak_type_emits_ts2559() {
+    // A string literal assigned to a weak type should emit TS2559.
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething("completely wrong");
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for string literal assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_boolean_literal_vs_weak_type_emits_ts2559() {
+    // A boolean literal assigned to a weak type should emit TS2559.
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething(false);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for boolean literal assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn enum_member_vs_weak_type_emits_ts2559() {
+    // A string enum member assigned to a weak type with no common properties
+    // should emit TS2559.
+    // See: nestedExcessPropertyChecking.ts - `let x: { nope?: any } = E.A`
+    let source = r#"
+        enum E { A = "A" }
+        let x: { nope?: any } = E.A;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for enum member assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_with_matching_property_passes_weak_type() {
+    // A string assigned to a weak type that has 'length' property should NOT
+    // trigger TS2559 because strings have a 'length' property.
+    let source = r#"
+        let x: { length?: number } = "hello" as any as string;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        !has_ts2559,
+        "String should not trigger TS2559 for weak type with 'length' property. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn callable_value_to_weak_type_emits_ts2560_not_ts2559() {
+    // When passing a callable value to a parameter with a weak type (all optional
+    // properties), and calling the value would produce a compatible type,
+    // tsc emits TS2560 ("did you mean to call it?") instead of TS2559.
+    // See: weakType.ts - `doSomething(getDefaultSettings)`
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function getDefaultSettings() {
+            return { timeout: 1000 };
+        }
+        function doSomething(settings: Settings) {}
+        doSomething(getDefaultSettings);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    assert!(
+        has_ts2560,
+        "Expected TS2560 for callable value assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+    assert!(
+        !has_ts2559,
+        "Should emit TS2560, not TS2559, for callable value. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn arrow_function_to_weak_type_emits_ts2560() {
+    // An arrow function returning a compatible type should emit TS2560.
+    // See: weakType.ts - `doSomething(() => ({ timeout: 1000 }))`
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething(() => ({ timeout: 1000 }));
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
+    assert!(
+        has_ts2560,
+        "Expected TS2560 for arrow function assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn primitive_still_emits_ts2559_not_ts2560() {
+    // Primitives (non-callable) should still emit TS2559, not TS2560.
+    let source = r#"
+        interface Settings {
+            timeout?: number;
+            onError?(): void;
+        }
+        function doSomething(settings: Settings) {}
+        doSomething(12);
+        doSomething(false);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for primitives assigned to weak type. Got: {:?}",
+        diagnostics
+    );
+    assert!(
+        !has_ts2560,
+        "Should not emit TS2560 for non-callable primitives. Got: {:?}",
+        diagnostics
     );
 }

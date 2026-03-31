@@ -274,6 +274,26 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn normalize_assignability_display_type(&mut self, ty: TypeId) -> TypeId {
+        // Depth guard: recursive types (e.g., `interface Foo { j: Foo }`) cause
+        // unbounded recursion when normalizing property types for display. Deep
+        // recursion can trip the stack overflow breaker in get_type_of_symbol,
+        // permanently poisoning symbol resolution and causing subsequent type
+        // evaluations to return ERROR — which silently suppresses real
+        // assignability diagnostics (e.g., TS2322).
+        thread_local! {
+            static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        let depth = DEPTH.get();
+        if depth >= 10 {
+            return ty;
+        }
+        DEPTH.set(depth + 1);
+        let result = self.normalize_assignability_display_type_inner(ty);
+        DEPTH.set(depth);
+        result
+    }
+
+    fn normalize_assignability_display_type_inner(&mut self, ty: TypeId) -> TypeId {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);

@@ -699,6 +699,32 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION
                 || k == syntax_kind_ext::TYPE_ASSERTION =>
             {
+                // TS1294: erasableSyntaxOnly — angle-bracket type assertions are not erasable.
+                // Skip when there are parse errors — tsc's checker never visits error-recovery nodes.
+                if k == syntax_kind_ext::TYPE_ASSERTION
+                    && self.checker.ctx.compiler_options.erasable_syntax_only
+                    && !self.checker.ctx.has_parse_errors
+                {
+                    if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
+                        // Error span covers just the <Type> part, from node start to expression start
+                        let start = node.pos;
+                        let end = if let Some(expr_node) =
+                            self.checker.ctx.arena.get(assertion.expression)
+                        {
+                            expr_node.pos
+                        } else {
+                            node.end
+                        };
+                        self.checker.ctx.error(
+                            start,
+                            end - start,
+                            tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                                .to_string(),
+                            tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                        );
+                    }
+                }
+
                 if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
                     // Check for const assertion BEFORE type-checking the expression
                     // so we can set the context flag to preserve literal types

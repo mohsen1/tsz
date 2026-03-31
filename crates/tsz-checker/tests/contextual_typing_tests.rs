@@ -8,22 +8,22 @@
 //! The fix pushes `TypeId::ANY` as the return type context when the return type
 //! is purely inferred, so `check_return_statement` skips the circular check.
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 /// Helper: parse, bind, check with default options.
-fn check_default(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+fn check_default(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     check_with_options(source, CheckerOptions::default())
 }
 
 fn check_with_options(
     source: &str,
     options: CheckerOptions,
-) -> Vec<crate::diagnostics::Diagnostic> {
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -992,12 +992,7 @@ const r = apply(42, x => x);
 /// Weak type detection (TS2559): when the target type has only optional
 /// properties and a non-fresh source shares NO properties with it, tsc
 /// emits TS2559. (For fresh object literals, EPC/TS2353 takes priority.)
-///
-/// NOTE: tsz currently emits TS2345 instead of TS2559 — weak-type detection
-/// is not yet fully implemented. This test documents the current behavior and
-/// should be updated to expect TS2559 once the Lawyer layer implements it.
 #[test]
-#[ignore = "TS2559 weak-type detection not yet implemented — currently emits TS2345"]
 fn test_weak_type_detection_ts2559_for_non_fresh_source() {
     let source = r#"
 interface Options {
@@ -1013,9 +1008,8 @@ configure(obj);
 
     let diagnostics = check_default(source);
 
-    // tsc: TS2559: Type '{ unknown: boolean; }' has no properties in common
+    // tsc emits TS2559: Type '{ unknown: boolean; }' has no properties in common
     // with type 'Options'.
-    // tsz (current): TS2345 argument not assignable.
     let ts2559_errors: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2559)
@@ -1057,6 +1051,118 @@ configure({ unknown: true });
     assert!(
         !ts2353_errors.is_empty(),
         "Expected TS2353 (EPC) for fresh literal to weak type, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Generic type argument constraint against a weak type (all-optional properties)
+/// must emit TS2559 when the type argument has no properties in common with the
+/// constraint. This matches tsc behavior where `checkTypeAssignableTo` includes
+/// weak type detection for constraint checking.
+///
+/// Regression test for: incorrectNumberOfTypeArgumentsDuringErrorReporting.ts
+#[test]
+fn test_ts2559_weak_type_constraint_on_generic_type_argument() {
+    let source = r#"
+interface ObjA {
+  y?: string,
+}
+
+interface ObjB {[key:string]:any}
+
+interface Opts<A, B> {a:A, b:B}
+
+const fn2 = <
+  A extends ObjA,
+  B extends ObjB = ObjB
+>(opts:Opts<A, B>):string => 'Z'
+
+interface MyObjA {
+  x: string,
+}
+
+fn2<MyObjA>({
+  a: {x: 'X', y: 'Y'},
+  b: {},
+})
+"#;
+
+    let diagnostics = check_default(source);
+
+    let ts2559_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2559)
+        .collect();
+
+    assert!(
+        !ts2559_errors.is_empty(),
+        "Expected TS2559 for type argument with no common properties against weak constraint, \
+         got diagnostics={diagnostics:?}"
+    );
+
+    // Should NOT emit TS2344 (general constraint violation) for this case
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2344)
+        .collect();
+
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should emit TS2559 (weak type), not TS2344 (general constraint violation), \
+         got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Primitives should satisfy weak type constraints without TS2559.
+/// e.g., `bigint extends {t?: string}` is valid in tsc.
+#[test]
+fn test_primitive_satisfies_weak_type_constraint_no_ts2559() {
+    let source = r#"
+type WeakCheck<T extends { t?: string }> = T;
+type Result = WeakCheck<number>;
+"#;
+
+    let diagnostics = check_default(source);
+
+    let ts2559_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2559)
+        .collect();
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2344)
+        .collect();
+
+    assert!(
+        ts2559_errors.is_empty() && ts2344_errors.is_empty(),
+        "Primitives should satisfy weak type constraints, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// TS2559 for variable assignment to weak type (non-call, non-generic path).
+/// When `const x: WeakType = nonOverlappingObj`, tsc emits TS2559.
+#[test]
+fn test_ts2559_weak_type_variable_assignment() {
+    let source = r#"
+interface Config {
+    verbose?: boolean;
+    debug?: boolean;
+}
+
+let settings = { unrelated: 42 };
+let cfg: Config = settings;
+"#;
+
+    let diagnostics = check_default(source);
+
+    let ts2559_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2559)
+        .collect();
+
+    assert!(
+        !ts2559_errors.is_empty(),
+        "Expected TS2559 for variable assignment with no common properties, \
+         got diagnostics={diagnostics:?}"
     );
 }
 

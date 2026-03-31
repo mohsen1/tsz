@@ -1613,7 +1613,59 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let mut is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
+                // When the constraint is an object type with ONLY optional properties
+                // (a "weak type" like `{t?: string}`), primitive types always satisfy
+                // it in tsc (e.g., `bigint extends {t?: string}` is valid). However,
+                // non-primitive types that share no common properties should fail
+                // with TS2559 ("Type has no properties in common").
+                let constraint_is_all_optional = {
+                    let db = self.ctx.types.as_type_database();
+                    if let Some(shape_id) = tsz_solver::object_shape_id(db, instantiated_constraint)
+                    {
+                        let shape = db.object_shape(shape_id);
+                        !shape.properties.is_empty()
+                            && shape.properties.iter().all(|p| p.optional)
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                    } else {
+                        false
+                    }
+                };
+                // Only skip for primitives: they always satisfy weak type constraints.
+                // Non-primitive types must still go through assignability to detect
+                // TS2559 (no common properties).
+                let primitive_satisfies_weak = constraint_is_all_optional
+                    && query::is_primitive_type(self.ctx.types.as_type_database(), type_arg);
+                // When the constraint is a weak type (all-optional) and the type arg
+                // is NOT primitive, use assignability WITH weak type checks so that
+                // TS2559 is emitted when source has no common properties with the
+                // constraint. Without this, `{x: string}` would pass against
+                // `{y?: string}` structurally (all target props optional) but miss
+                // the weak type violation.
+                let mut is_satisfied = primitive_satisfies_weak
+                    || if constraint_is_all_optional
+                        && !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg)
+                    {
+                        self.is_assignable_to(type_arg, instantiated_constraint)
+                    } else {
+                        self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint)
+                    };
+
+                // When the constraint is all-optional and the structural check
+                // passed (because all-optional types have no required properties),
+                // separately check for weak type violation (TS2559).
+                // Non-primitive type arguments with NO common properties should
+                // fail, e.g., MyObjA {x: string} vs ObjA {y?: string}.
+                if is_satisfied && constraint_is_all_optional && !primitive_satisfies_weak {
+                    let analysis =
+                        self.analyze_assignability_failure(type_arg, instantiated_constraint);
+                    if matches!(
+                        analysis.failure_reason,
+                        Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+                    ) {
+                        is_satisfied = false;
+                    }
+                }
 
                 // Fallback for recursive generic constraints (coinductive semantics).
                 //
@@ -1829,7 +1881,7 @@ impl<'a> CheckerState<'a> {
     /// against function signature constraints.
     fn type_parameter_has_callable_constraint(&self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
-        if let Some(tsz_solver::TypeData::TypeParameter(tp)) = db.lookup(type_id) {
+        if let Some(tp) = tsz_solver::type_queries::get_type_parameter_info(db, type_id) {
             if let Some(constraint) = tp.constraint {
                 return query::is_callable_type(db, constraint)
                     || self.is_function_constraint(constraint);

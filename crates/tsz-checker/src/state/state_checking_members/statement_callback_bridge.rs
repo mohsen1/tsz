@@ -194,7 +194,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.check_import_attributes_deprecated_assert(export_decl.attributes);
 
             // TS2823: Import attributes require specific module options
-            self.check_import_attributes_module_option(export_decl.attributes);
+            self.check_import_attributes_module_option(
+                export_decl.attributes,
+                export_decl.is_type_only,
+            );
 
             // TS2322: Check export attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(export_decl.attributes);

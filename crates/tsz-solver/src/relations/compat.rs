@@ -235,6 +235,79 @@ impl<'a> CompatChecker<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    fn function_like_weak_type_properties(
+        &self,
+        mut props: Vec<PropertyInfo>,
+        has_call_signatures: bool,
+        has_construct_signatures: bool,
+    ) -> Vec<PropertyInfo> {
+        let mut ensure_prop = |name: &str| {
+            let atom = self.interner.intern_string(name);
+            if !props.iter().any(|prop| prop.name == atom) {
+                props.push(PropertyInfo::new(atom, TypeId::ANY));
+            }
+        };
+
+        if has_call_signatures {
+            // Function-like values expose Function members even when the callable
+            // shape itself does not materialize them. Weak-type overlap checks need
+            // to see those stable property names so unrelated weak object targets
+            // don't incorrectly accept function/class values.
+            ensure_prop("call");
+            ensure_prop("apply");
+        }
+
+        if has_construct_signatures {
+            ensure_prop("prototype");
+        }
+
+        props
+    }
+
+    fn weak_type_source_properties(&self, source: TypeId) -> Option<(Vec<PropertyInfo>, bool)> {
+        if source == TypeId::FUNCTION {
+            return Some((
+                self.function_like_weak_type_properties(Vec::new(), true, false),
+                false,
+            ));
+        }
+
+        match self.interner.lookup(source) {
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                let props = self.function_like_weak_type_properties(
+                    shape.properties.clone(),
+                    !shape.call_signatures.is_empty(),
+                    !shape.construct_signatures.is_empty(),
+                );
+                Some((
+                    props,
+                    shape.string_index.is_some() || shape.number_index.is_some(),
+                ))
+            }
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                let props = self.function_like_weak_type_properties(
+                    Vec::new(),
+                    !shape.is_constructor,
+                    shape.is_constructor,
+                );
+                Some((props, false))
+            }
+            _ => {
+                let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+                let source_shape_id = extractor.extract(source)?;
+                let source_shape = self
+                    .interner
+                    .object_shape(crate::types::ObjectShapeId(source_shape_id));
+                Some((
+                    source_shape.properties.clone(),
+                    source_shape.string_index.is_some() || source_shape.number_index.is_some(),
+                ))
+            }
+        }
+    }
+
     fn normalize_assignability_operand(&mut self, mut type_id: TypeId) -> TypeId {
         // Keep normalization bounded to avoid infinite resolver/evaluator cycles.
         for _ in 0..8 {
@@ -1225,12 +1298,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // as `never` or any non-nullable type. The structural subtype check
         // at core.rs:830-889 correctly rejects concrete <: TypeParam, so we
         // must not short-circuit here.
+        // Additionally, `null` is not assignable to `void` even without
+        // strictNullChecks — only `undefined` is (via the intrinsic rule).
         if !self.strict_null_checks
             && source.is_nullish()
             && !matches!(
                 self.interner.lookup(target),
                 Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
             )
+            && !(source == TypeId::NULL && target == TypeId::VOID)
         {
             return Some(true);
         }
@@ -1291,13 +1367,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         // Without strictNullChecks, null/undefined are assignable to all types
-        // EXCEPT type parameters (which are opaque and could be any type).
+        // EXCEPT type parameters and null-to-void (only undefined <: void).
         if !self.strict_null_checks
             && source.is_nullish()
             && !matches!(
                 self.interner.lookup(target),
                 Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
             )
+            && !(source == TypeId::NULL && target == TypeId::VOID)
         {
             return true;
         }
@@ -1359,6 +1436,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 self.interner.lookup(target),
                 Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
             )
+            && !(source == TypeId::NULL && target == TypeId::VOID)
         {
             return None;
         }
@@ -1489,7 +1567,44 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.disable_method_bivariance = self.strict_subtype_checking;
     }
 
+    /// Check if a type is a "weak type" in the tsc sense.
+    /// A weak type is an object type with all optional properties, no call/construct
+    /// signatures, and no index signatures. For intersections, ALL members must be
+    /// weak types. Non-object types (primitives, etc.) are never weak.
+    fn is_weak_type(&self, type_id: TypeId) -> bool {
+        // Intersections are weak only if ALL members are weak
+        if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return !members.is_empty() && members.iter().all(|m| self.is_weak_type(*m));
+        }
+
+        // Try to extract object shape
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+        let Some(shape_id) = extractor.extract(type_id) else {
+            return false;
+        };
+        let shape = self
+            .interner
+            .object_shape(crate::types::ObjectShapeId(shape_id));
+
+        // Must have properties, all optional, no index signatures
+        !shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().all(|p| p.optional)
+    }
+
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
+        // For intersection targets, ALL members must be weak types.
+        // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
+        // This matches tsc's isWeakType() which checks every() for intersections.
+        if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(list_id);
+            if members.iter().any(|m| !self.is_weak_type(*m)) {
+                return false;
+            }
+        }
+
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
 
         let Some(target_shape_id) = extractor.extract(target) else {
@@ -1628,26 +1743,158 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
-        let source_shape_id = match extractor.extract(source) {
-            Some(id) => id,
-            None => {
-                // No extractable object shape. tsc considers primitives assignable
-                // to weak types: `bigint extends {t?: string}` is valid because
-                // the weak type check is about objects with wrong properties.
-                // Primitives have no own properties to conflict.
-                return false;
-            }
+        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        else {
+            // No extractable object/function-like shape. For primitive types
+            // (string/number/boolean/bigint/symbol literals, enum members, etc.),
+            // tsc emits TS2559 because primitives have no user-defined properties
+            // in common with weak types.
+            //
+            // We check if the target's weak type properties could overlap with
+            // well-known primitive prototype properties (e.g., `length` for strings).
+            // If no overlap, it's a weak type violation.
+            return self.primitive_violates_weak_type(source, target_props);
         };
 
-        let source_shape = self
-            .interner
-            .object_shape(crate::types::ObjectShapeId(source_shape_id));
-        let source_props = source_shape.properties.as_slice();
+        if has_index_signature {
+            return false;
+        }
 
         // Empty objects are assignable to weak types (all optional properties).
         // Only trigger weak type violation if source has properties that don't overlap.
-        !source_props.is_empty() && !self.has_common_property(source_props, target_props)
+        !source_props.is_empty() && !self.has_common_property(source_props.as_slice(), target_props)
+    }
+
+    /// Check if a primitive source type violates a weak type target by having
+    /// no properties in common.
+    ///
+    /// In tsc, primitives have apparent types (e.g., `string` has the `String`
+    /// interface with `length`, `charAt`, etc.). When checking a primitive
+    /// against a weak type, tsc checks if ANY of the weak type's properties
+    /// exist on the primitive's apparent type.
+    ///
+    /// We approximate this by checking target properties against a set of
+    /// well-known primitive prototype properties.
+    fn primitive_violates_weak_type(&self, source: TypeId, target_props: &[PropertyInfo]) -> bool {
+        // Determine if source is a primitive type
+        let is_primitive = if source.is_intrinsic() {
+            matches!(
+                source,
+                TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+            )
+        } else {
+            matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::Intrinsic(_))
+            )
+        };
+
+        if !is_primitive {
+            // Not a primitive — fall back to the original behavior (no violation
+            // because we can't determine the source's properties).
+            return false;
+        }
+
+        // Determine which primitive category the source belongs to
+        let is_string_like = source == TypeId::STRING
+            || matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(LiteralValue::String(_)))
+            )
+            || self.is_string_enum_member(source);
+
+        let is_number_like = source == TypeId::NUMBER
+            || matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(LiteralValue::Number(_)))
+            )
+            || self.is_numeric_enum_member(source);
+
+        // Check if any target property matches a well-known primitive property.
+        // If so, the primitive's apparent type shares a property with the weak
+        // target and this is NOT a violation.
+        for prop in target_props {
+            let name = self.interner.resolve_atom_ref(prop.name);
+            // Properties common to all primitives (from Object.prototype)
+            if matches!(
+                name.as_ref(),
+                "toString"
+                    | "valueOf"
+                    | "constructor"
+                    | "toLocaleString"
+                    | "hasOwnProperty"
+                    | "isPrototypeOf"
+                    | "propertyIsEnumerable"
+            ) {
+                return false;
+            }
+            // String-specific properties
+            if is_string_like
+                && matches!(
+                    name.as_ref(),
+                    "length"
+                        | "charAt"
+                        | "charCodeAt"
+                        | "concat"
+                        | "indexOf"
+                        | "lastIndexOf"
+                        | "match"
+                        | "replace"
+                        | "search"
+                        | "slice"
+                        | "split"
+                        | "substring"
+                        | "toLowerCase"
+                        | "toUpperCase"
+                        | "trim"
+                        | "trimStart"
+                        | "trimEnd"
+                        | "padStart"
+                        | "padEnd"
+                        | "startsWith"
+                        | "endsWith"
+                        | "includes"
+                        | "repeat"
+                        | "normalize"
+                        | "at"
+                )
+            {
+                return false;
+            }
+            // Number-specific properties
+            if is_number_like
+                && matches!(name.as_ref(), "toFixed" | "toExponential" | "toPrecision")
+            {
+                return false;
+            }
+        }
+
+        // None of the target's properties match the primitive's apparent type
+        true
+    }
+
+    /// Check if a type is a string enum member.
+    fn is_string_enum_member(&self, type_id: TypeId) -> bool {
+        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
+            matches!(
+                self.interner.lookup(member_type),
+                Some(TypeData::Literal(LiteralValue::String(_)))
+            ) || member_type == TypeId::STRING
+        } else {
+            false
+        }
+    }
+
+    /// Check if a type is a numeric enum member.
+    fn is_numeric_enum_member(&self, type_id: TypeId) -> bool {
+        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
+            matches!(
+                self.interner.lookup(member_type),
+                Some(TypeData::Literal(LiteralValue::Number(_)))
+            ) || member_type == TypeId::NUMBER
+        } else {
+            false
+        }
     }
 
     fn source_lacks_union_common_property(
@@ -1681,32 +1928,27 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Use visitor for Object types
-        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
-        let source_shape_id = match extractor.extract(source) {
-            Some(id) => id,
-            None => {
-                // Array/Tuple types are objects but not extractable. They rarely
-                // share property names with arbitrary union members, so treat as
-                // lacking common properties (matching tsc's getPropertiesOfType
-                // behavior for arrays in weak type detection).
-                if self.is_array_or_tuple_type(source) {
-                    return true;
-                }
-                return false;
+        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        else {
+            // Array/Tuple types are objects but not extractable. They rarely
+            // share property names with arbitrary union members, so treat as
+            // lacking common properties (matching tsc's getPropertiesOfType
+            // behavior for arrays in weak type detection).
+            if self.is_array_or_tuple_type(source) {
+                return true;
             }
+            return false;
         };
 
-        let source_shape = self
-            .interner
-            .object_shape(crate::types::ObjectShapeId(source_shape_id));
-        if source_shape.string_index.is_some() || source_shape.number_index.is_some() {
+        if has_index_signature {
             return false;
         }
-        let source_props = source_shape.properties.as_slice();
+
         if source_props.is_empty() {
             return false;
         }
 
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let mut has_common = false;
         for member in target_members {
             let resolved_member = self.resolve_weak_type_ref(*member);
@@ -1721,7 +1963,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if member_shape.string_index.is_some() || member_shape.number_index.is_some() {
                 return false;
             }
-            if self.has_common_property(source_props, member_shape.properties.as_slice()) {
+            if self.has_common_property(source_props.as_slice(), member_shape.properties.as_slice())
+            {
                 has_common = true;
                 break;
             }

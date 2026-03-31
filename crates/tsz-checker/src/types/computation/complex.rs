@@ -209,10 +209,9 @@ impl<'a> CheckerState<'a> {
                     .filter(|&sym_id| {
                         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
                             // Accept single-class declarations AND merged class+function
-                            // declarations. For merged symbols, `get_type_of_symbol` correctly
-                            // produces a Callable with both call and construct signatures.
-                            // The slow path (`get_type_of_node_with_request`) can return the
-                            // function type instead of the merged class constructor type.
+                            // declarations. Checked-JS class + constructor-variable merges
+                            // stay on this fast path too, but are resolved to the constructor
+                            // variable's value declaration below.
                             let has_class_decl = symbol.declarations.iter().any(|&d| {
                                 d.is_some()
                                     && self.ctx.arena.get(d).is_some_and(|decl| {
@@ -230,7 +229,35 @@ impl<'a> CheckerState<'a> {
                     });
                 if let Some(sym_id) = fast_symbol {
                     self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
-                    self.get_type_of_symbol(sym_id)
+                    // The fast path bypasses get_type_of_identifier which
+                    // normally performs TDZ checking. We must check here so
+                    // that `new C()` before `class C {}` still emits TS2449.
+                    if self.check_tdz_violation(sym_id, new_expr.expression, identifier_text, false)
+                    {
+                        return TypeId::ERROR;
+                    }
+                    if self.ctx.is_js_file()
+                        && self.ctx.should_resolve_jsdoc()
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
+                        && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
+                        && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) == 0
+                        && let Some(preferred_decl) = self.checked_js_constructor_value_declaration(
+                            sym_id,
+                            symbol.value_declaration,
+                            &symbol.declarations,
+                        )
+                    {
+                        let value_type =
+                            self.type_of_value_declaration_for_symbol(sym_id, preferred_decl);
+                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                            value_type
+                        } else {
+                            self.get_type_of_symbol(sym_id)
+                        }
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    }
                 } else {
                     self.get_type_of_node_with_request(new_expr.expression, &read_request)
                 }

@@ -238,9 +238,10 @@ impl<'a> CheckerState<'a> {
                 // `unknown` for unconstrained, uninferred type params.
                 for tp in &shape.type_params {
                     if let Some(resolved) = substitution.get(tp.name) {
-                        if let Some(tsz_solver::TypeData::TypeParameter(info)) =
-                            self.ctx.types.lookup(resolved)
-                        {
+                        if let Some(info) = tsz_solver::type_queries::get_type_parameter_info(
+                            self.ctx.types,
+                            resolved,
+                        ) {
                             let name_str = self.ctx.types.resolve_atom(info.name);
                             if name_str.as_str().starts_with("__infer_") {
                                 let fallback = if let Some(constraint) = tp.constraint {

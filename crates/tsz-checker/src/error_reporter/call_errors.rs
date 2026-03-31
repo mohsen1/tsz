@@ -134,8 +134,8 @@ impl<'a> CheckerState<'a> {
                         // Create a union with undefined if not already present.
                         if p.type_id == TypeId::UNDEFINED {
                             p.type_id
-                        } else if let Some(tsz_solver::types::TypeData::Union(list_id)) =
-                            self.ctx.types.lookup(p.type_id)
+                        } else if let Some(list_id) =
+                            tsz_solver::union_list_id(self.ctx.types, p.type_id)
                         {
                             let members = self.ctx.types.type_list(list_id);
                             if members.contains(&TypeId::UNDEFINED) {
@@ -1618,9 +1618,23 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             };
 
-            // Get the property name string
-            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
-                continue;
+            // Get the property name string.
+            // For computed property names (e.g., `[SYM]`), fall back to type-level
+            // resolution so unique symbols and const-evaluated keys are resolved.
+            let is_computed_property = self
+                .ctx
+                .arena
+                .get(prop_name_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
+                Some(name) => name,
+                None if is_computed_property => {
+                    match self.get_property_name_resolved(prop_name_idx) {
+                        Some(name) => name,
+                        None => continue,
+                    }
+                }
+                None => continue,
             };
 
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
@@ -1788,22 +1802,44 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let source_prop_type_for_diagnostic =
-                    if self.is_fresh_literal_expression(prop_value_idx) {
-                        self.widen_literal_type(source_prop_type)
-                    } else {
-                        source_prop_type
-                    };
-
-                // Emit TS2322 on the property name node, using the declared type
-                // (without optional undefined) for the error message
-                let source_prop_type_for_diagnostic =
-                    self.widen_function_like_call_source(source_prop_type_for_diagnostic);
-                self.error_type_not_assignable_at_with_anchor(
-                    source_prop_type_for_diagnostic,
-                    target_prop_type_for_diagnostic,
-                    prop_name_idx,
-                );
+                // For computed property names, emit TS2418 ("Type of computed
+                // property's value is '{0}', which is not assignable to type
+                // '{1}'.") instead of the generic TS2322.  This matches tsc's
+                // behavior in `elaborateElementwise`.  tsc does not widen
+                // literal types in the TS2418 message.
+                if is_computed_property {
+                    // For TS2418, use the literal type from the initializer
+                    // expression when available (tsc shows "str" not string).
+                    let computed_source = self
+                        .literal_type_from_initializer(prop_value_idx)
+                        .unwrap_or(source_prop_type);
+                    let src_str = self.format_type_for_assignability_message(computed_source);
+                    let tgt_str =
+                        self.format_type_for_assignability_message(target_prop_type_for_diagnostic);
+                    let msg = format_message(
+                        diagnostic_messages::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    self.error_at_node(
+                        prop_name_idx,
+                        &msg,
+                        diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                } else {
+                    let source_prop_type_for_diagnostic =
+                        if self.is_fresh_literal_expression(prop_value_idx) {
+                            self.widen_literal_type(source_prop_type)
+                        } else {
+                            source_prop_type
+                        };
+                    let source_prop_type_for_diagnostic =
+                        self.widen_function_like_call_source(source_prop_type_for_diagnostic);
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_prop_type_for_diagnostic,
+                        target_prop_type_for_diagnostic,
+                        prop_name_idx,
+                    );
+                }
                 elaborated = true;
             }
         }
@@ -1886,21 +1922,22 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Extract a property name from an object literal element node.
-    fn object_literal_property_name_from_elem(&self, elem_idx: NodeIndex) -> Option<String> {
+    /// Falls back to type-level resolution for computed property names
+    /// (e.g., unique symbols, const-evaluated keys).
+    fn object_literal_property_name_from_elem(&mut self, elem_idx: NodeIndex) -> Option<String> {
         use tsz_parser::parser::syntax_kind_ext;
         let elem_node = self.ctx.arena.get(elem_idx)?;
-        match elem_node.kind {
+        let name_idx = match elem_node.kind {
             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                let prop = self.ctx.arena.get_property_assignment(elem_node)?;
-                self.object_literal_property_name_text(prop.name)
+                self.ctx.arena.get_property_assignment(elem_node)?.name
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                let prop = self.ctx.arena.get_shorthand_property(elem_node)?;
-                self.object_literal_property_name_text(prop.name)
+                self.ctx.arena.get_shorthand_property(elem_node)?.name
             }
-            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => None,
-            _ => None,
-        }
+            _ => return None,
+        };
+        self.object_literal_property_name_text(name_idx)
+            .or_else(|| self.get_property_name_resolved(name_idx))
     }
 
     /// Elaborate array literal element type mismatches with TS2322.
@@ -2237,22 +2274,40 @@ impl<'a> CheckerState<'a> {
 
         // When the failure reason is NoCommonProperties (weak types with no
         // properties in common), tsc emits TS2559 directly instead of TS2345.
+        // If the source is callable/constructable and calling it would produce a
+        // compatible type, tsc emits TS2560 ("did you mean to call it?") instead.
+        // Use the unwidened literal type for the diagnostic message — tsc preserves
+        // literal types (e.g., "12" not "number", "false" not "boolean") in
+        // "has no properties in common" messages.
         if matches!(
             &analysis.failure_reason,
             Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
         ) {
-            let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
+            // Try to get the literal expression display (unwidened) from the AST
+            let arg_str = self
+                .literal_call_argument_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(arg_type));
             let param_str =
                 self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
-            let message = format_message(
-                diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                &[&arg_str, &param_str],
-            );
-            let request = DiagnosticRenderRequest::simple(
-                DiagnosticAnchorKind::Exact,
-                diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                message,
-            );
+
+            // Check if the source is callable/constructable and calling would fix
+            // the type mismatch — if so, emit TS2560 instead of TS2559.
+            let (msg_template, code) = if self
+                .should_suggest_calling_for_weak_type(arg_type, param_type)
+            {
+                (
+                        diagnostic_messages::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                        diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                    )
+            } else {
+                (
+                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                )
+            };
+            let message = format_message(msg_template, &[&arg_str, &param_str]);
+            let request =
+                DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message);
             self.emit_render_request(idx, request);
             return;
         }
@@ -2300,16 +2355,25 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
     ) {
         // When there are excess arguments, point to them instead of the callee.
-        let (start, length) =
-            if let Some((s, l)) = self.resolve_excess_argument_span(args, expected_max) {
-                (s, l)
-            } else if let Some(anchor) =
-                self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
-            {
+        let (start, length) = if let Some((s, l)) =
+            self.resolve_excess_argument_span(args, expected_max)
+        {
+            (s, l)
+        } else if self.is_new_expression(idx) {
+            // For `new X()` with too few arguments, TSC uses the full
+            // `new X(...)` span (starting from the `new` keyword).
+            if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {
                 (anchor.start, anchor.length)
             } else {
                 return;
-            };
+            }
+        } else if let Some(anchor) =
+            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
+        {
+            (anchor.start, anchor.length)
+        } else {
+            return;
+        };
 
         let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
             self.ctx.types,
@@ -2321,6 +2385,14 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .diagnostics
             .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+    }
+
+    /// Check if a node is a `new` expression.
+    fn is_new_expression(&self, idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::NEW_EXPRESSION)
     }
 
     /// Report a spread argument type error (TS2556).
@@ -2342,9 +2414,15 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         let message = format!("Expected at least {expected_min} arguments, but got {got}.");
+        // For `new` expressions, TSC uses the full `new X(...)` span.
+        let anchor_kind = if self.is_new_expression(idx) {
+            DiagnosticAnchorKind::Exact
+        } else {
+            DiagnosticAnchorKind::CallPrimary
+        };
         self.error_at_anchor(
             idx,
-            DiagnosticAnchorKind::CallPrimary,
+            anchor_kind,
             &message,
             diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
         );

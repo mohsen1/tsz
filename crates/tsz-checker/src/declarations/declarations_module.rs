@@ -175,6 +175,23 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
 
+            // TS1294: erasableSyntaxOnly — non-ambient instantiated modules are not erasable.
+            // tsc reports the error at node.name, matching getErrorSpanForNode behavior.
+            if self.ctx.compiler_options.erasable_syntax_only
+                && !self.ctx.is_ambient_declaration(module_idx)
+                && module.body.is_some()
+                && self.is_namespace_declaration_instantiated(module_idx)
+            {
+                let error_node = self.ctx.arena.get(module.name).unwrap_or(node);
+                self.ctx.error(
+                    error_node.pos,
+                    error_node.end - error_node.pos,
+                    diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                        .to_string(),
+                    diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                );
+            }
+
             // TS2433/TS2434: Check namespace merging with class/function
             // A namespace declaration cannot be in a different file from a class/function
             // with which it is merged (TS2433), or located prior to the class/function (TS2434).

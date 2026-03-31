@@ -70,6 +70,10 @@ pub const CONTEXT_FLAG_CLASS_FIELD_INITIALIZER: u32 = 32768;
 /// Context flag: parsing inside a tuple element where `?` is an optional marker.
 /// When set, postfix `?` should NOT be treated as JSDoc nullable (TS17019).
 pub const CONTEXT_FLAG_IN_TUPLE_ELEMENT: u32 = 65536;
+/// Context flag: parsing the property name of a generator method (`* [name]`).
+/// Suppresses TS1213 for `yield` in computed property names of generator methods
+/// (tsc does not emit TS1213 in this position).
+pub const CONTEXT_FLAG_GENERATOR_MEMBER_NAME: u32 = 131072;
 
 // =============================================================================
 // Parse Diagnostic
@@ -165,6 +169,12 @@ pub struct ParserState {
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
     pub(crate) suppress_next_missing_close_paren_error_once: bool,
+    /// Speculative async-arrow parsing consumed `=>` while recovering a malformed
+    /// parameter list, so the async-arrow candidate must roll back.
+    pub(crate) saw_arrow_parameter_recovery: bool,
+    /// A failed async-arrow speculation left a trailing `: Type =>` tail that
+    /// should use the narrower variable-declaration recovery path.
+    pub(crate) pending_failed_async_arrow_colon_recovery: bool,
 }
 
 impl ParserState {
@@ -211,6 +221,8 @@ impl ParserState {
             import_attribute_tail_recovered: false,
             suppress_object_literal_comma_once: false,
             suppress_next_missing_close_paren_error_once: false,
+            saw_arrow_parameter_recovery: false,
+            pending_failed_async_arrow_colon_recovery: false,
         }
     }
 
@@ -237,6 +249,8 @@ impl ParserState {
         self.import_attribute_tail_recovered = false;
         self.suppress_object_literal_comma_once = false;
         self.suppress_next_missing_close_paren_error_once = false;
+        self.saw_arrow_parameter_recovery = false;
+        self.pending_failed_async_arrow_colon_recovery = false;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded

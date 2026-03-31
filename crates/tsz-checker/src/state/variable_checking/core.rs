@@ -151,6 +151,66 @@ impl<'a> CheckerState<'a> {
         TypingRequest::with_contextual_type(self.contextual_type_for_expression(cached_type))
     }
 
+    fn checked_js_remote_class_declared_type_for_variable(
+        &mut self,
+        decl_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || self.ctx.binder.is_external_module()
+        {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(node)?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        let name = self
+            .ctx
+            .arena
+            .get_identifier_at(var_decl.name)?
+            .escaped_text
+            .clone();
+
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx || binder.is_external_module() {
+                continue;
+            }
+            let arena = all_arenas.get(file_idx)?;
+            let source_file = arena.source_files.first()?;
+
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    continue;
+                }
+                let Some(class_decl) = arena.get_class(stmt_node) else {
+                    continue;
+                };
+                let Some(ident) = arena.get_identifier_at(class_decl.name) else {
+                    continue;
+                };
+                if ident.escaped_text != name || !arena.is_in_ambient_context(stmt_idx) {
+                    continue;
+                }
+                let Some(sym_id) = binder.get_node_symbol(stmt_idx) else {
+                    continue;
+                };
+                self.ctx.register_symbol_file_index(sym_id, file_idx);
+                return Some(self.get_type_of_symbol(sym_id));
+            }
+        }
+
+        None
+    }
+
     fn maybe_clear_checked_initializer_type_cache(&mut self, initializer_idx: NodeIndex) {
         // Some initializer forms are first visited during build_type_environment, where we only
         // want a stable type shape. The later checked pass must revisit them so body/member
@@ -522,6 +582,13 @@ impl<'a> CheckerState<'a> {
             {
                 declared_type = jsdoc_type;
                 jsdoc_declared_type = Some(jsdoc_type);
+                has_type_annotation = true;
+            }
+            if !has_type_annotation
+                && let Some(merged_type) =
+                    checker.checked_js_remote_class_declared_type_for_variable(decl_idx)
+            {
+                declared_type = merged_type;
                 has_type_annotation = true;
             }
             // If there's a type annotation, that determines the type (even for 'any')

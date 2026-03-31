@@ -196,6 +196,7 @@ impl<'a> CheckerContext<'a> {
             generator_yield_operand_types: Vec::new(),
             generator_had_ts7057: false,
             this_type_stack: Vec::new(),
+            function_owned_this_stack: Vec::new(),
             enclosing_class: None,
             enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),

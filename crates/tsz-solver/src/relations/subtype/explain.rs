@@ -65,7 +65,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        if !self.strict_null_checks && source.is_nullish() {
+        if !self.strict_null_checks
+            && source.is_nullish()
+            && !(source == TypeId::NULL && target == TypeId::VOID)
+        {
             return None;
         }
 

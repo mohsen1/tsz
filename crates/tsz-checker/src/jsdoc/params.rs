@@ -42,6 +42,47 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn jsdoc_marks_parameter_optional(
+        &self,
+        function_idx: NodeIndex,
+        param_idx: NodeIndex,
+        param_name: NodeIndex,
+    ) -> bool {
+        if !self.is_js_file() {
+            return false;
+        }
+
+        let Some(function_node) = self.ctx.arena.get(function_idx) else {
+            return false;
+        };
+        let parameters = if let Some(func) = self.ctx.arena.get_function(function_node) {
+            &func.parameters.nodes
+        } else if let Some(method) = self.ctx.arena.get_method_decl(function_node) {
+            &method.parameters.nodes
+        } else if let Some(ctor) = self.ctx.arena.get_constructor(function_node) {
+            &ctor.parameters.nodes
+        } else {
+            return false;
+        };
+
+        let Some(param_position) = parameters.iter().position(|&idx| idx == param_idx) else {
+            return false;
+        };
+        let Some(jsdoc) = self
+            .get_jsdoc_for_function(function_idx)
+            .or_else(|| self.find_jsdoc_for_function(function_idx))
+        else {
+            return false;
+        };
+
+        let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(&jsdoc)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let pname = self.effective_jsdoc_param_name(param_name, &jsdoc_param_names, param_position);
+        !Self::jsdoc_has_required_param_tag(&jsdoc, &pname)
+    }
+
     /// TS8024: Check that JSDoc `@param` tag names match actual function parameters.
     ///
     /// For each `@param` tag, verifies that a parameter with that name exists.
