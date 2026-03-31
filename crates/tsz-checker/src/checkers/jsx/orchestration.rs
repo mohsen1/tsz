@@ -1353,6 +1353,26 @@ impl<'a> CheckerState<'a> {
             // Component: resolve as variable expression
             // The tag name is a reference to a component (function or class)
             let component_type = self.compute_type_of_node(tag_name_idx);
+            
+            // If the JSX element has explicit type arguments (e.g., <Component<T>>),
+            // create an Application type to properly instantiate the generic component.
+            // This ensures that when we check overloaded SFCs, the signatures are
+            // instantiated with the provided type arguments rather than constraints/defaults.
+            let component_type = if let Some(ref type_args_nodes) = jsx_opening.type_arguments {
+                let type_args: Vec<TypeId> = type_args_nodes
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                    .collect();
+                if !type_args.is_empty() {
+                    self.ctx.types.application(component_type, type_args)
+                } else {
+                    component_type
+                }
+            } else {
+                component_type
+            };
+            
             let component_metadata_type =
                 self.get_jsx_component_metadata_type(tag_name_idx, component_type);
             let resolved_component_type =
