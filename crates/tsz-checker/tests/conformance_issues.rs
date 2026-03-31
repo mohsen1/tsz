@@ -9849,6 +9849,54 @@ namespace myModule {
 }
 
 #[test]
+fn test_import_aliases_in_global_augmentation_emit_ts2667_and_ts2591() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+export { }
+
+namespace A {
+    export const y = 34;
+    export interface y { s: string }
+}
+
+declare global {
+    export import x = A.y;
+
+    // Should still error
+    import f = require("fs");
+}
+
+const m: number = x;
+let s: x = { s: "" };
+void s.s;
+        "#,
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2667),
+        "Expected TS2667 for import in global augmentation. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2591),
+        "Expected TS2591 for unresolved require module in global augmentation. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1147),
+        "TS1147 should not be emitted for global augmentation import. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "TS2322 should be suppressed once global augmentation import errors are emitted. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_exported_var_without_type_or_initializer_emits_ts7005() {
     let opts = CheckerOptions {
         no_implicit_any: true,
