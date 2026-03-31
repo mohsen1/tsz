@@ -2274,6 +2274,8 @@ impl<'a> CheckerState<'a> {
 
         // When the failure reason is NoCommonProperties (weak types with no
         // properties in common), tsc emits TS2559 directly instead of TS2345.
+        // If the source is callable/constructable and calling it would produce a
+        // compatible type, tsc emits TS2560 ("did you mean to call it?") instead.
         // Use the unwidened literal type for the diagnostic message — tsc preserves
         // literal types (e.g., "12" not "number", "false" not "boolean") in
         // "has no properties in common" messages.
@@ -2287,15 +2289,25 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| self.format_type_diagnostic(arg_type));
             let param_str =
                 self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
-            let message = format_message(
-                diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                &[&arg_str, &param_str],
-            );
-            let request = DiagnosticRenderRequest::simple(
-                DiagnosticAnchorKind::Exact,
-                diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                message,
-            );
+
+            // Check if the source is callable/constructable and calling would fix
+            // the type mismatch — if so, emit TS2560 instead of TS2559.
+            let (msg_template, code) = if self
+                .should_suggest_calling_for_weak_type(arg_type, param_type)
+            {
+                (
+                        diagnostic_messages::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                        diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                    )
+            } else {
+                (
+                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                )
+            };
+            let message = format_message(msg_template, &[&arg_str, &param_str]);
+            let request =
+                DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message);
             self.emit_render_request(idx, request);
             return;
         }
