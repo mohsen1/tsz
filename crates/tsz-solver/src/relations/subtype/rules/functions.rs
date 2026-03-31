@@ -1055,28 +1055,68 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         });
 
                     // For alpha-rename to succeed, the target's constraint must be
-                    // assignable to the source's constraint. This ensures the source
-                    // function's constraint requirements are at least as permissive
-                    // as the target's. For example:
-                    //   source: <S extends T> (stricter constraint)
-                    //   target: <S> (no constraint = unknown)
-                    //   check: unknown ≤ T → false → alpha-rename fails
-                    //   → falls through to erasure/inference which correctly
-                    //   rejects the assignment (TS2322).
+                    // at least as strict as the source's constraint. This ensures the source
+                    // function's constraint requirements are at most as strict
+                    // as the target's.
                     //
+                    // The key check: target_constraint ≤ source_constraint
+                    // If target's constraint is not assignable to source's constraint,
+                    // then source is stricter and we should NOT allow alpha-rename.
+                    //
+                    // Example:
+                    //   source: <S extends T> (constraint: T)
+                    //   target: <S> (constraint: unknown)
+                    //   check: unknown ≤ T → true (unknown is assignable to T)
+                    //   But wait, this means target is LOOSER, so source is STRICTER!
+                    //   We should NOT allow alpha-rename when source is stricter.
+                    //
+                    // The issue: when source has S extends T and target has S (no constraint),
+                    // the source is stricter. Alpha-rename would erase this distinction.
+                    // We need to detect when source has a constraint that target doesn't.
+                    //
+                    // Correction: check if source has a constraint that target doesn't.
+                    // If source has constraint and target doesn't (or target's constraint
+                    // is looser), then alpha-rename should fail.
+                    //
+                    // We check: does source have a constraint that makes it stricter?
+                    // Source is stricter if:
+                    // - source has constraint, target doesn't: always stricter
+                    // - both have constraints: source is stricter if its constraint is narrower
+                    let source_has_constraint = source_tp.constraint.is_some();
+                    let target_has_constraint = target_tp.constraint.is_some();
+                    
+                    let source_is_stricter = if source_has_constraint && !target_has_constraint {
+                        // Source has constraint, target doesn't → source is stricter
+                        true
+                    } else if !source_has_constraint && target_has_constraint {
+                        // Target has constraint, source doesn't → source is looser (OK)
+                        false
+                    } else if source_has_constraint && target_has_constraint {
+                        // Both have constraints: check if source's is stricter
+                        // If target's constraint is NOT assignable to source's constraint,
+                        // then source is stricter
+                        !self.check_subtype(target_constraint, source_constraint).is_true()
+                    } else {
+                        // Neither has constraint → equal
+                        false
+                    };
+
+                    if source_is_stricter {
+                        return false; // Don't allow alpha-rename
+                    }
+
                     // For mapped/indexed contexts, both directions must hold
                     // to preserve constraint information.
-                    let target_to_source = self
-                        .check_subtype(target_constraint, source_constraint)
-                        .is_true();
-
                     if mapped_constraint_sensitive {
+                        let target_to_source = self
+                            .check_subtype(target_constraint, source_constraint)
+                            .is_true();
                         let source_to_target = self
                             .check_subtype(source_constraint, target_constraint)
                             .is_true();
                         target_to_source && source_to_target
                     } else {
-                        target_to_source
+                        true // Constraints are compatible, allow alpha-rename
                     }
                 });
 
@@ -1112,13 +1152,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     &target_to_source_substitution,
                 );
             } else {
-                // Strategy 2: canonicalize target — replace type params with constraints,
-                // then fall through to the generic-source → non-generic-target inference path
-                let canonical_substitution =
-                    erase_type_params_to_constraints(&target_instantiated.type_params);
-                target_instantiated =
-                    self.instantiate_function_shape(&target_instantiated, &canonical_substitution);
-                target_instantiated.type_params.clear();
+                // Strategy 2: When alpha-rename fails due to incompatible constraints,
+                // the source has stricter constraints than the target. Inference would
+                // incorrectly succeed by inferring unconstrained types. Instead, we reject
+                // the assignment immediately.
+                //
+                // Example:
+                //   source: <T, S extends T>(x: T, y: S) => void
+                //   target: <T, S>(x: T, y: S) => void
+                //   constraint check: unknown <: T (false) → alpha-rename fails
+                //   → source is stricter, so assignment should fail (TS2322)
+                self.type_param_equivalences.truncate(equiv_start);
+                return SubtypeResult::False;
             }
         }
 
