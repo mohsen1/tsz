@@ -84,7 +84,10 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
             return false;
         };
-        let base_expr = self.ctx.arena.skip_parenthesized_and_assertions(access.expression);
+        let base_expr = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(access.expression);
         let Some(base_node) = self.ctx.arena.get(base_expr) else {
             return false;
         };
