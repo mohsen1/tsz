@@ -693,6 +693,26 @@ impl<'a> CheckerState<'a> {
                         )
                     })
                 });
+
+        // When the original constraint is an indexed access type (e.g., `AB[S]`),
+        // evaluation may eagerly resolve it (e.g., to `"a"`) by substituting the
+        // type parameter's constraint, which can mask the fact that the index
+        // constraint exceeds the object's key space (e.g., S extends 'a'|'b'|'extra'
+        // but AB only has keys 'a'|'b'). Check the PRE-evaluation indexed access
+        // for this pattern and override validity when the index constraint is invalid.
+        let has_invalid_index_constraint =
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, constraint_type)
+                .is_some_and(|(object_type, index_type)| {
+                    crate::query_boundaries::common::type_parameter_constraint(
+                        self.ctx.types,
+                        index_type,
+                    )
+                    .is_some_and(|constraint| {
+                        let keyof_object = self.ctx.types.evaluate_keyof(object_type);
+                        !self.is_assignable_to(constraint, keyof_object)
+                    })
+                });
+
         // Check if the constraint contains a self-reference to the mapped type parameter.
         // Use a shallow check that does NOT walk into other type parameters' constraints,
         // because those constraints are separate scopes. For example, in
@@ -750,7 +770,7 @@ impl<'a> CheckerState<'a> {
             false
         });
 
-        if !is_valid && !references_enclosing_mapped_key {
+        if (!is_valid || has_invalid_index_constraint) && !references_enclosing_mapped_key {
             let constraint_name = {
                 let mut formatter = self.ctx.create_type_formatter();
                 formatter.format(constraint_type)

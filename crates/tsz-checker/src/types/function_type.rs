@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn js_constructor_body_instance_type_for_function(
+    pub(crate) fn js_constructor_body_instance_type_for_function(
         &mut self,
         func_idx: NodeIndex,
     ) -> Option<TypeId> {
@@ -956,7 +956,8 @@ impl<'a> CheckerState<'a> {
                 let mut type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some()
                         || ((has_contextual_type || has_external_binding_context)
-                            && type_id != TypeId::ANY)
+                            && type_id != TypeId::ANY
+                            && type_id != TypeId::UNKNOWN)
                     {
                         // When a type annotation, concrete contextual type, or IIFE
                         // argument type is available, preserve it.  The binding pattern
@@ -967,6 +968,13 @@ impl<'a> CheckerState<'a> {
                         // TS2345.  Including `has_external_binding_context` ensures IIFE
                         // argument types are preserved for destructuring parameters:
                         //   (({ a, b }) => a)({ a: 1, b: 2 })
+                        //
+                        // When the contextual type is `unknown` (e.g. from an uninferred
+                        // type parameter), fall back to the binding pattern type. `unknown`
+                        // is not a useful structural type for destructuring — properties
+                        // can't be extracted from it — and tsc falls back to the pattern
+                        // type `{a: any}` in this case, which correctly produces TS2345
+                        // when the callback is checked for assignability.
                         type_id
                     } else {
                         pattern_type

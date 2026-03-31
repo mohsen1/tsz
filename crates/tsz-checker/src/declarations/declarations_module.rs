@@ -458,22 +458,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
 
-            // TS2666/TS2667: Imports/exports are not permitted in module augmentations
-            // Only check imports/exports if the augmentation target module actually exists.
-            // tsc uses the Transient flag (set only on merged augmentations) to skip
-            // this check for unresolved targets — avoiding cascading errors.
-            // However, duplicate value declaration tracking (TS2451) must always run.
-            let module_augmentation_target_exists = has_declare
-                && is_string_named
-                && self.is_external_module()
-                && self
-                    .ctx
-                    .arena
-                    .get(module.name)
-                    .and_then(|n| self.ctx.arena.get_literal(n))
-                    .is_some_and(|lit| self.module_exists(&lit.text));
-            let should_check_augmentation_body =
-                has_declare && is_string_named && self.is_external_module();
+            // TS2666/TS2667: Imports/exports are not permitted in module augmentations.
+            // For string-literal augmentations, only emit these diagnostics when the
+            // target module exists to match TS's transient behavior.
+            // For `declare global`, there is no module specifier target, so always
+            // apply these checks in external modules.
+            let module_augmentation_target_exists = if has_declare {
+                if is_string_named {
+                    self
+                        .ctx
+                        .arena
+                        .get(module.name)
+                        .and_then(|n| self.ctx.arena.get_literal(n))
+                        .is_some_and(|lit| self.module_exists(&lit.text))
+                } else if is_global_augmentation {
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            } && self.is_external_module();
+            let should_check_augmentation_body = has_declare
+                && (is_string_named || is_global_augmentation)
+                && self.is_external_module();
             if should_check_augmentation_body {
                 let module_specifier = self
                     .ctx

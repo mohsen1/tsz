@@ -5576,3 +5576,63 @@ fn test_null_not_assignable_to_unconstrained_type_param() {
         "null should be assignable to string without strictNullChecks"
     );
 }
+
+/// Regression: genericFunctionCallSignatureReturnTypeMismatch.ts
+#[test]
+fn test_generic_callable_return_type_mismatch_compat_layer() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let s_param = TypeParamInfo {
+        name: interner.intern_string("S"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let s_type = interner.type_param(s_param);
+    let s_array = interner.array(s_type);
+    let source = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![s_param],
+            params: vec![],
+            this_type: None,
+            return_type: s_array,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let target = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![t_param],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: t_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(
+        !checker.is_assignable(source, target),
+        "generic callable with incompatible return type should not be assignable"
+    );
+}

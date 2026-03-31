@@ -1012,6 +1012,29 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 t
+            } else if param.initializer.is_some() {
+                let init_type =
+                    self.get_type_of_node_with_request(param.initializer, &TypingRequest::NONE);
+                if init_type != TypeId::ANY
+                    && init_type != TypeId::UNKNOWN
+                    && init_type != TypeId::ERROR
+                {
+                    init_type
+                } else {
+                    let Some(sym_id) = self
+                        .parameter_symbol_ids(param_idx, param.name)
+                        .into_iter()
+                        .flatten()
+                        .next()
+                    else {
+                        continue;
+                    };
+                    let t = self.get_type_of_symbol(sym_id);
+                    if t == TypeId::ANY || t == TypeId::UNKNOWN || t == TypeId::ERROR {
+                        continue;
+                    }
+                    t
+                }
             } else {
                 // Try to get cached type from symbol
                 let Some(sym_id) = self

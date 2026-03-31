@@ -88,6 +88,16 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Preserve deferred indexed-access contextual types like `T[K]` and
+        // `Type[K]`. Evaluating them here collapses the generic key space to a
+        // union of property types, which suppresses TS2322 on return/assignment
+        // sites that should still be checked against the unresolved indexed access.
+        if is_index_access_type(self.ctx.types, type_id)
+            && contains_type_parameters(self.ctx.types, type_id)
+        {
+            return type_id;
+        }
+
         // Preserve direct callable shapes as contextual types. Re-evaluating them
         // can simplify contravariant parameter unions inside callback types, e.g.
         // `(value: A | B | C) => U` collapsing to `(value: A) => any` during

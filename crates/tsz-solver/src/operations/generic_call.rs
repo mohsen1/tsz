@@ -147,11 +147,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         type_id: TypeId,
         arg_count: usize,
     ) -> Option<FunctionShape> {
-        let signatures = crate::type_queries::get_call_signatures(db, type_id)
+        let (signatures, is_constructor) = crate::type_queries::get_call_signatures(db, type_id)
             .filter(|signatures| !signatures.is_empty())
+            .map(|signatures| (signatures, false))
             .or_else(|| {
                 crate::type_queries::get_construct_signatures(db, type_id)
                     .filter(|signatures| !signatures.is_empty())
+                    .map(|signatures| (signatures, true))
             })?;
         let signature_accepts_arg_count = |params: &[crate::types::ParamInfo], count: usize| {
             let required_count = params.iter().filter(|p| !p.optional).count();
@@ -173,7 +175,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             this_type: sig.this_type,
             return_type: sig.return_type,
             type_predicate: sig.type_predicate,
-            is_constructor: false,
+            is_constructor,
             is_method: sig.is_method,
         })
     }
@@ -1249,6 +1251,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
 
+            let target_type_param_name = var_map.get(&target_type).and_then(|&var| {
+                func.type_params
+                    .iter()
+                    .zip(type_param_vars.iter())
+                    .find_map(|(tp, candidate_var)| (*candidate_var == var).then_some(tp.name))
+            });
+
+            if let Some(type_param_name) = target_type_param_name
+                && self.later_generic_function_like_arg_depends_on_type_param(
+                    func,
+                    arg_types,
+                    i,
+                    type_param_name,
+                )
+            {
+                saw_deferred_arg = true;
+                continue;
+            }
+
             // Keep round-2 contextual arguments for full checking, but only process
             // non-contextual arguments (and non-contextual parts of mixed objects) in
             // round 1.
@@ -1659,6 +1680,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Now that non-contextual arguments have been processed, we can provide
         // proper contextual types to lambdas based on fixed type variables.
         if saw_deferred_arg {
+            let tracked_round2_type_params: FxHashSet<_> =
+                func.type_params.iter().map(|tp| tp.name).collect();
             let round2_params = if fixed_subst.is_empty() {
                 None
             } else {
@@ -1667,7 +1690,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .iter()
                         .map(|param| ParamInfo {
                             name: param.name,
-                            type_id: instantiate_type(self.interner, param.type_id, &fixed_subst),
+                            type_id: if self.function_like_type_param_appears_in_parameter_position(
+                                param.type_id,
+                                &tracked_round2_type_params,
+                            ) {
+                                param.type_id
+                            } else {
+                                instantiate_type(self.interner, param.type_id, &fixed_subst)
+                            },
                             optional: param.optional,
                             rest: param.rest,
                         })
@@ -1727,10 +1757,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         };
                     }
                 } else {
+                    let preserve_callback_parameter_placeholders = self
+                        .function_like_placeholder_appears_in_parameter_position(
+                            target_type,
+                            &var_map,
+                            &mut placeholder_visited,
+                        );
+
                     // Re-instantiate target_type with fixed Round 1 results.
                     // This replaces resolved placeholders with their inferred types while
                     // preserving unresolved placeholders for further Round 2 inference.
-                    let r2_target = if let Some(candidate) = round2_target_type {
+                    let r2_target = if preserve_callback_parameter_placeholders {
+                        target_type
+                    } else if let Some(candidate) = round2_target_type {
                         candidate
                     } else if !fixed_subst.is_empty() {
                         let candidate = instantiate_type(self.interner, target_type, &fixed_subst);
@@ -2399,24 +2438,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
         let return_type =
             self.hoist_resolved_type_params_into_return_type(func, &final_subst, return_type);
+        let tracked_final_type_params: FxHashSet<_> =
+            func.type_params.iter().map(|tp| tp.name).collect();
         let instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {
             instantiated_params
         } else {
             instantiated_params
                 .into_iter()
                 .map(|param| {
-                    let normalized =
-                        self.normalize_inferred_placeholder_type(param.type_id, &final_arg_subst);
-                    // Evaluate Application types (conditional types) to resolve them
-                    // after instantiation, but skip plain type parameters to avoid
-                    // infinite loops in self-referential generic inference.
-                    let evaluated = if matches!(
-                        self.interner.lookup(normalized),
-                        Some(TypeData::Application(_))
+                    let evaluated = if self.function_like_type_param_appears_in_parameter_position(
+                        param.type_id,
+                        &tracked_final_type_params,
                     ) {
-                        self.interner.evaluate_type(normalized)
+                        param.type_id
                     } else {
-                        normalized
+                        let normalized = self
+                            .normalize_inferred_placeholder_type(param.type_id, &final_arg_subst);
+                        // Evaluate Application types (conditional types) to resolve them
+                        // after instantiation, but skip plain type parameters to avoid
+                        // infinite loops in self-referential generic inference.
+                        if matches!(
+                            self.interner.lookup(normalized),
+                            Some(TypeData::Application(_))
+                        ) {
+                            self.interner.evaluate_type(normalized)
+                        } else {
+                            normalized
+                        }
                     };
                     ParamInfo {
                         name: param.name,
@@ -2875,6 +2923,169 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    fn function_like_placeholder_appears_in_parameter_position(
+        &self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        let params_contain_placeholder = |params: &[ParamInfo], visited: &mut FxHashSet<TypeId>| {
+            params.iter().any(|param| {
+                visited.clear();
+                self.type_contains_placeholder(param.type_id, var_map, visited)
+            })
+        };
+
+        match self.interner.lookup(ty) {
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                params_contain_placeholder(&shape.params, visited)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| params_contain_placeholder(&sig.params, visited))
+                    || shape
+                        .construct_signatures
+                        .iter()
+                        .any(|sig| params_contain_placeholder(&sig.params, visited))
+            }
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .copied()
+                .any(|member| {
+                    self.function_like_placeholder_appears_in_parameter_position(
+                        member, var_map, visited,
+                    )
+                }),
+            Some(
+                TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::Mapped(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _),
+            ) => {
+                let evaluated = self.interner.evaluate_type(ty);
+                evaluated != ty
+                    && self.function_like_placeholder_appears_in_parameter_position(
+                        evaluated, var_map, visited,
+                    )
+            }
+            _ => false,
+        }
+    }
+
+    fn function_like_type_param_appears_in_parameter_position(
+        &self,
+        ty: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+    ) -> bool {
+        let params_contain_tracked_type_param = |params: &[ParamInfo]| {
+            params.iter().any(|param| {
+                crate::visitor::collect_all_types(self.interner.as_type_database(), param.type_id)
+                    .into_iter()
+                    .any(|candidate| {
+                        crate::type_param_info(self.interner.as_type_database(), candidate)
+                            .is_some_and(|info| tracked_type_params.contains(&info.name))
+                    })
+            })
+        };
+
+        match self.interner.lookup(ty) {
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                params_contain_tracked_type_param(&shape.params)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| params_contain_tracked_type_param(&sig.params))
+                    || shape
+                        .construct_signatures
+                        .iter()
+                        .any(|sig| params_contain_tracked_type_param(&sig.params))
+            }
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .copied()
+                .any(|member| {
+                    self.function_like_type_param_appears_in_parameter_position(
+                        member,
+                        tracked_type_params,
+                    )
+                }),
+            Some(
+                TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::Mapped(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _),
+            ) => {
+                let evaluated = self.interner.evaluate_type(ty);
+                evaluated != ty
+                    && self.function_like_type_param_appears_in_parameter_position(
+                        evaluated,
+                        tracked_type_params,
+                    )
+            }
+            _ => false,
+        }
+    }
+
+    fn later_generic_function_like_arg_depends_on_type_param(
+        &self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+        start_index: usize,
+        type_param_name: tsz_common::Atom,
+    ) -> bool {
+        let tracked_type_params = FxHashSet::from_iter([type_param_name]);
+
+        func.params
+            .iter()
+            .enumerate()
+            .skip(start_index + 1)
+            .any(|(index, param)| {
+                let Some(&arg_type) = arg_types.get(index) else {
+                    return false;
+                };
+
+                let arg_is_generic_function_like = match self.interner.lookup(arg_type) {
+                    Some(TypeData::Function(shape_id)) => !self
+                        .interner
+                        .function_shape(shape_id)
+                        .type_params
+                        .is_empty(),
+                    Some(TypeData::Callable(shape_id)) => {
+                        let shape = self.interner.callable_shape(shape_id);
+                        shape
+                            .call_signatures
+                            .iter()
+                            .any(|sig| !sig.type_params.is_empty())
+                            || shape
+                                .construct_signatures
+                                .iter()
+                                .any(|sig| !sig.type_params.is_empty())
+                    }
+                    _ => false,
+                };
+
+                arg_is_generic_function_like
+                    && self.function_like_type_param_appears_in_parameter_position(
+                        param.type_id,
+                        &tracked_type_params,
+                    )
+            })
+    }
+
     fn should_skip_contextual_arg_in_round1(&self, arg_type: TypeId) -> bool {
         if !self.is_contextually_sensitive(arg_type) {
             return false;
@@ -3168,19 +3379,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> TypeId {
         // Class constructor Callable types (e.g., `Promise`) must not be
         // decomposed into a Function type, because that loses static members and
-        // the construct-signature wrapper.  However, ordinary declared generic
-        // functions (e.g., `declare function identity<T>(value: T): T`) are ALSO
-        // represented as Callable types and DO need to be instantiated against the
-        // target callback signature.  We distinguish the two by checking whether
-        // the Callable has call signatures with type parameters — if so, it is a
-        // generic function that needs instantiation, not a class constructor value.
+        // the construct-signature wrapper. However, ordinary declared generic
+        // functions and generic constructor callbacks represented as Callable
+        // types do need contextual instantiation against the target callback
+        // signature. Distinguish those cases by checking for a single generic
+        // call or construct signature.
         if let Some(TypeData::Callable(shape_id)) = self.interner.lookup(source_ty) {
             let shape = self.interner.callable_shape(shape_id);
             let has_generic_call_sig = shape
                 .call_signatures
                 .iter()
                 .any(|sig| !sig.type_params.is_empty());
-            if !has_generic_call_sig {
+            let has_generic_construct_sig = shape.call_signatures.is_empty()
+                && shape.construct_signatures.len() == 1
+                && !shape.construct_signatures[0].type_params.is_empty();
+            if !has_generic_call_sig && !has_generic_construct_sig {
                 return source_ty;
             }
         }

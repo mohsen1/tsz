@@ -763,6 +763,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return Some(from_call_signature(first));
             }
 
+            // Mixed-arity overload sets cannot be safely flattened into a single
+            // contextual signature. Doing so widens shorter overloads through
+            // trailing optional parameters and breaks generic callback/constructor
+            // matching that depends on the original overload boundaries.
+            if signatures
+                .iter()
+                .any(|sig| sig.params.len() != first.params.len())
+            {
+                return None;
+            }
+
             // tsc's getIntersectedSignatures returns undefined when multiple
             // signatures are present and ANY has type parameters. This prevents
             // contextual typing of arrow functions assigned to overloaded types
@@ -1019,6 +1030,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             count >= min_args && (has_rest || count <= sig.params.len())
                         })
                         .collect();
+                    if matching.iter().any(|sig| {
+                        sig.params.len() == count
+                            && !sig.params.last().is_some_and(|param| param.rest)
+                    }) {
+                        matching.retain(|sig| {
+                            sig.params.len() == count
+                                && !sig.params.last().is_some_and(|param| param.rest)
+                        });
+                    }
                     if matching
                         .iter()
                         .any(|sig| !sig.params.last().is_some_and(|param| param.rest))

@@ -241,7 +241,11 @@ impl<'a> CheckerState<'a> {
         }
         let mut force_module_not_found = false;
         let mut force_module_not_found_as_2307 = false;
-        let mut inside_namespace = false;
+        // `declare global {}` is treated as a global augmentation, not a namespace.
+        // TS1147 should only apply to true namespace contexts.
+        let mut inside_namespace =
+            self.is_inside_namespace_declaration(stmt_idx)
+                && !self.is_inside_global_augmentation(stmt_idx);
         // When in a wrong context (inside block/function), skip module resolution
         // errors. The grammar error (TS1232) is the primary diagnostic.
         let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
@@ -265,9 +269,6 @@ impl<'a> CheckerState<'a> {
                                 if let Some(name_literal) = self.ctx.arena.get_literal(name_node) {
                                     containing_module_name = Some(name_literal.text.clone());
                                 }
-                            } else {
-                                // This is a namespace: namespace Foo
-                                inside_namespace = true;
                             }
                         }
                         break;

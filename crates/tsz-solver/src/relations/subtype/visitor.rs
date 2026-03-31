@@ -747,14 +747,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // considered subtypes even if they have the same constraint. The upper
             // bound check below would incorrectly return true because both resolve
             // to the same constraint type.
-            if object_type == t_obj {
-                if let Some(s_param) = type_param_info(self.checker.interner, key_type) {
-                    if let Some(t_param) = type_param_info(self.checker.interner, t_idx) {
-                        // Both keys are type parameters with different names - they are not subtypes
-                        if s_param.name != t_param.name {
-                            return SubtypeResult::False;
-                        }
-                    }
+            if object_type == t_obj
+                && let Some(s_param) = type_param_info(self.checker.interner, key_type)
+                && let Some(t_param) = type_param_info(self.checker.interner, t_idx)
+            {
+                // Both keys are type parameters with different names - they are not subtypes
+                if s_param.name != t_param.name {
+                    return SubtypeResult::False;
                 }
             }
         }
