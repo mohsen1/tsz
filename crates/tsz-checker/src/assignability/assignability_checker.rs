@@ -616,6 +616,7 @@ impl<'a> CheckerState<'a> {
                 return shape
                     .call_signatures
                     .iter()
+                    .chain(shape.construct_signatures.iter())
                     .any(|sig| !sig.type_params.is_empty());
             }
             if let Some(shape) =
