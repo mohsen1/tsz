@@ -61,9 +61,10 @@ impl<'a> CheckerState<'a> {
                     };
 
                 // Evaluate the heritage expression to trigger control flow analysis (TS2454)
-                // and compute the actual type of the expression. We only do this for `extends`,
-                // because `implements` only takes types, not expressions.
-                if is_extends_clause {
+                // and compute the actual type of the expression. We only do this for class
+                // `extends` because classes can have expression-based heritage (mixins).
+                // For interface `extends`, the expression is always a type reference, not a value.
+                if is_extends_clause && is_class_declaration {
                     let _ = self.get_type_of_node(expr_idx);
                 }
 

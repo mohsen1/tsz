@@ -635,9 +635,67 @@ impl<'a> CheckerState<'a> {
             // generic type parameters that may not have been fully inferred from context.
             // This handles cases like inferenceExactOptionalProperties2 where contextual
             // typing should allow the assignment but the type parameters weren't resolved.
+            // However, do NOT suppress when the source has stricter constraints than target
+            // (e.g., source has `S extends T` but target has no constraint on `S`).
             || (is_callable_application(source) 
                 && is_callable_application(target) 
-                && contains_type_parameters(source))
+                && contains_type_parameters(source)
+                && !self.source_has_stricter_constraints_than_target_simple(source, target))
+    }
+    
+    /// Simple check if source callable has stricter constraints than target (no is_assignable_to needed).
+    /// This only checks the simple case: source has constraint but target doesn't.
+    fn source_has_stricter_constraints_than_target_simple(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        // Get callable shapes for both types
+        let source_callable = tsz_solver::type_queries::get_callable_shape(self.ctx.types, source)
+            .or_else(|| {
+                tsz_solver::type_queries::get_type_application(self.ctx.types, source)
+                    .and_then(|app| tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base))
+            });
+        
+        let target_callable = tsz_solver::type_queries::get_callable_shape(self.ctx.types, target)
+            .or_else(|| {
+                tsz_solver::type_queries::get_type_application(self.ctx.types, target)
+                    .and_then(|app| tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base))
+            });
+        
+        // Also check function shapes
+        let source_fn = tsz_solver::type_queries::get_function_shape(self.ctx.types, source);
+        let target_fn = tsz_solver::type_queries::get_function_shape(self.ctx.types, target);
+        
+        // Check function type parameters
+        if let (Some(src_fn), Some(tgt_fn)) = (&source_fn, &target_fn) {
+            if src_fn.type_params.len() == tgt_fn.type_params.len() {
+                for (src_tp, tgt_tp) in src_fn.type_params.iter().zip(tgt_fn.type_params.iter()) {
+                    // Simple check: source has constraint but target doesn't
+                    if src_tp.constraint.is_some() && tgt_tp.constraint.is_none() {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Check callable signatures
+        if let (Some(src_call), Some(tgt_call)) = (&source_callable, &target_callable) {
+            for src_sig in &src_call.call_signatures {
+                for tgt_sig in &tgt_call.call_signatures {
+                    if src_sig.type_params.len() == tgt_sig.type_params.len() {
+                        for (src_tp, tgt_tp) in src_sig.type_params.iter().zip(tgt_sig.type_params.iter()) {
+                            // Simple check: source has constraint but target doesn't
+                            if src_tp.constraint.is_some() && tgt_tp.constraint.is_none() {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        false
     }
     
     /// Check if a type contains an error application (recursively).
