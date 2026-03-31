@@ -1363,7 +1363,15 @@ impl<'a> CheckerState<'a> {
             let should_narrow = (is_identifier || is_this_keyword)
                 && self.should_apply_flow_narrowing_for_identifier(idx, skip_flow_narrowing);
 
-            if should_narrow {
+            // Property/element access expressions (e.g. `this.no`, `obj.kind`) can also
+            // be narrowed by control flow analysis. After `if (this.no === 1)`, the
+            // property access `this.no` should be narrowed to `1`. Apply flow narrowing
+            // for access expressions when not in a write context.
+            let should_narrow_access = is_access_expr
+                && !skip_flow_narrowing
+                && self.ctx.binder.get_node_flow(idx).is_some();
+
+            if should_narrow || should_narrow_access {
                 // Skip second flow narrowing if check_flow_usage already narrowed
                 // this node.  Double-narrowing corrupts `any` types: e.g.
                 // `any` → `string` (typeof), then re-narrowing `string` through
@@ -1383,14 +1391,20 @@ impl<'a> CheckerState<'a> {
                         tsz_solver::widening::widen_type(self.ctx.types, evaluated_cached);
                     if widened_cached == narrowed {
                         // Update stable flow cache: flow returned declared type
-                        self.update_symbol_flow_confirmed(idx, cached, true);
+                        if should_narrow {
+                            self.update_symbol_flow_confirmed(idx, cached, true);
+                        }
                         return cached;
                     }
                     // Flow returned a narrowed type — invalidate stable cache
-                    self.update_symbol_flow_confirmed(idx, cached, false);
+                    if should_narrow {
+                        self.update_symbol_flow_confirmed(idx, cached, false);
+                    }
                 } else {
                     // Flow returned declared type unchanged — update stable cache
-                    self.update_symbol_flow_confirmed(idx, cached, true);
+                    if should_narrow {
+                        self.update_symbol_flow_confirmed(idx, cached, true);
+                    }
                 }
                 return narrowed;
             }

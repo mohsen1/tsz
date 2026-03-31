@@ -26283,3 +26283,93 @@ fn test_regular_named_object_still_rejects_number_index() {
         "Regular named object (no ENUM_NAMESPACE flag) should NOT satisfy number index target"
     );
 }
+
+// ============================================================================
+// TypeQuery (typeof) explain_failure: resolve to structural forms for TS2741
+// ============================================================================
+
+#[test]
+fn test_explain_failure_resolves_typequery_to_structural_form() {
+    // Simulates: typeof Outer vs typeof Outer.instantiated
+    //
+    // `typeof Outer` has properties: { instantiated: ..., uninstantiated: ... }
+    // `typeof Outer.instantiated` has properties: { C: typeof C }
+    //
+    // Assignment `x5 = Outer` where `x5: typeof importInst` should produce
+    // MissingProperty for 'C' (TS2741), not generic TypeMismatch (TS2322).
+    use crate::types::TypeData;
+    use crate::{SymbolRef, TypeEnvironment};
+
+    let interner = TypeInterner::new();
+
+    let c_name = interner.intern_string("C");
+    let inst_name = interner.intern_string("instantiated");
+    let uninst_name = interner.intern_string("uninstantiated");
+
+    // Build typeof Outer.instantiated: { C: typeof C }
+    let inner_obj = interner.object(vec![PropertyInfo::new(c_name, TypeId::OBJECT)]);
+
+    // Build typeof Outer: { instantiated: ..., uninstantiated: ... }
+    let outer_obj = interner.object(vec![
+        PropertyInfo::new(inst_name, inner_obj),
+        PropertyInfo::new(uninst_name, TypeId::OBJECT),
+    ]);
+
+    // Create TypeQuery types referencing symbols
+    let sym_outer = SymbolRef(100);
+    let sym_inner = SymbolRef(200);
+
+    let tq_outer = interner.intern(TypeData::TypeQuery(sym_outer));
+    let tq_inner = interner.intern(TypeData::TypeQuery(sym_inner));
+
+    // Set up environment: symbols resolve to the object types
+    let mut env = TypeEnvironment::new();
+    env.insert(sym_outer, outer_obj);
+    env.insert(sym_inner, inner_obj);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    // typeof Outer is NOT assignable to typeof Outer.instantiated
+    // (outer has {instantiated, uninstantiated} but inner needs {C})
+    assert!(
+        !checker.is_subtype_of(tq_outer, tq_inner),
+        "typeof Outer should not be assignable to typeof Outer.instantiated"
+    );
+
+    // explain_failure should produce MissingProperty for 'C' (TS2741)
+    let reason = checker.explain_failure(tq_outer, tq_inner);
+    assert!(reason.is_some(), "Should produce a failure reason");
+    match reason.unwrap() {
+        SubtypeFailureReason::MissingProperty { property_name, .. } => {
+            assert_eq!(property_name, c_name, "Missing property should be 'C'");
+        }
+        SubtypeFailureReason::MissingProperties { .. } => {
+            // Also acceptable
+        }
+        other => panic!("Expected MissingProperty for 'C' on typeof namespace, got {other:?}"),
+    }
+
+    // And the reverse: typeof Outer.instantiated is NOT assignable to typeof Outer
+    assert!(
+        !checker.is_subtype_of(tq_inner, tq_outer),
+        "typeof Outer.instantiated should not be assignable to typeof Outer"
+    );
+
+    // explain_failure should produce MissingProperty for 'instantiated' (TS2741)
+    let reason2 = checker.explain_failure(tq_inner, tq_outer);
+    assert!(reason2.is_some(), "Should produce a failure reason");
+    match reason2.unwrap() {
+        SubtypeFailureReason::MissingProperty { property_name, .. } => {
+            assert_eq!(
+                property_name, inst_name,
+                "Missing property should be 'instantiated'"
+            );
+        }
+        SubtypeFailureReason::MissingProperties { .. } => {
+            // Also acceptable
+        }
+        other => {
+            panic!("Expected MissingProperty for 'instantiated' on typeof namespace, got {other:?}")
+        }
+    }
+}
