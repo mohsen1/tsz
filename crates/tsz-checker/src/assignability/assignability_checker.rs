@@ -550,8 +550,16 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
+        // Check if a type contains an error application (e.g., error<any>)
+        // This happens when type resolution fails for qualified names like React.ReactElement
+        // in function return type positions. Suppress the false positive TS2322.
+        let contains_error_application = |type_id: TypeId| {
+            Self::type_contains_error_application(self.ctx.types, type_id)
+        };
+        
         matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
+            || contains_error_application(target)
             // any is assignable to everything except never — tsc reports TS2322 for any→never
             || (source == TypeId::ANY && target != TypeId::NEVER)
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
@@ -567,6 +575,52 @@ impl<'a> CheckerState<'a> {
             // would cause false suppression of real assignability errors.
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
+    }
+    
+    /// Check if a type contains an error application (recursively).
+    fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+        // Check if it's a direct error application
+        if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
+            if app.base == TypeId::ERROR {
+                return true;
+            }
+        }
+        
+        // Check if it's a union type containing an error application
+        if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
+            for member in members {
+                if Self::type_contains_error_application(db, member) {
+                    return true;
+                }
+            }
+        }
+        
+        // Check if it's an intersection type containing an error application
+        if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
+            for member in members {
+                if Self::type_contains_error_application(db, member) {
+                    return true;
+                }
+            }
+        }
+        
+        // Check if it's a function type with error return
+        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+            if Self::type_contains_error_application(db, fn_shape.return_type) {
+                return true;
+            }
+        }
+        
+        // Check if it's a callable type with error return
+        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
+            for sig in &callable.call_signatures {
+                if Self::type_contains_error_application(db, sig.return_type) {
+                    return true;
+                }
+            }
+        }
+        
+        false
     }
 
     /// Suppress assignability diagnostics for parser-recovery artifacts.
