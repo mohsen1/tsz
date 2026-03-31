@@ -554,7 +554,7 @@ impl<'a> CheckerState<'a> {
     /// the `this` type is contextually provided. TS2683 should be suppressed because
     /// the contextual typing pass will properly type `this`.
     pub(crate) fn enclosing_function_has_contextual_this_type(&mut self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
+        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_DECLARATION, FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
 
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
             Some(f) => f,
@@ -567,9 +567,15 @@ impl<'a> CheckerState<'a> {
 
         // Only applies to function expressions (closures), not declarations
         // Exception: In JS files, function declarations can have contextual this types
-        // from @constructor or @this JSDoc annotations
+        // from @constructor or @this JSDoc annotations, or from being treated as constructors
         if fn_node.kind != FUNCTION_EXPRESSION && !self.is_js_file() {
             return false;
+        }
+
+        // In JS files, function declarations are treated as potential constructors
+        // and will have synthesized instance types for `this`. Suppress TS2683.
+        if self.is_js_file() && fn_node.kind == FUNCTION_DECLARATION {
+            return true;
         }
 
         // Walk up to find the parent variable declaration
