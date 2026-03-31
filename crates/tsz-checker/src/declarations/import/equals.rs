@@ -760,12 +760,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // When inside a namespace, TS1147 was emitted above. tsc does NOT
-        // also emit TS2307 for unresolved modules in this case — skip resolution.
-        if inside_namespace {
-            return;
-        }
-
         if force_module_not_found {
             let (message, code) = self.module_not_found_diagnostic_with_context(module_name, true);
             let (message, code) = if force_module_not_found_as_2307 {
