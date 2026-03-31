@@ -187,7 +187,12 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             // application instantiation (`Foo<T>` collapses to bare `Foo`), so give
             // the type environment a chance to provide the real body first.
             if let Some(&ty) = self.symbol_types.get(&sym_id) {
-                if tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id) {
+                if ty == tsz_solver::TypeId::ERROR {
+                    // Skip poisoned ERROR entries (e.g., from stack overflow protection
+                    // tripping during deep recursive type resolution). Fall through to
+                    // the type environment, which may have the correct resolved type from
+                    // an earlier successful resolution.
+                } else if tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id) {
                     // Defer this self-wrapper until after the type environment fallback.
                 } else {
                     if let Some(override_ty) = self.lib_heritage_cache_override(Some(sym_id), ty) {
