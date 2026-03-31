@@ -358,7 +358,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         SubtypeResult::True
     }
 
-    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+    fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
         // Resolve the Lazy(DefId) type using the receiver-aware lazy specialization.
         let resolved = self.checker.resolve_lazy_type(self.source);
 
@@ -367,32 +367,23 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if resolved != self.source {
             self.checker.check_subtype(resolved, self.target)
         } else {
-            // Resolution failed or returned the same type.
-            // Check if this DefId is involved in an ongoing comparison (circular reference).
-            // When a Lazy type can't be resolved because the type is still being defined
-            // (e.g., `interface BB extends AA<AA<BB>>`), and the DefId appears in the
-            // def_guard's visiting set, this indicates a circular constraint that tsc
-            // would accept via its "assume related on cycle" semantics (Ternary.Maybe).
-            let def = DefId(def_id);
-            if self
-                .checker
-                .def_guard
-                .is_visiting_any(|&(s, t)| s == def || t == def)
-            {
-                return self.checker.cycle_result();
-            }
-
-            // Also check the TypeId-level guard for circular references.
-            // This handles cases where the same Lazy TypeId appears in nested
-            // comparisons without being tracked at the DefId level.
-            if self
-                .checker
-                .guard
-                .is_visiting_any(|&(s, t)| s == self.source || t == self.source)
-            {
-                return self.checker.cycle_result();
-            }
-
+            // Resolution failed or returned the same type (self-referencing).
+            //
+            // For genuinely recursive types (interfaces, classes, type aliases),
+            // resolve_lazy returns a DIFFERENT type (the structural body) — so
+            // this branch is NOT taken for those. This branch only fires when
+            // the type environment maps DefId → Lazy(same DefId), which happens
+            // for namespace types.
+            //
+            // In this case, the type is opaque and cannot be structurally compared.
+            // Since the source and target DefIds are already known to be different
+            // (checked by the caller's identity shortcut), these represent different
+            // semantic entities and are NOT subtypes. Return False instead of the
+            // coinductive True that cycle_result() would give.
+            //
+            // Note: the original code checked def_guard.is_visiting_any and
+            // returned cycle_result() (True), which caused namespace types to be
+            // incorrectly treated as compatible, suppressing TS2741.
             SubtypeResult::False
         }
     }

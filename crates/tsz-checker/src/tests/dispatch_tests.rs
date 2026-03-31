@@ -1320,3 +1320,75 @@ fn ts2352_tuple_different_length_assertion() {
         "Expected TS2352 for <[number, string, boolean]>x"
     );
 }
+
+// =============================================================================
+// Property access narrowing (this.X after equality checks)
+// =============================================================================
+
+#[test]
+fn no_false_ts2322_typeof_this_property_after_equality_narrowing() {
+    // After `if (this.no === 1)`, both `typeof this.no` and `this.no` in value
+    // position should be narrowed to `1`. Without property access narrowing,
+    // `typeof this.no` resolves to `1` but `this.no` stays `number`, causing
+    // a spurious TS2322: "Type 'number' is not assignable to type '1'".
+    let diags = check_source(
+        r#"
+class Test9 {
+    no = 0;
+
+    g() {
+        if (this.no === 1) {
+            const no: typeof this.no = this.no;
+        }
+    }
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 for `typeof this.no = this.no` inside equality guard, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_false_ts2322_typeof_this_property_named_this_after_equality_narrowing() {
+    // Same test but for a property literally named `this` — the property access
+    // `this.this` should also be narrowed after `if (this.this === 1)`.
+    let diags = check_source(
+        r#"
+class Test9 {
+    this = 0;
+
+    g() {
+        if (this.this === 1) {
+            const no: typeof this.this = this.this;
+        }
+    }
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 for `typeof this.this = this.this` inside equality guard, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}

@@ -717,6 +717,26 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip uninstantiated namespace members (type-only namespaces).
+            // The binder sets VALUE_MODULE | NAMESPACE_MODULE on ALL namespaces,
+            // but only instantiated ones (with value declarations like classes,
+            // functions, variables) should appear in the structural value type.
+            if (member_symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+                let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+                if (member_symbol.flags & value_flags_except_module) == 0 {
+                    let mut is_instantiated = false;
+                    for &decl_idx in &member_symbol.declarations {
+                        if self.is_namespace_declaration_instantiated(decl_idx) {
+                            is_instantiated = true;
+                            break;
+                        }
+                    }
+                    if !is_instantiated {
+                        continue;
+                    }
+                }
+            }
+
             let mut type_id = self.get_type_of_symbol(*member_id);
             if member_symbol.flags & symbol_flags::INTERFACE != 0 {
                 let mut candidate = self.type_of_value_declaration_for_symbol(
