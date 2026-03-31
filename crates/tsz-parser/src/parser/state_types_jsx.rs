@@ -1218,6 +1218,20 @@ impl ParserState {
         // not in the parser, matching tsc behavior (one error per JSX element).
         let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
             NodeIndex::NONE
+        } else if dot_dot_dot_token {
+            // `{...expr}` is not valid as a JSX attribute initializer in JS/TS.
+            // tsc reports this as TS1109 at `{` and TS1003 at `expr`.
+            let spread_start = self.token_pos().saturating_sub(3);
+            self.parse_error_at(
+                spread_start,
+                1,
+                "Expression expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            // Consume the spread payload so recovery continues at the closing brace.
+            self.parse_jsx_embedded_expression();
+            self.error_identifier_expected();
+            NodeIndex::NONE
         } else {
             self.parse_jsx_embedded_expression()
         };

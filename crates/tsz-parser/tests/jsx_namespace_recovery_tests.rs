@@ -164,3 +164,28 @@ fn jsx_closing_tag_with_extra_namespace_separator_keeps_tail_outside_closing_nam
         "expected tsc-style recovery for malformed JSX closing tag, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn jsx_attribute_with_leading_spread_in_initializer_reports_expression_then_identifier() {
+    let source = "var x = <X a={...a} />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let brace_pos = source.find("{...").expect("spread initializer") as u32 + 1;
+    let identifier_pos = source.find("{...").expect("spread initializer") as u32 + 5;
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                brace_pos,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                identifier_pos,
+                "Identifier expected.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery for attribute initializer spread syntax, got {diagnostics:?}"
+    );
+}
