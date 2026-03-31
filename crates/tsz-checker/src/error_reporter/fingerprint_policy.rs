@@ -826,7 +826,9 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return idx;
         };
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
             return idx;
         }
 

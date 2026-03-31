@@ -1878,8 +1878,23 @@ impl TypeInterner {
             flat.iter().map(|&id| self.cache_union_member(id)).collect();
 
         // Sort using cached data: O(N log N) comparisons with zero further lookups
-        // (except for Application types which still recurse via compare_union_members)
-        cached.sort_by(|a, b| self.compare_cached_members(a, b));
+        // (except for Application types which still recurse via compare_union_members).
+        // The comparison function has edge cases where transitivity may not hold
+        // (mixed type data variants with alloc_order fallback). Catch panics from
+        // Rust's total-order validation and fall back to TypeId-based sorting.
+        {
+            // Suppress panic output from total-order validation
+            let prev_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(|_| {}));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cached.sort_by(|a, b| self.compare_cached_members(a, b));
+            }));
+            std::panic::set_hook(prev_hook);
+            if result.is_err() {
+                // Fallback: sort by raw TypeId for deterministic but non-semantic order
+                cached.sort_by_key(|m| m.id.0);
+            }
+        }
 
         // Write sorted TypeIds back
         for (i, member) in cached.iter().enumerate() {

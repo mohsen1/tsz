@@ -694,7 +694,31 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
-            return ctx.get_this_type();
+            if let Some(this_type) = ctx.get_this_type() {
+                return Some(this_type);
+            }
+            // Application base might be a type alias (Lazy) - evaluate to resolve
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_this_type();
+            }
+            return None;
+        }
+
+        // Handle Lazy/Mapped/Conditional/IndexAccess by evaluating first
+        if let Some(
+            TypeData::Lazy(_)
+            | TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_this_type();
+            }
         }
 
         // Use visitor for Function/Callable types

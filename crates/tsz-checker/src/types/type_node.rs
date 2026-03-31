@@ -731,6 +731,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
+        // The return type of a function type is processed through TypeLowering,
+        // which doesn't trigger grammar checks. Recursively scan the return type
+        // subtree for TS1385/TS1387 (unparenthesized function/constructor types in
+        // union/intersection contexts) to match tsc's parser-level detection.
+        self.check_nested_function_types_in_type(func_data.type_annotation);
+
         // Delegate to TypeLowering with standard resolvers.
         // Enable qualified name resolution so return types like `Ns.Type<T>`
         // resolve correctly (QUALIFIED_NAME nodes need the extended resolver).

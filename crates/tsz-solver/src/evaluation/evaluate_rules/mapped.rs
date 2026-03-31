@@ -161,6 +161,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 keys
             }
             None => {
+                // When key extraction fails but the mapped type has an `as` clause
+                // and the constraint is a concrete union (of non-literal types like
+                // objects), we can still evaluate by iterating over the constraint
+                // members directly. Each member is substituted into both the `as`
+                // clause (to derive the property name) and the template (to get the
+                // property type).
+                //
+                // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
+                // → { a: {name:"a"}, b: {name:"b"} }
+                if mapped.name_type.is_some()
+                    && let Some(result) =
+                        self.try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
+                {
+                    return result;
+                }
                 tracing::trace!(
                     keys_lookup = ?self.interner().lookup(keys),
                     "evaluate_mapped: DEFERRED - could not extract concrete keys"
@@ -523,6 +538,117 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else {
             self.interner().object(properties)
         }
+    }
+
+    /// Evaluate a mapped type with an `as` clause when the constraint is a union of
+    /// non-literal types (e.g., objects). Instead of extracting string literal keys,
+    /// iterate over the constraint union members directly and evaluate the `as` clause
+    /// for each to derive property names.
+    ///
+    /// Example: `{ [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }`
+    /// → `{ a: {name:"a"}, b: {name:"b"} }`
+    fn try_evaluate_mapped_with_as_over_non_literal_constraint(
+        &mut self,
+        mapped: &MappedType,
+        evaluated_constraint: TypeId,
+    ) -> Option<TypeId> {
+        let name_type = mapped.name_type?;
+
+        // Extract union members from the constraint
+        let members: Vec<TypeId> =
+            if let Some(TypeData::Union(list_id)) = self.interner().lookup(evaluated_constraint) {
+                self.interner().type_list(list_id).to_vec()
+            } else {
+                // Single non-literal member
+                vec![evaluated_constraint]
+            };
+
+        // Verify all members are concrete (no type parameters)
+        for &member in &members {
+            if matches!(
+                self.interner().lookup(member),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ) {
+                return None;
+            }
+        }
+
+        // Limit to prevent OOM
+        if members.len() > 500 {
+            return None;
+        }
+
+        let mut properties = Vec::new();
+        let mut subst = TypeSubstitution::new();
+
+        for &member in &members {
+            if self.is_depth_exceeded() {
+                return Some(TypeId::ERROR);
+            }
+
+            // Substitute the constraint member (e.g., {name:"a"}) for the type parameter
+            subst.clear();
+            subst.insert(mapped.type_param.name, member);
+
+            // Evaluate the `as` clause to get the remapped key
+            let remapped_key = self.evaluate(instantiate_type(self.interner(), name_type, &subst));
+
+            // If remapped key is `never`, skip this member (filtered out)
+            if remapped_key == TypeId::NEVER {
+                continue;
+            }
+
+            // Extract property name(s) from remapped key
+            let remapped_names: smallvec::SmallVec<[Atom; 1]> = if let Some(name) =
+                crate::visitor::literal_string(self.interner(), remapped_key)
+            {
+                smallvec::smallvec![name]
+            } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped_key) {
+                let key_members = self.interner().type_list(list_id);
+                let names: smallvec::SmallVec<[Atom; 1]> = key_members
+                    .iter()
+                    .filter_map(|&m| crate::visitor::literal_string(self.interner(), m))
+                    .collect();
+                if names.is_empty() {
+                    return None; // Can't resolve to concrete names
+                }
+                names
+            } else {
+                return None; // Can't resolve to concrete name
+            };
+
+            // Evaluate the template with the substitution
+            let instantiated_template = instantiate_type(self.interner(), mapped.template, &subst);
+            let property_type = self.evaluate(instantiated_template);
+
+            if property_type == TypeId::ERROR && self.is_depth_exceeded() {
+                return Some(TypeId::ERROR);
+            }
+
+            // Compute modifiers
+            let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
+                mapped, false, // not homomorphic (no source to inherit from)
+                false, false,
+            );
+
+            for remapped_name in remapped_names {
+                properties.push(PropertyInfo {
+                    name: remapped_name,
+                    type_id: property_type,
+                    write_type: property_type,
+                    optional,
+                    readonly,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                });
+            }
+        }
+
+        Some(self.interner().object(properties))
     }
 
     /// Check if a mapped type's constraint is `keyof T` where T is a type parameter.

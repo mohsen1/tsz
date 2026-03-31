@@ -34,6 +34,29 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         )
 }
 
+/// Check if a type has call signatures (not just construct signatures).
+///
+/// Returns `true` for `Function` types and `Callable` types that have at least
+/// one call signature. Returns `false` for `Callable` types that only have
+/// construct signatures (e.g., class constructor types like `typeof MyClass`).
+///
+/// This is important for distinguishing callable types from constructable types
+/// when checking constraints like `T extends (...args: any) => any` which
+/// requires call signatures, not construct signatures.
+pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::FUNCTION {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Function(_)) => true,
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            !shape.call_signatures.is_empty()
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is structurally the Function interface from lib.d.ts.
 ///
 /// The Function interface may be lowered as an `Object` (without call signatures)

@@ -89,6 +89,33 @@ f(n);
     );
 }
 
+#[test]
+fn variadic_tuple_rest_call_expands_parameter_display() {
+    let source = r#"
+type Funcs = [...((arg: number) => void)[], (arg: string) => void];
+declare function f1(...args: Funcs): void;
+f1();
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for empty variadic tuple rest call");
+
+    assert!(
+        ts2345
+            .message_text
+            .contains("[...((arg: number) => void)[], (arg: string) => void]"),
+        "Expected expanded variadic tuple display in TS2345, got: {:?}",
+        ts2345.message_text
+    );
+    assert!(
+        !ts2345.message_text.contains("parameter of type 'Funcs'"),
+        "Expected TS2345 to expand the rest tuple alias at the call site, got: {:?}",
+        ts2345.message_text
+    );
+}
+
 // =========================================================================
 // TS2769 / no overload matches — migrated in call_errors.rs
 // =========================================================================

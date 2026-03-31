@@ -151,6 +151,32 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1294: erasableSyntaxOnly — import equals declarations are not erasable.
+        // Exception: `import x = require("y")` is allowed in .cts/.cjs files because
+        // it's the standard CJS import syntax and compiles to `const x = require("y")`.
+        if self.ctx.compiler_options.erasable_syntax_only
+            && !self.ctx.is_ambient_declaration(stmt_idx)
+        {
+            // `import x = require("y")` has a string literal as module_specifier.
+            // `import x = NS.Member` has a qualified name / identifier.
+            let is_external_module_import = self
+                .ctx
+                .arena
+                .get(import.module_specifier)
+                .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16);
+            let is_cts_file =
+                self.ctx.file_name.ends_with(".cts") || self.ctx.file_name.ends_with(".cjs");
+            if !(is_external_module_import && is_cts_file) {
+                self.ctx.error(
+                    node.pos,
+                    node.end - node.pos,
+                    diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                        .to_string(),
+                    diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                );
+            }
+        }
+
         if let Some(name_node) = self.ctx.arena.get(import.import_clause)
             && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
             && is_strict_mode_reserved_name(&name_ident.escaped_text)
@@ -289,7 +315,37 @@ impl<'a> CheckerState<'a> {
             // correctly handles both same-file and cross-file cycles with
             // proper deduplication. Only check_export_target_is_module here.
             if let Some(imported_module) = require_module_specifier.as_deref() {
-                self.check_export_target_is_module(import.module_specifier, imported_module);
+                self.check_export_target_is_module(import.module_specifier, imported_module, None);
+            }
+
+            // TS2876: rewriteRelativeImportExtensions — specifier looks like a
+            // file name but actually resolves to a directory index file.
+            if let Some(module_name) = require_module_specifier.as_deref() {
+                if self.ctx.compiler_options.rewrite_relative_import_extensions
+                    && !import.is_type_only
+                    && !self.ctx.is_declaration_file()
+                    && super::declaration::should_rewrite_module_specifier(module_name)
+                    && self.resolved_via_directory_index(module_name)
+                {
+                    let resolved_display = self.resolved_file_display_path(module_name);
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let message = format_message(
+                        diagnostic_messages::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+                        &[&resolved_display],
+                    );
+                    // Emit on the string literal (import.module_specifier
+                    // is the StringLiteral for require() imports).
+                    if let Some(node) = self.ctx.arena.get(import.module_specifier) {
+                        self.error_at_position(
+                            node.pos,
+                            node.end.saturating_sub(node.pos),
+                            &message,
+                            diagnostic_codes::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+                        );
+                    }
+                }
             }
         }
 
@@ -711,7 +767,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if force_module_not_found {
-            let (message, code) = self.module_not_found_diagnostic(module_name);
+            let (message, code) = self.module_not_found_diagnostic_with_context(module_name, true);
             let (message, code) = if force_module_not_found_as_2307 {
                 (
                     crate::diagnostics::format_message(
@@ -759,7 +815,8 @@ impl<'a> CheckerState<'a> {
             if error_code
                 == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
             {
-                let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
+                let (fallback_message, fallback_code) =
+                    self.module_not_found_diagnostic_with_context(module_name, true);
                 error_code = fallback_code;
                 error_message = fallback_message;
             }
@@ -779,7 +836,7 @@ impl<'a> CheckerState<'a> {
 
         // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
         // suggesting the user switch to nodenext or configure paths.
-        let (message, code) = self.module_not_found_diagnostic(module_name);
+        let (message, code) = self.module_not_found_diagnostic_with_context(module_name, true);
         self.ctx.modules_with_ts2307_emitted.insert(module_key);
         self.error_at_position(spec_start, spec_length, &message, code);
     }

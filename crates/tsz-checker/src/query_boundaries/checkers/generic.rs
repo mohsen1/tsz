@@ -68,6 +68,12 @@ pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
 
+/// Check if a type has call signatures (not just construct signatures).
+/// Returns false for class constructor types that only have `new` signatures.
+pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::has_call_signatures(db, type_id)
+}
+
 /// Check if a type is structurally the Function interface (has apply/call/bind).
 pub(crate) fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_function_interface_structural(db, type_id)
@@ -76,6 +82,16 @@ pub(crate) fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: T
 /// Check if a type is a `this` type (visitor-based, handles Lazy indirection).
 pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::is_this_type(db, type_id)
+}
+
+/// Check if a type is an `Infer` type variable (from conditional `infer X`).
+///
+/// Used for TS2344 constraint checking: when a conditional type's true branch
+/// is an `Infer` variable (e.g., `F extends (...args: infer L) => any ? L : never`),
+/// the result is structurally extracted from the extends type, not bounded by it.
+/// The extends type is NOT a reliable constraint proxy for infer-extraction patterns.
+pub(crate) fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_infer_type(db, type_id)
 }
 
 /// Check if a type is a primitive (string, number, boolean, bigint, etc.).

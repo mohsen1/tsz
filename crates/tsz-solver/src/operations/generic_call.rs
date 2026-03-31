@@ -528,19 +528,80 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         if let Some(((source_base, source_args), (target_base, target_args))) = app_info
-            && source_base == target_base
             && source_args.len() == target_args.len()
         {
-            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                self.collect_return_context_substitution(
-                    *source_arg,
-                    *target_arg,
-                    tracked_type_params,
-                    substitution,
-                    visited,
-                );
+            if source_base == target_base {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                return;
             }
-            return;
+            // When bases differ (e.g., AssignAction<TActor> vs ActionFunction<ConcreteType>),
+            // match type arguments positionally if any source arg is a tracked type parameter.
+            // This handles branded-property patterns where different interfaces share
+            // structural positions for their type parameters (e.g., _out_TActor?: TActor).
+            let has_tracked_source_arg = source_args.iter().any(|&arg| {
+                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(arg) {
+                    tracked_type_params.contains(&tp.name)
+                } else {
+                    false
+                }
+            });
+            if has_tracked_source_arg {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
+            }
+        }
+
+        // Fallback: when source is an Application wrapping a single tracked type
+        // parameter (e.g., Awaited<T>) and no structural match was found above,
+        // try inferring the type parameter directly. This handles return context
+        // inference for Promise.all where the return type contains Awaited<T> and
+        // the contextual type is a concrete non-thenable type.
+        // Guard: verify by evaluating Application(Base, [target]) and checking
+        // it equals target — this ensures the alias is "transparent" (like
+        // Awaited<X> = X for non-thenables) and not a structural wrapper (like
+        // Task<X> which wraps X in a function type).
+        if let Some((source_base, source_args)) =
+            crate::type_queries::get_application_info(self.interner.as_type_database(), source)
+                .or_else(|| {
+                    crate::type_queries::get_application_info(
+                        self.interner.as_type_database(),
+                        source_eval,
+                    )
+                })
+        {
+            if source_args.len() == 1 {
+                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source_args[0])
+                    && tracked_type_params.contains(&tp.name)
+                    && substitution.get(tp.name).is_none()
+                    && !self.target_contains_untracked_type_params(target, tracked_type_params)
+                {
+                    // Verify: Application(Base, [target]) should evaluate to target
+                    // for the substitution to be correct.
+                    let test_app = self.interner.application(source_base, vec![target]);
+                    let evaluated = self.interner.evaluate_type(test_app);
+                    if evaluated == target {
+                        substitution.insert(tp.name, target);
+                    }
+                }
+            }
         }
     }
 
@@ -583,9 +644,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    /// Check if a type contains TypeParameter references that are NOT in the
+    /// Check if a type contains `TypeParameter` references that are NOT in the
     /// tracked set. These are "foreign" type params from nested generic signatures
-    /// (e.g., Promise.catch's TResult when matching through .then()).
+    /// (e.g., `Promise.catch`'s `TResult` when matching through `.then()`).
     fn target_contains_untracked_type_params(
         &self,
         type_id: TypeId,
@@ -1135,11 +1196,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // from the callback should NOT be widened to string.
         if !structural_return_subst.is_empty() {
             for (&name, &ty) in structural_return_subst.map().iter() {
-                if self.type_contains_literals(ty) {
-                    if let Some(tp_idx) = func.type_params.iter().position(|tp| tp.name == name) {
-                        let var = type_param_vars[tp_idx];
-                        infer_ctx.add_upper_bound(var, ty);
-                    }
+                if self.type_contains_literals(ty)
+                    && let Some(tp_idx) = func.type_params.iter().position(|tp| tp.name == name)
+                {
+                    let var = type_param_vars[tp_idx];
+                    infer_ctx.add_upper_bound(var, ty);
                 }
             }
         }
@@ -1293,13 +1354,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         };
                     }
                     if track_direct_placeholder_vars
-                        && !matches!(
-                            self.interner.lookup(target_type),
-                            Some(TypeData::Union(_) | TypeData::Intersection(_))
-                        )
+                        && let Some(direct_target) =
+                            self.direct_inference_tracking_target(target_type)
                     {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                            target_type,
+                            direct_target,
                             &var_map,
                             &mut placeholder_probe_map,
                             &mut placeholder_visited,
@@ -1316,13 +1375,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // T appears bare in multiple parameters (e.g., `f<T>(a: T, b: T)`) and
                     // heterogeneous arguments produce conflicting candidates.
                     if track_direct_placeholder_vars
-                        && !matches!(
-                            self.interner.lookup(contextual_target_type),
-                            Some(TypeData::Union(_) | TypeData::Intersection(_))
-                        )
+                        && let Some(direct_target) =
+                            self.direct_inference_tracking_target(contextual_target_type)
                     {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                            target_type,
+                            direct_target,
                             &var_map,
                             &mut placeholder_probe_map,
                             &mut placeholder_visited,
@@ -1369,13 +1426,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // first-wins behavior applies for incompatible candidates.
                 // This also applies to rest parameters: `foo<T>(...s: T[])` with
                 // heterogeneous args uses first-wins to match tsc behavior.
-                let is_union_or_intersection = matches!(
-                    self.interner.lookup(target_type),
-                    Some(TypeData::Union(_) | TypeData::Intersection(_))
-                );
-                if !is_union_or_intersection {
+                if let Some(direct_target) = self.direct_inference_tracking_target(target_type) {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                        target_type,
+                        direct_target,
                         &var_map,
                         &mut placeholder_probe_map,
                         &mut placeholder_visited,
@@ -1650,13 +1703,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .and_then(|params| self.param_type_for_arg_index(params, i, arg_types.len()));
 
                 if original_has_placeholders
-                    && !matches!(
-                        self.interner.lookup(target_type),
-                        Some(TypeData::Union(_) | TypeData::Intersection(_))
-                    )
+                    && let Some(direct_target) = self.direct_inference_tracking_target(target_type)
                 {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
-                        target_type,
+                        direct_target,
                         &var_map,
                         &mut placeholder_probe_map,
                         &mut placeholder_visited,
@@ -2805,6 +2855,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         result
+    }
+
+    fn direct_inference_tracking_target(&self, ty: TypeId) -> Option<TypeId> {
+        match self.interner.lookup(ty) {
+            Some(TypeData::Union(members)) => {
+                let non_nullish: Vec<TypeId> = self
+                    .interner
+                    .type_list(members)
+                    .iter()
+                    .copied()
+                    .filter(|member| !member.is_nullable())
+                    .collect();
+                if non_nullish.len() == 1 {
+                    self.direct_inference_tracking_target(non_nullish[0])
+                } else {
+                    None
+                }
+            }
+            Some(TypeData::Intersection(_)) => None,
+            _ => Some(ty),
+        }
     }
 
     fn should_skip_contextual_arg_in_round1(&self, arg_type: TypeId) -> bool {

@@ -611,6 +611,21 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         };
 
+        // TS1294: erasableSyntaxOnly — non-ambient enums are not erasable.
+        // tsc's error(node) uses getErrorSpanForNode which reports at the name.
+        if self.ctx.compiler_options.erasable_syntax_only
+            && !self.ctx.is_ambient_declaration(enum_idx)
+        {
+            let error_node = self.ctx.arena.get(enum_data.name).unwrap_or(node);
+            self.ctx.error(
+                error_node.pos,
+                error_node.end - error_node.pos,
+                diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                    .to_string(),
+                diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+            );
+        }
+
         // TS2431: Enum name cannot be '{0}'.
         if let Some(name_text) = self.ctx.arena.get_identifier_text(enum_data.name) {
             match name_text {

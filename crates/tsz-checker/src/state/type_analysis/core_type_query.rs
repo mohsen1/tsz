@@ -140,22 +140,34 @@ impl<'a> CheckerState<'a> {
                         use_flow_sensitive_query,
                     );
                     trace!(left_type = ?left_type, "type_query qualified: left_type");
-                    if left_type == TypeId::ANY {
-                        // globalThis resolves to ANY since it's a synthetic global.
-                        // `typeof globalThis.foo` should also be ANY (no TS2304).
-                        if let Some(left_node) = self.ctx.arena.get(left_idx)
-                            && let Some(ident) = self.ctx.arena.get_identifier(left_node)
-                            && ident.escaped_text == "globalThis"
+                    if let Some(right_node) = self.ctx.arena.get(right_idx)
+                        && let Some(ident) = self.ctx.arena.get_identifier(right_node)
+                    {
+                        let prop_name = ident.escaped_text.clone();
+                        if let Some(global_like_type) = self
+                            .resolve_global_like_typeof_member_access(
+                                left_idx, &prop_name, right_idx,
+                            )
                         {
-                            return TypeId::ANY;
+                            let resolved = self.get_enum_namespace_type_for_value(global_like_type);
+                            return if use_flow_sensitive_query {
+                                self.apply_flow_narrowing(type_query.expr_name, resolved)
+                            } else {
+                                resolved
+                            };
                         }
-                    }
-                    if left_type != TypeId::ANY && left_type != TypeId::ERROR {
-                        // Look up the right side as a property on the left type
-                        if let Some(right_node) = self.ctx.arena.get(right_idx)
-                            && let Some(ident) = self.ctx.arena.get_identifier(right_node)
-                        {
-                            let prop_name = ident.escaped_text.clone();
+
+                        if left_type == TypeId::ANY {
+                            // globalThis resolves to ANY since it's a synthetic global.
+                            // `typeof globalThis.foo` should also be ANY (no TS2304).
+                            if let Some(left_node) = self.ctx.arena.get(left_idx)
+                                && let Some(ident) = self.ctx.arena.get_identifier(left_node)
+                                && ident.escaped_text == "globalThis"
+                            {
+                                return TypeId::ANY;
+                            }
+                        }
+                        if left_type != TypeId::ANY && left_type != TypeId::ERROR {
                             let object_type = self.resolve_type_for_property_access(left_type);
                             if object_type == TypeId::ANY || object_type == TypeId::ERROR {
                                 return object_type;

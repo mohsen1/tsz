@@ -8,6 +8,7 @@ use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -601,6 +602,7 @@ impl<'a> CheckerState<'a> {
     fn resolve_cross_file_namespace_exports_for_file(
         &self,
         target_file_idx: usize,
+        module_specifier: Option<&str>,
     ) -> Option<tsz_binder::SymbolTable> {
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
@@ -613,7 +615,11 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let direct_exports = self.module_exports_for_file(target_binder, &target_file_name);
+        let direct_exports = self
+            .module_exports_for_file(target_binder, &target_file_name)
+            .or_else(|| {
+                module_specifier.and_then(|specifier| target_binder.module_exports.get(specifier))
+            });
 
         if let Some(exports) = direct_exports {
             let mut combined = exports.clone();
@@ -668,10 +674,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx.current_file_idx,
                 module_specifier,
                 Some(mode),
-            ) && let Some(exports) =
-                self.resolve_cross_file_namespace_exports_for_file(target_idx)
-            {
-                return Some(exports);
+            ) {
+                if let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(
+                    target_idx,
+                    Some(module_specifier),
+                ) {
+                    return Some(exports);
+                }
+                return Some(tsz_binder::SymbolTable::new());
             }
         }
         self.resolve_effective_module_exports(module_specifier)
@@ -690,13 +700,15 @@ impl<'a> CheckerState<'a> {
             && let Some(target_idx) = self
                 .ctx
                 .resolve_import_target_from_file(source_idx, module_specifier)
-            && let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(target_idx)
+            && let Some(exports) = self
+                .resolve_cross_file_namespace_exports_for_file(target_idx, Some(module_specifier))
         {
             return Some(exports);
         }
 
         if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
-            && let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(target_idx)
+            && let Some(exports) = self
+                .resolve_cross_file_namespace_exports_for_file(target_idx, Some(module_specifier))
         {
             return Some(exports);
         }
@@ -709,7 +721,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .resolve_import_target_from_file(source_idx, &candidate)
                 && let Some(exports) =
-                    self.resolve_cross_file_namespace_exports_for_file(target_idx)
+                    self.resolve_cross_file_namespace_exports_for_file(target_idx, Some(&candidate))
             {
                 return Some(exports);
             }
@@ -784,6 +796,104 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// When `export =` targets a `typeof import("./...")` declaration, the binder symbol
+    /// itself has no exports table. Re-hydrate the referenced module's named exports so
+    /// namespace imports see the same surface as the imported module.
+    pub(crate) fn merge_export_equals_import_type_members(
+        &self,
+        export_equals_symbol: &tsz_binder::Symbol,
+        combined: &mut tsz_binder::SymbolTable,
+    ) {
+        if export_equals_symbol.decl_file_idx == u32::MAX {
+            return;
+        }
+        let decl_file_idx = export_equals_symbol.decl_file_idx as usize;
+        if self.ctx.get_binder_for_file(decl_file_idx).is_none() {
+            return;
+        }
+        let arena = self.ctx.get_arena_for_file(decl_file_idx as u32);
+
+        let decl_idx = if export_equals_symbol.value_declaration.is_some() {
+            export_equals_symbol.value_declaration
+        } else if let Some(&decl_idx) = export_equals_symbol.declarations.first() {
+            decl_idx
+        } else {
+            return;
+        };
+        let Some(node) = arena.get(decl_idx) else {
+            return;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return;
+        }
+        let Some(var_decl) = arena.get_variable_declaration(node) else {
+            return;
+        };
+        let type_idx = var_decl.type_annotation;
+        if !type_idx.is_some() {
+            return;
+        }
+        let Some(module_specifier) =
+            self.import_type_module_specifier_from_type_node(arena, type_idx)
+        else {
+            return;
+        };
+
+        let Some(nested_exports) =
+            self.resolve_effective_module_exports_from_file(&module_specifier, Some(decl_file_idx))
+        else {
+            return;
+        };
+
+        for (name, sym_id) in nested_exports.iter() {
+            if name != "export=" && !combined.has(name) {
+                combined.set(name.to_string(), *sym_id);
+            }
+        }
+    }
+
+    fn import_type_module_specifier_from_type_node(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(type_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_QUERY {
+            return None;
+        }
+        let type_query = arena.get_type_query(node)?;
+        let call_idx = self.leftmost_import_call_in_entity_name(arena, type_query.expr_name)?;
+        let call = arena.get_call_expr(arena.get(call_idx)?)?;
+        let args = call.arguments.as_ref()?;
+        let &first_arg = args.nodes.first()?;
+        let arg_node = arena.get(first_arg)?;
+        let literal = arena.get_literal(arg_node)?;
+        Some(literal.text.clone())
+    }
+
+    fn leftmost_import_call_in_entity_name(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        mut idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        const MAX_DEPTH: usize = 64;
+        for _ in 0..MAX_DEPTH {
+            let node = arena.get(idx)?;
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let qn = arena.get_qualified_name(node)?;
+                idx = qn.left;
+                continue;
+            }
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = arena.get_call_expr(node)?;
+            let expr_node = arena.get(call.expression)?;
+            return (expr_node.kind == SyntaxKind::ImportKeyword as u16).then_some(idx);
+        }
+        None
     }
 
     /// Collect all symbols reachable through re-export chains into the given `SymbolTable`.

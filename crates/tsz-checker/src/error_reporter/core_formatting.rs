@@ -44,6 +44,14 @@ impl<'a> CheckerState<'a> {
             return extract_display;
         }
 
+        // Check for type alias names BEFORE normalization, which transforms the
+        // TypeId and breaks the body_to_alias lookup.  tsc preserves alias names
+        // in assignability messages (e.g. "not assignable to type 'FuncType'"
+        // instead of expanding to the function signature).
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
+            return alias_name;
+        }
+
         let display_ty = self.normalize_assignability_display_type(ty);
         // Do NOT use display properties — tsc shows widened property types
         // in error messages: `{ two: number }` not `{ two: 1 }`.
@@ -654,5 +662,56 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(missing_required_props[0].name)
+    }
+
+    /// Look up a type alias name for a TypeId, returning the alias name if found.
+    ///
+    /// Uses the definition store's `body_to_alias` index to check if the given
+    /// TypeId is the body of a non-generic type alias.  This must be called
+    /// BEFORE `normalize_assignability_display_type`, which creates a new TypeId
+    /// that won't match the stored body.
+    fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
+        // Only check composite types — tsc does NOT preserve alias names for
+        // primitive types (number, string, etc.), literal types, or simple unions
+        // of primitives.  Restricting to object/function/callable types avoids
+        // regressions like `number` → `TypeOfInfinity`.
+        let is_object = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some();
+        let is_function = if !is_object {
+            if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+            {
+                // Skip function types that have their own type parameters — these
+                // are generic functions (including JSDoc @template callbacks) where
+                // the DefInfo may report empty type_params even though the body is
+                // generic. Using the alias name would lose the instantiated form.
+                if !fn_shape.type_params.is_empty() {
+                    return None;
+                }
+                true
+            } else {
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).is_some()
+            }
+        } else {
+            false
+        };
+        if !is_object && !is_function {
+            return None;
+        }
+
+        // If the type has a display alias (produced by evaluating a generic
+        // Application like B<string>), let the formatter handle it — using the
+        // raw alias name would lose the type arguments.
+        if self.ctx.types.get_display_alias(ty).is_some() {
+            return None;
+        }
+
+        let def_id = self.ctx.definition_store.find_type_alias_by_body(ty)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        // Only use the alias for non-generic type aliases.  Generic aliases
+        // need type argument display (e.g., B<string> not B).
+        if !def.type_params.is_empty() {
+            return None;
+        }
+        let name = self.ctx.types.resolve_atom_ref(def.name);
+        Some(name.to_string())
     }
 }

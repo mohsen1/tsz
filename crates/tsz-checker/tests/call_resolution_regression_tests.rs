@@ -1893,3 +1893,66 @@ var out = foo((x, y) => {
         "TS2454 for unassigned 'bar' should not be suppressed by overload resolution, got: {codes:?}"
     );
 }
+
+#[test]
+fn union_multi_overload_incompatible_this_emits_ts2349() {
+    // When a union has multiple members each with multiple overloads, and no
+    // compatible pair of signatures exists across members, the union is not
+    // callable (TS2349). This matches tsc's getUnionSignatures behavior.
+    // Regression test for unionTypeCallSignatures6.ts line 39: x1.f3()
+    let source = r#"
+type A = { a: string };
+type B = { b: number };
+type C = { c: string };
+type D = { d: number };
+
+interface F3 {
+    (this: A): void;
+    (this: B): void;
+}
+interface F4 {
+    (this: C): void;
+    (this: D): void;
+}
+
+declare var x1: A & C & {
+    f3: F3 | F4;
+};
+x1.f3();
+"#;
+    assert!(
+        has_error(source, 2349),
+        "Union of multi-overload interfaces with no compatible this-pairs should emit TS2349"
+    );
+}
+
+#[test]
+fn union_multi_overload_compatible_this_no_ts2349() {
+    // When multi-overload union members DO have a compatible signature pair,
+    // the union IS callable (no TS2349). The this-type is intersected.
+    // Regression test for unionTypeCallSignatures6.ts line 40: x1.f4()
+    let source = r#"
+type A = { a: string };
+type B = { b: number };
+type C = { c: string };
+
+interface F3 {
+    (this: A): void;
+    (this: B): void;
+}
+interface F5 {
+    (this: C): void;
+    (this: B): void;
+}
+
+declare var x2: A & B & {
+    f4: F3 | F5;
+};
+x2.f4();
+"#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2349),
+        "Union of multi-overload interfaces with compatible this-pair (B) should NOT emit TS2349, got: {codes:?}"
+    );
+}

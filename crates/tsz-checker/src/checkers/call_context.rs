@@ -637,10 +637,8 @@ impl<'a> CheckerState<'a> {
         // already handles priority correctly — it only adds the contextual type
         // as a candidate when no direct argument candidates exist.
         let return_is_bare_type_param = shape.type_params.iter().any(|tp| {
-            matches!(
-                self.ctx.types.lookup(shape.return_type),
-                Some(tsz_solver::TypeData::TypeParameter(info)) if info.name == tp.name
-            )
+            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, shape.return_type)
+                .is_some_and(|info| info.name == tp.name)
         });
         if return_is_bare_type_param {
             return false;

@@ -4,6 +4,7 @@
 //! the binder, checking TDZ violations, validating definite assignment,
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
+use crate::context::should_resolve_jsdoc_for_file;
 use crate::context::{PendingImplicitAnyKind, TypingRequest, is_js_file_name};
 use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::type_computation::complex as query;
@@ -1748,6 +1749,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
+        // Check global augmentations (`declare global { namespace X { ... } }`).
+        // A `declare global` namespace with value members provides a legitimate
+        // global value binding that should suppress TS2686 / TS2708, even though
+        // the namespace symbol only carries VALUE_MODULE (excluded above).
+        // tsc merges these augmentations into the global symbol, giving it value
+        // semantics; we check for their existence as a proxy.
+        if self.ctx.binder.global_augmentations.contains_key(name) {
+            return true;
+        }
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            if lib_ctx.binder.global_augmentations.contains_key(name) {
+                return true;
+            }
+        }
+        if let Some(ref all_binders) = self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if binder.global_augmentations.contains_key(name) {
+                    return true;
+                }
+            }
+        }
+
         false
     }
 
@@ -2231,7 +2255,7 @@ impl<'a> CheckerState<'a> {
     /// declaration kinds, since those carry the constructor-side type.
     pub(crate) fn preferred_value_declaration(
         &self,
-        _sym_id: SymbolId,
+        sym_id: SymbolId,
         default_decl: NodeIndex,
         declarations: &[NodeIndex],
     ) -> Option<NodeIndex> {
@@ -2258,7 +2282,81 @@ impl<'a> CheckerState<'a> {
         {
             return Some(default_decl);
         }
+        if let Some(js_ctor_decl) =
+            self.checked_js_constructor_value_declaration(sym_id, default_decl, declarations)
+        {
+            return Some(js_ctor_decl);
+        }
         None
+    }
+
+    pub(crate) fn checked_js_constructor_value_declaration(
+        &self,
+        sym_id: SymbolId,
+        default_decl: NodeIndex,
+        declarations: &[NodeIndex],
+    ) -> Option<NodeIndex> {
+        if self.declaration_is_checked_js_constructor_value_declaration(sym_id, default_decl) {
+            return Some(default_decl);
+        }
+
+        declarations.iter().copied().find(|&decl_idx| {
+            decl_idx != default_decl
+                && self.declaration_is_checked_js_constructor_value_declaration(sym_id, decl_idx)
+        })
+    }
+
+    pub(crate) fn declaration_is_checked_js_constructor_value_declaration(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        if decl_idx.is_none() {
+            return false;
+        }
+
+        if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+            return arenas.iter().any(|arena| {
+                self.arena_has_checked_js_constructor_value_declaration(arena.as_ref(), decl_idx)
+            });
+        }
+
+        self.arena_has_checked_js_constructor_value_declaration(self.ctx.arena, decl_idx)
+    }
+
+    fn arena_has_checked_js_constructor_value_declaration(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        if !is_js_file_name(&source_file.file_name)
+            || !should_resolve_jsdoc_for_file(
+                &source_file.file_name,
+                source_file.text.as_ref(),
+                &self.ctx.compiler_options,
+            )
+        {
+            return false;
+        }
+
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+
+        let Some(var_decl) = arena.get_variable_declaration(node) else {
+            return false;
+        };
+        let Some(init_node) = arena.get(var_decl.initializer) else {
+            return false;
+        };
+
+        init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
     }
 
     /// Extract the module specifier string from an import declaration.

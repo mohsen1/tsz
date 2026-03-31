@@ -1562,6 +1562,20 @@ const result = f([["", true]]);
     }
 
     #[test]
+    fn generic_iterable_context_preserves_heterogeneous_entries_for_type_mismatch() {
+        let source = r#"
+declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];
+const result = f([["", true], ["", 0]]);
+"#;
+        let errors = check_source_codes(source);
+        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+        assert!(
+            semantic_errors.contains(&2345),
+            "Heterogeneous generic entries should produce TS2345, got: {semantic_errors:?}"
+        );
+    }
+
+    #[test]
     fn template_expr_without_context_stays_string() {
         // Template expression assigned to `string` should still work (not break)
         let source = r#"

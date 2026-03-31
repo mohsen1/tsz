@@ -2488,6 +2488,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_implicit_override {
         options.checker.no_implicit_override = true;
     }
+    if args.erasable_syntax_only {
+        options.checker.erasable_syntax_only = true;
+    }
     if args.no_implicit_use_strict {
         options.checker.no_implicit_use_strict = true;
     }

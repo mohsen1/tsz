@@ -192,25 +192,61 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(parent_node) = self.ctx.arena.get(parent) else {
             return;
         };
+        // tsc uses node.pos (full start, including leading trivia) for this error.
+        let (full_start, end) = self
+            .ctx
+            .arena
+            .get(idx)
+            .map(|n| (self.full_start_of(n.pos), n.end))
+            .unwrap_or((0, 0));
+        let length = end.saturating_sub(full_start);
+
         if parent_node.kind == syntax_kind_ext::UNION_TYPE {
             self.ctx.error(
-                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
-                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                full_start,
+                length,
                 "Constructor type notation must be parenthesized when used in a union type.".to_string(),
                 crate::diagnostics::diagnostic_codes::CONSTRUCTOR_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_A_UNION_TYPE,
             );
         } else if parent_node.kind == syntax_kind_ext::INTERSECTION_TYPE {
             self.ctx.error(
-                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
-                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                full_start,
+                length,
                 "Constructor type notation must be parenthesized when used in an intersection type.".to_string(),
                 crate::diagnostics::diagnostic_codes::CONSTRUCTOR_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_AN_INTERSECTION_TYP,
             );
         }
     }
 
+    /// Compute the "full start" position of a node (including leading trivia/whitespace).
+    /// tsc's `node.pos` includes leading trivia, but our parser uses token start (no trivia).
+    /// This helper scans backward in the source text from the node's `pos` to find the
+    /// start of leading whitespace, matching tsc's error position for TS1385/TS1387.
+    fn full_start_of(&self, pos: u32) -> u32 {
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return pos;
+        };
+        let text = &sf.text;
+        let pos_usize = pos as usize;
+        if pos_usize == 0 || pos_usize > text.len() {
+            return pos;
+        }
+        let bytes = text.as_bytes();
+        let mut start = pos_usize;
+        // Scan backward past whitespace (spaces, tabs) but NOT past newlines
+        // (newlines would cross line boundaries, which would be wrong).
+        while start > 0 && matches!(bytes[start - 1], b' ' | b'\t') {
+            start -= 1;
+        }
+        start as u32
+    }
+
     /// TS1385/TS1387: Function type notation must be parenthesized when used
     /// in a union or intersection type.
+    ///
+    /// tsc also detects when a function type inside an intersection is transitively
+    /// inside a union (e.g. `() => void | () => void & any`), emitting TS1385 for
+    /// the union level in addition to TS1387 for the intersection level.
     pub(super) fn check_grammar_function_type_in_union_or_intersection(&mut self, idx: NodeIndex) {
         if self.is_type_node_parenthesized(idx) {
             return;
@@ -222,20 +258,96 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(parent_node) = self.ctx.arena.get(parent) else {
             return;
         };
+        // tsc uses node.pos (full start, including leading trivia) for this error.
+        // Our nodes store token start (no trivia), so compute the full start.
+        let (full_start, end) = self
+            .ctx
+            .arena
+            .get(idx)
+            .map(|n| (self.full_start_of(n.pos), n.end))
+            .unwrap_or((0, 0));
+        let length = end.saturating_sub(full_start);
+
         if parent_node.kind == syntax_kind_ext::UNION_TYPE {
             self.ctx.error(
-                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
-                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                full_start,
+                length,
                 "Function type notation must be parenthesized when used in a union type.".to_string(),
                 crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_A_UNION_TYPE,
             );
         } else if parent_node.kind == syntax_kind_ext::INTERSECTION_TYPE {
             self.ctx.error(
-                self.ctx.arena.get(idx).map_or(0, |n| n.pos),
-                self.ctx.arena.get(idx).map_or(0, |n| n.end - n.pos),
+                full_start,
+                length,
                 "Function type notation must be parenthesized when used in an intersection type.".to_string(),
                 crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_AN_INTERSECTION_TYPE,
             );
+            // tsc also emits TS1385 when the intersection is itself inside a union
+            // AND the function type is the first constituent of the intersection.
+            // This matches tsc's parser behavior where `parseFunctionOrConstructorTypeToError`
+            // catches function types at the union level before they get wrapped in an
+            // intersection. E.g., `void | () => void & any` — the `(` is at the union
+            // constituent boundary so tsc catches it at both levels.
+            let is_first_in_intersection = self
+                .ctx
+                .arena
+                .get_composite_type(parent_node)
+                .is_some_and(|ct| ct.types.nodes.first().copied() == Some(idx));
+            if is_first_in_intersection {
+                if let Some(gp_ext) = self.ctx.arena.get_extended(parent) {
+                    if let Some(gp_node) = self.ctx.arena.get(gp_ext.parent) {
+                        if gp_node.kind == syntax_kind_ext::UNION_TYPE {
+                            self.ctx.error(
+                                full_start,
+                                length,
+                                "Function type notation must be parenthesized when used in a union type.".to_string(),
+                                crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_A_UNION_TYPE,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Recursively scan a type node subtree for unparenthesized function/constructor
+    /// types in union/intersection contexts. This is needed because function type
+    /// return types are processed through TypeLowering, which doesn't trigger the
+    /// grammar checks that `compute_type` normally runs.
+    pub(super) fn check_nested_function_types_in_type(&mut self, root: NodeIndex) {
+        if root.is_none() {
+            return;
+        }
+        let mut stack = vec![root];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::FUNCTION_TYPE => {
+                    self.check_grammar_function_type_in_union_or_intersection(node_idx);
+                    // Also check nested return types recursively
+                    if let Some(ft) = self.ctx.arena.get_function_type(node) {
+                        stack.push(ft.type_annotation);
+                    }
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                    self.check_grammar_constructor_type_in_union_or_intersection(node_idx);
+                    if let Some(ft) = self.ctx.arena.get_function_type(node) {
+                        stack.push(ft.type_annotation);
+                    }
+                }
+                k if k == syntax_kind_ext::UNION_TYPE
+                    || k == syntax_kind_ext::INTERSECTION_TYPE =>
+                {
+                    if let Some(ct) = self.ctx.arena.get_composite_type(node) {
+                        for &child in &ct.types.nodes {
+                            stack.push(child);
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 

@@ -672,6 +672,7 @@ impl CompilerOptions {
             allow_umd_global_access: false,
             preserve_const_enums: false,
             strict_builtin_iterator_return: strict,
+            erasable_syntax_only: false,
         }
     }
 }
@@ -2786,6 +2787,9 @@ mod ts2305_tests;
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/ts2306_tests.rs"]
 mod ts2306_tests;
+#[cfg(test)]
+#[path = "../../tsz-checker/tests/ts2498_export_star_export_equals_tests.rs"]
+mod ts2498_export_star_export_equals_tests;
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/widening_integration_tests.rs"]
 mod widening_integration_tests;

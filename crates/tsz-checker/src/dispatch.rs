@@ -56,14 +56,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         if crate::checkers_domain::stack_overflow_tripped() {
             return TypeId::ERROR;
         }
+        // Periodically probe remaining stack and trip the breaker if low.
+        // This prevents unbounded stack growth from stacker::maybe_grow
+        // which would eventually hit the OS stack limit and crash.
+        if crate::checkers_domain::should_probe_stack() {
+            if stacker::remaining_stack().unwrap_or(0) < 1024 * 1024 {
+                crate::checkers_domain::trip_stack_overflow();
+                return TypeId::ERROR;
+            }
+        }
         // Dynamically grow the stack when depth becomes significant.
-        // `stacker::maybe_grow(red_zone, new_stack, closure)` checks if the
-        // remaining stack is less than `red_zone` bytes; if so it allocates a
-        // fresh `new_stack`-byte segment and runs the closure there. This
-        // replaces the previous amortized-probe + bail approach, which could
-        // miss rapid stack consumption between probes. The stacker approach
-        // lets deeply recursive type-level libraries (ts-toolbelt, ts-essentials)
-        // succeed instead of crashing.
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
             self.dispatch_type_computation_inner(idx, request)
         })
@@ -258,15 +260,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     );
                     TypeId::ANY
                 } else if self.checker.ctx.no_implicit_this()
-                    && !self.checker.is_js_file()
                     && self
                         .checker
                         .find_enclosing_non_arrow_function(idx)
                         .is_some()
+                    && (!self.checker.is_js_file()
+                        || self
+                            .checker
+                            .is_this_in_nested_function_without_own_this_binding(idx))
                 {
                     // TS2683: 'this' implicitly has type 'any'
-                    // Suppressed in JS files: tsc infers `this` for constructor/prototype
-                    // patterns and JSDoc-typed functions.
+                    // In JS files, only nested regular functions with a fresh,
+                    // unowned `this` binding reach this path. Constructor/prototype
+                    // patterns and explicit/contextual/JSDoc-owned receivers are
+                    // filtered out before this branch.
                     // Suppress if the enclosing function has an explicit `this` parameter
                     // or a contextual `this` type from a parent type annotation
                     if self
@@ -692,6 +699,32 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION
                 || k == syntax_kind_ext::TYPE_ASSERTION =>
             {
+                // TS1294: erasableSyntaxOnly — angle-bracket type assertions are not erasable.
+                // Skip when there are parse errors — tsc's checker never visits error-recovery nodes.
+                if k == syntax_kind_ext::TYPE_ASSERTION
+                    && self.checker.ctx.compiler_options.erasable_syntax_only
+                    && !self.checker.ctx.has_parse_errors
+                {
+                    if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
+                        // Error span covers just the <Type> part, from node start to expression start
+                        let start = node.pos;
+                        let end = if let Some(expr_node) =
+                            self.checker.ctx.arena.get(assertion.expression)
+                        {
+                            expr_node.pos
+                        } else {
+                            node.end
+                        };
+                        self.checker.ctx.error(
+                            start,
+                            end - start,
+                            tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                                .to_string(),
+                            tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                        );
+                    }
+                }
+
                 if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
                     // Check for const assertion BEFORE type-checking the expression
                     // so we can set the context flag to preserve literal types
@@ -1294,11 +1327,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 self.checker.invalidate_function_like_for_contextual_retry(
                                     expr_data.expression,
                                 );
-                                self.checker
-                                    .get_type_of_node_with_request(
-                                        expr_data.expression,
-                                        &children_request,
-                                    )
+                                self.checker.get_type_of_node_with_request(
+                                    expr_data.expression,
+                                    &children_request,
+                                )
                             } else {
                                 // Still process the arrow/function expression to emit
                                 // diagnostics (e.g., TS7006 for unannotated parameters).

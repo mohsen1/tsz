@@ -1040,9 +1040,21 @@ impl<'a> CheckerState<'a> {
                                                 false
                                             }
                                         };
+                                        // When the true branch is an `infer` variable
+                                        // (e.g., `F extends (...args: infer L) => any ? L : never`),
+                                        // the result is structurally extracted from the extends type
+                                        // pattern, not bounded by it. The extends type is a pattern
+                                        // matcher, not a constraint proxy. Defer to instantiation.
+                                        // This covers `Parameters<F>`, `ReturnType<F>`,
+                                        // `ConstructorParameters<F>`, `InstanceType<F>`, etc.
+                                        let cond_true_is_infer = query::is_infer_type(
+                                            self.ctx.types.as_type_database(),
+                                            cond_true,
+                                        );
                                         let is_extract_like = cond_true == cond_check
                                             || (cond_true_is_bare_param
-                                                && !is_key_filtering_pattern);
+                                                && !is_key_filtering_pattern
+                                                && !cond_true_is_infer);
                                         if !is_extract_like {
                                             // True branch is a structural type derived from the
                                             // check type (e.g., mapped type). Constraint satisfaction
@@ -1601,7 +1613,59 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let mut is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
+                // When the constraint is an object type with ONLY optional properties
+                // (a "weak type" like `{t?: string}`), primitive types always satisfy
+                // it in tsc (e.g., `bigint extends {t?: string}` is valid). However,
+                // non-primitive types that share no common properties should fail
+                // with TS2559 ("Type has no properties in common").
+                let constraint_is_all_optional = {
+                    let db = self.ctx.types.as_type_database();
+                    if let Some(shape_id) = tsz_solver::object_shape_id(db, instantiated_constraint)
+                    {
+                        let shape = db.object_shape(shape_id);
+                        !shape.properties.is_empty()
+                            && shape.properties.iter().all(|p| p.optional)
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                    } else {
+                        false
+                    }
+                };
+                // Only skip for primitives: they always satisfy weak type constraints.
+                // Non-primitive types must still go through assignability to detect
+                // TS2559 (no common properties).
+                let primitive_satisfies_weak = constraint_is_all_optional
+                    && query::is_primitive_type(self.ctx.types.as_type_database(), type_arg);
+                // When the constraint is a weak type (all-optional) and the type arg
+                // is NOT primitive, use assignability WITH weak type checks so that
+                // TS2559 is emitted when source has no common properties with the
+                // constraint. Without this, `{x: string}` would pass against
+                // `{y?: string}` structurally (all target props optional) but miss
+                // the weak type violation.
+                let mut is_satisfied = primitive_satisfies_weak
+                    || if constraint_is_all_optional
+                        && !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg)
+                    {
+                        self.is_assignable_to(type_arg, instantiated_constraint)
+                    } else {
+                        self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint)
+                    };
+
+                // When the constraint is all-optional and the structural check
+                // passed (because all-optional types have no required properties),
+                // separately check for weak type violation (TS2559).
+                // Non-primitive type arguments with NO common properties should
+                // fail, e.g., MyObjA {x: string} vs ObjA {y?: string}.
+                if is_satisfied && constraint_is_all_optional && !primitive_satisfies_weak {
+                    let analysis =
+                        self.analyze_assignability_failure(type_arg, instantiated_constraint);
+                    if matches!(
+                        analysis.failure_reason,
+                        Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+                    ) {
+                        is_satisfied = false;
+                    }
+                }
 
                 // Fallback for recursive generic constraints (coinductive semantics).
                 //
@@ -1622,17 +1686,20 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Fallback: if assignability failed but the constraint is the Function
-                // interface and the type argument is callable, accept it. This handles
-                // the case where Function has multiple TypeIds that aren't recognized
-                // as equivalent during assignability checking (RefCell borrow conflict
-                // prevents boxed type lookup during type evaluation).
+                // interface and the type argument has call signatures, accept it.
+                // This handles the case where Function has multiple TypeIds that
+                // aren't recognized as equivalent during assignability checking.
+                // IMPORTANT: Use has_call_signatures (not is_callable_type) to reject
+                // class constructor types that only have construct signatures.
+                // E.g., `Parameters<typeof MyClass>` should emit TS2344 because
+                // `typeof MyClass` has construct signatures but no call signatures.
                 if !is_satisfied {
                     // Check original (pre-resolution) constraint which may still be
                     // Lazy(DefId), making it easier to identify via boxed DefId lookup.
                     let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
                     let db = self.ctx.types.as_type_database();
                     is_satisfied = self.is_function_constraint(original_constraint)
-                        && query::is_callable_type(db, type_arg);
+                        && query::has_call_signatures(db, type_arg);
                 }
                 if !is_satisfied {
                     is_satisfied =
@@ -1814,7 +1881,7 @@ impl<'a> CheckerState<'a> {
     /// against function signature constraints.
     fn type_parameter_has_callable_constraint(&self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
-        if let Some(tsz_solver::TypeData::TypeParameter(tp)) = db.lookup(type_id) {
+        if let Some(tp) = tsz_solver::type_queries::get_type_parameter_info(db, type_id) {
             if let Some(constraint) = tp.constraint {
                 return query::is_callable_type(db, constraint)
                     || self.is_function_constraint(constraint);

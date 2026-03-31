@@ -92,12 +92,19 @@ impl<'a> CheckerState<'a> {
         }
 
         for sig in &sigs {
+            let instantiated_return = if !sig.type_params.is_empty() {
+                self.instantiate_type_with_constraints(sig.return_type, &sig.type_params)
+            } else {
+                sig.return_type
+            };
+
             // For 0-param overloads: only match when NO attributes are provided.
             // tsc treats JSX as a 1-arg call (the attributes object), so 0-param
             // overloads fail on arg count when any attributes exist.
             if sig.params.is_empty() {
                 if !has_any_attrs {
                     guard.rollback(&mut self.ctx);
+                    self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                     return;
                 }
                 continue;
@@ -111,7 +118,7 @@ impl<'a> CheckerState<'a> {
             // compatibility checks pass while still catching structural issues
             // (missing required properties, excess properties).
             let props_type = if !sig.type_params.is_empty() {
-                self.instantiate_props_with_constraints(props_type, &sig.type_params)
+                self.instantiate_type_with_constraints(props_type, &sig.type_params)
             } else {
                 props_type
             };
@@ -123,6 +130,7 @@ impl<'a> CheckerState<'a> {
                 // Found a matching overload — done.
                 // Roll back speculative diagnostics from attribute collection.
                 guard.rollback(&mut self.ctx);
+                self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                 return;
             }
         }
@@ -145,9 +153,9 @@ impl<'a> CheckerState<'a> {
     /// type compatibility checks will pass (any is assignable to anything), but
     /// structural checks (required properties, excess properties) still work
     /// correctly because property names don't depend on type arguments.
-    fn instantiate_props_with_constraints(
+    fn instantiate_type_with_constraints(
         &mut self,
-        props_type: TypeId,
+        type_id: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
     ) -> TypeId {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
@@ -157,7 +165,7 @@ impl<'a> CheckerState<'a> {
             .map(|param| param.default.or(param.constraint).unwrap_or(TypeId::ANY))
             .collect();
         let substitution = TypeSubstitution::from_args(self.ctx.types, type_params, &type_args);
-        instantiate_type(self.ctx.types, props_type, &substitution)
+        instantiate_type(self.ctx.types, type_id, &substitution)
     }
 
     /// Collect provided JSX attributes as `JsxAttrsInfo`.

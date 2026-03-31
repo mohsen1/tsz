@@ -254,7 +254,7 @@ impl<'a> CheckerState<'a> {
         if !is_function_declaration && !is_method_or_constructor {
             // Check for required parameters following optional parameters (TS1016)
             self.check_parameter_ordering(parameters, Some(idx));
-            self.check_binding_pattern_optionality(&parameters.nodes, body.is_some());
+            self.check_binding_pattern_optionality(&parameters.nodes, body.is_some(), Some(idx));
             // Check that rest parameters have array types (TS2370)
             self.check_rest_parameter_types(&parameters.nodes);
             self.check_strict_mode_reserved_parameter_names(
@@ -283,6 +283,11 @@ impl<'a> CheckerState<'a> {
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
 
         let (mut type_params, type_param_updates) = self.push_type_parameters(type_parameters);
+
+        if !is_function_declaration && !is_method_or_constructor {
+            self.check_duplicate_type_parameters(type_parameters);
+            self.check_type_parameters_for_missing_names(type_parameters);
+        }
 
         // Check for unused type parameters (TS6133) in function expressions and arrows
         if !is_function_declaration && !is_method_or_constructor {
@@ -1366,6 +1371,7 @@ impl<'a> CheckerState<'a> {
         let mut pushed_this_type_early = false;
         if let Some(tt) = implicit_this {
             self.ctx.this_type_stack.push(tt);
+            self.ctx.function_owned_this_stack.push(idx);
             pushed_this_type_early = true;
         }
 
@@ -2260,6 +2266,7 @@ impl<'a> CheckerState<'a> {
         // Pop this_type that was pushed before parameter initializer checks
         if pushed_this_type_early {
             self.ctx.this_type_stack.pop();
+            self.ctx.function_owned_this_stack.pop();
         }
 
         // In JS files, functions that reference `arguments` in their body should accept

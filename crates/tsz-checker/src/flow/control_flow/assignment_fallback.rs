@@ -188,11 +188,36 @@ impl<'a> FlowAnalyzer<'a> {
                     .resolve_identifier(self.arena, type_ref.type_name)
                     .or_else(|| self.reference_symbol(type_ref.type_name))?;
                 let symbol = self.binder.get_symbol(sym_id)?;
-                symbol
+                // Type parameters (e.g., K in `new Set<K>()`) need special handling:
+                // look up the type parameter's TypeId from node_types for its declaration.
+                // Without this, generic new expressions with type parameter arguments
+                // fail the fallback path, losing the type argument information.
+                if (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0 {
+                    return symbol.declarations.iter().copied().find_map(|decl| {
+                        self.node_types
+                            .and_then(|nt| nt.get(&decl.0).copied())
+                            .filter(|&ty| ty != TypeId::ERROR)
+                    });
+                }
+                let base_type = symbol
                     .declarations
                     .iter()
                     .copied()
-                    .find_map(|decl| self.fallback_named_type_declaration_type(decl))
+                    .find_map(|decl| self.fallback_named_type_declaration_type(decl));
+                // For generic type references with type arguments (e.g., Box<K>),
+                // apply the type arguments to the base type.
+                if let Some(base) = base_type
+                    && let Some(ref type_args_list) = type_ref.type_arguments
+                    && !type_args_list.nodes.is_empty()
+                {
+                    let mut resolved_args = Vec::with_capacity(type_args_list.nodes.len());
+                    for &arg_idx in &type_args_list.nodes {
+                        resolved_args.push(self.fallback_type_from_type_node_syntax(arg_idx)?);
+                    }
+                    Some(self.interner.application(base, resolved_args))
+                } else {
+                    base_type
+                }
             }
             _ => None,
         }
