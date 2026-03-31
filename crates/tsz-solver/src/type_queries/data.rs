@@ -1212,6 +1212,10 @@ pub fn get_object_shape(
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             Some(db.object_shape(shape_id))
         }
+        Some(TypeData::TypeParameter(info)) => {
+            // For type parameters with constraints, look through to the constraint.
+            info.constraint.and_then(|c| get_object_shape(db, c))
+        }
         _ => None,
     }
 }
