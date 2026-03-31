@@ -83,6 +83,20 @@ fn is_callable_application_type(db: &dyn tsz_solver::TypeDatabase, type_id: Type
     }
 }
 
+/// Check if a callable/function type has its own signature-level type parameters.
+fn has_own_signature_type_params(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(shape) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
+        return shape
+            .call_signatures
+            .iter()
+            .any(|sig| !sig.type_params.is_empty());
+    }
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+        return !shape.type_params.is_empty();
+    }
+    false
+}
+
 impl<'a> CheckerState<'a> {
     /// Check if the assignment failure is due to exact optional property types.
     ///
@@ -495,17 +509,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS2322 for callable application types with generic type parameters.
-        // This handles cases like inferenceExactOptionalProperties2 where the return type
-        // of a generic function (e.g., AssignAction<ProvidedActor>) should be assignable
-        // to a contextual type (e.g., ActionFunction<ToProvidedActor<...>>) but the
-        // type parameters weren't fully inferred from the context.
+        // Suppress TS2322 for callable types with generic type parameters from outer
+        // context. Skip the suppression when both sides have their own signature-level
+        // type params — the solver handles generic-to-generic comparison correctly.
         let src_callable = is_callable_application_type(self.ctx.types, source);
         let tgt_callable = is_callable_application_type(self.ctx.types, target);
         let has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, source);
-        tracing::debug!(src_callable, tgt_callable, has_type_params, source=?source, target=?target, "callable application suppression check");
-        if src_callable && tgt_callable && has_type_params {
-            tracing::info!("Suppressing TS2322 for callable application types");
+        let both_have_own_sig_params = has_own_signature_type_params(self.ctx.types, source)
+            && has_own_signature_type_params(self.ctx.types, target);
+        if src_callable && tgt_callable && has_type_params && !both_have_own_sig_params {
             return;
         }
 
