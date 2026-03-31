@@ -641,6 +641,12 @@ pub struct CheckerContext<'a> {
     /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
     pub spelling_suggestions_emitted: u32,
 
+    /// Node indices for which a name resolution failure (TS2304/TS2552) has already
+    /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
+    /// when the same type reference is resolved multiple times (e.g., due to
+    /// re-evaluation in generic/contextual typing contexts).
+    pub name_resolution_reported_nodes: FxHashSet<NodeIndex>,
+
     /// `TypeId`s that represent interfaces extending arrays/tuples.
     /// Used to suppress false TS2559 (weak type) violations for these types,
     /// since they inherit non-optional members from Array.prototype.
