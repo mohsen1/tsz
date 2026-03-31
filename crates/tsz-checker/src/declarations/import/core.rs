@@ -1,9 +1,11 @@
 //! Core import/export checking implementation.
 
 use crate::diagnostics::format_message;
+use crate::query_boundaries::capabilities::FeatureGate;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
@@ -63,6 +65,116 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn has_only_valid_resolution_mode_attribute(&self, attributes_idx: NodeIndex) -> bool {
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return false;
+        };
+        let Some(attrs) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return false;
+        };
+        if attrs.elements.nodes.len() != 1 {
+            return false;
+        }
+        self.get_resolution_mode_override(attributes_idx).is_some()
+    }
+
+    pub(crate) fn resolution_mode_override_is_effective(
+        &self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) -> bool {
+        if self.get_resolution_mode_override(attributes_idx).is_none() {
+            return false;
+        }
+
+        if self
+            .ctx
+            .capabilities
+            .feature_available(FeatureGate::ImportAttributes)
+        {
+            return true;
+        }
+
+        self.ctx.capabilities.module == ModuleKind::Node16
+            && declaration_is_type_only
+            && self.has_only_valid_resolution_mode_attribute(attributes_idx)
+    }
+
+    pub(crate) fn effective_resolution_mode_override(
+        &self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) -> Option<crate::context::ResolutionModeOverride> {
+        if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only) {
+            self.get_resolution_mode_override(attributes_idx)
+        } else {
+            None
+        }
+    }
+
+    fn current_file_emit_resolution_mode(&self) -> crate::context::ResolutionModeOverride {
+        let file_name = self.ctx.file_name.as_str();
+        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+            return crate::context::ResolutionModeOverride::Import;
+        }
+        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+            return crate::context::ResolutionModeOverride::Require;
+        }
+        if let Some(map) = self.ctx.file_is_esm_map.as_ref() {
+            let normalized = file_name.replace('\\', "/");
+            let trimmed = normalized.trim_start_matches('/');
+            let slash_trimmed = format!("/{trimmed}");
+            for candidate in [
+                file_name,
+                normalized.as_str(),
+                trimmed,
+                slash_trimmed.as_str(),
+            ] {
+                if let Some(&is_esm) = map.get(candidate) {
+                    return if is_esm {
+                        crate::context::ResolutionModeOverride::Import
+                    } else {
+                        crate::context::ResolutionModeOverride::Require
+                    };
+                }
+            }
+            if let Some(&is_esm) = map.iter().find_map(|(path, is_esm)| {
+                let path = path.replace('\\', "/");
+                (path == normalized
+                    || path == trimmed
+                    || path.ends_with(&normalized)
+                    || path.ends_with(trimmed))
+                .then_some(is_esm)
+            }) {
+                return if is_esm {
+                    crate::context::ResolutionModeOverride::Import
+                } else {
+                    crate::context::ResolutionModeOverride::Require
+                };
+            }
+        }
+        if self.ctx.file_is_esm == Some(true) {
+            crate::context::ResolutionModeOverride::Import
+        } else {
+            crate::context::ResolutionModeOverride::Require
+        }
+    }
+
+    pub(crate) fn requested_resolution_mode(
+        &self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) -> Option<crate::context::ResolutionModeOverride> {
+        let raw_mode = self.get_resolution_mode_override(attributes_idx)?;
+        if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only) {
+            return Some(raw_mode);
+        }
+        if self.ctx.capabilities.module == ModuleKind::Node16 && !declaration_is_type_only {
+            return Some(self.current_file_emit_resolution_mode());
+        }
+        None
+    }
+
     /// Returns the appropriate "module not found" diagnostic code and message.
     /// Uses TS2792 when the effective module resolution is "Classic", otherwise TS2307.
     ///
@@ -71,37 +183,41 @@ impl<'a> CheckerState<'a> {
     /// the effective module resolution (considering both `module` and `moduleResolution`
     /// options), matching tsc's `getEmitModuleResolutionKind()`.
     pub(crate) fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
+        self.module_not_found_diagnostic_with_context(module_name, false)
+    }
+
+    /// Like `module_not_found_diagnostic`, but preserves require-like contexts for
+    /// Node built-in module specifiers.
+    pub(crate) fn module_not_found_diagnostic_with_context(
+        &self,
+        module_name: &str,
+        require_like: bool,
+    ) -> (String, u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::query_boundaries::capabilities::is_known_node_module;
 
-        // tsc emits TS2591 instead of TS2307 when the unresolved module specifier
-        // is a known Node.js built-in module, suggesting @types/node installation.
+        // Known Node.js built-ins use the "cannot find name" family instead of TS2307,
+        // but the exact code depends on the import context:
+        // - TS2580 for regular TypeScript import/export sites
+        // - TS2591 for require-like sites, JavaScript files, and noTypesAndSymbols runs
+        //
         // This takes priority over any resolution error from the driver.
         if is_known_node_module(module_name) {
-            return (
-                format_message(
+            let use_types_field_hint = require_like
+                || self.ctx.compiler_options.no_types_and_symbols
+                || self.ctx.is_js_file();
+            let (message_template, code) = if use_types_field_hint {
+                (
                     diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                    &[module_name],
-                ),
-                diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-            );
-        }
-
-        // When the module specifier is a known Node.js built-in module name,
-        // tsc emits TS2591 ("Cannot find name 'X'. Do you need to install type
-        // definitions for node?") instead of TS2307. This check must come before
-        // the driver resolution error check, because the driver always produces
-        // TS2307 for unresolved modules — but for Node built-ins, tsc uses TS2591.
-        // In Node16/NodeNext mode, the error is suppressed entirely upstream;
-        // in CommonJS/other modes, this substitution produces the correct diagnostic.
-        if super::declaration::is_node_builtin_module(module_name) {
-            return (
-                format_message(
-                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                    &[module_name],
-                ),
-                diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-            );
+                    diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                )
+            } else {
+                (
+                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                    diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                )
+            };
+            return (format_message(message_template, &[module_name]), code);
         }
 
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
@@ -634,7 +750,20 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         normalized: &str,
         import_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> bool {
+        if resolution_mode.is_some() {
+            return self.resolve_import_via_target_binder(
+                module_name,
+                import_name,
+                resolution_mode,
+            ) || self.import_found_via_module_augmentation(
+                module_name,
+                normalized,
+                import_name,
+            );
+        }
+
         self.ctx
             .binder
             .resolve_import_if_needed_public(module_name, import_name)
@@ -644,10 +773,10 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .resolve_import_if_needed_public(normalized, import_name)
                 .is_some()
-            || self.resolve_import_via_target_binder(module_name, import_name)
+            || self.resolve_import_via_target_binder(module_name, import_name, None)
             || self.resolve_import_via_all_binders(module_name, normalized, import_name)
-            || self.cross_file_export_is_actual_export(module_name, import_name)
-            || self.cross_file_export_is_actual_export(normalized, import_name)
+            || self.cross_file_export_is_actual_export(module_name, import_name, None)
+            || self.cross_file_export_is_actual_export(normalized, import_name, None)
             || self.import_found_via_module_augmentation(module_name, normalized, import_name)
     }
 
@@ -677,6 +806,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         export_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> bool {
         let sym_id = match self.resolve_cross_file_export_from_file(
             module_specifier,
@@ -689,7 +819,16 @@ impl<'a> CheckerState<'a> {
 
         // If the target module is an external module (has import/export statements),
         // verify the symbol is actually exported (in module_exports), not just local.
-        if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
+        let target_idx = if let Some(mode) = resolution_mode {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_specifier,
+                Some(mode),
+            )
+        } else {
+            self.ctx.resolve_import_target(module_specifier)
+        };
+        if let Some(target_idx) = target_idx
             && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
             && target_binder.is_external_module
         {
@@ -795,15 +934,29 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        // Extract resolution-mode override from import attributes so we resolve
-        // against the correct conditional-exports entry (e.g., "require" vs "import").
-        let resolution_mode = self.get_resolution_mode_override(import.attributes);
-
         if self.is_ambient_module_match(module_name)
             || self.any_ambient_module_declared(module_name)
         {
             return;
         }
+
+        let clause_node = match self.ctx.arena.get(import.import_clause) {
+            Some(node) => node,
+            None => return,
+        };
+
+        let clause = match self.ctx.arena.get_import_clause(clause_node) {
+            Some(c) => c,
+            None => return,
+        };
+
+        // Only whole-declaration type-only imports keep a `resolution-mode` override
+        // when the current module kind would otherwise reject import attributes.
+        let resolution_mode =
+            self.requested_resolution_mode(import.attributes, clause.is_type_only);
+        let uses_fallback_branch_resolution = resolution_mode.is_some()
+            && !self.resolution_mode_override_is_effective(import.attributes, clause.is_type_only);
+
         let resolved_target = if resolution_mode.is_some() {
             self.ctx.resolve_import_target_from_file_with_mode(
                 self.ctx.current_file_idx,
@@ -828,16 +981,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
-        let clause_node = match self.ctx.arena.get(import.import_clause) {
-            Some(node) => node,
-            None => return,
-        };
-
-        let clause = match self.ctx.arena.get_import_clause(clause_node) {
-            Some(c) => c,
-            None => return,
-        };
 
         let has_default_import = clause.name.is_some();
         let bindings_node = self.ctx.arena.get(clause.named_bindings);
@@ -1102,15 +1245,17 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    if let Some(renamed_as) =
-                        self.local_named_export_alias_for_module(module_name, import_name)
-                    {
+                    if let Some(renamed_as) = self.local_named_export_alias_for_module(
+                        module_name,
+                        import_name,
+                        resolution_mode,
+                    ) {
                         let message = format_message(
                             diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
                             &[&quoted_module, import_name, &renamed_as],
                         );
                         self.error_at_node(
-                            specifier.name,
+                            name_idx,
                             &message,
                             diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
                         );
@@ -1118,24 +1263,37 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Check re-export chains before emitting TS2305
-                    let found_via_reexport =
-                        self.named_import_found_via_reexport(module_name, normalized, import_name);
+                    let found_via_reexport = self.named_import_found_via_reexport(
+                        module_name,
+                        normalized,
+                        import_name,
+                        resolution_mode,
+                    );
 
                     if !found_via_reexport {
                         // Use the unified JS export surface to check for CommonJS
                         // property-assignment exports (exports.foo = ..., module.exports.foo = ...).
-                        if self.js_export_surface_has_export(
-                            module_name,
-                            import_name,
-                            Some(self.ctx.current_file_idx),
-                        ) {
+                        if resolution_mode.is_none()
+                            && self.js_export_surface_has_export(
+                                module_name,
+                                import_name,
+                                Some(self.ctx.current_file_idx),
+                            )
+                        {
                             continue;
                         }
 
                         // Check if the symbol exists locally in the target module
                         // to distinguish between TS2459, TS2460, and TS2305
-                        let (exists_locally, exported_as) =
-                            self.check_local_symbol_and_renamed_export(module_name, import_name);
+                        let (mut exists_locally, exported_as) = self
+                            .check_local_symbol_and_renamed_export(
+                                module_name,
+                                import_name,
+                                resolution_mode,
+                            );
+                        if uses_fallback_branch_resolution {
+                            exists_locally = false;
+                        }
 
                         if exists_locally {
                             if let Some(ref renamed_as) = exported_as {
@@ -1145,7 +1303,7 @@ impl<'a> CheckerState<'a> {
                                     &[&quoted_module, import_name, renamed_as],
                                 );
                                 self.error_at_node(
-                                    specifier.name,
+                                    name_idx,
                                     &message,
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
                                 );
@@ -1156,7 +1314,7 @@ impl<'a> CheckerState<'a> {
                                     &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
-                                    specifier.name,
+                                    name_idx,
                                     &message,
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
                                 );
@@ -1168,7 +1326,7 @@ impl<'a> CheckerState<'a> {
                                 &[&quoted_module, import_name],
                             );
                             self.error_at_node(
-                                specifier.name,
+                                name_idx,
                                 &message,
                                 diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
                             );
@@ -1211,15 +1369,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if let Some(renamed_as) =
-                    self.local_named_export_alias_for_module(module_name, import_name)
-                {
+                if let Some(renamed_as) = self.local_named_export_alias_for_module(
+                    module_name,
+                    import_name,
+                    resolution_mode,
+                ) {
                     let message = format_message(
                         diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
                         &[&quoted_module, import_name, &renamed_as],
                     );
                     self.error_at_node(
-                        specifier.name,
+                        name_idx,
                         &message,
                         diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
                     );
@@ -1231,24 +1391,37 @@ impl<'a> CheckerState<'a> {
                 {
                     // Before emitting TS2305, check if this import can be resolved
                     // through re-export chains (wildcard or named re-exports).
-                    let found_via_reexport =
-                        self.named_import_found_via_reexport(module_name, normalized, import_name);
+                    let found_via_reexport = self.named_import_found_via_reexport(
+                        module_name,
+                        normalized,
+                        import_name,
+                        resolution_mode,
+                    );
 
                     if !found_via_reexport {
                         // Use the unified JS export surface to check for CommonJS
                         // property-assignment exports (exports.foo = ..., module.exports.foo = ...).
-                        if self.js_export_surface_has_export(
-                            module_name,
-                            import_name,
-                            Some(self.ctx.current_file_idx),
-                        ) {
+                        if resolution_mode.is_none()
+                            && self.js_export_surface_has_export(
+                                module_name,
+                                import_name,
+                                Some(self.ctx.current_file_idx),
+                            )
+                        {
                             continue;
                         }
 
                         // Check if the symbol exists locally in the target module
                         // to distinguish between TS2459, TS2460, and TS2305
-                        let (exists_locally, exported_as) =
-                            self.check_local_symbol_and_renamed_export(module_name, import_name);
+                        let (mut exists_locally, exported_as) = self
+                            .check_local_symbol_and_renamed_export(
+                                module_name,
+                                import_name,
+                                resolution_mode,
+                            );
+                        if uses_fallback_branch_resolution {
+                            exists_locally = false;
+                        }
 
                         if exists_locally {
                             if let Some(ref renamed_as) = exported_as {
@@ -1258,7 +1431,7 @@ impl<'a> CheckerState<'a> {
                                     &[&quoted_module, import_name, renamed_as],
                                 );
                                 self.error_at_node(
-                                    specifier.name,
+                                    name_idx,
                                     &message,
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
                                 );
@@ -1269,7 +1442,7 @@ impl<'a> CheckerState<'a> {
                                     &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
-                                    specifier.name,
+                                    name_idx,
                                     &message,
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
                                 );
@@ -1291,7 +1464,7 @@ impl<'a> CheckerState<'a> {
                                     &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
-                                    specifier.name,
+                                    name_idx,
                                     &message,
                                     diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
                                 );
@@ -1314,7 +1487,7 @@ impl<'a> CheckerState<'a> {
                                     &[&quoted_module, import_name, suggestion],
                                 );
                                 self.error_at_node(
-                                    specifier.name,
+                                    name_idx,
                                     &message,
                                     diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
                                 );
@@ -1325,7 +1498,7 @@ impl<'a> CheckerState<'a> {
                                     &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
-                                    specifier.name,
+                                    name_idx,
                                     &message,
                                     diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
                                 );
@@ -1380,11 +1553,16 @@ impl<'a> CheckerState<'a> {
         &self,
         module_name: &str,
         import_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> (bool, Option<String>) {
         tracing::trace!("Checking if symbol exists locally and is renamed");
 
         // Try to get the target module's binder
-        let resolved_target = self.ctx.resolve_import_target(module_name);
+        let resolved_target = self.ctx.resolve_import_target_from_file_with_mode(
+            self.ctx.current_file_idx,
+            module_name,
+            resolution_mode,
+        );
         let target_binder = if let Some(target_idx) = resolved_target {
             tracing::trace!(target_idx, "Resolved import target");
             self.ctx.get_binder_for_file(target_idx)
@@ -1427,9 +1605,12 @@ impl<'a> CheckerState<'a> {
                             }
                             if let Some(binder) = all_binders.get(binder_idx) {
                                 tracing::trace!(binder_idx, "Found matching binder via index");
-                                if let Some(exists) =
-                                    self.check_symbol_in_binder(binder, import_name, module_name)
-                                {
+                                if let Some(exists) = self.check_symbol_in_binder(
+                                    binder,
+                                    import_name,
+                                    module_name,
+                                    resolution_mode,
+                                ) {
                                     return exists;
                                 }
                             }
@@ -1447,9 +1628,12 @@ impl<'a> CheckerState<'a> {
                             || binder.module_exports.contains_key(normalized)
                         {
                             tracing::trace!("Found matching binder via exports");
-                            if let Some(exists) =
-                                self.check_symbol_in_binder(binder, import_name, module_name)
-                            {
+                            if let Some(exists) = self.check_symbol_in_binder(
+                                binder,
+                                import_name,
+                                module_name,
+                                resolution_mode,
+                            ) {
                                 return exists;
                             }
                         }
@@ -1460,7 +1644,9 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        if let Some(result) = self.check_symbol_in_binder(target_binder, import_name, module_name) {
+        if let Some(result) =
+            self.check_symbol_in_binder(target_binder, import_name, module_name, resolution_mode)
+        {
             tracing::trace!(exists_locally = result.0, renamed = ?result.1, "Got result from check_symbol_in_binder");
             result
         } else {
@@ -1476,6 +1662,7 @@ impl<'a> CheckerState<'a> {
         binder: &tsz_binder::BinderState,
         import_name: &str,
         module_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<(bool, Option<String>)> {
         // Check if the symbol exists in the binder's file-level symbol table
         // (not just the arena, which doesn't include all declarations)
@@ -1512,16 +1699,20 @@ impl<'a> CheckerState<'a> {
         ];
 
         // Also try to get the target file's name if available
-        let (file_name, target_arena) =
-            if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
-                let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                (
-                    arena.source_files.first().map(|sf| sf.file_name.as_str()),
-                    Some(arena),
-                )
-            } else {
-                (None, None)
-            };
+        let (file_name, target_arena) = if let Some(target_idx) =
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode,
+            ) {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            (
+                arena.source_files.first().map(|sf| sf.file_name.as_str()),
+                Some(arena),
+            )
+        } else {
+            (None, None)
+        };
 
         if let Some(arena) = target_arena
             && let Some(renamed_as) = self.local_named_export_alias_for_import(arena, import_name)
@@ -1777,8 +1968,17 @@ impl<'a> CheckerState<'a> {
         &self,
         module_name: &str,
         import_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<String> {
-        let target_idx = self.ctx.resolve_import_target(module_name)?;
+        let target_idx = if let Some(mode) = resolution_mode {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                Some(mode),
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        }?;
         let arena = self.ctx.get_arena_for_file(target_idx as u32);
         self.local_named_export_alias_for_import(arena, import_name)
     }
@@ -1960,6 +2160,25 @@ impl<'a> CheckerState<'a> {
                     export_assignment_indices.push(stmt_idx);
 
                     if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
+                        // TS1294: erasableSyntaxOnly — export = is not erasable.
+                        // Exception: `export = x` is allowed in .cts/.cjs files because
+                        // it's the standard CJS export syntax and compiles to `module.exports = x`.
+                        let is_cts_file = self.ctx.file_name.ends_with(".cts")
+                            || self.ctx.file_name.ends_with(".cjs");
+                        if export_data.is_export_equals
+                            && self.ctx.compiler_options.erasable_syntax_only
+                            && !self.ctx.is_ambient_declaration(stmt_idx)
+                            && !is_cts_file
+                        {
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                                    .to_string(),
+                                diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                            );
+                        }
+
                         // TS1282/TS1283: VMS checks for export = <type>
                         if export_data.is_export_equals
                             && self.ctx.compiler_options.verbatim_module_syntax

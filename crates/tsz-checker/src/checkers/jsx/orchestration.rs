@@ -11,11 +11,9 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn normalize_jsx_contextual_callable_member(&mut self, type_id: TypeId) -> TypeId {
-        let type_id = crate::query_boundaries::common::unwrap_readonly_or_noinfer(
-            self.ctx.types,
-            type_id,
-        )
-        .unwrap_or(type_id);
+        let type_id =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+                .unwrap_or(type_id);
         let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
         else {
             return type_id;
@@ -49,7 +47,7 @@ impl<'a> CheckerState<'a> {
                 shape.return_type,
             )
             .unwrap_or(shape.return_type),
-            type_predicate: shape.type_predicate.clone(),
+            type_predicate: shape.type_predicate,
             is_constructor: shape.is_constructor,
             is_method: shape.is_method,
         };
@@ -582,12 +580,24 @@ impl<'a> CheckerState<'a> {
         // (for example selector props) have had a chance to refine generic
         // parameters. Otherwise defaulted type params can freeze the children
         // context too early and produce the wrong TS2322/TS7006 pair.
-        if (has_function_valued_attrs || has_function_valued_children) && !substitution.is_empty() {
+        //
+        // When substitution is empty (all attrs are function-valued, no
+        // defaults/constraints), we still enter this block to bootstrap
+        // inference from function-valued attrs whose contextual parameter
+        // types are concrete (don't depend on type params being inferred).
+        // This enables intra-expression inference in JSX, e.g.:
+        //   <Foo a={() => 10} b={(arg) => arg.toString()} />
+        // where `a: (x: string) => T` has concrete param types and can
+        // be typed first to infer T, then `b: (arg: T) => void` is typed
+        // with the inferred T.
+        if has_function_valued_attrs || has_function_valued_children {
             let mut all_attrs = concrete_attrs;
 
             if has_function_valued_attrs {
-                let r1_instantiated = self
-                    .instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+                let r1_instantiated = self.instantiate_jsx_function_shape_with_substitution(
+                    &function_shape,
+                    &substitution,
+                );
                 if let Some(r1_props_param) = r1_instantiated.params.first() {
                     let r1_props_type = r1_props_param.type_id;
                     let r1_props_type = self.resolve_type_for_property_access(r1_props_type);
@@ -642,8 +652,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if has_function_valued_attrs {
-                let r2_instantiated = self
-                    .instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+                let r2_instantiated = self.instantiate_jsx_function_shape_with_substitution(
+                    &function_shape,
+                    &substitution,
+                );
                 if let Some(r2_props_param) = r2_instantiated.params.first() {
                     let r2_props_type = r2_props_param.type_id;
                     let r2_props_type = self.resolve_type_for_property_access(r2_props_type);
@@ -671,8 +683,7 @@ impl<'a> CheckerState<'a> {
                             &mut substitution,
                         );
 
-                        let full_attrs_type =
-                            self.build_jsx_provided_attrs_object_type(&all_attrs);
+                        let full_attrs_type = self.build_jsx_provided_attrs_object_type(&all_attrs);
                         let round3_sub = {
                             let env = self.ctx.type_env.borrow();
                             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
@@ -692,8 +703,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if has_function_valued_children {
-                let r2_instantiated = self
-                    .instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+                let r2_instantiated = self.instantiate_jsx_function_shape_with_substitution(
+                    &function_shape,
+                    &substitution,
+                );
                 if let Some(r2_props_param) = r2_instantiated.params.first() {
                     let r2_props_type = r2_props_param.type_id;
                     let r2_props_type = self.resolve_type_for_property_access(r2_props_type);
@@ -714,8 +727,7 @@ impl<'a> CheckerState<'a> {
                     );
 
                     if !all_attrs.is_empty() {
-                        let full_attrs_type =
-                            self.build_jsx_provided_attrs_object_type(&all_attrs);
+                        let full_attrs_type = self.build_jsx_provided_attrs_object_type(&all_attrs);
                         let round3_sub = {
                             let env = self.ctx.type_env.borrow();
                             crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
@@ -769,8 +781,11 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
         use rustc_hash::FxHashSet;
 
-        let tracked_type_params: FxHashSet<_> =
-            function_shape.type_params.iter().map(|tp| tp.name).collect();
+        let tracked_type_params: FxHashSet<_> = function_shape
+            .type_params
+            .iter()
+            .map(|tp| tp.name)
+            .collect();
 
         for (attr_name, attr_type) in typed_attrs {
             let expected_type = match self.resolve_property_access_with_env(props_type, attr_name) {
@@ -902,19 +917,20 @@ impl<'a> CheckerState<'a> {
 
             let contextual_type = self.refine_jsx_callable_contextual_type(expected_type);
             if let Some(names) = unresolved_type_params.filter(|names| !names.is_empty()) {
-                let should_defer = crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    contextual_type,
-                )
-                .is_some_and(|signature| {
-                    signature.params.iter().any(|param| {
-                        crate::query_boundaries::common::references_any_type_param_named(
-                            self.ctx.types,
-                            param.type_id,
-                            names,
-                        )
-                    })
-                });
+                let should_defer =
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        contextual_type,
+                    )
+                    .is_some_and(|signature| {
+                        signature.params.iter().any(|param| {
+                            crate::query_boundaries::common::references_any_type_param_named(
+                                self.ctx.types,
+                                param.type_id,
+                                names,
+                            )
+                        })
+                    });
                 if should_defer {
                     continue;
                 }
@@ -1404,24 +1420,27 @@ impl<'a> CheckerState<'a> {
             }
 
             let jsx_element_expr_type = self.get_jsx_element_type_for_check();
-
-            // TS2786: component return type must be valid JSX element
-            self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
-
             let reported_factory_arity =
                 self.check_jsx_sfc_factory_arity(resolved_component_type, tag_name_idx);
+            let recovered_props = if reported_factory_arity {
+                None
+            } else {
+                self.recover_jsx_component_props_type(
+                    jsx_opening.attributes,
+                    component_metadata_type,
+                    Some(idx),
+                )
+            };
+            let uses_jsx_overload_resolution = recovered_props.is_none()
+                && (self.is_overloaded_sfc(resolved_component_type)
+                    || self.has_multi_signature_overloads(resolved_component_type));
 
             // Extract props type from the component and check attributes.
             // TS2607/TS2608 are emitted within props extraction when applicable.
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
-            if !reported_factory_arity
-                && let Some((props_type, raw_has_type_params)) = self
-                    .recover_jsx_component_props_type(
-                        jsx_opening.attributes,
-                        component_metadata_type,
-                        Some(idx),
-                    )
-            {
+            if let Some((props_type, raw_has_type_params)) = recovered_props {
+                // TS2786: component return type must be valid JSX element
+                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                 let props_type =
                     self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
                 let preferred_props_display =
@@ -1443,9 +1462,7 @@ impl<'a> CheckerState<'a> {
                     request,
                     children_ctx,
                 );
-            } else if self.is_overloaded_sfc(resolved_component_type)
-                || self.has_multi_signature_overloads(resolved_component_type)
-            {
+            } else if uses_jsx_overload_resolution {
                 // JSX overload resolution: try each call signature (including generic
                 // ones) against the provided attributes. If no overload matches, emit
                 // TS2769. The `has_multi_signature_overloads` fallback covers cases
@@ -1457,6 +1474,9 @@ impl<'a> CheckerState<'a> {
                     children_ctx,
                 );
             } else {
+                // TS2786: component return type must be valid JSX element
+                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+
                 // Grammar check: TS17000 for empty expressions in JSX attributes.
                 self.check_grammar_jsx_element(jsx_opening.attributes);
 

@@ -194,7 +194,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.check_import_attributes_deprecated_assert(export_decl.attributes);
 
             // TS2823: Import attributes require specific module options
-            self.check_import_attributes_module_option(export_decl.attributes);
+            self.check_import_attributes_module_option(
+                export_decl.attributes,
+                export_decl.is_type_only,
+            );
 
             // TS2322: Check export attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(export_decl.attributes);
@@ -202,6 +205,38 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Check module specifier for unresolved modules (TS2792)
             if export_decl.module_specifier.is_some() {
                 self.check_export_module_specifier(export_idx);
+                // TS2498: export * from a module that uses export =
+                self.check_export_star_of_export_equals_module(export_idx);
+            }
+
+            // TS2498: `export *` (or `export * as ns`) from a module that uses `export =`
+            if export_decl.module_specifier.is_some() {
+                let is_star_export = export_decl.export_clause.is_none()
+                    || self
+                        .ctx
+                        .arena
+                        .get(export_decl.export_clause)
+                        .is_some_and(|n| n.kind != syntax_kind_ext::NAMED_EXPORTS);
+                if is_star_export {
+                    if let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier)
+                        && let Some(literal) = self.ctx.arena.get_literal(spec_node)
+                    {
+                        let module_name = literal.text.clone();
+                        if self.target_module_has_export_equals(&module_name) {
+                            // tsc uses the resolved module symbol name (without ./ prefix)
+                            let display_name = module_name
+                                .strip_prefix("./")
+                                .or_else(|| module_name.strip_prefix("../"))
+                                .unwrap_or(&module_name);
+                            let quoted = format!("\"{}\"", display_name);
+                            self.error_at_node_msg(
+                                export_decl.module_specifier,
+                                crate::diagnostics::diagnostic_codes::MODULE_USES_EXPORT_AND_CANNOT_BE_USED_WITH_EXPORT,
+                                &[&quoted],
+                            );
+                        }
+                    }
+                }
             }
 
             // Check the wrapped declaration

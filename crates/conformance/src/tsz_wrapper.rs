@@ -81,7 +81,7 @@ pub fn prepare_test_dir(
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
     key_order: &[String],
-    _expected_error_codes: Option<&[u32]>,
+    expected_error_codes: Option<&[u32]>,
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
 
@@ -287,13 +287,60 @@ pub fn prepare_test_dir(
     } else {
         None
     };
-    // Match tsc 6.0's implicit include defaults.
-    // tsc always includes .js/.jsx in the include patterns regardless of allowJs;
-    // the actual file filtering respects allowJs separately. This matters for the
-    // TS18003 "no inputs found" message which displays these include patterns.
+    // Match tsc's test harness default include patterns.
+    // tsc's harness generates: ["*.ts","*.tsx","*.js","*.jsx","**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]
+    // Note: these patterns do NOT include .mts/.cts/.mjs/.cjs extensions.
+    // In standard glob semantics, *.ts does NOT match .mts files.
+    // tsc's real default include is ["**/*"] which matches everything (then filters
+    // by supported extensions), but the test harness uses explicit extension patterns.
+    // This means tests with ONLY .mts/.cts files correctly get TS18003 "no inputs found",
+    // matching tsc behavior.
     let include = serde_json::json!([
         "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
     ]);
+    // For multi-file tests with @filename directives that include .mts/.cts/.mjs/.cjs
+    // files, build an explicit "files" array so tsz's file discovery finds them.
+    // tsc's harness passes files directly to the compiler, but our wrapper relies on
+    // tsconfig include patterns. Without explicit "files", the narrow include patterns
+    // won't discover .mts/.cts/.mjs/.cjs files.
+    //
+    // EXCEPTION: when tsc expects TS18003 ("no inputs found"), DON'T add explicit files.
+    // This preserves the "no inputs" condition for tests where tsc's include patterns
+    // also fail to discover the files (e.g., moduleExportNonStructured.ts with only
+    // .mts/.d.cts files and a module/moduleResolution mismatch).
+    let tsc_expects_no_inputs = expected_error_codes.is_some_and(|codes| codes.contains(&18003));
+    let explicit_module_ext_files: Option<Vec<String>> =
+        if !filenames.is_empty() && !tsc_expects_no_inputs {
+            let module_files: Vec<String> = filenames
+                .iter()
+                .filter_map(|(name, _)| {
+                    let lower = name.to_lowercase().replace('\\', "/");
+                    if lower.ends_with("tsconfig.json")
+                        || lower.ends_with("package.json")
+                        || lower.contains("/node_modules/")
+                        || lower.starts_with("node_modules/")
+                    {
+                        return None;
+                    }
+                    if lower.ends_with(".mts")
+                        || lower.ends_with(".cts")
+                        || lower.ends_with(".mjs")
+                        || lower.ends_with(".cjs")
+                    {
+                        Some(name.replace("..", "_").trim_start_matches('/').to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if module_files.is_empty() {
+                None
+            } else {
+                Some(module_files)
+            }
+        } else {
+            None
+        };
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
@@ -382,6 +429,16 @@ pub fn prepare_test_dir(
             serde_json::json!({
                 "compilerOptions": compiler_options,
                 "files": root_files,
+                "exclude": ["node_modules"]
+            })
+        } else if let Some(module_files) = &explicit_module_ext_files {
+            // Multi-file test with .mts/.cts/.mjs/.cjs files: use both "include"
+            // (for standard extension discovery + TS18003 reporting) and "files"
+            // (for module-extension files that include patterns don't match).
+            serde_json::json!({
+                "compilerOptions": compiler_options,
+                "include": include,
+                "files": module_files,
                 "exclude": ["node_modules"]
             })
         } else {
@@ -1295,8 +1352,10 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
     use regex::Regex;
 
     static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*)$")
-            .expect("valid regex")
+        Regex::new(
+            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*)$",
+        )
+        .expect("valid regex")
     });
 
     let mut codes = Vec::new();

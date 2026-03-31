@@ -83,7 +83,7 @@ pub(crate) struct JsStaticMethodAugmentations {
 /// e.g. `let A; A.prototype.b = {};` → variable `A` becomes `declare class A { ... }`.
 #[derive(Default)]
 pub(crate) struct JsClassLikePrototypeMembers {
-    /// Maps variable name → list of (member_name_idx, initializer_idx) pairs.
+    /// Maps variable name → list of (`member_name_idx`, `initializer_idx`) pairs.
     pub(crate) members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Statement indices consumed by the class-like heuristic (to skip during normal emit).
     pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
@@ -119,6 +119,47 @@ pub(crate) struct JsdocParamDecl {
     pub(crate) type_text: String,
     pub(crate) optional: bool,
     pub(crate) rest: bool,
+}
+
+/// Lightweight `TypeResolver` backed by `TypeCacheView` data for DTS emit.
+#[allow(dead_code)]
+pub(crate) struct DtsCacheResolver<'a> {
+    pub(crate) cache: &'a crate::type_cache_view::TypeCacheView,
+}
+
+impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
+    fn resolve_ref(
+        &self,
+        _symbol: tsz_solver::types::SymbolRef,
+        _interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::types::TypeId> {
+        None
+    }
+
+    fn resolve_lazy(
+        &self,
+        def_id: tsz_solver::DefId,
+        interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let &type_id = self.cache.def_types.get(&def_id.0)?;
+        use tsz_solver::types::TypeData;
+        match interner.lookup(type_id) {
+            Some(TypeData::Union(_))
+            | Some(TypeData::Intersection(_))
+            | Some(TypeData::Lazy(_))
+            | Some(TypeData::KeyOf(_)) => Some(type_id),
+            _ if type_id.is_intrinsic() => Some(type_id),
+            _ if tsz_solver::visitor::literal_value(interner, type_id).is_some() => Some(type_id),
+            _ => None,
+        }
+    }
+
+    fn get_lazy_type_params(
+        &self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<Vec<tsz_solver::types::TypeParamInfo>> {
+        self.cache.def_type_params.get(&def_id.0).cloned()
+    }
 }
 
 impl<'a> DeclarationEmitter<'a> {
@@ -369,7 +410,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.emit_node(elem.name);
                             }
                         }
-                        self.write(" }");
+                        if pattern.elements.has_trailing_comma {
+                            self.write(", }");
+                        } else {
+                            self.write(" }");
+                        }
                     }
                 }
             }
@@ -6275,6 +6320,26 @@ impl<'a> DeclarationEmitter<'a> {
                 let callee_type = self
                     .get_node_type_or_names(&[call.expression])
                     .or_else(|| self.get_type_via_symbol(call.expression))?;
+                // Guard: do not use the un-instantiated return type of a
+                // generic function/callable.  Free type variables cannot be
+                // resolved without inference from the checker.
+                match interner.lookup(callee_type) {
+                    Some(tsz_solver::types::TypeData::Function(sid))
+                        if !interner.function_shape(sid).type_params.is_empty() =>
+                    {
+                        return None;
+                    }
+                    Some(tsz_solver::types::TypeData::Callable(sid))
+                        if interner
+                            .callable_shape(sid)
+                            .call_signatures
+                            .iter()
+                            .any(|s| !s.type_params.is_empty()) =>
+                    {
+                        return None;
+                    }
+                    _ => {}
+                }
                 tsz_solver::type_queries::get_return_type(interner, callee_type)
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION

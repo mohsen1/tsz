@@ -216,6 +216,9 @@ impl ParserState {
                 // `async function f(a = await => await) {}`
                 // treat `=>` as a missing comma boundary to continue parsing.
                 if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    if (self.context_flags & CONTEXT_FLAG_ARROW_PARAMETERS) != 0 {
+                        self.saw_arrow_parameter_recovery = true;
+                    }
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
                     self.next_token(); // consume =>
@@ -451,9 +454,10 @@ impl ParserState {
         // Parse rest parameter (...)
         let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
 
-        // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
-        // This must be called BEFORE parsing the parameter name to catch reserved words
-        self.check_illegal_binding_identifier();
+        // NOTE: tsc's parser does NOT check for `await`/`yield` as reserved words
+        // in parameter names. Any such errors are deferred to the checker/binder.
+        // `async function * f(await) {}` produces no parser error in tsc.
+        // Do NOT call check_illegal_binding_identifier() here.
         if (self.context_flags & CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS) != 0
             && self.is_token(SyntaxKind::StaticKeyword)
         {

@@ -832,13 +832,12 @@ impl<'a> CheckerState<'a> {
                 .diagnostics
                 .iter()
                 .any(|diag| diag.code == 2454 && diag.start == receiver_start);
-        if receiver_has_daa_error && !skip_flow_narrowing {
-            return TypeId::ERROR;
-        }
         if !skip_flow_narrowing
             // When TS2454 already forced the receiver read back to its declared type,
-            // a second property-read flow pass would incorrectly reapply narrowing
-            // and hide follow-on property errors like TS2339.
+            // keep property access on that declared type so member lookup and call
+            // contextual typing still work. Only the second property-read flow pass
+            // must be skipped, otherwise we reapply narrowing and lose tsc-aligned
+            // downstream behavior.
             && !receiver_has_daa_error
             && self.ctx.arena.get(access.expression).is_some_and(|expr| {
                 matches!(
@@ -1103,9 +1102,7 @@ impl<'a> CheckerState<'a> {
         // constraint for display purposes. tsc shows the apparent type in error
         // messages (e.g., 'NumClass<number> | StrClass<string>'), not the raw
         // indexed access type (e.g., 'Entries[EntryId]').
-        if let Some(tsz_solver::types::TypeData::IndexAccess(_, _)) =
-            self.ctx.types.lookup(display_object_type)
-        {
+        if tsz_solver::is_index_access_type(self.ctx.types, display_object_type) {
             let resolved = self.resolve_index_access_base_constraint(display_object_type);
             if resolved != display_object_type {
                 display_object_type = resolved;
@@ -2353,9 +2350,26 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    // When TS2454 (variable used before being assigned) has already been
+                    // emitted for this expression, suppress TS18047/18048/18049.  tsc does
+                    // not stack "possibly undefined" on top of "used before assignment".
+                    if self.ctx.daa_error_nodes.contains(&access.expression.0)
+                        || self.ctx.daa_error_nodes.contains(&idx.0)
+                    {
+                        return self.finalize_property_access_result(
+                            idx,
+                            property_type.unwrap_or(TypeId::ERROR),
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
+
                     // Try to get the name of the expression (handles identifiers and property chains like a.b)
                     // Use specific error codes (TS18047/18048/18049) when name is available
-                    let name = self.expression_text(access.expression);
+                    let name = self.expression_text(access.expression).or_else(|| {
+                        self.is_this_expression(access.expression)
+                            .then(|| "this".to_string())
+                    });
 
                     let (code, message): (u32, String) = if let Some(ref name) = name {
                         // Use specific error codes with the variable name
@@ -2457,33 +2471,22 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_env(type_id);
 
         // If fully resolved (no longer an IndexAccess), use it
-        if !matches!(
-            self.ctx.types.lookup(evaluated),
-            Some(tsz_solver::types::TypeData::IndexAccess(_, _))
-        ) {
+        if !tsz_solver::is_index_access_type(self.ctx.types, evaluated) {
             return evaluated;
         }
 
         // Still an IndexAccess — try resolving the index type parameter's constraint.
         // E.g., {[s:string]:V}[K] where K extends keyof T => evaluate {[s:string]:V}[keyof T] => V
-        if let Some(tsz_solver::types::TypeData::IndexAccess(ia_obj, ia_idx)) =
-            self.ctx.types.lookup(evaluated)
+        if let Some((ia_obj, ia_idx)) = tsz_solver::index_access_parts(self.ctx.types, evaluated)
+            && let Some(constraint) =
+                access_query::type_parameter_constraint(self.ctx.types, ia_idx)
         {
-            if let Some(tsz_solver::types::TypeData::TypeParameter(info)) =
-                self.ctx.types.lookup(ia_idx)
-            {
-                if let Some(constraint) = info.constraint {
-                    let resolved = self
-                        .ctx
-                        .types
-                        .evaluate_index_access_with_options(ia_obj, constraint, false);
-                    if !matches!(
-                        self.ctx.types.lookup(resolved),
-                        Some(tsz_solver::types::TypeData::IndexAccess(_, _))
-                    ) {
-                        return resolved;
-                    }
-                }
+            let resolved = self
+                .ctx
+                .types
+                .evaluate_index_access_with_options(ia_obj, constraint, false);
+            if !tsz_solver::is_index_access_type(self.ctx.types, resolved) {
+                return resolved;
             }
         }
 

@@ -666,7 +666,11 @@ impl<'a> CheckerState<'a> {
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&method.parameters, Some(member_idx));
-        self.check_binding_pattern_optionality(&method.parameters.nodes, method.body.is_some());
+        self.check_binding_pattern_optionality(
+            &method.parameters.nodes,
+            method.body.is_some(),
+            Some(member_idx),
+        );
 
         // Check that rest parameters have array types (TS2370)
         self.check_rest_parameter_types(&method.parameters.nodes);
@@ -1035,6 +1039,31 @@ impl<'a> CheckerState<'a> {
         if ctor.body.is_none() {
             self.check_parameter_properties(&ctor.parameters.nodes);
         }
+        // TS1294: erasableSyntaxOnly — parameter properties are not erasable.
+        if self.ctx.compiler_options.erasable_syntax_only {
+            for &param_idx in &ctor.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if let Some(modifier_idx) =
+                    self.find_first_parameter_property_modifier(&param.modifiers)
+                {
+                    if let Some(mod_node) = self.ctx.arena.get(modifier_idx) {
+                        self.ctx.error(
+                            mod_node.pos,
+                            mod_node.end - mod_node.pos,
+                            diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
+                                .to_string(),
+                            diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                        );
+                    }
+                }
+            }
+        }
+
         // TS1187: Parameter properties cannot use binding patterns in constructors.
         // TS1317: A parameter property cannot be declared using a rest parameter.
         for &param_idx in &ctor.parameters.nodes {
@@ -1160,7 +1189,11 @@ impl<'a> CheckerState<'a> {
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&ctor.parameters, Some(member_idx));
-        self.check_binding_pattern_optionality(&ctor.parameters.nodes, ctor.body.is_some());
+        self.check_binding_pattern_optionality(
+            &ctor.parameters.nodes,
+            ctor.body.is_some(),
+            Some(member_idx),
+        );
 
         // Check that rest parameters have array types (TS2370)
         self.check_rest_parameter_types(&ctor.parameters.nodes);

@@ -155,6 +155,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Skip assignability check when the rest target is an optional property
+        // access (e.g., `{ ...obj?.a } = source`). TS2778 is already emitted for
+        // this pattern, and the flow-narrowed type of an invalid optional chain
+        // target can be incorrect (narrowed by a prior invalid assignment like
+        // `obj?.a = 1`), leading to false TS2322 errors.
+        if self.is_optional_chain_access(spread_expr) {
+            return;
+        }
+
         // Get the declared type of the rest target variable
         let rest_target_type = self.get_type_of_assignment_target(spread_expr);
         if rest_target_type == TypeId::ANY || rest_target_type == TypeId::ERROR {
@@ -397,10 +406,17 @@ impl<'a> CheckerState<'a> {
                         //   [...c] = ["", 0];  // TS2741: Property 'bogus' is missing
                         // Use exact anchor to point at the identifier (e.g., `c`), not
                         // the enclosing array literal.
+                        //
+                        // Skip when the spread target is an optional chain access
+                        // (e.g., `[...obj?.a] = []`). TS2779 is already emitted for
+                        // this pattern, and the flow-narrowed type of the target can
+                        // be incorrect from a prior invalid assignment, producing
+                        // false TS2322.
                         let target_type = self.get_type_of_assignment_target(target_idx);
                         if target_type != TypeId::ANY
                             && target_type != TypeId::ERROR
                             && check_type != TypeId::ANY
+                            && !self.is_optional_chain_access(target_idx)
                         {
                             self.check_assignable_or_report_at_exact_anchor(
                                 check_type,

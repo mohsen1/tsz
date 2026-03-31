@@ -751,8 +751,9 @@ pub struct PropertyInfo {
     pub parent_id: Option<SymbolId>,
     /// Declaration order for preserving source ordering in emit (excluded from equality/hash).
     pub declaration_order: u32,
-    /// Whether this property was declared with a string key that looks numeric.
-    /// Display-only; excluded from PartialEq/Hash.
+    /// Whether this property was declared with a string key that looks numeric
+    /// (e.g. `"404"` vs `404`). Included in PartialEq/Hash because `"100"` and
+    /// `100` are semantically different property keys in TypeScript.
     pub is_string_named: bool,
 }
 
@@ -766,6 +767,7 @@ impl PartialEq for PropertyInfo {
             && self.is_method == other.is_method
             && self.visibility == other.visibility
             && self.parent_id == other.parent_id
+            && self.is_string_named == other.is_string_named
     }
 }
 
@@ -781,6 +783,7 @@ impl std::hash::Hash for PropertyInfo {
         self.is_method.hash(state);
         self.visibility.hash(state);
         self.parent_id.hash(state);
+        self.is_string_named.hash(state);
     }
 }
 

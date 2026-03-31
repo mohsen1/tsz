@@ -172,6 +172,18 @@ impl<'a> CheckerState<'a> {
 
         self.check_variance_annotations_supported_for_type_alias(alias);
 
+        // Check variance annotations match actual usage (TS2636).
+        // Resolve the alias body type directly so the solver can compute variance.
+        // This must be done while type parameters are still in scope.
+        {
+            let body_type = self.get_type_from_type_node(alias.type_node);
+            self.check_variance_annotations_with_body(
+                node_idx,
+                &alias.type_parameters,
+                Some(body_type),
+            );
+        }
+
         // TS4109: detect circular type arguments when the alias body is directly
         // a TypeReference (e.g. `type X = Foo<X extends {} ? A : B>`).  In TSC
         // this fires only during `resolveTypeArguments` for the direct body type
@@ -534,10 +546,23 @@ impl<'a> CheckerState<'a> {
                             self.check_index_sig_param_type_in_type_literal(&index_sig.parameters);
                             continue;
                         }
-                        if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
-                            && accessor.type_annotation != NodeIndex::NONE
-                        {
-                            self.check_type_node(accessor.type_annotation);
+                        if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                            if accessor.type_annotation != NodeIndex::NONE {
+                                self.check_type_node(accessor.type_annotation);
+                            }
+                            // Also check set accessor parameter type annotations
+                            // for constraint validation (TS2344).
+                            if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                                for &param_idx in &accessor.parameters.nodes {
+                                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                        && let Some(param) =
+                                            self.ctx.arena.get_parameter(param_node)
+                                        && param.type_annotation != NodeIndex::NONE
+                                    {
+                                        self.check_type_node(param.type_annotation);
+                                    }
+                                }
+                            }
                         }
                     }
 

@@ -1660,14 +1660,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When TS2454 (variable used before being assigned) has already been
+        // emitted for this expression, suppress TS18047/18048/18049.  tsc does
+        // not stack "possibly undefined" on top of "used before assignment".
+        if self.ctx.daa_error_nodes.contains(&idx.0) {
+            return;
+        }
+
         // Try to get the name if the expression is an identifier
         // Use specific error codes (TS18047/18048/18049) when name is available
-        let name = self
-            .ctx
-            .arena
-            .get(idx)
-            .and_then(|node| self.ctx.arena.get_identifier(node))
-            .map(|ident| ident.escaped_text.clone());
+        let name = self.ctx.arena.get(idx).and_then(|node| {
+            self.ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone())
+                .or_else(|| {
+                    (node.kind == SyntaxKind::ThisKeyword as u16).then(|| "this".to_string())
+                })
+        });
 
         let (code, message) = if let Some(ref name) = name {
             // Use specific error codes with the variable name

@@ -208,13 +208,18 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.resolve_identifier_symbol(new_expr.expression))
                     .filter(|&sym_id| {
                         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            let is_single_class_decl = symbol.declarations.len() == 1
-                                && symbol.value_declaration.is_some()
-                                && self.ctx.arena.get(symbol.value_declaration).is_some_and(
-                                    |decl| decl.kind == syntax_kind_ext::CLASS_DECLARATION,
-                                );
+                            // Accept single-class declarations AND merged class+function
+                            // declarations. Checked-JS class + constructor-variable merges
+                            // stay on this fast path too, but are resolved to the constructor
+                            // variable's value declaration below.
+                            let has_class_decl = symbol.declarations.iter().any(|&d| {
+                                d.is_some()
+                                    && self.ctx.arena.get(d).is_some_and(|decl| {
+                                        decl.kind == syntax_kind_ext::CLASS_DECLARATION
+                                    })
+                            });
                             symbol.escaped_name == identifier_text
-                                && is_single_class_decl
+                                && has_class_decl
                                 && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
                                 && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
                                 && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
@@ -224,7 +229,35 @@ impl<'a> CheckerState<'a> {
                     });
                 if let Some(sym_id) = fast_symbol {
                     self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
-                    self.get_type_of_symbol(sym_id)
+                    // The fast path bypasses get_type_of_identifier which
+                    // normally performs TDZ checking. We must check here so
+                    // that `new C()` before `class C {}` still emits TS2449.
+                    if self.check_tdz_violation(sym_id, new_expr.expression, identifier_text, false)
+                    {
+                        return TypeId::ERROR;
+                    }
+                    if self.ctx.is_js_file()
+                        && self.ctx.should_resolve_jsdoc()
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
+                        && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
+                        && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) == 0
+                        && let Some(preferred_decl) = self.checked_js_constructor_value_declaration(
+                            sym_id,
+                            symbol.value_declaration,
+                            &symbol.declarations,
+                        )
+                    {
+                        let value_type =
+                            self.type_of_value_declaration_for_symbol(sym_id, preferred_decl);
+                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                            value_type
+                        } else {
+                            self.get_type_of_symbol(sym_id)
+                        }
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    }
                 } else {
                     self.get_type_of_node_with_request(new_expr.expression, &read_request)
                 }
@@ -245,7 +278,11 @@ impl<'a> CheckerState<'a> {
         if let Some(cause) = nullish_cause {
             // Without strictNullChecks, null/undefined are in every type's domain,
             // so "possibly null/undefined" diagnostics should not be emitted.
-            if self.ctx.compiler_options.strict_null_checks {
+            // When TS2454 (variable used before being assigned) has already been
+            // emitted for this expression, suppress TS18047/18048/18049.
+            if self.ctx.compiler_options.strict_null_checks
+                && !self.ctx.daa_error_nodes.contains(&new_expr.expression.0)
+            {
                 let (code, message) = if let Some(name) = self.expression_text(new_expr.expression)
                 {
                     if cause == TypeId::NULL {
@@ -519,10 +556,13 @@ impl<'a> CheckerState<'a> {
         // generic construct signatures and return no contextual type, causing array/object literals
         // passed as arguments to be over-widened (e.g. `[["",true]]` → `(string|boolean)[][]`
         // instead of `[string, boolean][]`).
-        let ctx_helper = if is_generic_new && let Some(ref shape) = constructor_shape {
-            // Build a Function type from the generic signature so that
-            // `ParameterForCallExtractor::visit_function` can extract param types directly,
-            // bypassing the Callable-level logic that skips generic construct signatures.
+        let ctx_helper = if let Some(ref shape) = constructor_shape {
+            // Build a Function type from the construct signature so that
+            // `ParameterForCallExtractor::visit_function` can extract param types
+            // directly, bypassing the Callable-level logic that only looks at call
+            // signatures. Without this, merged function+class declarations would use
+            // the function's call signature parameters instead of the class constructor's
+            // construct signature parameters for contextual typing of `new` arguments.
             let factory = self.ctx.types.factory();
             let func_type = factory.function(tsz_solver::FunctionShape {
                 params: shape.params.clone(),
@@ -971,6 +1011,13 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
 
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[new_expr] constructor_type={:?}, data={:?}",
+            constructor_type,
+            self.ctx.types.lookup(constructor_type)
+        );
+
         // Delegate to Solver for constructor resolution, passing contextual type
         // so generic constructors like `new Promise(...)` can infer type parameters
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
@@ -983,6 +1030,15 @@ impl<'a> CheckerState<'a> {
 
         match result {
             CallResult::Success(return_type) => {
+                // TS2351: when a class extends a generic base without required type
+                // arguments (TS2314 on the extends clause), tsc considers `typeof C`
+                // to have no construct signatures. Our constructor builder still
+                // generates a default constructor; detect the condition here and
+                // emit TS2351 + return `any` to match tsc.
+                if self.class_has_invalid_base_type_args(new_expr.expression) {
+                    self.error_not_constructable_at(constructor_type, new_expr.expression);
+                    return TypeId::ANY;
+                }
                 // For circular classes (TS2506), when `new` is called without
                 // explicit type arguments, the solver may return the raw instance
                 // type with unresolved type parameters (e.g. `M<T>` instead of

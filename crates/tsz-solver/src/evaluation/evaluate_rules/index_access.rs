@@ -7,9 +7,9 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
-    CallableShape, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedTypeId,
-    ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData,
-    TypeId, TypeListId, TypeParamInfo,
+    CallableShape, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedType,
+    MappedTypeId, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleElement, TupleListId,
+    TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils;
 use crate::visitor::{
@@ -412,7 +412,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
         let result = self
             .evaluator
-            .evaluate_object_index(&shape.properties, self.index_type);
+            .evaluate_object_index_from_constraint(&shape.properties, self.index_type)
+            .unwrap_or_else(|| {
+                self.evaluator
+                    .evaluate_object_index(&shape.properties, self.index_type)
+            });
 
         // CRITICAL FIX: If we can't find the property, but the index is generic,
         // we must defer evaluation (return None) instead of returning UNDEFINED.
@@ -433,7 +437,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
         let result = self
             .evaluator
-            .evaluate_object_with_index(&shape, self.index_type);
+            .evaluate_object_with_index_from_constraint(&shape, self.index_type)
+            .unwrap_or_else(|| {
+                self.evaluator
+                    .evaluate_object_with_index(&shape, self.index_type)
+            });
 
         // CRITICAL FIX: Same deferral logic for objects with index signatures
         if result == TypeId::UNDEFINED && self.is_generic_index() {
@@ -753,8 +761,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     //   function handleOption<K extends Options['kind']>(...)
                     // where K's constraint is stored as Options['kind'] but the mapped
                     // constraint is the evaluated union "one" | "two".
-                    let evaluated_constraint = self.evaluator.evaluate(constraint);
-                    evaluated_constraint == mapped.constraint
+                    self.evaluator
+                        .constraints_semantically_match(constraint, mapped.constraint)
                 }
             } else {
                 false
@@ -797,21 +805,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, self.index_type);
 
-            let mut value_type = self.evaluator.evaluate(instantiate_type(
+            let value_type = self.evaluator.evaluate(instantiate_type(
                 self.evaluator.interner(),
                 mapped.template,
                 &subst,
             ));
 
-            // Handle optional modifier
-            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
-                value_type = self
-                    .evaluator
-                    .interner()
-                    .union2(value_type, TypeId::UNDEFINED);
-            }
-
-            return Some(value_type);
+            return Some(self.evaluator.apply_mapped_optional_read_semantics(
+                self.object_type,
+                &mapped,
+                self.index_type,
+                value_type,
+            ));
         }
 
         None
@@ -1197,6 +1202,153 @@ impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn constraints_semantically_match(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        let evaluated_left = self.evaluate(left);
+        let evaluated_right = self.evaluate(right);
+        left == evaluated_right || evaluated_left == right || evaluated_left == evaluated_right
+    }
+
+    fn index_type_overlaps_optional_props(
+        &mut self,
+        index_type: TypeId,
+        optional_props: &[tsz_common::Atom],
+    ) -> bool {
+        if let Some(name) =
+            crate::type_queries::get_literal_property_name(self.interner(), index_type)
+        {
+            return optional_props.contains(&name);
+        }
+
+        if let Some(members) = union_list_id(self.interner(), index_type) {
+            return self
+                .interner()
+                .type_list(members)
+                .iter()
+                .any(|&member| self.index_type_overlaps_optional_props(member, optional_props));
+        }
+
+        match self.interner().lookup(index_type) {
+            Some(TypeData::TypeParameter(tp)) => tp.constraint.is_some_and(|constraint| {
+                self.index_type_overlaps_optional_props(constraint, optional_props)
+            }),
+            Some(TypeData::KeyOf(inner)) => {
+                let evaluated = self.evaluate(self.interner().keyof(inner));
+                evaluated != index_type
+                    && self.index_type_overlaps_optional_props(evaluated, optional_props)
+            }
+            Some(TypeData::Intersection(list_id)) => self
+                .interner()
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.index_type_overlaps_optional_props(member, optional_props)),
+            _ => false,
+        }
+    }
+
+    fn index_type_can_hit_optional_property(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        let evaluated_object = self.evaluate(object_type);
+        let optional_props: Vec<_> = match self.interner().lookup(evaluated_object) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
+                .interner()
+                .object_shape(shape_id)
+                .properties
+                .iter()
+                .filter(|prop| prop.optional)
+                .map(|prop| prop.name)
+                .collect(),
+            Some(TypeData::Callable(shape_id)) => self
+                .interner()
+                .callable_shape(shape_id)
+                .properties
+                .iter()
+                .filter(|prop| prop.optional)
+                .map(|prop| prop.name)
+                .collect(),
+            _ => return false,
+        };
+
+        !optional_props.is_empty()
+            && self.index_type_overlaps_optional_props(index_type, &optional_props)
+    }
+
+    fn apply_mapped_optional_read_semantics(
+        &mut self,
+        object_type: TypeId,
+        mapped: &MappedType,
+        index_type: TypeId,
+        value_type: TypeId,
+    ) -> TypeId {
+        if matches!(mapped.optional_modifier, Some(MappedModifier::Add))
+            || (mapped.optional_modifier.is_none()
+                && self.index_type_can_hit_optional_property(object_type, index_type))
+        {
+            return self.interner().union2(value_type, TypeId::UNDEFINED);
+        }
+
+        value_type
+    }
+
+    fn constrained_index_type(&mut self, index_type: TypeId) -> Option<TypeId> {
+        match self.interner().lookup(index_type) {
+            Some(TypeData::TypeParameter(tp)) => tp.constraint.and_then(|constraint| {
+                let evaluated = self.evaluate(constraint);
+                (evaluated != index_type).then_some(evaluated)
+            }),
+            Some(TypeData::KeyOf(inner)) => {
+                let evaluated = self.evaluate(self.interner().keyof(inner));
+                (evaluated != index_type).then_some(evaluated)
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members: Vec<_> = self.interner().type_list(list_id).iter().copied().collect();
+                let resolved: Vec<_> = members
+                    .into_iter()
+                    .filter_map(|member| {
+                        self.constrained_index_type(member)
+                            .filter(|resolved| *resolved != member)
+                    })
+                    .collect();
+                match resolved.as_slice() {
+                    [] => None,
+                    [only] => Some(*only),
+                    _ => Some(self.interner().intersection(resolved)),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn evaluate_object_index_from_constraint(
+        &mut self,
+        props: &[PropertyInfo],
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        let constrained = self.constrained_index_type(index_type)?;
+        let result = self.evaluate_object_index(props, constrained);
+        (result != TypeId::UNDEFINED
+            || !crate::type_queries::is_generic_type(self.interner(), constrained))
+        .then_some(result)
+    }
+
+    fn evaluate_object_with_index_from_constraint(
+        &mut self,
+        shape: &ObjectShape,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        let constrained = self.constrained_index_type(index_type)?;
+        let result = self.evaluate_object_with_index(shape, constrained);
+        (result != TypeId::UNDEFINED
+            || !crate::type_queries::is_generic_type(self.interner(), constrained))
+        .then_some(result)
+    }
+
     /// Pre-evaluation check for mapped type + type parameter index access.
     ///
     /// When the object is a mapped type like `{ [P in C]: Template<P> }` and the
@@ -1231,10 +1383,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Check if the type parameter's constraint matches the mapped constraint.
         // The constraint may be stored in an unevaluated form (e.g., IndexAccess)
         // that evaluates to the same type as the mapped constraint.
-        let constraint_matches = index_constraint == mapped.constraint || {
-            let evaluated = self.evaluate(index_constraint);
-            evaluated == mapped.constraint
-        };
+        let constraint_matches =
+            self.constraints_semantically_match(index_constraint, mapped.constraint);
 
         if !constraint_matches {
             return None;
@@ -1244,15 +1394,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, index_type);
 
-        let mut value_type =
-            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let value_type = self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
-        // Handle optional modifier
-        if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
-            value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
-        }
-
-        Some(value_type)
+        Some(self.apply_mapped_optional_read_semantics(
+            object_type,
+            &mapped,
+            index_type,
+            value_type,
+        ))
     }
 
     /// Helper to recursively evaluate an index access while respecting depth limits.

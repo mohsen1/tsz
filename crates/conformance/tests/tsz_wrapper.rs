@@ -689,7 +689,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
 }
 
 #[test]
-fn test_prepare_test_dir_implicit_include_excludes_module_js_entry_extensions() {
+fn test_prepare_test_dir_implicit_include_includes_module_extensions() {
     let filenames = vec![
         ("/index.js".to_string(), "export {};".to_string()),
         ("/index.mjs".to_string(), "export {};".to_string()),
@@ -707,24 +707,47 @@ fn test_prepare_test_dir_implicit_include_excludes_module_js_entry_extensions() 
     let include = parsed["include"].as_array().expect("include array");
     let include_values: Vec<_> = include.iter().filter_map(|v| v.as_str()).collect();
 
-    // Match TSC's default include patterns: *.ts, *.tsx, *.js, *.jsx
-    // TSC does NOT include .mjs/.cjs/.mts/.cts — those are discovered through
-    // import-following, not include patterns.
+    // Include patterns match tsc's harness (narrow, no .mts/.cts/.mjs/.cjs).
+    // Module-extension files are listed in "files" instead.
     assert!(include_values.contains(&"*.ts"));
     assert!(include_values.contains(&"*.tsx"));
+    assert!(
+        !include_values.contains(&"*.mts"),
+        "*.mts should not be in include"
+    );
+    assert!(
+        !include_values.contains(&"*.cts"),
+        "*.cts should not be in include"
+    );
     assert!(include_values.contains(&"*.js"));
     assert!(include_values.contains(&"*.jsx"));
-    assert!(!include_values.contains(&"*.mjs"));
-    assert!(!include_values.contains(&"*.cjs"));
-    assert!(!include_values.contains(&"**/*.mjs"));
-    assert!(!include_values.contains(&"**/*.cjs"));
-    assert!(!include_values.contains(&"*.mts"));
-    assert!(!include_values.contains(&"*.cts"));
+    assert!(
+        !include_values.contains(&"*.mjs"),
+        "*.mjs should not be in include"
+    );
+    assert!(
+        !include_values.contains(&"*.cjs"),
+        "*.cjs should not be in include"
+    );
+
+    // Module-extension files are listed explicitly in "files"
+    let files = parsed["files"]
+        .as_array()
+        .expect("files array for module-ext tests");
+    let file_values: Vec<_> = files.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        file_values.contains(&"index.mjs"),
+        "index.mjs should be in files"
+    );
+    assert!(
+        file_values.contains(&"index.cjs"),
+        "index.cjs should be in files"
+    );
 }
 
 #[test]
 #[ignore = "requires tsz binary: cargo build --profile dist-fast -p tsz-cli"]
-fn test_compile_prepared_dir_emits_ts18003_for_only_mts_input() {
+fn test_compile_prepared_dir_mts_only_emits_ts18003() {
     let content = r#"
 // @target: es2015
 // @module: esnext
@@ -747,14 +770,12 @@ export const x = 1;
     let tsz = find_tsz_binary();
     let result = compile_test(content, &filenames, &options, &tsz).unwrap();
 
-    assert!(
-        result.error_codes.contains(&5110),
-        "got: {:?}",
-        result.error_codes
-    );
+    // tsc's test harness include patterns (*.ts, *.tsx, *.js, *.jsx, etc.) do NOT
+    // match .mts files via glob. So an .mts-only test with wrapper-generated include
+    // correctly gets TS18003 "no inputs found", matching tsc's test harness behavior.
     assert!(
         result.error_codes.contains(&18003),
-        "got: {:?}",
+        "mts-only input should trigger TS18003 (matches tsc), got: {:?}",
         result.error_codes
     );
 }

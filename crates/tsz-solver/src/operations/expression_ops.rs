@@ -224,6 +224,14 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
     let mut changed = false;
     let mut normalized = Vec::with_capacity(object_members.len());
     for (original_type, shape) in object_members {
+        // Don't enrich empty objects (`{}`) with optional properties from other
+        // members. `{}` is already a valid structural supertype — adding phantom
+        // `{ foo?: undefined }` properties alters its identity and breaks downstream
+        // checks (e.g. TS2352 overlap, BCT display). tsc keeps `{}` as-is.
+        if shape.properties.is_empty() {
+            normalized.push(original_type);
+            continue;
+        }
         let completed = add_missing_optional_properties(&shape.properties, &names);
         if completed != shape.properties {
             changed = true;

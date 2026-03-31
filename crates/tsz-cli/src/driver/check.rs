@@ -1982,6 +1982,62 @@ mod tests {
         resolved
     }
 
+    fn mapped_type_indexed_access_constraint_repro() -> &'static str {
+        r#"type Identity<T> = { [K in keyof T]: T[K] };
+
+type M0 = { a: 1, b: 2 };
+
+type M1 = { [K in keyof Partial<M0>]: M0[K] };
+
+type M2 = { [K in keyof Required<M1>]: M1[K] };
+
+type M3 = { [K in keyof Identity<Partial<M0>>]: M0[K] };
+
+function foo<K extends keyof M0>(m1: M1[K], m2: M2[K], m3: M3[K]) {
+    m1.toString();
+    m1?.toString();
+    m2.toString();
+    m2?.toString();
+    m3.toString();
+    m3?.toString();
+}
+
+type Obj = {
+    a: 1,
+    b: 2
+};
+
+const mapped: { [K in keyof Partial<Obj>]: Obj[K] } = {};
+
+const resolveMapped = <K extends keyof typeof mapped>(key: K) => mapped[key].toString();
+
+const arr = ["foo", "12", 42] as const;
+
+type Mappings = { foo: boolean, "12": number, 42: string };
+
+type MapperArgs<K extends (typeof arr)[number]> = {
+    v: K,
+    i: number
+};
+
+type SetOptional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+
+type PartMappings = SetOptional<Mappings, "foo">;
+
+const mapper: { [K in keyof PartMappings]: (o: MapperArgs<K>) => PartMappings[K] } = {
+    foo: ({ v, i }) => v.length + i > 4,
+    "12": ({ v, i }) => Number(v) + i,
+    42: ({ v, i }) => `${v}${i}`,
+};
+
+const resolveMapper1 = <K extends keyof typeof mapper>(
+    key: K, o: MapperArgs<K>) => mapper[key](o);
+
+const resolveMapper2 = <K extends keyof typeof mapper>(
+    key: K, o: MapperArgs<K>) => mapper[key]?.(o);
+"#
+    }
+
     #[test]
     fn jsx_attribute_comma_expression_survives_into_bind_results() {
         let source = r#"
@@ -1997,8 +2053,7 @@ const class2 = "bar";
 const elem = <div className={class1, class2}/>;
 "#;
 
-        let result =
-            parallel::parse_and_bind_single("file.tsx".to_string(), source.to_string());
+        let result = parallel::parse_and_bind_single("file.tsx".to_string(), source.to_string());
         let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
 
         assert!(
@@ -2032,6 +2087,153 @@ const elem = <div className={class1, class2}/>;
         assert!(
             codes.contains(&2695),
             "expected CLI diagnostics to include TS2695, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn jsx_invalid_namespace_start_keeps_colon_ts1109_in_bind_results() {
+        let source = "declare var React: any;\nvar x = <:a attr={\"value\"} />;\n";
+        let result = parallel::parse_and_bind_single("file.tsx".to_string(), source.to_string());
+        let less_than_pos = source.find('<').expect("opening angle") as u32;
+        let colon_pos = source[less_than_pos as usize + 1..]
+            .find(':')
+            .map(|offset| less_than_pos + 1 + offset as u32)
+            .expect("colon");
+        let expr_expected_positions: Vec<u32> = result
+            .parse_diagnostics
+            .iter()
+            .filter(|diag| diag.code == 1109)
+            .map(|diag| diag.start)
+            .collect();
+
+        assert!(
+            expr_expected_positions.contains(&less_than_pos),
+            "expected TS1109 at '<', got: {expr_expected_positions:?}"
+        );
+        assert!(
+            expr_expected_positions.contains(&colon_pos),
+            "expected TS1109 at ':', got: {expr_expected_positions:?}"
+        );
+    }
+
+    #[test]
+    fn jsx_invalid_namespace_start_keeps_colon_ts1109_in_cli_diagnostics() {
+        let source = "declare var React: any;\nvar x = <:a attr={\"value\"} />;\n";
+        let diagnostics = collect_test_diagnostics(&[("file.tsx", source)]);
+        let less_than_pos = source.find('<').expect("opening angle") as u32;
+        let colon_pos = source[less_than_pos as usize + 1..]
+            .find(':')
+            .map(|offset| less_than_pos + 1 + offset as u32)
+            .expect("colon");
+        let expr_expected_positions: Vec<u32> = diagnostics
+            .iter()
+            .filter(|diag| diag.code == 1109)
+            .map(|diag| diag.start)
+            .collect();
+
+        assert!(
+            expr_expected_positions.contains(&less_than_pos),
+            "expected CLI TS1109 at '<', got: {diagnostics:?}"
+        );
+        assert!(
+            expr_expected_positions.contains(&colon_pos),
+            "expected CLI TS1109 at ':', got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_diagnostics_preserves_mapped_type_nullish_indexed_reads() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(&file_path, mapped_type_indexed_access_constraint_repro())
+            .expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+        let ts18048_count = diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::IS_POSSIBLY_UNDEFINED)
+            .count();
+        let ts2532_count = diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED)
+            .count();
+        let ts2722_count = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED
+            })
+            .count();
+        let ts2349_count = diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE)
+            .count();
+
+        assert_eq!(
+            ts18048_count, 3,
+            "Expected collect_diagnostics to preserve three TS18048 diagnostics, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            ts2532_count, 1,
+            "Expected one TS2532 for mapped[key].toString(), got: {diagnostics:?}"
+        );
+        assert_eq!(
+            ts2722_count, 1,
+            "Expected one TS2722 for mapper[key](o), got: {diagnostics:?}"
+        );
+        assert_eq!(
+            ts2349_count, 0,
+            "Did not expect TS2349 for mapper[key](o), got: {diagnostics:?}"
         );
     }
 

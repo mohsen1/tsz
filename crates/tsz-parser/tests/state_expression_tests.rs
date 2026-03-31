@@ -190,3 +190,30 @@ fn object_literal_dotted_property_recovery() {
         "should not emit TS1109, got: {diags:?}"
     );
 }
+
+#[test]
+fn async_arrow_parameter_recovery_rolls_back_speculation() {
+    let source = "var foo = async (a = await => await): Promise<void> => {}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let actual: Vec<(u32, u32)> = diags.iter().map(|diag| (diag.code, diag.start)).collect();
+    let expected = vec![
+        (
+            diagnostic_codes::EXPECTED,
+            source.find(':').expect("return type colon") as u32,
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            source.find('<').expect("Promise type args") as u32,
+        ),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            source.rfind("=>").expect("outer arrow") as u32,
+        ),
+    ];
+
+    assert_eq!(
+        actual, expected,
+        "async-arrow speculation should roll back to TypeScript's fallback parse.\nactual diagnostics: {diags:?}"
+    );
+}

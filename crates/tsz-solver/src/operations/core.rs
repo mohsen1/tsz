@@ -1729,29 +1729,44 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
 
-        if has_multi_overload_members >= 2
-            && let Some(unified_sigs) = self.find_union_compatible_signatures(&sig_lists)
-        {
-            // Compatible signatures found — check `this` type constraint.
-            // The unified signatures have intersected `this` types from
-            // the matched overloads across all members.
-            let unified_this = unified_sigs
-                .iter()
-                .filter_map(|s| s.this_type)
-                .reduce(|a, b| self.interner.intersection2(a, b));
+        if has_multi_overload_members >= 2 {
+            if let Some(unified_sigs) = self.find_union_compatible_signatures(&sig_lists) {
+                // Compatible signatures found — check `this` type constraint.
+                // The unified signatures have intersected `this` types from
+                // the matched overloads across all members.
+                let unified_this = unified_sigs
+                    .iter()
+                    .filter_map(|s| s.this_type)
+                    .reduce(|a, b| self.interner.intersection2(a, b));
 
-            if let Some(combined_this) = unified_this {
-                let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-                if !self.checker.is_assignable_to(actual_this, combined_this) {
-                    return CallResult::ThisTypeMismatch {
-                        expected_this: combined_this,
-                        actual_this,
+                if let Some(combined_this) = unified_this {
+                    let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+                    if !self.checker.is_assignable_to(actual_this, combined_this) {
+                        return CallResult::ThisTypeMismatch {
+                            expected_this: combined_this,
+                            actual_this,
+                        };
+                    }
+                }
+            } else {
+                // No compatible signatures found across multi-overload members.
+                // Per tsc's getUnionSignatures: when multiple union members have
+                // multiple overloads and no compatible pair exists, the union is
+                // not callable (TS2349). However, our compatibility check skips
+                // generic signatures, so only report NotCallable when all overloads
+                // across multi-overload members are non-generic. For generic
+                // overloads, fall through to per-member resolution.
+                let all_non_generic = sig_lists
+                    .iter()
+                    .filter(|(_, sigs)| sigs.len() > 1)
+                    .all(|(_, sigs)| sigs.iter().all(|s| s.type_params.is_empty()));
+                if all_non_generic {
+                    return CallResult::NotCallable {
+                        type_id: union_type,
                     };
                 }
             }
         }
-        // No compatible signatures found — fall through to per-member
-        // resolution which resolves each member's overloads independently.
 
         // Try to compute a combined signature for the union.
         // TypeScript computes combined arity (max required params across members)
@@ -2324,16 +2339,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
-        // If we got here, no signature matched
+        // If we got here, no signature matched.
+        // Use the last overload signature's return type as the fallback (matching
+        // tsc behavior). tsc uses the last declaration's return type for error
+        // recovery, allowing downstream code to see the expected shape. For
+        // example, `[].concat(...)` on `never[]` should still produce `never[]`,
+        // not `never`, so that chained `.map()` resolves correctly.
+        let fallback_return = callable
+            .call_signatures
+            .last()
+            .map(|s| s.return_type)
+            .unwrap_or(TypeId::NEVER);
         CallResult::NoOverloadMatch {
             func_type: self.interner.callable(callable.clone()),
             arg_types: arg_types.to_vec(),
             failures,
-            // Preserve the semantic fact that a failed overload call has no
-            // usable result type. Returning `never` lets downstream property
-            // access and control-flow consumers observe the failed call as
-            // bottom instead of pretending the first overload succeeded.
-            fallback_return: TypeId::NEVER,
+            fallback_return,
         }
     }
 }

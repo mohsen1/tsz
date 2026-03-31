@@ -1566,6 +1566,15 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_types = std::mem::take(&mut original_node_types);
 
         // First pass: try each signature with union-contextual argument types.
+        // When an overload succeeds but its return context substitution is empty
+        // (couldn't infer type params from contextual return type), defer it as
+        // a fallback and continue trying later overloads which might have better
+        // return context inference.
+        let mut no_rcs_fallback: Option<(
+            Vec<TypeId>,
+            TypeId,
+            crate::context::speculation::FullSnapshot,
+        )> = None;
         for (idx, (sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_relation_input_ready(func_type);
@@ -1632,6 +1641,7 @@ impl<'a> CheckerState<'a> {
                     // causing false diagnostics in callback bodies (e.g., TS2339 for `this.b`
                     // when `this` has type `TContext` instead of the inferred `{b: string}`).
                     let mut did_instantiated_retry = false;
+                    let mut used_return_context_sub_outer = false;
                     let (final_arg_types, final_return_type) = if !sig.type_params.is_empty()
                         && !contextual_refresh_args.is_empty()
                         && let Some(instantiated_params) = instantiated_params.as_ref()
@@ -1739,6 +1749,7 @@ impl<'a> CheckerState<'a> {
                             return_type
                         };
                         did_instantiated_retry = true;
+                        used_return_context_sub_outer = used_return_context_sub;
                         (refreshed_arg_types, final_return_type)
                     } else {
                         (arg_types.clone(), return_type)
@@ -1755,6 +1766,25 @@ impl<'a> CheckerState<'a> {
                             .overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
                     {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                        continue;
+                    }
+
+                    // When return context substitution failed and there are more
+                    // overloads to try, defer this overload as a fallback. A later
+                    // overload might use return context inference successfully
+                    // (e.g., Promise.all's iterable overload can infer T from
+                    // Awaited<T>[] matching a contextual tuple type).
+                    if !used_return_context_sub_outer
+                        && did_instantiated_retry
+                        && idx + 1 < signatures.len()
+                        && contextual_type.is_some()
+                        && no_rcs_fallback.is_none()
+                    {
+                        no_rcs_fallback = Some((
+                            final_arg_types.clone(),
+                            final_return_type,
+                            self.ctx.snapshot_full(),
+                        ));
                         continue;
                     }
 
@@ -1814,6 +1844,17 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // If the first pass deferred an overload without return context substitution
+        // but no later overload succeeded, accept the deferred fallback.
+        if let Some((fallback_arg_types, fallback_return_type, fallback_snap)) = no_rcs_fallback {
+            self.ctx.rollback_full(&fallback_snap);
+            self.ctx.node_types.merge(&temp_node_types);
+            return Some(OverloadResolution {
+                arg_types: fallback_arg_types,
+                result: CallResult::Success(fallback_return_type),
+            });
         }
 
         // Second pass: signature-specific contextual typing.
@@ -2346,13 +2387,22 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        // When no overload matched, use the last overload's return type as the
+        // fallback (matching tsc behavior). tsc always uses the last signature's
+        // return type for error recovery so that downstream code sees the expected
+        // shape rather than `never`. For example, `[].concat(...)` on `never[]`
+        // should still produce `never[]`, not `never`.
+        let fallback_return = signatures
+            .last()
+            .map(|s| s.return_type)
+            .unwrap_or(TypeId::NEVER);
         Some(OverloadResolution {
             arg_types: arg_types.clone(),
             result: CallResult::NoOverloadMatch {
                 func_type: TypeId::ANY,
                 arg_types,
                 failures,
-                fallback_return: TypeId::NEVER,
+                fallback_return,
             },
         })
     }

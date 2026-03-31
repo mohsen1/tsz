@@ -1698,6 +1698,10 @@ impl ParserState {
                 if self.is_token(SyntaxKind::ColonToken) {
                     use tsz_common::diagnostics::diagnostic_codes;
 
+                    let use_failed_async_arrow_recovery =
+                        self.pending_failed_async_arrow_colon_recovery;
+                    self.pending_failed_async_arrow_colon_recovery = false;
+
                     self.error_comma_expected();
                     self.next_token();
 
@@ -1708,6 +1712,21 @@ impl ParserState {
                         );
                         break;
                     }
+
+                    let generic_like_type_arg_pos =
+                        if use_failed_async_arrow_recovery && self.is_identifier_or_keyword() {
+                            let snapshot = self.scanner.save_state();
+                            let current = self.current_token;
+                            self.next_token();
+                            let result = self
+                                .is_token(SyntaxKind::LessThanToken)
+                                .then(|| self.token_pos());
+                            self.scanner.restore_state(snapshot);
+                            self.current_token = current;
+                            result
+                        } else {
+                            None
+                        };
 
                     let recover_start = self.token_pos();
                     let _ = self.parse_type();
@@ -1723,11 +1742,19 @@ impl ParserState {
                         self.next_token();
                     }
 
+                    if let Some(pos) = generic_like_type_arg_pos {
+                        self.parse_error_at(pos, 1, "',' expected.", diagnostic_codes::EXPECTED);
+                    }
+
                     if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
-                        self.parse_error_at_current_token(
-                            "';' expected.",
-                            diagnostic_codes::EXPECTED,
-                        );
+                        if use_failed_async_arrow_recovery {
+                            self.error_expression_expected();
+                        } else {
+                            self.parse_error_at_current_token(
+                                "';' expected.",
+                                diagnostic_codes::EXPECTED,
+                            );
+                        }
                     }
                     break;
                 }

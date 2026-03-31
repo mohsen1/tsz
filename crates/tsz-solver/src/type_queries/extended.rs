@@ -504,6 +504,17 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                 }
             }
 
+            // For intersection types (arising from union property access), deduplicate
+            // generic signatures that are alpha-equivalent. When a generic method like
+            // `equalsShallow<T>(this: ReadonlyArray<T>, other: ReadonlyArray<T>): boolean`
+            // is resolved from different union members (e.g., Array<string> | Array<null>),
+            // the inner type parameter T gets different TypeIds per instantiation, producing
+            // structurally identical but TypeId-different signatures. Without dedup, overload
+            // resolution tries each independently and may fail (false TS2769).
+            if matches!(key, TypeData::Intersection(_)) && call_signatures.len() > 1 {
+                dedup_alpha_equivalent_signatures(&mut call_signatures);
+            }
+
             if call_signatures.is_empty() {
                 CallSignaturesKind::NoSignatures
             } else {
@@ -512,6 +523,45 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
         }
         _ => CallSignaturesKind::NoSignatures,
     }
+}
+
+/// Deduplicate generic call signatures that are alpha-equivalent (structurally
+/// identical up to type parameter renaming). Two signatures are considered
+/// equivalent when they have the same type parameter names/constraints, same
+/// parameter count/optionality/rest, and same return type.
+fn dedup_alpha_equivalent_signatures(signatures: &mut Vec<crate::CallSignature>) {
+    if signatures.len() <= 1 {
+        return;
+    }
+
+    fn signature_fingerprint(sig: &crate::CallSignature) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        sig.type_params.len().hash(&mut hasher);
+        for tp in &sig.type_params {
+            tp.name.hash(&mut hasher);
+            tp.constraint.is_some().hash(&mut hasher);
+            tp.default.is_some().hash(&mut hasher);
+            tp.is_const.hash(&mut hasher);
+        }
+        sig.params.len().hash(&mut hasher);
+        for p in &sig.params {
+            p.name.hash(&mut hasher);
+            p.optional.hash(&mut hasher);
+            p.rest.hash(&mut hasher);
+        }
+        sig.return_type.hash(&mut hasher);
+        sig.is_method.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    signatures.retain(|sig| {
+        if sig.type_params.is_empty() {
+            return true; // Only dedup generic signatures
+        }
+        seen.insert(signature_fingerprint(sig))
+    });
 }
 
 // =============================================================================
@@ -1219,5 +1269,154 @@ pub fn classify_for_type_argument_extraction(
         TypeData::Function(shape_id) => TypeArgumentExtractionKind::Function(shape_id),
         TypeData::Callable(shape_id) => TypeArgumentExtractionKind::Callable(shape_id),
         _ => TypeArgumentExtractionKind::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CallSignature, ParamInfo, TypeParamInfo};
+    use tsz_common::Atom;
+
+    #[test]
+    fn dedup_alpha_equivalent_generic_signatures() {
+        // Two signatures with the same generic structure but different TypeIds
+        // for type parameters (as happens when resolving a generic method from
+        // different union members).
+        let sig1 = CallSignature {
+            type_params: vec![TypeParamInfo {
+                name: Atom(10),
+                constraint: None,
+                default: None,
+                is_const: false,
+            }],
+            params: vec![ParamInfo {
+                name: Some(Atom(20)),
+                type_id: TypeId(100), // ReadonlyArray<T> with T=TypeId(100)
+                optional: false,
+                rest: false,
+            }],
+            this_type: Some(TypeId(100)),
+            return_type: TypeId(8), // boolean
+            type_predicate: None,
+            is_method: true,
+        };
+
+        let sig2 = CallSignature {
+            type_params: vec![TypeParamInfo {
+                name: Atom(10),
+                constraint: None,
+                default: None,
+                is_const: false,
+            }],
+            params: vec![ParamInfo {
+                name: Some(Atom(20)),
+                type_id: TypeId(200), // ReadonlyArray<T> with different T=TypeId(200)
+                optional: false,
+                rest: false,
+            }],
+            this_type: Some(TypeId(200)),
+            return_type: TypeId(8),
+            type_predicate: None,
+            is_method: true,
+        };
+
+        let mut sigs = vec![sig1.clone(), sig2];
+        dedup_alpha_equivalent_signatures(&mut sigs);
+        assert_eq!(
+            sigs.len(),
+            1,
+            "Alpha-equivalent generic signatures should deduplicate to 1"
+        );
+        assert_eq!(
+            sigs[0].this_type, sig1.this_type,
+            "Should keep the first signature"
+        );
+    }
+
+    #[test]
+    fn dedup_preserves_different_generic_signatures() {
+        // Two genuinely different generic signatures should not be deduped
+        let sig1 = CallSignature {
+            type_params: vec![TypeParamInfo {
+                name: Atom(10),
+                constraint: None,
+                default: None,
+                is_const: false,
+            }],
+            params: vec![ParamInfo {
+                name: Some(Atom(20)),
+                type_id: TypeId(100),
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId(8),
+            type_predicate: None,
+            is_method: true,
+        };
+
+        let sig2 = CallSignature {
+            type_params: vec![TypeParamInfo {
+                name: Atom(11), // Different type param name
+                constraint: None,
+                default: None,
+                is_const: false,
+            }],
+            params: vec![ParamInfo {
+                name: Some(Atom(20)),
+                type_id: TypeId(200),
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId(8),
+            type_predicate: None,
+            is_method: true,
+        };
+
+        let mut sigs = vec![sig1, sig2];
+        dedup_alpha_equivalent_signatures(&mut sigs);
+        assert_eq!(
+            sigs.len(),
+            2,
+            "Different generic signatures should be preserved"
+        );
+    }
+
+    #[test]
+    fn dedup_skips_non_generic_signatures() {
+        // Non-generic signatures should never be deduped
+        let sig1 = CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(Atom(20)),
+                type_id: TypeId(100),
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId(8),
+            type_predicate: None,
+            is_method: false,
+        };
+
+        let sig2 = CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(Atom(20)),
+                type_id: TypeId(200),
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId(8),
+            type_predicate: None,
+            is_method: false,
+        };
+
+        let mut sigs = vec![sig1, sig2];
+        dedup_alpha_equivalent_signatures(&mut sigs);
+        assert_eq!(sigs.len(), 2, "Non-generic signatures should be preserved");
     }
 }

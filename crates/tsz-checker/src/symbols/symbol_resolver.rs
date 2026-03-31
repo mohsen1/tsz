@@ -910,6 +910,21 @@ impl<'a> CheckerState<'a> {
                 })
         };
 
+        let should_preserve_alias_symbol_in_type_position = |sym_id: SymbolId| {
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return false;
+            };
+            if (symbol.flags & symbol_flags::ALIAS) == 0 {
+                return false;
+            }
+
+            let has_local_type_meaning = self.symbol_has_declared_type_meaning(sym_id);
+            let is_namespace_import_alias = symbol.import_module.is_some()
+                && matches!(symbol.import_name.as_deref(), Some("*"));
+
+            has_local_type_meaning || is_namespace_import_alias
+        };
+
         let is_private_external_module_type_symbol = |sym_id: SymbolId| -> bool {
             let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
                 return false;
@@ -968,6 +983,9 @@ impl<'a> CheckerState<'a> {
                     .find(|&(_, &alias_id)| alias_id == local_sym_id)
                 {
                     return TypeSymbolResolution::Type(type_alias_id);
+                }
+                if should_preserve_alias_symbol_in_type_position(local_sym_id) {
+                    return TypeSymbolResolution::Type(local_sym_id);
                 }
                 self.ctx
                     .referenced_symbols
@@ -1048,6 +1066,9 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                 && symbol.flags & symbol_flags::ALIAS != 0
             {
+                if should_preserve_alias_symbol_in_type_position(sym_id) {
+                    return TypeSymbolResolution::Type(sym_id);
+                }
                 // Mark the local alias as referenced (for unused-import tracking).
                 // When we follow the alias chain below, only the target gets returned
                 // and inserted into referenced_symbols by the caller. Without this,

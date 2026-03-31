@@ -624,3 +624,79 @@ Promise.all([getT<string>(), ...getT<any>()]).then((result) => {
             .collect::<Vec<_>>()
     );
 }
+
+/// When a type argument has no properties in common with an all-optional
+/// constraint (a "weak type"), tsc emits TS2559 instead of TS2344.
+/// Regression test for incorrectNumberOfTypeArgumentsDuringErrorReporting.ts.
+#[test]
+fn test_weak_type_constraint_emits_ts2559() {
+    let source = r#"
+interface ObjA {
+  y?: string;
+}
+
+interface ObjB { [key: string]: any }
+
+interface Opts<A, B> { a: A; b: B }
+
+const fn2 = <
+  A extends ObjA,
+  B extends ObjB = ObjB
+>(opts: Opts<A, B>): string => 'Z';
+
+interface MyObjA {
+  x: string;
+}
+
+fn2<MyObjA>({
+  a: { x: 'X', y: 'Y' },
+  b: {},
+});
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2559_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2559)
+        .count();
+    assert!(
+        ts2559_count >= 1,
+        "Expected TS2559 (weak type: no common properties) for MyObjA vs ObjA constraint, got {} TS2559 errors. All errors: {:?}",
+        ts2559_count,
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // Should NOT emit TS2344 (constraint not satisfied) — TS2559 is more specific
+    let ts2344_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2344)
+        .count();
+    assert_eq!(
+        ts2344_count, 0,
+        "Expected no TS2344 when TS2559 (weak type) applies, got {ts2344_count}"
+    );
+}

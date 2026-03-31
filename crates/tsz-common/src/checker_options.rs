@@ -156,6 +156,10 @@ pub struct CheckerOptions {
     /// When true, built-in iterators (Array, Map, Set, etc.) have `BuiltinIteratorReturn`
     /// resolved to `undefined` instead of `any`. Implied by `--strict` (TS 5.6+).
     pub strict_builtin_iterator_return: bool,
+    /// When true, only allow syntax that can be fully erased (no runtime emit).
+    /// Disallows parameter properties, enums, namespaces, import=, export=, and
+    /// angle-bracket type assertions. Reports TS1294.
+    pub erasable_syntax_only: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -237,6 +241,7 @@ impl Default for CheckerOptions {
             allow_umd_global_access: false,
             preserve_const_enums: false,
             strict_builtin_iterator_return: true,
+            erasable_syntax_only: false,
         }
     }
 }

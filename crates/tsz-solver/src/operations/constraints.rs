@@ -1761,6 +1761,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
+                // When bases differ and the target has MORE type args than the source
+                // (due to default type parameters, e.g., Iterable<T, TReturn = any>
+                // referenced as Iterable<T>), match the overlapping prefix of type args.
+                // Without this, Set<Foo> vs Iterable<T_placeholder, any> skips direct
+                // arg matching because arg counts differ (1 vs 2), falling back to
+                // structural evaluation which can't handle placeholder args correctly.
+                // The zip in constrain_application_type_args handles different lengths
+                // naturally by iterating over the minimum.
+                else if !same_base_application
+                    && !s_app.args.is_empty()
+                    && s_app.args.len() < t_app.args.len()
+                    && t_app.args[..s_app.args.len()]
+                        .iter()
+                        .any(|arg| var_map.contains_key(arg))
+                {
+                    self.constrain_application_type_args(
+                        ctx,
+                        var_map,
+                        t_app.base,
+                        &s_app.args,
+                        &t_app.args[..s_app.args.len()],
+                        priority,
+                    );
+                }
                 let promise_like_arg_pair = if !same_base_application {
                     self.checker
                         .promise_like_type_argument(source)

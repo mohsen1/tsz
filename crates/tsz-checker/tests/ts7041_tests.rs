@@ -123,3 +123,47 @@ defineOptions({
 
     assert!(has_error_with_code(src, 7041));
 }
+
+#[test]
+fn typeof_this_property_in_global_arrow_reports_ts7017_and_ts7041() {
+    // From typeofThis.ts: `typeof this.foo` in a top-level arrow should still
+    // reuse global-this property access diagnostics, not stop after TS7041.
+    let diags = get_diagnostics(
+        r#"
+const x = () => {
+    type T = typeof this.foo;
+};
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.0 == 7041),
+        "Expected TS7041 for global-capturing arrow, got diagnostics: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.0 == 7017),
+        "Expected TS7017 for missing globalThis index signature in typeof query, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn nullable_this_property_access_reports_named_ts18048() {
+    // From typeofThis.ts: nullable `this` should use the named nullish diagnostic
+    // rather than the generic "Object is possibly 'undefined'" form.
+    let diags = get_diagnostics(
+        r#"
+function f(this: { foo?: string } | undefined): string | undefined {
+    return this.foo;
+}
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.0 == 18048),
+        "Expected TS18048 for nullable `this`, got diagnostics: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2532),
+        "Did not expect generic TS2532 once `this` is named, got diagnostics: {diags:?}"
+    );
+}

@@ -1077,16 +1077,22 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|m| is_type_parameter_like(self.ctx.types, *m));
             if has_type_param {
+                for &member in &left_members {
+                    if !is_type_parameter_like(self.ctx.types, member) {
+                        continue;
+                    }
+                    let apparent = self.get_type_param_apparent_type(member);
+                    if self.types_have_no_overlap(apparent, effective_right) {
+                        return true;
+                    }
+                }
+
                 // Tier 1: Resolve type parameters to constraints
                 let resolved: Vec<TypeId> = left_members
                     .iter()
                     .map(|&m| {
                         if is_type_parameter_like(self.ctx.types, m) {
-                            crate::query_boundaries::common::type_parameter_constraint(
-                                self.ctx.types,
-                                m,
-                            )
-                            .unwrap_or(TypeId::UNKNOWN)
+                            self.get_type_param_apparent_type(m)
                         } else {
                             m
                         }
@@ -1115,15 +1121,21 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|m| is_type_parameter_like(self.ctx.types, *m));
             if has_type_param {
+                for &member in &right_members {
+                    if !is_type_parameter_like(self.ctx.types, member) {
+                        continue;
+                    }
+                    let apparent = self.get_type_param_apparent_type(member);
+                    if self.types_have_no_overlap(effective_left, apparent) {
+                        return true;
+                    }
+                }
+
                 let resolved: Vec<TypeId> = right_members
                     .iter()
                     .map(|&m| {
                         if is_type_parameter_like(self.ctx.types, m) {
-                            crate::query_boundaries::common::type_parameter_constraint(
-                                self.ctx.types,
-                                m,
-                            )
-                            .unwrap_or(TypeId::UNKNOWN)
+                            self.get_type_param_apparent_type(m)
                         } else {
                             m
                         }

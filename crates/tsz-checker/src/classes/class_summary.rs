@@ -438,6 +438,14 @@ impl<'a> CheckerState<'a> {
         let mut summary = ClassChainSummary::default();
         let mut visited = FxHashSet::default();
         let mut current = Some(class_idx);
+        // Track a cumulative substitution from ancestor type parameters to the
+        // root class's type parameter expressions.  When `L<RT> extends T<F(RT)>`,
+        // the substitution maps T's type param `A` to `F(RT)` so that inherited
+        // members from T are expressed in terms of L's type params.  This prevents
+        // false TS2416 when the derived class overrides a property whose base type
+        // is only correct after full substitution through the chain.
+        let mut cumulative_substitution = tsz_solver::TypeSubstitution::new();
+        let mut is_first = true;
 
         while let Some(current_idx) = current {
             if !visited.insert(current_idx) {
@@ -458,18 +466,82 @@ impl<'a> CheckerState<'a> {
 
             let own_summary = self.collect_class_members_for_chain(class);
 
+            // Extract extends-clause type arguments while the current class's type
+            // parameters are still in scope (so expressions like `RT[RT['a']]` resolve).
+            let extends_info = self.get_extends_clause_type_args(current_idx);
+
             self.pop_type_parameters(type_param_updates);
 
-            // Merge own instance members into chain summary (first insertion wins)
-            for (name, entry) in own_summary.instance_members {
-                summary.instance_members.entry(name).or_insert(entry);
-            }
-            // Merge own static members into chain summary
-            for (name, entry) in own_summary.static_members {
-                summary.static_members.entry(name).or_insert(entry);
+            // For the first class (the class itself), members are already in terms of
+            // its own type parameters — no substitution needed.  For inherited members
+            // from ancestor classes, apply the cumulative substitution to rewrite their
+            // types from the ancestor's type parameters to the root class's.
+            if is_first {
+                is_first = false;
+                for (name, entry) in own_summary.instance_members {
+                    summary.instance_members.entry(name).or_insert(entry);
+                }
+                for (name, entry) in own_summary.static_members {
+                    summary.static_members.entry(name).or_insert(entry);
+                }
+            } else {
+                for (name, mut entry) in own_summary.instance_members {
+                    if !cumulative_substitution.is_empty() {
+                        entry.info.type_id = crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            entry.info.type_id,
+                            &cumulative_substitution,
+                        );
+                    }
+                    summary.instance_members.entry(name).or_insert(entry);
+                }
+                for (name, mut entry) in own_summary.static_members {
+                    if !cumulative_substitution.is_empty() {
+                        entry.info.type_id = crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            entry.info.type_id,
+                            &cumulative_substitution,
+                        );
+                    }
+                    summary.static_members.entry(name).or_insert(entry);
+                }
             }
 
-            current = self.get_base_class_idx(current_idx);
+            // Build the substitution for the next level: map the base class's type
+            // parameters to the extends-clause type arguments, composed with the
+            // existing cumulative substitution.
+            if let Some((base_class_idx, type_arg_ids)) = extends_info {
+                if let Some(base_class) = self.ctx.arena.get_class_at(base_class_idx) {
+                    let (base_type_params, base_type_param_updates) =
+                        self.push_type_parameters(&base_class.type_parameters);
+                    self.pop_type_parameters(base_type_param_updates);
+
+                    if !base_type_params.is_empty() && !type_arg_ids.is_empty() {
+                        let level_sub = tsz_solver::TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &base_type_params,
+                            &type_arg_ids,
+                        );
+                        let mut new_cumulative = tsz_solver::TypeSubstitution::new();
+                        for (&param_name, &arg_type) in level_sub.map() {
+                            let instantiated = if !cumulative_substitution.is_empty() {
+                                crate::query_boundaries::common::instantiate_type(
+                                    self.ctx.types,
+                                    arg_type,
+                                    &cumulative_substitution,
+                                )
+                            } else {
+                                arg_type
+                            };
+                            new_cumulative.insert(param_name, instantiated);
+                        }
+                        cumulative_substitution = new_cumulative;
+                    }
+                }
+                current = Some(base_class_idx);
+            } else {
+                current = self.get_base_class_idx(current_idx);
+            }
         }
 
         self.ctx.preserve_literal_types = saved_preserve;
@@ -482,6 +554,53 @@ impl<'a> CheckerState<'a> {
             .insert(class_idx, std::rc::Rc::clone(&summary));
 
         summary
+    }
+
+    /// Extract extends-clause type arguments for a class, returning the resolved
+    /// base class node index and evaluated type argument TypeIds.
+    /// Must be called while the class's type parameters are in scope.
+    fn get_extends_clause_type_args(
+        &mut self,
+        class_idx: NodeIndex,
+    ) -> Option<(NodeIndex, Vec<TypeId>)> {
+        let class = self.ctx.arena.get_class_at(class_idx)?;
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let &type_idx = heritage.types.nodes.first()?;
+            let type_node = self.ctx.arena.get(type_idx)?;
+
+            let (expr_idx, type_arguments) =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    (
+                        expr_type_args.expression,
+                        expr_type_args.type_arguments.as_ref(),
+                    )
+                } else {
+                    (type_idx, None)
+                };
+
+            let base_sym_id = self.resolve_heritage_symbol(expr_idx)?;
+            let base_class_idx = self.get_class_declaration_from_symbol(base_sym_id)?;
+
+            let type_arg_ids: Vec<TypeId> = if let Some(args) = type_arguments {
+                args.nodes
+                    .iter()
+                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            return Some((base_class_idx, type_arg_ids));
+        }
+
+        None
     }
 
     pub(crate) fn parameter_property_member_info(

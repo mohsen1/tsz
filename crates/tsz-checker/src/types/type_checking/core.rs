@@ -1035,6 +1035,9 @@ impl<'a> CheckerState<'a> {
         check_default_assignability: bool,
         request: &TypingRequest,
     ) {
+        let pattern_type =
+            self.normalize_parameter_binding_pattern_source_type(pattern_idx, pattern_type);
+
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
@@ -1580,7 +1583,11 @@ impl<'a> CheckerState<'a> {
         if is_await_using {
             // await using accepts either Symbol.asyncDispose or Symbol.dispose
             return has_dispose
-                || has_property(self, type_id, &["[Symbol.asyncDispose]", "Symbol.asyncDispose"]);
+                || has_property(
+                    self,
+                    type_id,
+                    &["[Symbol.asyncDispose]", "Symbol.asyncDispose"],
+                );
         }
 
         has_dispose

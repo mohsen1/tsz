@@ -368,6 +368,12 @@ pub(crate) fn substitute_wildcard_in_exports(
                 .map(|(k, v)| (k.clone(), substitute_wildcard_in_exports(v, wildcard)))
                 .collect(),
         ),
+        PackageExports::Array(elements) => PackageExports::Array(
+            elements
+                .iter()
+                .map(|v| substitute_wildcard_in_exports(v, wildcard))
+                .collect(),
+        ),
         PackageExports::Null => PackageExports::Null,
     }
 }
@@ -537,6 +543,8 @@ pub(crate) enum PackageExports {
     String(String),
     Map(FxHashMap<String, Self>),
     Conditional(Vec<(String, Self)>),
+    /// Array of fallback targets — Node.js tries each element in order until one resolves
+    Array(Vec<Self>),
     /// null in JSON — indicates an explicitly blocked export
     Null,
 }
@@ -576,6 +584,17 @@ impl<'de> serde::Deserialize<'de> for PackageExports {
                 E: de::Error,
             {
                 Ok(PackageExports::Null)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let mut elements = Vec::new();
+                while let Some(element) = seq.next_element::<PackageExports>()? {
+                    elements.push(element);
+                }
+                Ok(PackageExports::Array(elements))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>

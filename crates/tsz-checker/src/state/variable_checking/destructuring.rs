@@ -44,12 +44,13 @@ impl<'a> CheckerState<'a> {
         &self,
         pattern_idx: NodeIndex,
         element_data: &tsz_parser::parser::node::BindingElementData,
-        request: &TypingRequest,
+        _request: &TypingRequest,
     ) -> bool {
         // Suppress TS2339 for missing properties in destructuring when:
-        // - For parameters: the parameter has an object literal default and no type
-        //   annotation. tsc treats all properties as implicitly optional in this case
-        //   (e.g., `function f({ a } = {}) {}`).
+        // - For parameters: the parameter has an object literal default. The
+        //   parameter-level default/assignability checks own the error, so the
+        //   binding pattern itself should not also report per-property TS2339
+        //   (e.g., `function f({ a }: T = {}) {}`).
         // - For variable declarations and binding elements: the binding element has
         //   its own default initializer AND the source is an object literal
         //   (e.g., `const { a = 5 } = {}`). Without a default, tsc still reports
@@ -89,10 +90,7 @@ impl<'a> CheckerState<'a> {
                 let Some(param) = self.ctx.arena.get_parameter(parent_node) else {
                     return false;
                 };
-                if param.name != pattern_idx
-                    || param.type_annotation.is_some()
-                    || request.contextual_type.is_some()
-                {
+                if param.name != pattern_idx {
                     return false;
                 }
                 param.initializer
@@ -197,6 +195,82 @@ impl<'a> CheckerState<'a> {
         flow_boundary::add_undefined_for_indexed_access(self.ctx.types, ty)
     }
 
+    pub(crate) fn normalize_parameter_binding_pattern_source_type(
+        &self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+    ) -> TypeId {
+        if !self.ctx.strict_null_checks()
+            || matches!(parent_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+        {
+            return parent_type;
+        }
+
+        let mut current = pattern_idx;
+        let mut param_idx = NodeIndex::NONE;
+        for _ in 0..6 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return parent_type;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                return parent_type;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                return parent_type;
+            };
+            if node.kind == syntax_kind_ext::PARAMETER {
+                param_idx = current;
+                break;
+            }
+        }
+        if param_idx.is_none() {
+            return parent_type;
+        }
+
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return parent_type;
+        };
+        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+            return parent_type;
+        };
+        if param.name != pattern_idx {
+            return parent_type;
+        }
+
+        let mut function_idx = NodeIndex::NONE;
+        for _ in 0..4 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if self.ctx.arena.get_function(node).is_some()
+                || self.ctx.arena.get_method_decl(node).is_some()
+                || self.ctx.arena.get_constructor(node).is_some()
+            {
+                function_idx = current;
+                break;
+            }
+        }
+        let jsdoc_optional = function_idx.is_some()
+            && self.jsdoc_marks_parameter_optional(function_idx, param_idx, param.name);
+
+        // Parameter omission/default handling belongs to the parameter itself.
+        // Destructuring inside the body should see the object side, not the
+        // transient `| undefined` wrapper added for call-arity semantics.
+        if param.initializer.is_some() || param.question_token || jsdoc_optional {
+            flow_boundary::narrow_destructuring_default(self.ctx.types, parent_type, true)
+        } else {
+            parent_type
+        }
+    }
+
     pub(crate) fn report_empty_array_destructuring_bounds(
         &mut self,
         pattern_idx: NodeIndex,
@@ -267,6 +341,9 @@ impl<'a> CheckerState<'a> {
         parent_type: TypeId,
         request: &TypingRequest,
     ) {
+        let parent_type =
+            self.normalize_parameter_binding_pattern_source_type(pattern_idx, parent_type);
+
         // Skip nested pattern processing for ERROR types to prevent cascading
         // diagnostics. When a parent element resolves to ERROR (e.g., from
         // destructuring `unknown`), nested patterns should not emit further errors.
@@ -669,6 +746,8 @@ impl<'a> CheckerState<'a> {
         element_data: &tsz_parser::parser::node::BindingElementData,
         request: &TypingRequest,
     ) -> TypeId {
+        let parent_type =
+            self.normalize_parameter_binding_pattern_source_type(pattern_idx, parent_type);
         let pattern_kind = self.ctx.arena.get(pattern_idx).map_or(0, |n| n.kind);
         // Resolve binding-parent shapes without forcing full assignability
         // normalization on recursive alias unions. Cases like

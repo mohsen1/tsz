@@ -1100,9 +1100,15 @@ impl<'a> CheckerState<'a> {
         if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
             && let Some(sym_id) = exports_table.get(export_name)
         {
-            // Use the main binder (which has the full merged symbol arena)
-            // rather than the cross-file lookup binder (which has empty symbols).
-            if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+            // Look up the symbol using the target binder first (which owns the export),
+            // then fall back to the main binder (for merged/remapped symbol arenas in
+            // the full pipeline). In per-file binder setups, SymbolIds are local to each
+            // file, so `self.ctx.binder.get_symbol(sym_id)` may return a wrong symbol
+            // from the current file at the same index.
+            let sym_opt = target_binder
+                .get_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id));
+            if let Some(sym) = sym_opt {
                 if sym.is_type_only {
                     // A merged symbol like `import type { A }` + `const A = 0`
                     // has both ALIAS and VALUE flags. The value binding overrides

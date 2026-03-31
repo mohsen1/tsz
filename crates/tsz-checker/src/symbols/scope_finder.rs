@@ -4,7 +4,6 @@ use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
 
 // =============================================================================
 // Scope Finding Methods
@@ -269,7 +268,7 @@ impl<'a> CheckerState<'a> {
             if self.enclosing_function_has_explicit_this_parameter(idx) {
                 return false;
             }
-            return !self.is_js_file();
+            return true;
         }
 
         if self.this_has_contextual_owner(idx).is_some()
@@ -282,7 +281,8 @@ impl<'a> CheckerState<'a> {
         if fn_node.kind == FUNCTION_EXPRESSION {
             let mut current = enclosing_fn;
             for _ in 0..3 {
-                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+                else {
                     break;
                 };
                 let Some(parent_node) = self.ctx.arena.get(parent) else {
@@ -303,12 +303,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // JS constructor/prototype receiver inference also owns the function's
-        // `this`, even though it is not modelled as an explicit parameter.
-        if self.is_js_file() {
+        if self.is_js_file()
+            && self
+                .ctx
+                .arena
+                .get_extended(enclosing_fn)
+                .map(|ext| ext.parent)
+                .is_some_and(|parent| {
+                    self.ctx.arena.get(parent).is_some_and(|node| {
+                        node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                    })
+                })
+        {
+            // Top-level/variable-declared JS function expressions participate in
+            // constructor-style receiver inference elsewhere in the checker.
             return false;
         }
 
+        // JS files do not get a blanket exemption here. A regular nested
+        // function still creates its own `this` binding unless one of the
+        // explicit/contextual receiver checks above already claimed ownership.
         true
     }
 
@@ -538,11 +552,7 @@ impl<'a> CheckerState<'a> {
     /// the `this` type is contextually provided. TS2683 should be suppressed because
     /// the contextual typing pass will properly type `this`.
     pub(crate) fn enclosing_function_has_contextual_this_type(&mut self, idx: NodeIndex) -> bool {
-        use crate::call_checker::CallableContext;
-        use tsz_parser::parser::syntax_kind_ext::{
-            CALL_EXPRESSION, FUNCTION_EXPRESSION, NEW_EXPRESSION, PARENTHESIZED_EXPRESSION,
-            VARIABLE_DECLARATION,
-        };
+        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
 
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
             Some(f) => f,
@@ -583,74 +593,6 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
             }
-        }
-
-        // Function expressions used as call/new arguments can receive a contextual
-        // `this` type from the parameter signature, e.g. `$.each(xs, function() {})`.
-        let mut current = enclosing_fn;
-        for _ in 0..3 {
-            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
-                break;
-            };
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-            if parent_node.kind == PARENTHESIZED_EXPRESSION {
-                current = parent;
-                continue;
-            }
-
-            let call = if parent_node.kind == CALL_EXPRESSION || parent_node.kind == NEW_EXPRESSION {
-                let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
-                    break;
-                };
-                call
-            } else {
-                break;
-            };
-            let Some(args) = call.arguments.as_ref() else {
-                break;
-            };
-
-            let Some(arg_index) = args.nodes.iter().position(|&arg| arg == current) else {
-                break;
-            };
-
-            let callee_type = self.get_type_of_node(call.expression);
-            if callee_type == TypeId::ERROR {
-                break;
-            }
-
-            let param_type = self
-                .contextual_parameter_type_for_call_with_env_from_expected(
-                    callee_type,
-                    arg_index,
-                    args.nodes.len(),
-                )
-                .or_else(|| {
-                    let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
-                        self.ctx.types,
-                        callee_type,
-                        self.ctx.compiler_options.no_implicit_any,
-                    );
-                    helper.get_parameter_type_for_call(arg_index, args.nodes.len())
-                });
-
-            let expected = self.contextual_type_option_for_call_argument_at(
-                param_type,
-                enclosing_fn,
-                Some(arg_index),
-                Some(args.nodes.len()),
-                CallableContext::new(callee_type),
-            );
-            if let Some(expected) = expected {
-                let ctx =
-                    tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, expected);
-                if ctx.get_this_type().is_some() {
-                    return true;
-                }
-            }
-            break;
         }
 
         if self.is_js_file()

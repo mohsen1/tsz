@@ -2,7 +2,8 @@
 
 use super::state::{
     CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
-    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_STATIC_BLOCK, ParserState,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_GENERATOR_MEMBER_NAME, CONTEXT_FLAG_STATIC_BLOCK,
+    ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -1363,6 +1364,12 @@ impl ParserState {
         // `yield` inside a computed property name like `async * [yield]()`
         // would be parsed as a YieldExpression instead of an Identifier.
         // The generator/async flags are correctly set later (lines ~3970-3974).
+        // However, track the generator asterisk so we can suppress TS1213
+        // for `yield` in computed property names of generator methods — tsc
+        // does not emit TS1213 in this position.
+        if asterisk_token {
+            self.context_flags |= CONTEXT_FLAG_GENERATOR_MEMBER_NAME;
+        }
         let has_modifiers = modifiers.is_some();
         let name = if self.is_property_name() {
             self.parse_property_name()
