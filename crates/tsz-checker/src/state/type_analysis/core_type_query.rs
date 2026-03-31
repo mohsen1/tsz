@@ -96,68 +96,6 @@ impl<'a> CheckerState<'a> {
             return param_type;
         }
 
-        // Check if the name resolves to a local variable (function-scoped or block-scoped)
-        // that is declared INSIDE a function body. Function-local variables should not be 
-        // visible in return type annotations - only parameters should be (via typeof_param_scope 
-        // above). If we get here, the name wasn't in typeof_param_scope (not a parameter), but 
-        // if it resolves to a local variable inside a function, we should emit TS2304 because 
-        // the variable is not actually in scope yet.
-        if is_identifier {
-            if let Some(ref name) = name_text {
-                if self.ctx.typeof_param_scope.get(name.as_str()).is_none() {
-                    // Not a parameter - check if it's a function-scoped or block-scoped variable
-                    if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
-                        if let Some(symbol) = self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_id)) {
-                            let is_local_variable = (symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
-                                || (symbol.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
-                            if is_local_variable {
-                                // Check if the variable is declared inside a function body
-                                // by checking if its value_declaration is inside a function
-                                let value_decl = symbol.value_declaration;
-                                if value_decl.is_some() {
-                                    let mut current = Some(value_decl);
-                                    let mut is_in_function = false;
-                                    while let Some(node_idx) = current {
-                                        if let Some(node) = self.ctx.arena.get(node_idx) {
-                                            // Check if this is a function container
-                                            if node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
-                                                || node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-                                                || node.kind == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
-                                                || node.kind == tsz_parser::parser::syntax_kind_ext::METHOD_DECLARATION
-                                            {
-                                                is_in_function = true;
-                                                break;
-                                            }
-                                            // Walk up to parent
-                                            if let Some(ext) = self.ctx.arena.get_extended(node_idx) {
-                                                current = Some(ext.parent);
-                                            } else {
-                                                break;
-                                            }
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    
-                                    // Only emit TS2304 if the variable is declared inside a function
-                                    if is_in_function {
-                                        let req = crate::query_boundaries::name_resolution::NameResolutionRequest::value(
-                                            name,
-                                            type_query.expr_name,
-                                        );
-                                        let failure =
-                                            crate::query_boundaries::name_resolution::ResolutionFailure::not_found();
-                                        self.report_name_resolution_failure(&req, &failure);
-                                        return TypeId::ERROR;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         if let Some(sym_id) = self
             .resolve_value_symbol_for_lowering(type_query.expr_name)
             .filter(|sym_id| {
