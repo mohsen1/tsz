@@ -549,28 +549,17 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
-        if string_index_nodes.is_empty()
-            && let Some(value_type) = synthesized_instance_string_value_type
-        {
-            index_info.string_index = Some(tsz_solver::IndexSignature {
-                key_type: TypeId::STRING,
-                value_type,
-                readonly: false,
-                param_name: None,
-            });
-        }
-        if number_index_nodes.is_empty()
-            && let Some(value_type) = synthesized_instance_number_value_type
-        {
-            index_info.number_index = Some(tsz_solver::IndexSignature {
-                key_type: TypeId::NUMBER,
-                value_type,
-                readonly: false,
-                param_name: None,
-            });
-        }
+        // NOTE: We do NOT populate index_info from synthesized index signatures
+        // that come from computed property names with entity expressions.
+        // These synthesized signatures are only for property access resolution,
+        // NOT for TS2411 checking against properties in the same declaration.
+        // Late-bound computed names should not participate in property/index compatibility checks.
 
         // Extract static index signature value types for TS2411 checking.
+        // Note: synthesized index signatures from computed property names with entity
+        // expressions (late-bound names) should NOT be used for TS2411 checking.
+        // These are only for property access resolution, not for checking property
+        // compatibility within the same declaration.
         let static_string_value_type = if !static_string_index_nodes.is_empty() {
             let node_idx = static_string_index_nodes[0];
             self.ctx
@@ -579,12 +568,8 @@ impl<'a> CheckerState<'a> {
                 .and_then(|n| self.ctx.arena.get_index_signature(n))
                 .filter(|sig| sig.type_annotation.is_some())
                 .map(|sig| self.get_type_from_type_node(sig.type_annotation))
-        } else if !synthesized_static_string_index_types.is_empty() {
-            Some(flow_query::union_types(
-                self.ctx.types,
-                synthesized_static_string_index_types,
-            ))
         } else {
+            // Don't use synthesized static index types from entity expressions for TS2411
             None
         };
         let static_number_value_type = if !static_number_index_nodes.is_empty() {
@@ -595,12 +580,8 @@ impl<'a> CheckerState<'a> {
                 .and_then(|n| self.ctx.arena.get_index_signature(n))
                 .filter(|sig| sig.type_annotation.is_some())
                 .map(|sig| self.get_type_from_type_node(sig.type_annotation))
-        } else if !synthesized_static_number_index_types.is_empty() {
-            Some(flow_query::union_types(
-                self.ctx.types,
-                synthesized_static_number_index_types,
-            ))
         } else {
+            // Don't use synthesized static index types from entity expressions for TS2411
             None
         };
 
