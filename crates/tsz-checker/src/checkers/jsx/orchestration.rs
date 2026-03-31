@@ -1353,7 +1353,7 @@ impl<'a> CheckerState<'a> {
             // Component: resolve as variable expression
             // The tag name is a reference to a component (function or class)
             let component_type = self.compute_type_of_node(tag_name_idx);
-            
+
             // If the JSX element has explicit type arguments (e.g., <Component<T>>),
             // create an Application type to properly instantiate the generic component.
             // This ensures that when we check overloaded SFCs, the signatures are
@@ -1372,7 +1372,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 component_type
             };
-            
+
             let component_metadata_type =
                 self.get_jsx_component_metadata_type(tag_name_idx, component_type);
             let resolved_component_type =

@@ -852,8 +852,7 @@ impl<'a> FlowAnalyzer<'a> {
                     // Readonly<P> where P is a type parameter).  tsc does not
                     // narrow non-union base types by property truthiness, so
                     // fall through instead of collapsing to NEVER.
-                    if narrowed != TypeId::NEVER || is_union_type(self.interner, type_id)
-                    {
+                    if narrowed != TypeId::NEVER || is_union_type(self.interner, type_id) {
                         return narrowed;
                     }
                 }
