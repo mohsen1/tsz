@@ -2,6 +2,7 @@ use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as query;
 use crate::query_boundaries::flow_analysis::{tuple_elements_for_type, union_members_for_type};
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
+use crate::query_boundaries::state::type_environment::{contains_this_type, substitute_this_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -418,9 +419,9 @@ impl<'a> FlowAnalyzer<'a> {
 
     fn substitute_this_type_if_available(&self, type_id: TypeId) -> TypeId {
         if let Some(concrete_this_type) = self.concrete_this_type
-            && tsz_solver::contains_this_type(self.interner, type_id)
+            && contains_this_type(self.interner, type_id)
         {
-            return tsz_solver::substitute_this_type(self.interner, type_id, concrete_this_type);
+            return substitute_this_type(self.interner, type_id, concrete_this_type);
         }
         type_id
     }
@@ -1843,10 +1844,30 @@ impl<'a> FlowAnalyzer<'a> {
             current_type
         };
 
+        // Handle fallthrough from previous case clauses.
+        // When there's fallthrough, union the pre_switch type with fallthrough types
+        // to get the base type for narrowing.
+        let base_type = if flow.antecedent.len() > 1 {
+            let mut types = vec![pre_switch_type];
+            for &ant in flow.antecedent.iter().skip(1) {
+                if let Some(&t) = results.get(&ant) {
+                    types.push(t);
+                }
+            }
+            let types = self.simplify_flow_merge_types(types);
+            if types.len() == 1 {
+                types[0]
+            } else {
+                query::union_types(self.interner, types)
+            }
+        } else {
+            pre_switch_type
+        };
+
         // Fast path: if this switch cannot narrow the reference at all, avoid
         // per-clause narrowing setup/work (narrowing context creation, expression checks).
         if !self.switch_can_affect_reference(switch_data.expression, reference) {
-            return pre_switch_type;
+            return base_type;
         }
 
         // Create narrowing context and wire up TypeEnvironment if available
@@ -1861,7 +1882,7 @@ impl<'a> FlowAnalyzer<'a> {
         // For implicit default, apply default clause narrowing (exclude all case types)
         if is_implicit_default {
             return self.narrow_by_default_switch_clause(
-                pre_switch_type,
+                base_type,
                 switch_data.expression,
                 switch_data.case_block,
                 reference,
@@ -1879,7 +1900,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         if clause.expression.is_none() {
             self.narrow_by_default_switch_clause(
-                pre_switch_type,
+                base_type,
                 switch_data.expression,
                 switch_data.case_block,
                 reference,
@@ -1889,7 +1910,7 @@ impl<'a> FlowAnalyzer<'a> {
             // For switch(true), dispatch to a case requires prior cases to be false
             // and the current case condition to be true.
             self.narrow_by_switch_true_case_clause(
-                pre_switch_type,
+                base_type,
                 switch_data.case_block,
                 clause_idx,
                 clause.expression,
@@ -1897,7 +1918,7 @@ impl<'a> FlowAnalyzer<'a> {
             )
         } else {
             self.narrow_by_switch_case_clause(
-                pre_switch_type,
+                base_type,
                 switch_data.expression,
                 switch_data.case_block,
                 clause_idx,
