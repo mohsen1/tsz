@@ -1266,8 +1266,9 @@ function test<T extends {{ x: number }}>(Component: SFC<T>) {{
 
 #[test]
 fn test_simple_type_param_props_no_excess_errors() {
-    // Simple case: props type is just T (type parameter), should suppress
-    // excess property checking.
+    // Simple case: props type is just T (type parameter). tsc still reports
+    // TS2322 here because `{ x: 1, y: "blah" }` is not assignable to arbitrary
+    // `T`, even though the excess-property-specific path is suppressed.
     let source = format!(
         r#"
 {JSX_PREAMBLE}
@@ -1281,8 +1282,8 @@ function test<T extends {{ x: number }}>(Component: SFC<T>) {{
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Should NOT emit TS2322 for extra props with type parameter, got: {diags:?}"
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should emit TS2322 for bare type-parameter props, got: {diags:?}"
     );
 }
 
