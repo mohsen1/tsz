@@ -229,12 +229,45 @@ impl CheckerState<'_> {
     }
 
     pub(crate) fn js_statement_declared_type(&mut self, stmt_idx: NodeIndex) -> Option<TypeId> {
-        self.jsdoc_type_annotation_for_node_direct(stmt_idx)
+        // For JS constructor property assignments, we should always try to resolve
+        // JSDoc annotations to provide type information to consuming TS files, even
+        // when checkJs is not enabled. This matches TypeScript's behavior where
+        // JSDoc types are available for cross-file type checking.
+        self.jsdoc_type_annotation_for_node_direct_force(stmt_idx)
             .or_else(|| {
                 let stmt_node = self.ctx.arena.get(stmt_idx)?;
                 let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
-                self.jsdoc_type_annotation_for_node_direct(expr_stmt.expression)
+                self.jsdoc_type_annotation_for_node_direct_force(expr_stmt.expression)
             })
+    }
+
+    /// Force resolve a direct leading JSDoc `@type` annotation, bypassing the
+    /// should_resolve_jsdoc() check. Used for JS constructor property assignments
+    /// where type information should be available to consuming TS files.
+    fn jsdoc_type_annotation_for_node_direct_force(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let sf = self.source_file_data_for_node(idx)?;
+        // Fast path: no comments in file means no JSDoc possible.
+        if sf.comments.is_empty() {
+            return None;
+        }
+        // Fast path: JSDoc annotations require multi-line comments (/** ... */).
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let jsdoc = self.try_leading_jsdoc(
+            &comments,
+            self.effective_jsdoc_pos_for_node(idx, &comments, &source_text)?,
+            &source_text,
+        )?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let type_expr = type_expr.trim();
+        // Use the authoritative resolution kernel — no fallback chain needed.
+        self.resolve_jsdoc_reference(type_expr)
     }
 
     /// Scan a body (constructor or method) for `this.prop = value` assignments
