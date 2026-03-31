@@ -6,7 +6,7 @@ use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::types::{MappedType, TypeData, Visibility};
+use crate::types::{CallableShape, MappedType, TypeData, Visibility};
 
 #[test]
 fn test_call_simple_function() {
@@ -10897,4 +10897,155 @@ fn test_trivial_identity_widens_literal_without_contextual_type() {
         }
         other => panic!("Expected success for identity call without context, got {other:?}"),
     }
+}
+
+/// Test that a union of a single-overload function and a multi-overload callable
+/// is not callable when the single-overload member's `this` type doesn't match
+/// any of the multi-overload member's `this` types.
+///
+/// Corresponds to tsc behavior for:
+///   type F1 = (this: A) => void;
+///   interface F4 { (this: C): void; (this: D): void; }
+///   type Union = F1 | F4;  // not callable → TS2349
+#[test]
+fn test_union_call_mixed_overloads_incompatible_this_not_callable() {
+    let interner = TypeInterner::new();
+
+    // Create distinct `this` types: A = { a: string }, C = { c: string }, D = { d: number }
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let type_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::STRING,
+    )]);
+    let type_d = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("d"),
+        TypeId::NUMBER,
+    )]);
+
+    // F1 = (this: A) => void — single overload
+    let f1 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: Some(type_a),
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // F4 = { (this: C): void; (this: D): void; } — multi-overload
+    let f4 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_c),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_d),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // Union = F1 | F4
+    let union_type = interner.union(vec![f1, f4]);
+
+    // Create a `this` context that satisfies A (from F1's this type)
+    // so Phase 0 passes and we reach the 1-multi compatibility check.
+    let actual_this = interner.intersection(vec![type_a, type_c]);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+    evaluator.set_actual_this_type(Some(actual_this));
+    let result = evaluator.resolve_call(union_type, &[]);
+
+    assert!(
+        matches!(result, CallResult::NotCallable { .. }),
+        "Union of single-overload (this: A) and multi-overload (this: C / this: D) \
+         should be not callable because A != C and A != D. Got: {result:?}"
+    );
+}
+
+/// Test that a union of a single-overload function and a multi-overload callable
+/// IS callable when the single-overload member's `this` type matches one of the
+/// multi-overload member's `this` types.
+///
+/// Corresponds to tsc behavior for:
+///   type F1 = (this: A) => void;
+///   interface F3 { (this: A): void; (this: B): void; }
+///   type Union = F1 | F3;  // callable (F1 matches F3's first overload)
+#[test]
+fn test_union_call_mixed_overloads_compatible_this_callable() {
+    let interner = TypeInterner::new();
+
+    // Create `this` types using SAME TypeId for A
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+
+    // F1 = (this: A) => void — single overload
+    let f1 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: Some(type_a),
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // F3 = { (this: A): void; (this: B): void; } — multi-overload, sharing `this: A`
+    let f3 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_a), // Same TypeId as F1's this
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // Union = F1 | F3
+    let union_type = interner.union(vec![f1, f3]);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+    // Set actual_this to a type that satisfies A (the shared this type)
+    evaluator.set_actual_this_type(Some(type_a));
+    let result = evaluator.resolve_call(union_type, &[]);
+
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Union of single-overload (this: A) and multi-overload (this: A / this: B) \
+         should be callable when `this` types match. Got: {result:?}"
+    );
 }

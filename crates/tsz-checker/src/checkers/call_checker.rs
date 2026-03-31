@@ -101,6 +101,21 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
     fn type_resolver(&self) -> Option<&dyn tsz_solver::TypeResolver> {
         Some(&self.state.ctx)
     }
+
+    fn are_types_identical(&mut self, a: TypeId, b: TypeId) -> bool {
+        if a == b {
+            return true;
+        }
+        let a_resolved = self.state.resolve_lazy_type(a);
+        let b_resolved = self.state.resolve_lazy_type(b);
+        if a_resolved == b_resolved {
+            return true;
+        }
+        self.state.ensure_relation_input_ready(a_resolved);
+        self.state.ensure_relation_input_ready(b_resolved);
+        self.state.is_assignable_to(a_resolved, b_resolved)
+            && self.state.is_assignable_to(b_resolved, a_resolved)
+    }
 }
 
 // =============================================================================
