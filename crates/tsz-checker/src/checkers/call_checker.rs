@@ -1246,7 +1246,7 @@ impl<'a> CheckerState<'a> {
                             && diag.start >= arg_node.pos
                             && diag.start < arg_node.end;
                     let is_direct_callback_body_assignability =
-                        callback_body_start.is_some_and(|start| diag.start >= start)
+                        callback_body_start.is_some_and(|start| diag.start == start)
                             && is_provisional_assignability;
                     let keep = if !is_provisional_assignability && !is_provisional_implicit_any {
                         true
@@ -1971,6 +1971,7 @@ impl<'a> CheckerState<'a> {
         let mut has_non_count_non_type_failure = false;
         let mut best_type_mismatch: Option<(OverloadResolution, crate::context::NodeTypeCache)> =
             None;
+        let mut mismatch_recovery_return: Option<TypeId> = None;
         // When an overload returns TypeParameterConstraintViolation and there are
         // more overloads to try, we store it as a fallback and continue. If no
         // later overload succeeds, we use this fallback (e.g., for single-overload
@@ -2312,6 +2313,15 @@ impl<'a> CheckerState<'a> {
                         ..
                     } = result
                     {
+                        if mismatch_recovery_return.is_none()
+                            && !matches!(fallback_return, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                            && !crate::query_boundaries::common::is_type_deeply_any(
+                                self.ctx.types,
+                                fallback_return,
+                            )
+                        {
+                            mismatch_recovery_return = Some(fallback_return);
+                        }
                         type_mismatch_count += 1;
                         if type_mismatch_count == 1 {
                             best_type_mismatch = Some((
@@ -2488,10 +2498,12 @@ impl<'a> CheckerState<'a> {
         // return type for error recovery so that downstream code sees the expected
         // shape rather than `never`. For example, `[].concat(...)` on `never[]`
         // should still produce `never[]`, not `never`.
-        let fallback_return = signatures
-            .last()
-            .map(|s| s.return_type)
-            .unwrap_or(TypeId::NEVER);
+        let fallback_return = mismatch_recovery_return.unwrap_or_else(|| {
+            signatures
+                .last()
+                .map(|s| s.return_type)
+                .unwrap_or(TypeId::NEVER)
+        });
         Some(OverloadResolution {
             arg_types: arg_types.clone(),
             result: CallResult::NoOverloadMatch {
