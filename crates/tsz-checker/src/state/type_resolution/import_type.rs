@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
         (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
     }
 
-    fn resolve_import_type_jsdoc_typedef(
+    pub(crate) fn resolve_import_type_jsdoc_typedef(
         &mut self,
         module_name: &str,
         typedef_name: &str,

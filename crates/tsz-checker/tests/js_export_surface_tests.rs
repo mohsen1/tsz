@@ -591,6 +591,112 @@ var bbb = new mod.Baz();
 }
 
 #[test]
+fn test_module_exports_object_literal_final_assignment_keeps_props_required() {
+    let diagnostics = check_commonjs_two_files(
+        "mod.js",
+        r#"
+class Thing  { x = 1 }
+class AnotherThing { y = 2  }
+function foo() { return 3 }
+function bar() { return 4 }
+module.exports = {
+    Thing,
+    AnotherThing,
+    foo,
+    qux: bar,
+    baz() { return 5 },
+    literal: "",
+};
+"#,
+        "index.ts",
+        r#"
+function values(
+    a: typeof import('./mod.js').Thing,
+    b: typeof import('./mod.js').AnotherThing,
+    c: typeof import('./mod.js').foo,
+    d: typeof import('./mod.js').qux,
+    e: typeof import('./mod.js').baz,
+    g: typeof import('./mod.js').literal,
+) {
+    return a.length + b.length + c() + d() + e() + g.length
+}
+"#,
+        "./mod.js",
+    );
+
+    let ts2722: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2722).collect();
+    let ts18048: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 18048).collect();
+
+    assert!(
+        ts2722.is_empty(),
+        "Expected no TS2722 for final module.exports object literal members, got: {ts2722:#?}"
+    );
+    assert!(
+        ts18048.is_empty(),
+        "Expected no TS18048 for final module.exports object literal members, got: {ts18048:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_typedef_is_not_visible_through_typeof_import_value_space() {
+    let diagnostics = check_commonjs_two_files(
+        "mod.js",
+        r#"
+/** @typedef {() => number} buz */
+module.exports = {};
+"#,
+        "index.ts",
+        r#"
+function values(f: typeof import('./mod.js').buz) {
+    return f()
+}
+"#,
+        "./mod.js",
+    );
+
+    let ts2694: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2694 && message.contains("buz"))
+        .collect();
+    assert_eq!(
+        ts2694.len(),
+        1,
+        "Expected typeof import('./mod.js').buz to stay value-invisible, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_param_typeof_import_reports_missing_value_export() {
+    let diagnostics = check_commonjs_two_files(
+        "mod.js",
+        r#"
+/** @typedef {() => number} buz */
+module.exports = {};
+"#,
+        "main.js",
+        r#"
+/**
+ * @param {typeof import('./mod.js').buz} f
+ */
+function values(f) {
+    return f()
+}
+"#,
+        "./mod.js",
+    );
+
+    let ts2694: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2694 && message.contains("buz"))
+        .collect();
+    assert_eq!(
+        ts2694.len(),
+        1,
+        "Expected JSDoc typeof import('./mod.js').buz to report TS2694, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_exports_function() {
     // module.exports = function greet() { return "hi"; }
     let diagnostics = check_commonjs_two_files(
