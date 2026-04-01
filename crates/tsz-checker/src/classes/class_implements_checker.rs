@@ -745,16 +745,13 @@ impl<'a> CheckerState<'a> {
             &mut inherited_member_types,
         );
 
-        // Also collect names of inherited PRIVATE/PROTECTED members. These don't
+        // Also collect inherited PRIVATE/PROTECTED members. These don't
         // satisfy interface requirements, but when an interface extends the same base
         // class, these members appear in the interface type shape and must not be
         // reported as "missing" — they're inherited through the shared base class.
-        let mut inherited_private_member_names: rustc_hash::FxHashSet<String> =
-            rustc_hash::FxHashSet::default();
-        self.collect_inherited_private_member_names(
-            class_data,
-            &mut inherited_private_member_names,
-        );
+        let mut inherited_non_public_members: rustc_hash::FxHashMap<String, Visibility> =
+            rustc_hash::FxHashMap::default();
+        self.collect_inherited_non_public_members(class_data, &mut inherited_non_public_members);
 
         // Get the class name for error messages
         let class_name = self.class_declaration_display_name(class_data);
@@ -1118,7 +1115,24 @@ impl<'a> CheckerState<'a> {
                                     actual_str,
                                 ));
                             }
-                        } else if !inherited_private_member_names.contains(&member_name) {
+                        } else if let Some(&visibility) =
+                            inherited_non_public_members.get(&member_name)
+                        {
+                            if prop.visibility == Visibility::Public {
+                                let visibility_text = match visibility {
+                                    Visibility::Private => "private",
+                                    Visibility::Protected => "protected",
+                                    Visibility::Public => "public",
+                                };
+                                self.error_at_node(
+                                    class_error_idx,
+                                    &format!(
+                                        "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is {visibility_text} in type '{class_name}' but not in type '{interface_display_name}'."
+                                    ),
+                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                );
+                            }
+                        } else {
                             // Before reporting as missing, check the class instance type.
                             // Members from module augmentations or declaration merging appear
                             // in the computed instance type but not in the AST body or
@@ -1136,8 +1150,6 @@ impl<'a> CheckerState<'a> {
                                 }
                             };
                             if !in_instance_type {
-                                // Only report as missing if it's not a private/protected
-                                // member inherited from the same base class chain.
                                 missing_members.push(member_name);
                             }
                         }

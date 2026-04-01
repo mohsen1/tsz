@@ -3,6 +3,8 @@
 
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
@@ -208,6 +210,257 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         false
+    }
+
+    fn isolated_modules_cross_file_enum_member_qualification(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if !self.ctx.isolated_modules() || self.ctx.binder.is_external_module() {
+            return None;
+        }
+
+        let mut current = idx;
+        let mut saw_initializer = false;
+        let mut enum_member_idx = NodeIndex::NONE;
+        let mut guard = 0;
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                return None;
+            }
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CONSTRUCTOR =>
+                {
+                    return None;
+                }
+                k if k == syntax_kind_ext::ENUM_MEMBER => {
+                    enum_member_idx = current;
+                    break;
+                }
+                _ => {}
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+
+        if enum_member_idx.is_none() {
+            return None;
+        }
+
+        let member_node = self.ctx.arena.get(enum_member_idx)?;
+        let member_data = self.ctx.arena.get_enum_member(member_node)?;
+        if member_data.initializer.is_none() {
+            return None;
+        }
+
+        current = idx;
+        guard = 0;
+        while current.is_some() && current != enum_member_idx {
+            guard += 1;
+            if guard > 256 {
+                return None;
+            }
+            if current == member_data.initializer {
+                saw_initializer = true;
+                break;
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        if !saw_initializer {
+            return None;
+        }
+
+        current = self.ctx.arena.get_extended(enum_member_idx)?.parent;
+        guard = 0;
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                return None;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                let enum_data = self.ctx.arena.get_enum(node)?;
+                if self.ctx.is_ambient_declaration(current) {
+                    return None;
+                }
+                let enum_name = self.ctx.arena.get_identifier_text(enum_data.name)?;
+                let candidates = self
+                    .ctx
+                    .global_file_locals_index
+                    .as_ref()
+                    .and_then(|index| index.get(enum_name))
+                    .cloned()
+                    .or_else(|| {
+                        self.ctx.all_binders.as_ref().map(|binders| {
+                            binders
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(file_idx, binder)| {
+                                    binder.file_locals.get(enum_name).map(|sym_id| (file_idx, sym_id))
+                                })
+                                .collect()
+                        })
+                    })?;
+
+                for (file_idx, sym_id) in candidates {
+                    if file_idx == self.ctx.current_file_idx {
+                        continue;
+                    }
+                    let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                        continue;
+                    };
+                    if binder.is_external_module() {
+                        continue;
+                    }
+                    let Some(symbol) = binder.get_symbol(sym_id) else {
+                        continue;
+                    };
+                    if (symbol.flags & symbol_flags::ENUM) == 0 {
+                        continue;
+                    }
+                    let arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    let has_member = symbol.declarations.iter().copied().any(|decl_idx| {
+                        arena.get(decl_idx).is_some_and(|decl_node| {
+                            if decl_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                                return false;
+                            }
+                            arena.get_enum(decl_node).is_some_and(|enum_decl| {
+                                enum_decl.members.nodes.iter().copied().any(|member_idx| {
+                                    arena.get(member_idx).and_then(|member_node| {
+                                        arena.get_enum_member(member_node)
+                                    }).and_then(|member| arena.get_identifier_text(member.name))
+                                        == Some(name)
+                                })
+                            })
+                        })
+                    });
+                    if has_member {
+                        return Some(format!("{enum_name}.{name}"));
+                    }
+                }
+
+                return None;
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+
+        None
+    }
+
+    fn should_suppress_unresolved_name_in_ambient_enum_initializer(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        let mut saw_initializer = false;
+        let mut enum_member_idx = NodeIndex::NONE;
+        let mut guard = 0;
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                return false;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CONSTRUCTOR =>
+                {
+                    return false;
+                }
+                k if k == syntax_kind_ext::ENUM_MEMBER => {
+                    enum_member_idx = current;
+                    break;
+                }
+                _ => {}
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+
+        if enum_member_idx.is_none() {
+            return false;
+        }
+
+        let Some(member_node) = self.ctx.arena.get(enum_member_idx) else {
+            return false;
+        };
+        let Some(member_data) = self.ctx.arena.get_enum_member(member_node) else {
+            return false;
+        };
+        if member_data.initializer.is_none() {
+            return false;
+        }
+
+        current = idx;
+        guard = 0;
+        while current.is_some() && current != enum_member_idx {
+            guard += 1;
+            if guard > 256 {
+                return false;
+            }
+            if current == member_data.initializer {
+                saw_initializer = true;
+                break;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        if !saw_initializer {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(enum_member_idx) else {
+            return false;
+        };
+        if ext.parent.is_none() {
+            return false;
+        }
+        let Some(enum_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        enum_node.kind == syntax_kind_ext::ENUM_DECLARATION
+            && self.ctx.is_ambient_declaration(ext.parent)
     }
 
     /// Report a cannot find name error using solver diagnostics with source tracking.
@@ -500,6 +753,21 @@ impl<'a> CheckerState<'a> {
                 )
             );
         if is_obviously_invalid {
+            return;
+        }
+
+        if self.should_suppress_unresolved_name_in_ambient_enum_initializer(idx) {
+            return;
+        }
+
+        if let Some(qualified_name) =
+            self.isolated_modules_cross_file_enum_member_qualification(name, idx)
+        {
+            self.error_at_node_msg(
+                idx,
+                diagnostic_codes::CANNOT_ACCESS_FROM_ANOTHER_FILE_WITHOUT_QUALIFICATION_WHEN_IS_ENABLED_USE_INSTEA,
+                &[name, "isolatedModules", qualified_name.as_str()],
+            );
             return;
         }
 

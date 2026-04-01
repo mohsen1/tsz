@@ -103,6 +103,66 @@ class U extends I {}
     );
 }
 
+#[test]
+fn class_extends_generic_interface_prefers_ts2689_over_ts2314() {
+    let source = r"
+interface I<T> { x: T; }
+class U extends I {}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2689_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2689)
+        .count();
+    let ts2314_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2314)
+        .count();
+
+    assert!(
+        ts2689_count >= 1,
+        "Expected TS2689 for class extending generic interface, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2314_count,
+        0,
+        "Expected TS2689 to suppress redundant TS2314 in class heritage, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 2314)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Interface extending another interface should NOT emit TS2693.
 /// `interface Q extends I {}` → no error.
 #[test]
@@ -192,6 +252,129 @@ declare class B extends I {}
             .diagnostics
             .iter()
             .filter(|d| d.code == 2693)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn qualified_heritage_missing_member_emits_namespace_specific_diagnostics() {
+    let source = r"
+namespace M {
+    export interface E<T> { foo: T; }
+}
+
+class D extends M.C {}
+interface I extends M.C {}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2708_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2708)
+        .count();
+    let ts2694_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2694)
+        .count();
+
+    assert!(
+        ts2708_count >= 1,
+        "Expected TS2708 for class heritage namespace member value access, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        ts2694_count >= 1,
+        "Expected TS2694 for interface heritage missing namespace member, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn instantiated_namespace_member_miss_keeps_property_access_diagnostic() {
+    let source = r"
+namespace M {
+    class C {}
+    class D extends M.C {}
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2339_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .count();
+    let ts2708_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2708)
+        .count();
+
+    assert!(
+        ts2339_count >= 1,
+        "Expected TS2339 for missing member on instantiated namespace value, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2708_count,
+        0,
+        "Expected no TS2708 when namespace has a runtime value side, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
             .map(|d| format!("TS{}: {}", d.code, d.message_text))
             .collect::<Vec<_>>()
     );

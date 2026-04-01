@@ -150,6 +150,67 @@ export let ctor: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<n
 }
 
 #[test]
+fn test_isolated_modules_global_script_namespaces_emit_single_ts1280() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "/script-namespaces.ts",
+            r#"
+namespace Instantiated {
+    export const x = 1;
+}
+namespace Uninstantiated {
+    export type T = number;
+}
+declare namespace Ambient {
+    export const x: number;
+}
+"#,
+        )],
+        "/script-namespaces.ts",
+        CheckerOptions {
+            isolated_modules: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts1280: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 1280)
+        .collect();
+    assert_eq!(
+        ts1280.len(),
+        1,
+        "Expected exactly one TS1280 for the first top-level namespace in a global script. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts1280[0].1.contains("Namespaces are not allowed in global script files"),
+        "Expected the TS1280 message for isolatedModules global-script namespaces. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ambient_enum_initializer_suppresses_ts2304_for_bare_identifier_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+declare enum Enum {
+    F = A,
+}
+"#,
+        CheckerOptions {
+            isolated_modules: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2304),
+        "Ambient enum constant-expression initializers should not cascade into TS2304. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_this_in_function_call_js_emits_ts2683_for_unannotated_callbacks_only() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "a.js",
@@ -1107,6 +1168,49 @@ doc.print();
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2339),
         "Property access should recover through the implemented interface surface instead of cascading TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_inherited_non_public_member_does_not_satisfy_public_interface_property() {
+    let source = r#"
+interface I {
+    name: string;
+}
+
+class PrivateBase {
+    private name: string;
+}
+
+class ProtectedBase {
+    protected name: string;
+}
+
+class PrivateDerived extends PrivateBase implements I {}
+class ProtectedDerived extends ProtectedBase implements I {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2420: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2420)
+        .collect();
+
+    assert_eq!(
+        ts2420.len(),
+        2,
+        "Expected both derived classes to report TS2420. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.iter().any(|(_, message)| message
+            .contains("Property 'name' is private in type 'PrivateDerived' but not in type 'I'.")),
+        "Expected the inherited private member to report as a visibility conflict. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.iter().any(|(_, message)| message.contains(
+            "Property 'name' is protected in type 'ProtectedDerived' but not in type 'I'."
+        )),
+        "Expected the inherited protected member to report as a visibility conflict. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

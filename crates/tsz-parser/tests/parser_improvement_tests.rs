@@ -1591,7 +1591,7 @@ const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "requi
 
 #[test]
 fn test_type_argument_with_empty_jsdoc_wildcard_has_no_ts1110() {
-    // `Foo<?>` should emit TS8020 but avoid TS1110 cascading.
+    // `Foo<?>` should emit TS8020 but avoid TS17020/TS1110 cascading.
     let source = r#"
 type T = Foo<?>;
 "#;
@@ -1611,14 +1611,42 @@ type T = Foo<?>;
         "Expected no TS1110 for `Foo<?>`, got {:?}",
         parser.get_diagnostics(),
     );
+    assert!(
+        !diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
+        "Expected no TS17020 for `Foo<?>`, got {:?}",
+        parser.get_diagnostics(),
+    );
 }
 
 #[test]
 fn test_type_argument_with_jsdoc_prefix_type_emits_ts17020() {
-    // `Foo<?string>` should still emit TS17020 for the JSDoc-style leading '?'
-    // plus TS8020 because the syntax is documentation-only.
+    // `Foo<?string>` should emit TS17020 for the JSDoc-style leading `?`, but
+    // the operand is still a real type so this is not the bare-wildcard TS8020 case.
     let source = r#"
 type T = Foo<?string>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
+        "Expected TS17020 for `Foo<?string>`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `Foo<?string>`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts8020_only() {
+    let source = r#"
+const WhatFoo = foo<?>;
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -1628,12 +1656,42 @@ type T = Foo<?string>;
         diagnostics.contains(
             &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
         ),
-        "Expected TS8020 for `Foo<?string>`, got {:?}",
+        "Expected TS8020 for `foo<?>`, got {:?}",
         parser.get_diagnostics(),
     );
     assert!(
-        diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
-        "Expected TS17020 for `Foo<?string>`, got {:?}",
+        !diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected no TS1110 for `foo<?>`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
+        "Expected no TS17020 for `foo<?>`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_expression_type_argument_with_jsdoc_prefix_type_emits_ts17020_only() {
+    let source = r#"
+const NopeFoo = foo<?string>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(
+            &diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE
+        ),
+        "Expected TS17020 for `foo<?string>`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `foo<?string>`, got {:?}",
         parser.get_diagnostics(),
     );
 }
@@ -2158,6 +2216,38 @@ type T = {
     assert!(
         ts1131_count >= 1,
         "Expected at least 1 TS1131 for invalid type literal member, got {ts1131_count}. Diagnostics: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_type_literal_statement_recovery_matches_interface_extending_class2() {
+    let source = r"
+class Foo {
+    x: string;
+    y() { }
+    get Z() {
+        return 1;
+    }
+    [x: string]: Object;
+}
+
+interface I2 extends Foo {
+    a: {
+        toString: () => {
+            return 1;
+        };
+    }
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![1131, 1128, 1128],
+        "Expected parser recovery to match tsc for malformed type literal member body, got {diagnostics:?}"
     );
 }
 
@@ -2719,6 +2809,31 @@ const y = + <> x;
     assert!(
         codes.contains(&17014),
         "Expected TS17014 for JS unary `+ <>` JSX-fragment recovery, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_unary_tilde_then_malformed_jsx_reports_ts1003() {
+    let source = "~< <";
+    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+
+    assert!(
+        codes.contains(&1003),
+        "Expected TS1003 for malformed JSX after unary `~`, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1003_count, 1,
+        "Expected exactly one TS1003 for malformed JSX after unary `~`, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1109_count, 1,
+        "Expected exactly one trailing TS1109 for malformed JSX after unary `~`, got diagnostics: {diagnostics:?}"
     );
 }
 

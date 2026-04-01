@@ -6,6 +6,43 @@ use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    pub(crate) fn finish_type_member_container_close_brace(&mut self) -> u32 {
+        if self.deferred_type_member_close_braces > 0 && self.is_token(SyntaxKind::CloseBraceToken)
+        {
+            self.deferred_type_member_close_braces -= 1;
+            self.token_pos()
+        } else {
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            self.token_end()
+        }
+    }
+
+    fn recover_invalid_type_member(&mut self) -> bool {
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+            tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+        );
+
+        if self.is_statement_start() {
+            while !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::SemicolonToken) {
+                self.next_token();
+            }
+            self.deferred_type_member_close_braces = self
+                .deferred_type_member_close_braces
+                .max(self.type_member_container_depth);
+            true
+        } else {
+            self.next_token();
+            false
+        }
+    }
+
     // =========================================================================
     // Parse Methods - Types (minimal implementation)
     // =========================================================================
@@ -327,7 +364,31 @@ impl ParserState {
         // checks (e.g., TS2322) can still run without parser cascade noise.
         if self.is_token(SyntaxKind::QuestionToken) {
             let q_start = self.token_pos();
+            let q_end = self.token_end();
             self.next_token(); // consume '?'
+
+            // Bare `?` is legacy JSDoc wildcard syntax. In TS source it should
+            // surface TS8020 and stop there rather than cascading into TS17020/TS1110.
+            if !self.can_token_start_type() {
+                self.parse_error_at(
+                    q_start,
+                    q_end.saturating_sub(q_start).max(1),
+                    tsz_common::diagnostics::diagnostic_messages::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
+                    tsz_common::diagnostics::diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
+                );
+                return self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    q_start,
+                    q_end,
+                    crate::parser::node::IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                );
+            }
+
             let inner_type = self.parse_primary_type();
             let (diag_end, suggested) = if let Some(node) = self.arena.get(inner_type) {
                 (
@@ -1446,6 +1507,9 @@ impl ParserState {
 
     /// Parse mapped type after opening brace: { [K in T]: U }
     pub(crate) fn parse_mapped_type_rest(&mut self, start_pos: u32) -> NodeIndex {
+        let saved_type_member_depth = self.type_member_container_depth;
+        self.type_member_container_depth += 1;
+
         // Parse optional readonly modifier with +/- prefix
         let readonly_token = if self.is_token(SyntaxKind::ReadonlyKeyword) {
             let pos = self.token_pos();
@@ -1541,18 +1605,9 @@ impl ParserState {
             let member = self.parse_type_member(false);
 
             if member.is_none() && self.token_pos() == saved_pos {
-                if self.is_identifier_or_keyword() {
-                    self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
-                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
-                    );
+                if self.recover_invalid_type_member() {
+                    break;
                 }
-                self.next_token();
                 continue;
             }
 
@@ -1563,9 +1618,8 @@ impl ParserState {
             self.parse_type_member_separator_with_asi();
         }
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
-        let end_pos = self.token_end();
+        let end_pos = self.finish_type_member_container_close_brace();
+        self.type_member_container_depth = saved_type_member_depth;
         let members = if extra_members.is_empty() {
             None
         } else {
@@ -1736,18 +1790,9 @@ impl ParserState {
             let member = self.parse_type_member(false);
 
             if member.is_none() && self.token_pos() == saved_pos {
-                if self.is_identifier_or_keyword() {
-                    self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
-                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
-                    );
+                if self.recover_invalid_type_member() {
+                    break;
                 }
-                self.next_token();
                 continue;
             }
 
@@ -1758,9 +1803,7 @@ impl ParserState {
             self.parse_type_member_separator_with_asi();
         }
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
-        let end_pos = self.token_end();
+        let end_pos = self.finish_type_member_container_close_brace();
         let members = if prior_members.is_empty() {
             None
         } else {
@@ -1784,6 +1827,8 @@ impl ParserState {
 
     /// Parse type literal (object type) after opening brace
     pub(crate) fn parse_type_literal_rest(&mut self, start_pos: u32) -> NodeIndex {
+        let saved_type_member_depth = self.type_member_container_depth;
+        self.type_member_container_depth += 1;
         let mut members = Vec::new();
 
         while !self.is_token(SyntaxKind::CloseBraceToken)
@@ -1793,7 +1838,9 @@ impl ParserState {
             // If so, switch to parsing a mapped type with mixed members (TS 4.1+)
             if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_mapped_type_start()
             {
-                return self.parse_mapped_type_with_members(start_pos, members);
+                let mapped_type = self.parse_mapped_type_with_members(start_pos, members);
+                self.type_member_container_depth = saved_type_member_depth;
+                return mapped_type;
             }
 
             let saved_pos = self.token_pos();
@@ -1802,20 +1849,9 @@ impl ParserState {
             // If parse_type_member returned NONE (couldn't parse) and we haven't advanced,
             // skip the current token to prevent infinite loops
             if member.is_none() && self.token_pos() == saved_pos {
-                // tsc emits TS1434 "Unexpected keyword or identifier" when the stuck token
-                // is an identifier or keyword, TS1131 "Property or signature expected" otherwise
-                if self.is_identifier_or_keyword() {
-                    self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
-                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
-                    );
+                if self.recover_invalid_type_member() {
+                    break;
                 }
-                self.next_token(); // Skip the problematic token
                 continue;
             }
 
@@ -1826,9 +1862,8 @@ impl ParserState {
             self.parse_type_member_separator_with_asi();
         }
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
-        let end_pos = self.token_end();
+        let end_pos = self.finish_type_member_container_close_brace();
+        self.type_member_container_depth = saved_type_member_depth;
 
         self.arena.add_type_literal(
             syntax_kind_ext::TYPE_LITERAL,
