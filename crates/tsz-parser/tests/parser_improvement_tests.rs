@@ -2162,6 +2162,38 @@ type T = {
 }
 
 #[test]
+fn test_type_literal_statement_recovery_matches_interface_extending_class2() {
+    let source = r"
+class Foo {
+    x: string;
+    y() { }
+    get Z() {
+        return 1;
+    }
+    [x: string]: Object;
+}
+
+interface I2 extends Foo {
+    a: {
+        toString: () => {
+            return 1;
+        };
+    }
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![1131, 1128, 1128],
+        "Expected parser recovery to match tsc for malformed type literal member body, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts1131_not_emitted_for_valid_interface() {
     // Valid interface should not emit TS1131
     let source = r"
