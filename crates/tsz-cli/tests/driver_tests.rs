@@ -4,6 +4,7 @@ use super::driver::{
 };
 use clap::Parser;
 use serde_json::Value;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -366,6 +367,104 @@ export class Api<SecurityDataType = unknown> {
         3,
         "expected TS7056 on all inferred Api property declarations, got: {:#?}",
         result.diagnostics
+    );
+}
+
+#[test]
+fn declaration_emit_reports_ts2883_for_transitive_react_styled_form() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    fs::create_dir_all(base.join("node_modules/react")).expect("react dir");
+    fs::create_dir_all(base.join("node_modules/create-emotion-styled/types/react"))
+        .expect("create-emotion-styled dir");
+    fs::create_dir_all(base.join("node_modules/react-emotion")).expect("react-emotion dir");
+
+    write_file(
+        &base.join("node_modules/react/index.d.ts"),
+        r#"declare namespace React {
+    export interface DetailedHTMLProps<T, U> {}
+    export interface HTMLAttributes<T> {}
+}
+export = React;
+export as namespace React;
+"#,
+    );
+    write_file(
+        &base.join("node_modules/create-emotion-styled/types/react/index.d.ts"),
+        r#"/// <reference types="react" />
+declare module 'react' {
+    interface HTMLAttributes<T> {
+        css?: unknown;
+    }
+}
+export interface StyledOtherComponentList {
+    "div": React.DetailedHTMLProps<React.HTMLAttributes<HTMLDivElement>, HTMLDivElement>
+}
+export interface StyledOtherComponent<A, B, C> {}
+"#,
+    );
+    write_file(
+        &base.join("node_modules/create-emotion-styled/index.d.ts"),
+        r#"export * from "./types/react";
+"#,
+    );
+    write_file(
+        &base.join("node_modules/react-emotion/index.d.ts"),
+        r#"import {StyledOtherComponent, StyledOtherComponentList} from "create-emotion-styled";
+export default function styled(tag: string): (o: object) => StyledOtherComponent<{}, StyledOtherComponentList["div"], any>;
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import styled from "react-emotion"
+
+const Form = styled('div')({ color: "red" })
+
+export default Form
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2883)
+        .map(|diagnostic| diagnostic.message_text.clone())
+        .collect();
+
+    assert_eq!(
+        ts2883_messages.len(),
+        3,
+        "expected three TS2883 diagnostics, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages
+            .iter()
+            .any(|message| message.contains("StyledOtherComponent")),
+        "expected one TS2883 to mention StyledOtherComponent, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages
+            .iter()
+            .filter(|message| message.contains("DetailedHTMLProps") || message.contains("HTMLAttributes"))
+            .count()
+            >= 2,
+        "expected TS2883 diagnostics for react transitive types, got: {ts2883_messages:#?}"
     );
 }
 
