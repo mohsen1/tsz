@@ -7510,6 +7510,14 @@ impl<'a> DeclarationEmitter<'a> {
                             name_node.end - name_node.pos,
                         );
                     }
+                    if self.diagnostics.len() == diagnostics_before {
+                        let _ = self.emit_non_serializable_property_diagnostic(
+                            &printed_type_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
                 }
 
                 if keyword == "const"
@@ -10384,6 +10392,87 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
         true
+    }
+
+    fn emit_non_serializable_property_diagnostic(
+        &mut self,
+        printed_type_text: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        use tsz_common::diagnostics::Diagnostic;
+
+        let Some(property_name) =
+            self.find_non_serializable_property_name_in_printed_type(printed_type_text)
+        else {
+            return false;
+        };
+
+        self.diagnostics.push(Diagnostic::from_code(
+            4118,
+            file,
+            pos,
+            length,
+            &[&property_name],
+        ));
+        true
+    }
+
+    fn find_non_serializable_property_name_in_printed_type(
+        &self,
+        printed_type_text: &str,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let current_path = self.current_file_path.as_deref()?;
+        let mut search = printed_type_text;
+        let needle = " in typeof ";
+
+        while let Some(index) = search.find(needle) {
+            let rest = &search[index + needle.len()..];
+            let symbol_expr: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                .collect();
+            if symbol_expr.is_empty() {
+                search = rest;
+                continue;
+            }
+
+            let accessible_symbol = binder
+                .file_locals
+                .get(&symbol_expr)
+                .or_else(|| binder.current_scope.get(&symbol_expr));
+
+            let Some(accessible_symbol) = accessible_symbol else {
+                return Some(format!("[{symbol_expr}]"));
+            };
+
+            let accessible_source_path = self.get_symbol_source_path(accessible_symbol, binder);
+            if accessible_source_path.as_deref().is_some_and(|source_path| {
+                self.paths_refer_to_same_source_file(current_path, source_path)
+            }) {
+                search = rest;
+                continue;
+            }
+
+            let original_sym_id = binder
+                .resolve_import_symbol(accessible_symbol)
+                .filter(|resolved| *resolved != accessible_symbol)
+                .unwrap_or(accessible_symbol);
+
+            let original_source_path = self.get_symbol_source_path(original_sym_id, binder);
+            if original_source_path.as_deref().is_some_and(|source_path| {
+                !self.paths_refer_to_same_source_file(current_path, source_path)
+                    && binder.module_exports.contains_key(source_path)
+            }) {
+                return Some(format!("[{symbol_expr}]"));
+            }
+
+            search = rest;
+        }
+
+        None
     }
 
     fn emit_non_portable_type_node_diagnostic_from_arena(

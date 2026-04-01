@@ -241,6 +241,65 @@ export default Object.assign(A, {
 }
 
 #[test]
+fn declaration_emit_reports_non_serializable_foreign_unique_symbol_property() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("a.d.ts"),
+        r#"export declare const timestampSymbol: unique symbol;
+
+export declare const Timestamp: {
+    [TKey in typeof timestampSymbol]: true;
+};
+
+export declare function now(): typeof Timestamp;
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import * as x from "./a";
+export const timestamp = x.now();
+"#,
+    );
+    write_file(
+        &base.join("c.ts"),
+        r#"import { now } from "./a";
+
+export const timestamp = now();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["b.ts", "c.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts4118_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 4118)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert_eq!(ts4118_messages.len(), 2, "expected two TS4118 diagnostics, got: {ts4118_messages:#?}");
+    assert!(ts4118_messages.iter().all(|message| {
+        message.contains("[timestampSymbol]")
+    }), "expected TS4118 to mention [timestampSymbol], got: {ts4118_messages:#?}");
+}
+
+#[test]
 fn compile_project_namespace_import_qualified_type_sees_module_augmentation_exports() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
