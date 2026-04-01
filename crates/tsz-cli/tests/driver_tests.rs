@@ -10858,6 +10858,46 @@ function bad1(x, {a, b}) {}
 }
 
 #[test]
+fn ts5107_es5_target_suppresses_accessor_call_follow_on_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"class Test24554 {
+    get property(): number { return 1; }
+}
+function test24554(x: Test24554) {
+    return x.property();
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&5107),
+        "Expected TS5107 for deprecated ES5 target, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&6234),
+        "Did not expect TS6234 alongside deprecated ES5 target, got: {codes:?}"
+    );
+}
+
+#[test]
 fn js_checkjs_define_property_module_exports_preserve_augmented_shape() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
