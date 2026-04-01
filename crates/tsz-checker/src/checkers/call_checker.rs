@@ -533,6 +533,41 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    pub(crate) fn collect_non_callback_and_body_assignability_diagnostics_between(
+        &self,
+        args: &[NodeIndex],
+        from_snap: &crate::context::speculation::DiagnosticSnapshot,
+        to_snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        self.ctx
+            .diagnostics_between(from_snap, to_snap)
+            .iter()
+            .filter(|diag| {
+                !args.iter().any(|&arg_idx| {
+                    let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                        return false;
+                    };
+                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                    if is_callback_arg
+                        && let Some((start, end)) = self.callback_body_span(arg_idx)
+                        && diag.start >= start
+                        && diag.start < end
+                    {
+                        return diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                            && diag.code
+                                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                    }
+                    if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        return diag.start >= arg_node.pos && diag.start < arg_node.end;
+                    }
+                    false
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn preserved_speculative_call_diagnostics(
         &self,
         snap: &crate::context::speculation::DiagnosticSnapshot,
