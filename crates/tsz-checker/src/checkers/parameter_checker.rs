@@ -1005,8 +1005,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Get the parameter type: from type annotation or from cached symbol type
-            let param_type = if param.type_annotation.is_some() {
+            // Get the parameter type: from type annotation or from cached symbol type.
+            // Track whether the type comes from an explicit annotation —
+            // TSC only checks binding-element default assignability when there
+            // is a declared type, not when the type is inferred from an initializer.
+            let has_explicit_type = param.type_annotation.is_some();
+            let param_type = if has_explicit_type {
                 let t = self.get_type_from_type_node(param.type_annotation);
                 if t == TypeId::ANY || t == TypeId::ERROR {
                     continue;
@@ -1055,7 +1059,12 @@ impl<'a> CheckerState<'a> {
             // Delegate to check_binding_pattern which handles element type resolution,
             // contextual type for function-like initializers, and assignability checks.
             let request = TypingRequest::with_contextual_type(param_type);
-            self.check_binding_pattern_with_request(param.name, param_type, true, &request);
+            self.check_binding_pattern_with_request(
+                param.name,
+                param_type,
+                has_explicit_type,
+                &request,
+            );
         }
     }
 

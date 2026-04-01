@@ -60,6 +60,69 @@ const [e1, e2] = f();
     );
 }
 
+/// Destructuring parameters with array literal defaults must NOT produce false TS2322 errors
+/// when there is no explicit type annotation. TSC infers parameter types from the combination
+/// of binding element defaults and the parameter initializer — checking binding defaults
+/// against a type inferred purely from the initializer (e.g., `[]` → `never[]`) is incorrect.
+///
+/// Corresponds to conformance test: destructuringWithLiteralInitializers2.ts
+#[test]
+fn test_destructuring_param_defaults_no_false_ts2322() {
+    let source = r#"
+function f01([x, y] = []) {}
+function f11([x = 0, y] = []) {}
+function f21([x = 0, y = 'bar'] = []) {}
+function f22([x = 0, y = 'bar'] = [1]) {}
+function f23([x = 0, y = 'bar'] = [1, 'foo']) {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_errors: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322_errors.len(),
+        0,
+        "Destructuring parameter defaults with inferred types should not produce TS2322. \
+         Got {} TS2322 errors: {ts2322_errors:#?}",
+        ts2322_errors.len()
+    );
+}
+
+/// When a destructuring parameter HAS an explicit type annotation, binding element defaults
+/// that are incompatible with the declared type SHOULD produce TS2322.
+#[test]
+fn test_destructuring_param_defaults_ts2322_with_annotation() {
+    let source = r#"
+function f([x = 'hello']: [number]) {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+
+    assert!(
+        ts2322_count > 0,
+        "Destructuring parameter with explicit type annotation should produce TS2322 \
+         when default is incompatible. Got diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// When a generic function's type parameter has no inference candidates (no constraint,
 /// no default, and the only argument is a callback with a binding-pattern parameter),
 /// T falls back to `unknown`. The callback's binding-pattern type (`{a: any}`) is NOT
