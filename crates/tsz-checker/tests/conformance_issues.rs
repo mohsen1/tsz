@@ -1111,6 +1111,49 @@ doc.print();
 }
 
 #[test]
+fn test_inherited_non_public_member_does_not_satisfy_public_interface_property() {
+    let source = r#"
+interface I {
+    name: string;
+}
+
+class PrivateBase {
+    private name: string;
+}
+
+class ProtectedBase {
+    protected name: string;
+}
+
+class PrivateDerived extends PrivateBase implements I {}
+class ProtectedDerived extends ProtectedBase implements I {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2420: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2420)
+        .collect();
+
+    assert_eq!(
+        ts2420.len(),
+        2,
+        "Expected both derived classes to report TS2420. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.iter().any(|(_, message)| message
+            .contains("Property 'name' is private in type 'PrivateDerived' but not in type 'I'.")),
+        "Expected the inherited private member to report as a visibility conflict. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.iter().any(|(_, message)| message.contains(
+            "Property 'name' is protected in type 'ProtectedDerived' but not in type 'I'."
+        )),
+        "Expected the inherited protected member to report as a visibility conflict. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 #[ignore = "pre-existing: remote merge regression"]
 fn test_overloaded_interface_method_inheritance_uses_trailing_signature_compatibility() {
     let source = r#"
