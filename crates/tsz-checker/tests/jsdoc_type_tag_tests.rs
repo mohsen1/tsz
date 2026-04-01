@@ -4,28 +4,93 @@
 //! Verifies that @type annotations are used for type checking initializers
 //! and that @type function types provide parameter types in JS files.
 
+use rustc_hash::FxHashSet;
+use std::path::Path;
+use std::sync::Arc;
+use tsz_binder::lib_loader::LibFile;
+use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::LibContext;
+use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::state::CheckerState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
 struct Diag {
     code: u32,
 }
 
-fn check_js(source: &str) -> Vec<Diag> {
+fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_roots = [
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+    ];
+    let lib_names = [
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "dom.d.ts",
+        "dom.generated.d.ts",
+        "dom.iterable.d.ts",
+        "esnext.d.ts",
+    ];
+
+    let mut lib_files = Vec::new();
+    let mut seen_files = FxHashSet::default();
+    for file_name in lib_names {
+        for root in &lib_roots {
+            let lib_path = root.join(file_name);
+            if lib_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&lib_path)
+            {
+                if !seen_files.insert(file_name.to_string()) {
+                    break;
+                }
+                lib_files.push(Arc::new(LibFile::from_source(file_name.to_string(), content)));
+                break;
+            }
+        }
+    }
+
+    lib_files
+}
+
+fn check_js_internal(source: &str, with_libs: bool) -> Vec<Diag> {
     let options = CheckerOptions {
+        allow_js: true,
         check_js: true,
         strict: true,
         ..CheckerOptions::default()
     };
 
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let lib_files = if with_libs {
+        load_lib_files_for_test()
+    } else {
+        Vec::new()
+    };
 
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
+    let mut binder = BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -33,15 +98,36 @@ fn check_js(source: &str) -> Vec<Diag> {
         options,
     );
 
-    checker.ctx.set_lib_contexts(Vec::new());
+    if lib_files.is_empty() {
+        checker.ctx.set_lib_contexts(Vec::new());
+    } else {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
     checker.check_source_file(root);
 
     checker
         .ctx
         .diagnostics
         .iter()
-        .map(|d| Diag { code: d.code })
+        .map(|d: &Diagnostic| Diag { code: d.code })
         .collect()
+}
+
+fn check_js(source: &str) -> Vec<Diag> {
+    check_js_internal(source, false)
+}
+
+fn check_js_with_libs(source: &str) -> Vec<Diag> {
+    check_js_internal(source, true)
 }
 
 /// @type {boolean} on class field with incompatible initializer → TS2322
@@ -331,11 +417,36 @@ var props = {};
  */
 var props = {};
 "##;
-    let diagnostics = check_js(source);
+    let diagnostics = check_js_with_libs(source);
     let ts7006 = diagnostics.iter().filter(|d| d.code == 7006).count();
+    let ts2403 = diagnostics.iter().filter(|d| d.code == 2403).count();
     assert!(
         ts7006 >= 2,
         "Expected two TS7006 diagnostics in the mixed JSDoc file, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        ts2403 >= 1,
+        "Expected TS2403 for @type {{object}} vs @type {{Object}} redeclaration, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_object_and_object_interface_redeclaration_emit_ts2403() {
+    let source = r#"
+// @ts-check
+/** @type {object} */
+var props = {};
+
+/** @type {Object} */
+var props = {};
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let ts2403 = diagnostics.iter().filter(|d| d.code == 2403).count();
+    assert!(
+        ts2403 >= 1,
+        "Expected TS2403 for @type {{object}} vs @type {{Object}} redeclaration, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }

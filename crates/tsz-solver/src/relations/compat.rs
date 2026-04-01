@@ -404,7 +404,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Checks via resolver boxed type lookup, Lazy DefId matching, and structural
     /// detection (an `ObjectShape` with `constructor`, `toString`, `valueOf`,
     /// `hasOwnProperty`, and `isPrototypeOf` properties).
-    fn is_global_object_interface_target(&self, target: TypeId) -> bool {
+    pub(crate) fn is_global_object_interface_target(&self, target: TypeId) -> bool {
         if self
             .subtype
             .resolver
