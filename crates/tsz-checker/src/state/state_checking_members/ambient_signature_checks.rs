@@ -873,7 +873,17 @@ impl<'a> CheckerState<'a> {
                 return_type
             };
 
-            self.push_return_type(effective_return_type);
+            // When the return type is inferred from the body, avoid
+            // re-checking return statements against that inferred type.
+            // Feeding the inferred type back as contextual typing can
+            // create circular false positives in generic calls.
+            let body_return_type = if has_type_annotation {
+                effective_return_type
+            } else {
+                TypeId::ANY
+            };
+
+            self.push_return_type(body_return_type);
 
             // For generator functions, push the contextual yield type so that
             // yield expressions can contextually type their operand.
