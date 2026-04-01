@@ -1329,26 +1329,6 @@ fn compile_inner(
     if !binary_file_names_to_suppress.is_empty() {
         diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
     }
-    // tsc 6.0 deprecation diagnostic handling:
-    // TS5107/TS5101 are fatal in tsc 6.0: tsc stops compilation early and never emits
-    // file-level diagnostics (syntactic or semantic) alongside them.
-    //
-    // When TS5107 comes from deprecated config option values (like alwaysStrict=false),
-    // tsc stops compilation entirely and only emits TS5107. We should match this behavior
-    // by dropping all file-level diagnostics when TS5107 is present.
-    //
-    // Note: Previously we checked for reliable grammar errors and allowed them to suppress
-    // TS5107, but this caused mismatches with tsc behavior for tests like privacyImportParseErrors
-    // where tsc emits ONLY TS5107.
-    if has_deprecation_diagnostics {
-        // TS5107 takes priority — drop all file-level diagnostics.
-        // Preserve global-level TS2318 ("Cannot find global type") because
-        // tsc emits these alongside deprecation warnings. These are
-        // identified by empty file name and position 0 (global diagnostics),
-        // as opposed to file-level TS2318 from type checking which tsc
-        // suppresses along with other file-level errors.
-        diagnostics.retain(|d| d.code == 2318 && d.file.is_empty() && d.start == 0);
-    }
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.extend(type_file_diagnostics);
