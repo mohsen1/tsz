@@ -442,6 +442,7 @@ pub(super) fn collect_type_root_files(
         if !has_wildcard {
             let mut unresolved = Vec::new();
             let synthetic_from_file = base_dir.join("__types__.ts");
+            let explicit_type_roots = options.type_roots.is_some();
             for name in types {
                 if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
                     files.insert(entry);
@@ -454,9 +455,13 @@ pub(super) fn collect_type_root_files(
                         options,
                     )
                 {
-                    // Found via node_modules fallback — include the file but don't
-                    // report TS2688 since the package exists, just not in @types/.
+                    // `compilerOptions.types` still owes TS2688 when explicit
+                    // typeRoots did not contain the package, but tsc also makes
+                    // the fallback package globals visible from node_modules.
                     files.insert(entry);
+                    if explicit_type_roots {
+                        unresolved.push(name.clone());
+                    }
                 } else {
                     unresolved.push(name.clone());
                 }

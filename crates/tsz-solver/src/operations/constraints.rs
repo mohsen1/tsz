@@ -2461,19 +2461,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let template_app = self.interner.type_application(template_app_id);
             if let Some(TypeData::Application(source_app_id)) = self.interner.lookup(source_value) {
                 let source_app = self.interner.type_application(source_app_id);
-                if template_app.base == source_app.base
-                    && template_app.args.len() == source_app.args.len()
-                {
-                    for (t_arg, s_arg) in template_app.args.iter().zip(source_app.args.iter()) {
-                        if let Some(rev) =
-                            self.reverse_infer_through_template(*s_arg, *t_arg, target_placeholder)
-                        {
-                            return Some(rev);
+                if template_app.base == source_app.base {
+                    if template_app.args.len() == source_app.args.len() {
+                        for (t_arg, s_arg) in template_app.args.iter().zip(source_app.args.iter()) {
+                            if let Some(rev) = self.reverse_infer_through_template(
+                                *s_arg,
+                                *t_arg,
+                                target_placeholder,
+                            ) {
+                                return Some(rev);
+                            }
                         }
-                    }
-                    // Single type arg shortcut (Box<T[P]> → unwrap the single arg)
-                    if template_app.args.len() == 1 {
-                        return Some(source_app.args[0]);
+                        // Single type arg shortcut (Box<T[P]> → unwrap the single arg)
+                        if template_app.args.len() == 1 {
+                            return Some(source_app.args[0]);
+                        }
+                    } else if source_app.args.len() < template_app.args.len() {
+                        // Source has fewer args due to defaulted type parameters
+                        // (e.g., Reducer<number> has 1 arg, Reducer<S[K], A> has 2).
+                        // Only try reverse inference for the args present in source,
+                        // and only succeed if the target placeholder is found within
+                        // those shared positions.
+                        for (t_arg, s_arg) in template_app.args.iter().zip(source_app.args.iter()) {
+                            if let Some(rev) = self.reverse_infer_through_template(
+                                *s_arg,
+                                *t_arg,
+                                target_placeholder,
+                            ) {
+                                return Some(rev);
+                            }
+                        }
                     }
                 }
             }

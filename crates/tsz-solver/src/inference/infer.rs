@@ -259,6 +259,13 @@ pub(crate) struct InferenceContext<'a> {
     /// contra-candidates are resolved via intersection and are only used
     /// when no covariant candidates exist.
     pub(crate) in_contra_mode: bool,
+    /// Properties accumulated during reverse mapped type inference.
+    /// When a homomorphic mapped type `{ [K in keyof T]: Template<T[K]> }`
+    /// is matched against a source object, we accumulate (key_atom, value_type)
+    /// pairs for each `T[K]` position encountered during template inference.
+    /// After the mapped type loop completes, these are flushed into a single
+    /// object candidate for T.
+    pub(crate) reverse_mapped_properties: FxHashMap<InferenceVar, Vec<(Atom, TypeId)>>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -279,6 +286,7 @@ impl<'a> InferenceContext<'a> {
             declared_constraints: FxHashMap::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
+            reverse_mapped_properties: FxHashMap::default(),
         }
     }
 
@@ -296,6 +304,7 @@ impl<'a> InferenceContext<'a> {
             declared_constraints: FxHashMap::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
+            reverse_mapped_properties: FxHashMap::default(),
         }
     }
 

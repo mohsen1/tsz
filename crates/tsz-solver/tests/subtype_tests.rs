@@ -1,10 +1,10 @@
 use super::*;
+use crate::def::DefId;
+use crate::diagnostics::SubtypeFailureReason;
 use crate::QueryCache;
 use crate::TypeInterner;
 use crate::TypeResolver;
-use crate::def::DefId;
-use crate::diagnostics::SubtypeFailureReason;
-use crate::{TypeSubstitution, Visibility, instantiate_type};
+use crate::{instantiate_type, TypeSubstitution, Visibility};
 use tsz_binder::SymbolId;
 
 #[test]
@@ -2910,6 +2910,95 @@ fn test_number_index_signature_method_bivariant_property() {
 
     assert!(checker.is_subtype_of(source_method, target));
     assert!(!checker.is_subtype_of(source_prop, target));
+}
+
+#[test]
+fn test_named_class_requires_explicit_string_index_signature() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let class_def = DefId(4100);
+    let class_symbol = SymbolId(4100);
+    env.register_def_symbol_mapping(class_def, class_symbol);
+    env.insert_def_kind(class_def, crate::def::DefKind::Class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::method(
+            interner.intern_string("foo"),
+            interner.function(FunctionShape {
+                type_params: vec![],
+                params: vec![],
+                this_type: None,
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_constructor: false,
+                is_method: true,
+            }),
+        )],
+        ObjectFlags::empty(),
+        Some(class_symbol),
+    );
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: None,
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::UNKNOWN,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(!checker.is_subtype_of(source, target));
+    assert!(matches!(
+        checker.explain_failure(source, target),
+        Some(SubtypeFailureReason::MissingIndexSignature {
+            index_kind: "string"
+        })
+    ));
+}
+
+#[test]
+fn test_namespace_object_can_satisfy_string_index_structurally() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let namespace_def = DefId(4101);
+    let namespace_symbol = SymbolId(4101);
+    env.register_def_symbol_mapping(namespace_def, namespace_symbol);
+    env.insert_def_kind(namespace_def, crate::def::DefKind::Namespace);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(
+            interner.intern_string("unrelated"),
+            TypeId::NUMBER,
+        )],
+        ObjectFlags::empty(),
+        Some(namespace_symbol),
+    );
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: None,
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::UNKNOWN,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(
+        checker.is_subtype_of(source, target),
+        "Namespace value objects should keep their implicit structural compatibility"
+    );
 }
 
 #[test]

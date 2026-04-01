@@ -527,10 +527,13 @@ impl<'a> CheckerState<'a> {
         // If lowering produced a function with ERROR return type, prefer get_type_of_node
         // which resolves type references through the full type environment.
         // Manual lowering cannot resolve interface/class type references that require
-        // full binder scope resolution (e.g., `Moose` in `function f(): Moose {}`).
+        // full binder scope resolution (e.g., `Moose` in `function f(): Moose {}`)
+        // or class type parameters (e.g., `T` in `class Foo<T> { method(): Vector<T> }`).
+        // Use contains_error_type to detect Error at any depth in the return type.
         let lowered_ret = get_function_return_type(self.ctx.types, impl_type);
-        if impl_type == tsz_solver::TypeId::ERROR || lowered_ret == Some(tsz_solver::TypeId::ERROR)
-        {
+        let impl_has_error = impl_type == tsz_solver::TypeId::ERROR
+            || lowered_ret.is_some_and(|ret| tsz_solver::contains_error_type(self.ctx.types, ret));
+        if impl_has_error {
             let node_type = self.get_type_of_node(impl_node_idx);
             if node_type != tsz_solver::TypeId::ERROR {
                 impl_type = node_type;
@@ -623,11 +626,16 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| {
                     lowering.lower_signature_from_declaration(decl_idx, overload_return_override)
                 });
-            // Same ERROR return fallback for overloads
+            // ERROR return fallback for overloads.
+            // Manual lowering doesn't have access to class/interface type parameters,
+            // so references like `Vector<T>` where T is a class type param produce
+            // Error buried inside the return type (e.g., Application(Vector, [Error])).
+            // Use contains_error_type to detect Error at any depth, not just top-level.
             let overload_lowered_ret = get_function_return_type(self.ctx.types, overload_type);
-            if overload_type == tsz_solver::TypeId::ERROR
-                || overload_lowered_ret == Some(tsz_solver::TypeId::ERROR)
-            {
+            let has_error = overload_type == tsz_solver::TypeId::ERROR
+                || overload_lowered_ret
+                    .is_some_and(|ret| tsz_solver::contains_error_type(self.ctx.types, ret));
+            if has_error {
                 let node_type = self.get_type_of_node(decl_idx);
                 if node_type != tsz_solver::TypeId::ERROR {
                     overload_type = node_type;
