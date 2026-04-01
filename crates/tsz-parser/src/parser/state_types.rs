@@ -364,7 +364,31 @@ impl ParserState {
         // checks (e.g., TS2322) can still run without parser cascade noise.
         if self.is_token(SyntaxKind::QuestionToken) {
             let q_start = self.token_pos();
+            let q_end = self.token_end();
             self.next_token(); // consume '?'
+
+            // Bare `?` is legacy JSDoc wildcard syntax. In TS source it should
+            // surface TS8020 and stop there rather than cascading into TS17020/TS1110.
+            if !self.can_token_start_type() {
+                self.parse_error_at(
+                    q_start,
+                    q_end.saturating_sub(q_start).max(1),
+                    tsz_common::diagnostics::diagnostic_messages::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
+                    tsz_common::diagnostics::diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
+                );
+                return self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    q_start,
+                    q_end,
+                    crate::parser::node::IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                );
+            }
+
             let inner_type = self.parse_primary_type();
             let (diag_end, suggested) = if let Some(node) = self.arena.get(inner_type) {
                 (
