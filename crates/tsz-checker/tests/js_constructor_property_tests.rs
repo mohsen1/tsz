@@ -1129,6 +1129,111 @@ z.u = false
 }
 
 #[test]
+fn test_generic_constructor_prototype_object_methods_allow_new_this_props() {
+    let source = r#"
+/**
+ * @class
+ * @template T
+ * @param {T} t
+ */
+function Cp(t) {
+    /** @type {this} */
+    this.dit = this
+    this.y = t
+    /** @return {this} */
+    this.m3 = () => this
+}
+
+Cp.prototype = {
+    /** @return {this} */
+    m4() {
+        this.z = this.y; return this
+    }
+}
+
+/**
+ * @class
+ * @template T
+ * @param {T} t
+ */
+function Cpp(t) {
+    this.y = t
+}
+/** @return {this} */
+Cpp.prototype.m2 = function () {
+    this.z = this.y; return this
+}
+
+var cp = new Cp(1)
+var cpp = new Cpp(2)
+cp.dit
+
+/** @type {Cpp<number>} */
+var cppn = cpp.m2()
+
+/** @type {Cp<number>} */
+var cpn = cp.m3()
+/** @type {Cp<number>} */
+var cpn = cp.m4()
+"#;
+
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected generic constructor prototype methods to allow new `this` properties, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_constructor_prototype_object_methods_keep_existing_member_checks() {
+    let source = r#"
+/**
+ * @class
+ * @template T
+ * @param {T} t
+ */
+function Cp(t) {
+    this.x = 1
+    this.y = t
+}
+
+Cp.prototype = {
+    m4() {
+        this.x = "oops"
+        this.z = this.y
+        return this
+    }
+}
+"#;
+
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2322 && message.contains("string") && message.contains("number")
+        })
+        .collect();
+
+    assert!(
+        ts2339.is_empty(),
+        "Expected prototype object literal expando writes to avoid TS2339, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for writing string into numeric `this.x`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_class_can_extend_js_constructor_function() {
     let source = r#"
 /**

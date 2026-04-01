@@ -135,6 +135,41 @@ impl<'a> CheckerState<'a> {
             .then_some(file_idx)
     }
 
+    pub(super) fn is_js_prototype_object_literal_expando_write(
+        &mut self,
+        this_expr_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let owner_idx = match self.this_has_contextual_owner(this_expr_idx) {
+            Some(owner_idx) => owner_idx,
+            None => return false,
+        };
+        let owner_node = match self.ctx.arena.get(owner_idx) {
+            Some(owner_node) => owner_node,
+            None => return false,
+        };
+        if owner_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(owner_expr) = self.js_prototype_owner_expression_for_node(owner_idx) else {
+            return false;
+        };
+        let Some(owner_target) = self.js_prototype_owner_function_target(owner_expr) else {
+            return false;
+        };
+        let Some(instance_type) = self.js_constructor_body_instance_type_for_function(owner_target)
+        else {
+            return false;
+        };
+
+        !crate::query_boundaries::property_access::type_has_property(
+            self.ctx.types,
+            instance_type,
+            property_name,
+        )
+    }
+
     fn source_file_has_expando_assignment(
         arena: &NodeArena,
         idx: NodeIndex,

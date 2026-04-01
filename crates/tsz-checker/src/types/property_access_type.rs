@@ -2053,7 +2053,12 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|owner_node| {
                                 owner_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                             });
-                        if !object_literal_owned_this {
+                        let prototype_object_literal_expando_write = object_literal_owned_this
+                            && self.is_js_prototype_object_literal_expando_write(
+                                access.expression,
+                                property_name,
+                            );
+                        if !object_literal_owned_this || prototype_object_literal_expando_write {
                             return TypeId::ANY;
                         }
                     }
