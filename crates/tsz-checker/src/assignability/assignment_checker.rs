@@ -2151,6 +2151,9 @@ impl<'a> CheckerState<'a> {
                 if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
                     return;
                 }
+                if self.array_destructuring_element_has_default_initializer(element_idx) {
+                    continue;
+                }
 
                 let tuple_type_str = self.format_type(rhs);
                 self.error_at_node(
@@ -2182,6 +2185,9 @@ impl<'a> CheckerState<'a> {
                 {
                     continue;
                 }
+                if self.array_destructuring_element_has_default_initializer(element_idx) {
+                    continue;
+                }
 
                 let all_out_of_bounds = !members.is_empty()
                     && members.iter().all(|&m| {
@@ -2207,6 +2213,15 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn array_destructuring_element_has_default_initializer(&self, element_idx: NodeIndex) -> bool {
+        let element_idx = self.ctx.arena.skip_parenthesized_and_assertions(element_idx);
+        self.ctx
+            .arena
+            .get(element_idx)
+            .and_then(|node| self.ctx.arena.get_binary_expr(node))
+            .is_some_and(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16)
     }
 
     /// TS2462: A rest element in array destructuring must be the last element.
