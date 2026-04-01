@@ -10216,6 +10216,75 @@ void s.s;
 }
 
 #[test]
+fn test_import_with_non_relative_ts_extension_emits_ts2877() {
+    let importer_source = r#"import {} from "foo.ts";"#;
+    let exported_source = "export {};";
+    let files = [
+        ("index.ts".to_string(), importer_source.to_string()),
+        ("foo.ts".to_string(), exported_source.to_string()),
+    ];
+    let entry_idx = 0usize;
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
+
+    for (file_name, source) in &files {
+        let mut parser = ParserState::new(file_name.clone(), source.clone());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (mut resolved_module_paths, mut resolved_modules) =
+        build_module_resolution_maps(&file_names);
+    resolved_module_paths.insert((entry_idx, "foo.ts".to_string()), 1);
+    resolved_modules.insert("foo.ts".to_string());
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        CheckerOptions {
+            rewrite_relative_import_extensions: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(roots[entry_idx]);
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        has_error(&diagnostics, 2877),
+        "Expected TS2877 for non-relative `.ts` imports when rewriteRelativeImportExtensions is enabled. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should not also emit TS2307 for this resolved import. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_exported_var_without_type_or_initializer_emits_ts7005() {
     let opts = CheckerOptions {
         no_implicit_any: true,

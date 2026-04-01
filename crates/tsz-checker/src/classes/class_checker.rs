@@ -1064,16 +1064,18 @@ impl<'a> CheckerState<'a> {
                 // Handle both cases:
                 // 1. ExpressionWithTypeArguments (e.g., Base<T>)
                 // 2. Simple Identifier (e.g., Base)
-                let (expr_idx, type_arguments) = if let Some(expr_type_args) =
-                    self.ctx.arena.get_expr_type_args(type_node)
-                {
-                    (expr_type_args.expression, expr_type_args.type_arguments.as_ref())
-                } else if let Some(call_expr) = self.ctx.arena.get_call_expr(type_node) {
-                    (call_expr.expression, None)
-                } else {
-                    // For simple identifiers without type arguments, the type_node itself is the identifier
-                    (type_idx, None)
-                };
+                let (expr_idx, type_arguments) =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else if let Some(call_expr) = self.ctx.arena.get_call_expr(type_node) {
+                        (call_expr.expression, None)
+                    } else {
+                        // For simple identifiers without type arguments, the type_node itself is the identifier
+                        (type_idx, None)
+                    };
                 heritage_expr_idx = Some(type_idx);
                 heritage_type_idx = Some(type_idx);
                 if let Some(args) = type_arguments {
@@ -1167,7 +1169,8 @@ impl<'a> CheckerState<'a> {
             // No AST-level class declaration found. Try type-level fallback for complex
             // heritage expressions (function calls, intersection types, etc.).
             if let Some(h_expr_idx) = heritage_expr_idx {
-                let type_arguments = heritage_type_idx.and_then(|tidx| resolve_heritage_type_args(self, tidx));
+                let type_arguments =
+                    heritage_type_idx.and_then(|tidx| resolve_heritage_type_args(self, tidx));
                 if let Some(instance_type) =
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
@@ -1225,7 +1228,8 @@ impl<'a> CheckerState<'a> {
             // base_idx points to a non-class node (e.g., variable declaration).
             // Fall back to type-level resolution via base_instance_type_from_expression.
             if let Some(h_expr_idx) = heritage_expr_idx {
-                let type_arguments = heritage_type_idx.and_then(|tidx| resolve_heritage_type_args(self, tidx));
+                let type_arguments =
+                    heritage_type_idx.and_then(|tidx| resolve_heritage_type_args(self, tidx));
                 if let Some(instance_type) =
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
