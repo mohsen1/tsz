@@ -427,6 +427,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         provided_attrs: &[(String, TypeId)],
         attributes_idx: NodeIndex,
+        tag_name_idx: Option<NodeIndex>,
         preferred_target_display: Option<&str>,
     ) {
         let preferred_target = self.preferred_jsx_missing_props_target(props_type);
@@ -457,16 +458,63 @@ impl<'a> CheckerState<'a> {
         );
 
         if missing_names.len() == 1 {
-            let prop_name = self.ctx.types.resolve_atom(missing_names[0]);
+            let missing_name = missing_names[0];
+            let prop_name = self.ctx.types.resolve_atom(missing_name);
             let message = format!(
                 "Property '{prop_name}' is missing in type '{source_type}' but required in type '{target_type}'."
             );
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node(
-                attributes_idx,
-                &message,
+            use crate::diagnostics::{Diagnostic, diagnostic_codes};
+            let Some((start, end)) = self.get_node_span(attributes_idx) else {
+                return;
+            };
+            let (start, length) =
+                self.normalized_anchor_span(attributes_idx, start, end.saturating_sub(start));
+            let mut diag = Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                message,
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             );
+            if let Some(related) = self.missing_property_related_information(
+                preferred_target,
+                missing_name,
+                tag_name_idx,
+            ) {
+                diag.related_information.push(related);
+            } else if let Some(tag_name_idx) = tag_name_idx
+                && let Some(prop_decl_idx) = self
+                    .get_jsx_component_prop_declaration(tag_name_idx, &prop_name)
+                    .or_else(|| self.nearest_property_declaration_before(tag_name_idx, &prop_name))
+                && let Some((related_start, related_end)) = self.get_node_span(prop_decl_idx)
+            {
+                use crate::diagnostics::{
+                    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_messages,
+                    format_message,
+                };
+
+                let (related_start, related_length) = self.normalized_anchor_span(
+                    prop_decl_idx,
+                    related_start,
+                    related_end.saturating_sub(related_start),
+                );
+                let related_file = self
+                    .source_file_data_for_node(prop_decl_idx)
+                    .map(|sf| sf.file_name.clone())
+                    .unwrap_or_else(|| self.ctx.file_name.clone());
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::IS_DECLARED_HERE,
+                    file: related_file,
+                    start: related_start,
+                    length: related_length,
+                    message_text: format_message(
+                        diagnostic_messages::IS_DECLARED_HERE,
+                        &[&prop_name],
+                    ),
+                });
+            }
+            self.ctx.push_diagnostic(diag);
             return;
         }
 
@@ -621,6 +669,68 @@ impl<'a> CheckerState<'a> {
         tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
     }
 
+    fn nearest_property_declaration_before(
+        &self,
+        anchor_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let (anchor_start, _) = self.get_node_span(anchor_idx)?;
+        let mut best: Option<(NodeIndex, u32)> = None;
+
+        for symbol in self.ctx.binder.symbols.iter() {
+            if symbol.escaped_name != prop_name
+                || (symbol.decl_file_idx != u32::MAX
+                    && symbol.decl_file_idx != self.ctx.current_file_idx as u32)
+            {
+                continue;
+            }
+
+            let decl_idx = if symbol.value_declaration.is_some() {
+                symbol.value_declaration
+            } else if let Some(&decl_idx) = symbol.declarations.first() {
+                decl_idx
+            } else {
+                continue;
+            };
+
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let is_prop_like = if decl_node.kind == SyntaxKind::Identifier as u16 {
+                self.ctx
+                    .arena
+                    .get_extended(decl_idx)
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .is_some_and(|parent| {
+                        parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                            || parent.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                    })
+            } else {
+                decl_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                    || decl_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+            };
+            if !is_prop_like {
+                continue;
+            }
+
+            let Some((start, _)) = self.get_node_span(decl_idx) else {
+                continue;
+            };
+            if start >= anchor_start {
+                continue;
+            }
+
+            if best.is_none_or(|(_, best_start)| start > best_start) {
+                best = Some((decl_idx, start));
+            }
+        }
+
+        best.map(|(decl_idx, _)| decl_idx)
+    }
+
     fn normalize_jsx_function_context_type(&mut self, type_id: TypeId) -> TypeId {
         let type_id = self.resolve_type_for_property_access(type_id);
         if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
@@ -694,6 +804,7 @@ impl<'a> CheckerState<'a> {
                 &provided_attrs,
                 tag_name_idx,
                 None,
+                None,
             );
         }
         if let Some(intrinsic_class_attrs_type) = intrinsic_class_attrs_type {
@@ -701,6 +812,7 @@ impl<'a> CheckerState<'a> {
                 intrinsic_class_attrs_type,
                 &provided_attrs,
                 tag_name_idx,
+                None,
                 None,
             );
         }
@@ -1997,6 +2109,7 @@ impl<'a> CheckerState<'a> {
                 props_type,
                 &provided_attrs,
                 tag_name_idx,
+                Some(tag_name_idx),
                 preferred_target_display,
             );
         }
@@ -2011,6 +2124,7 @@ impl<'a> CheckerState<'a> {
                 &provided_attrs,
                 tag_name_idx,
                 None,
+                None,
             );
         }
 
@@ -2024,6 +2138,7 @@ impl<'a> CheckerState<'a> {
                 intrinsic_class_attrs_type,
                 &provided_attrs,
                 tag_name_idx,
+                None,
                 None,
             );
         }

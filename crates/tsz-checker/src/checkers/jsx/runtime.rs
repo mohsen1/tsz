@@ -64,6 +64,59 @@ pub(crate) fn extract_jsx_pragma(source: &str) -> Option<String> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn should_prefer_jsx_import_source_anchor(
+        &self,
+        candidate_idx: NodeIndex,
+        current_idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let function_like_depth = |mut idx: NodeIndex| {
+            let mut depth = 0usize;
+            while idx.is_some() {
+                let Some(node) = self.ctx.arena.get(idx) else {
+                    break;
+                };
+                if matches!(
+                    node.kind,
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::ARROW_FUNCTION
+                        || k == syntax_kind_ext::METHOD_DECLARATION
+                        || k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR
+                        || k == syntax_kind_ext::CONSTRUCTOR
+                ) {
+                    depth += 1;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                idx = ext.parent;
+            }
+            depth
+        };
+
+        let candidate_depth = function_like_depth(candidate_idx);
+        let current_depth = function_like_depth(current_idx);
+        if candidate_depth != current_depth {
+            return candidate_depth < current_depth;
+        }
+
+        let candidate_start = self
+            .get_node_span(candidate_idx)
+            .map(|(start, _)| start)
+            .unwrap_or(u32::MAX);
+        let current_start = self
+            .get_node_span(current_idx)
+            .map(|(start, _)| start)
+            .unwrap_or(u32::MAX);
+        candidate_start < current_start
+    }
+
     /// Check that the JSX import source module can be resolved (TS2875).
     pub(crate) fn check_jsx_import_source(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
@@ -80,6 +133,12 @@ impl<'a> CheckerState<'a> {
         };
 
         if self.ctx.jsx_import_source_checked {
+            if let Some((current_idx, runtime_path)) =
+                self.ctx.deferred_jsx_import_source_error.clone()
+                && self.should_prefer_jsx_import_source_anchor(node_idx, current_idx)
+            {
+                self.ctx.deferred_jsx_import_source_error = Some((node_idx, runtime_path));
+            }
             return;
         }
         self.ctx.jsx_import_source_checked = true;
