@@ -682,12 +682,9 @@ impl<'a> CheckerState<'a> {
         let Some(type_alias) = self.ctx.arena.get_type_alias(node) else {
             return false;
         };
-        let Some(body_node) = self.ctx.arena.get(type_alias.type_node) else {
+        let Some(_body_node) = self.ctx.arena.get(type_alias.type_node) else {
             return false;
         };
-        if body_node.kind != syntax_kind_ext::MAPPED_TYPE {
-            return false;
-        }
 
         // Get the alias name and type parameter names
         let sym_name = self
@@ -713,14 +710,57 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or_default();
 
-        // Get the mapped type template node
-        let Some(mapped) = self.ctx.arena.get_mapped_type(body_node) else {
+        // Check if the body contains a self-referencing mapped type (recursively)
+        self.body_contains_self_referencing_mapped(
+            type_alias.type_node,
+            &sym_name,
+            &param_names,
+        )
+    }
+
+    /// Recursively check if a type node contains a mapped type that references
+    /// the alias with the same type arguments.
+    fn body_contains_self_referencing_mapped(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+        param_names: &[String],
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
 
-        // Check if the template contains a type reference to the alias
-        // with the SAME type arguments (identity recursion)
-        self.template_has_identity_self_ref(mapped.type_node, &sym_name, &param_names)
+        // Check if this node is a mapped type with self-reference in template
+        if node.kind == syntax_kind_ext::MAPPED_TYPE {
+            if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
+                if self.template_has_identity_self_ref(mapped.type_node, name, param_names) {
+                    return true;
+                }
+            }
+        }
+
+        // Special case: index access type like `{ [P in K]: N<T, K> }[K]`
+        // The object type is a mapped type, check if it self-references
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
+                // Check the object type (which may be a mapped type)
+                if self.body_contains_self_referencing_mapped(indexed.object_type, name, param_names) {
+                    return true;
+                }
+            }
+        }
+
+        // Recurse into children for union types, intersection types, etc.
+        // Skip conditional types as they represent bounded recursion
+        if node.kind != syntax_kind_ext::CONDITIONAL_TYPE {
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                if self.body_contains_self_referencing_mapped(child_idx, name, param_names) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Check if a type node contains a type reference to `name` with type args
