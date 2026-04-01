@@ -3142,6 +3142,49 @@ fn compile_with_project_dir_uses_tsconfig() {
 }
 
 #[test]
+fn compile_reports_ts7005_for_exported_bare_var_in_imported_dts() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "jsx": "react",
+            "module": "commonjs",
+            "target": "es2015"
+          },
+          "include": ["*.ts", "*.tsx", "*.d.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("file.tsx"),
+        r#"declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}"#,
+    );
+    write_file(&base.join("test.d.ts"), "export var React;\n");
+    write_file(
+        &base.join("react-consumer.tsx"),
+        r#"import { React } from "./test";
+var foo: any;
+var spread1 = <div x='' {...foo} y='' />;"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 7005),
+        "Expected TS7005 for exported bare var in imported .d.ts, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
