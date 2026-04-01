@@ -693,11 +693,12 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
-                // Suppress TS2769 if the callee has structural errors
-                let should_suppress =
+                // Check if we should suppress TS2769 due to structural errors on the callee
+                let suppress_due_to_structural_errors =
                     self.should_suppress_no_overload_due_to_structural_errors(callee_expr);
 
-                if !should_suppress && !self.should_suppress_weak_key_no_overload(callee_expr, args)
+                if !suppress_due_to_structural_errors
+                    && !self.should_suppress_weak_key_no_overload(callee_expr, args)
                 {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
@@ -988,7 +989,10 @@ impl<'a> CheckerState<'a> {
     /// errors on the callee type. When a class/interface has structural errors
     /// (TS2420, TS2430, TS2694), we suppress "no overload matches" errors because
     /// the type is known to be broken and the primary errors should be shown instead.
-    fn should_suppress_no_overload_due_to_structural_errors(&self, callee_expr: NodeIndex) -> bool {
+    fn should_suppress_no_overload_due_to_structural_errors(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> bool {
         // Only check for property access expressions (e.g., Promise.try)
         let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
             return false;
@@ -1001,36 +1005,52 @@ impl<'a> CheckerState<'a> {
         // Get the base expression (e.g., Promise in Promise.try)
         let base_expr = access.expression;
 
-        // Only check simple identifiers
-        let Some(base_node) = self.ctx.arena.get(base_expr) else {
+        // Resolve the base identifier to its symbol
+        let Some(symbol_id) = self.resolve_identifier_symbol(base_expr) else {
             return false;
         };
 
-        if base_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
-            return false;
+        // Check if this symbol has structural error diagnostics
+        let has_errors = self.symbol_has_structural_errors(symbol_id);
+        if has_errors {
+            eprintln!(
+                "DEBUG: Suppressing TS2769 for symbol {:?} due to structural errors",
+                symbol_id
+            );
         }
+        has_errors
+    }
 
-        // Check if any structural error diagnostics have been emitted
+    /// Check if a symbol has structural error diagnostics (TS2420, TS2430, TS2694).
+    fn symbol_has_structural_errors(&self, symbol_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+
         let structural_error_codes = [
             diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
             diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
             diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
         ];
 
-        // Get the span of the base identifier
-        let base_start = base_node.pos as u32;
-        let base_end = base_node.end as u32;
+        // Check if any structural error diagnostics are within this symbol's declaration spans
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let decl_start = node.pos as u32;
+            let decl_end = node.end as u32;
 
-        // Check if there are any structural errors anywhere in the file
-        // This is a conservative check - if there are structural errors, suppress TS2769
-        // The key insight is that if a class/interface has structural errors, all calls
-        // on that type should suppress TS2769
-        let has_structural_errors = self
-            .ctx
-            .diagnostics
-            .iter()
-            .any(|d| structural_error_codes.contains(&d.code));
+            for diag in &self.ctx.diagnostics {
+                if structural_error_codes.contains(&diag.code)
+                    && diag.start >= decl_start
+                    && diag.start < decl_end
+                {
+                    return true;
+                }
+            }
+        }
 
-        has_structural_errors
+        false
     }
 }
