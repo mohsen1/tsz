@@ -513,6 +513,39 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Property access is a value context. If the base identifier resolves to a
+        // type-only import/export chain, stop before member lookup so we don't emit
+        // a follow-on TS2339 after the primary TS1361/TS1362 wrong-meaning error.
+        if let Some(base_node) = self.ctx.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::Identifier as u16
+            && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+            && let Some(base_sym_id) =
+                self.resolve_identifier_symbol(access.expression)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .resolve_identifier(self.ctx.arena, access.expression)
+                    })
+            && self.alias_resolves_to_type_only(base_sym_id)
+            && !self.source_file_has_value_import_binding_named(
+                access.expression,
+                &base_ident.escaped_text,
+            )
+        {
+            if self.is_heritage_type_only_context(access.expression)
+                || self.is_in_ambient_computed_property_context()
+                || self.is_in_type_query_context(access.expression)
+            {
+                return TypeId::ERROR;
+            }
+            self.report_wrong_meaning_diagnostic(
+                &base_ident.escaped_text,
+                access.expression,
+                crate::query_boundaries::name_resolution::NameLookupKind::Type,
+            );
+            return TypeId::ERROR;
+        }
+
         if self.ctx.checking_computed_property_name.is_some()
             && let Some(base_ident) = self.ctx.arena.get_identifier_at(access.expression)
             && base_ident.escaped_text == "Symbol"
@@ -1340,6 +1373,12 @@ impl<'a> CheckerState<'a> {
                     && let Some(node) = self.ctx.arena.get(idx)
                     && let Some(export_type) = self
                         .current_file_commonjs_late_bound_named_export_type(export_name, node.pos)
+                {
+                    return export_type;
+                }
+                if let Some(export_name) = static_member_name.as_deref()
+                    && let Some(export_type) =
+                        surface.lookup_named_export(export_name, self.ctx.types)
                 {
                     return export_type;
                 }

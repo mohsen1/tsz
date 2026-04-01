@@ -2103,7 +2103,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn source_file_has_value_import_binding_named(&self, idx: NodeIndex, name: &str) -> bool {
+    pub(crate) fn source_file_has_value_import_binding_named(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> bool {
         let mut current = idx;
         let mut guard = 0u32;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
