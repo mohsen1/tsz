@@ -711,11 +711,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_default();
 
         // Check if the body contains a self-referencing mapped type (recursively)
-        self.body_contains_self_referencing_mapped(
-            type_alias.type_node,
-            &sym_name,
-            &param_names,
-        )
+        self.body_contains_self_referencing_mapped(type_alias.type_node, &sym_name, &param_names)
     }
 
     /// Recursively check if a type node contains a mapped type that references
@@ -744,7 +740,11 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
             if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
                 // Check the object type (which may be a mapped type)
-                if self.body_contains_self_referencing_mapped(indexed.object_type, name, param_names) {
+                if self.body_contains_self_referencing_mapped(
+                    indexed.object_type,
+                    name,
+                    param_names,
+                ) {
                     return true;
                 }
             }
