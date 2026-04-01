@@ -1039,33 +1039,93 @@ impl<'a> CheckerState<'a> {
                                         };
                                         // When the true branch is an `infer` variable
                                         // (e.g., `F extends (...args: infer L) => any ? L : never`),
-                                        // the result is often structurally extracted from the
-                                        // extends-type pattern, not bounded by it. For signature
-                                        // utilities (`Parameters`, `ReturnType`,
-                                        // `ConstructorParameters`, `InstanceType`) the extends
-                                        // type is only a matcher, so defer to instantiation.
-                                        // For opaque wrapper extractors like
-                                        // `C extends ComponentType<infer P> ? P : never`,
-                                        // tsc still uses the extends type as the eager proxy when
-                                        // the required constraint is neither callable nor
-                                        // constructable.
+                                        // the result is structurally extracted from the extends type
+                                        // pattern, not bounded by it. tsc's `getBaseConstraintOfType`
+                                        // for such conditionals returns the base constraint of the
+                                        // infer variable — `unknown` for unconstrained infer, or the
+                                        // explicit constraint for `infer R extends C`. Since `unknown`
+                                        // is not assignable to any non-trivial constraint, tsc emits
+                                        // TS2344 eagerly. Match that behavior here.
                                         let cond_true_is_infer = query::is_infer_type(
                                             self.ctx.types.as_type_database(),
                                             cond_true,
                                         );
-                                        let constraint_uses_signature_matching =
-                                            query::is_callable_type(
+                                        if cond_true_is_infer && !is_key_filtering_pattern {
+                                            // Get the infer variable's own constraint (if any).
+                                            // Unconstrained infer → base is `unknown`.
+                                            let infer_base = query::get_type_parameter_constraint(
                                                 self.ctx.types.as_type_database(),
-                                                constraint_resolved,
-                                            ) || query::is_constructor_like_type(
-                                                self.ctx.types.as_type_database(),
-                                                constraint_resolved,
-                                            ) || self.is_function_constraint(constraint);
+                                                cond_true,
+                                            )
+                                            .unwrap_or(TypeId::UNKNOWN);
+
+                                            // Instantiate the required constraint with provided
+                                            // type arguments for accurate error messages.
+                                            let mut subst =
+                                                crate::query_boundaries::common::TypeSubstitution::new(
+                                                );
+                                            for (j, p) in type_params.iter().enumerate() {
+                                                if let Some(&arg) = type_args.get(j) {
+                                                    subst.insert(p.name, arg);
+                                                }
+                                            }
+                                            let inst_constraint = if subst.is_empty() {
+                                                constraint_resolved
+                                            } else {
+                                                crate::query_boundaries::common::instantiate_type(
+                                                    self.ctx.types,
+                                                    constraint_resolved,
+                                                    &subst,
+                                                )
+                                            };
+
+                                            // When the instantiated constraint is fully
+                                            // concrete (no type parameters), tsc can use
+                                            // "restrictive instantiation" — substituting
+                                            // the check type's constraint into the
+                                            // conditional to resolve the infer variable.
+                                            // This often proves satisfaction (e.g.,
+                                            // `Parameters<F>` where `F extends Function`
+                                            // resolves infer to `any[]` which satisfies
+                                            // `ReadonlyArray<any>`). We can't easily
+                                            // replicate this, so defer for concrete
+                                            // constraints.
+                                            if !query::contains_type_parameters(
+                                                self.ctx.types,
+                                                inst_constraint,
+                                            ) {
+                                                continue;
+                                            }
+
+                                            // Constraint still has type parameters (e.g.,
+                                            // self-referential `Shared<T, GetProps<C>>`).
+                                            // Check if the infer base satisfies it.
+                                            // For unconstrained infer (base=unknown), this
+                                            // fails → TS2344.
+                                            let is_satisfied = inst_constraint == TypeId::UNKNOWN
+                                                || inst_constraint == TypeId::ANY
+                                                || self
+                                                    .is_assignable_to(infer_base, inst_constraint);
+
+                                            if !is_satisfied
+                                                && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                                                && !self
+                                                    .type_argument_is_narrowed_by_conditional_true_branch(
+                                                        arg_idx,
+                                                        inst_constraint,
+                                                    )
+                                            {
+                                                self.error_type_constraint_not_satisfied(
+                                                    type_arg,
+                                                    inst_constraint,
+                                                    arg_idx,
+                                                );
+                                            }
+                                            continue;
+                                        }
                                         let is_extract_like = cond_true == cond_check
                                             || (cond_true_is_bare_param
-                                                && !is_key_filtering_pattern
-                                                && (!cond_true_is_infer
-                                                    || !constraint_uses_signature_matching));
+                                                && !is_key_filtering_pattern);
                                         if !is_extract_like {
                                             // True branch is a structural type derived from the
                                             // check type (e.g., mapped type). Constraint satisfaction

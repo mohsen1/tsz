@@ -99,6 +99,17 @@ pub(crate) fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_infer_type(db, type_id)
 }
 
+/// Get the constraint of an `Infer` or `TypeParameter` type, if any.
+///
+/// Returns `None` if the type is not a type parameter/infer, or has no constraint.
+/// Used for TS2344: the base constraint of an unconstrained infer result is `unknown`.
+pub(crate) fn get_type_parameter_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
+}
+
 /// Check if a type is a primitive (string, number, boolean, bigint, etc.).
 pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::is_primitive_type(db, type_id)
