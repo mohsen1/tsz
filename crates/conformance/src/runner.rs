@@ -944,7 +944,25 @@ impl Runner {
                     };
                     // Filter .lib/ diagnostics (see filter functions for explanation)
                     let mut compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+
+                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
+                    // config-level deprecation warnings. These should not be compared as they are
+                    // compiler configuration diagnostics, not file-level type checking diagnostics.
+                    let config_level_codes: std::collections::HashSet<u32> =
+                        [5101u32, 5107u32].iter().cloned().collect();
+                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    let tsc_fps: Vec<_> = tsc_fps
+                        .into_iter()
+                        .filter(|fp| !config_level_codes.contains(&fp.code))
+                        .collect();
+                    compile_result
+                        .error_codes
+                        .retain(|c| !config_level_codes.contains(c));
+                    compile_result
+                        .diagnostic_fingerprints
+                        .retain(|fp| !config_level_codes.contains(&fp.code));
 
                     // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
                     // and suppresses downstream errors caused by missing lib types.
@@ -1174,7 +1192,7 @@ impl Runner {
 
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
 
                     // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
@@ -1182,15 +1200,21 @@ impl Runner {
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
                     let config_level_codes: std::collections::HashSet<u32> =
                         [5101u32, 5107u32].iter().cloned().collect();
-                    let tsc_error_codes: Vec<u32> = tsc_error_codes
+                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|c| !config_level_codes.contains(c))
+                        .filter(|fp| !config_level_codes.contains(&fp.code))
                         .collect();
                     let compile_result = crate::tsz_wrapper::CompilationResult {
                         error_codes: compile_result
                             .error_codes
                             .into_iter()
                             .filter(|c| !config_level_codes.contains(c))
+                            .collect(),
+                        diagnostic_fingerprints: compile_result
+                            .diagnostic_fingerprints
+                            .into_iter()
+                            .filter(|fp| !config_level_codes.contains(&fp.code))
                             .collect(),
                         ..compile_result
                     };
@@ -1366,7 +1390,7 @@ impl Runner {
 
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
 
                     // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
@@ -1374,9 +1398,10 @@ impl Runner {
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
                     let config_level_codes: std::collections::HashSet<u32> =
                         [5101u32, 5107u32].iter().cloned().collect();
-                    let tsc_error_codes: Vec<u32> = tsc_error_codes
+                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|c| !config_level_codes.contains(c))
+                        .filter(|fp| !config_level_codes.contains(&fp.code))
                         .collect();
                     let compile_result = crate::tsz_wrapper::CompilationResult {
                         error_codes: compile_result

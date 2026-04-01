@@ -838,12 +838,10 @@ fn compile_inner(
             || d.code
                 == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
     });
-
+    
     // TS5107/TS5101 (deprecation warnings for deprecated options/values) are fatal in tsc 6.0.
     // They stop compilation and only config-level diagnostics are reported.
-    // Match this behavior to avoid extra file-level diagnostics like TS2390, TS2391.
-    // Note: Grammar errors like TS17006, TS17007, 8xxx errors suppress TS5107 in tsc,
-    // but for now we keep it simple - any deprecation diagnostic stops compilation.
+    // Match this behavior to avoid extra file-level diagnostics.
     if has_deprecation_diagnostics {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
@@ -1514,6 +1512,34 @@ fn compile_inner(
             emitted = emitted_files.len(),
             no_check = resolved.no_check
         );
+    }
+
+    // Handle TS5107/TS5101 deprecation diagnostics based on tsc behavior:
+    // 1. If grammar errors exist (1xxx, 8xxx range), they take precedence - suppress TS5107
+    // 2. If TS5107 exists without grammar errors, TS5107 is shown but function implementation
+    //    errors (TS2389, TS2390, TS2391) are suppressed to match tsc behavior
+    if has_deprecation_diagnostics {
+        let has_grammar_errors = diagnostics.iter().any(|d| {
+            let code = d.code;
+            // Parser/grammar errors (1xxx range) and JS grammar errors (8xxx range)
+            (code >= 1000 && code < 2000) || (code >= 8000 && code < 9000)
+        });
+        
+        if has_grammar_errors {
+            // Grammar errors take precedence - suppress TS5107/TS5101
+            diagnostics.retain(|d| {
+                d.code
+                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+                    && d.code
+                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+            });
+        } else {
+            // TS5107 present without grammar errors - suppress function implementation errors
+            diagnostics.retain(|d| {
+                // Keep all except TS2389, TS2390, TS2391 (function implementation errors)
+                d.code != 2389 && d.code != 2390 && d.code != 2391
+            });
+        }
     }
 
     Ok(CompilationResult {
