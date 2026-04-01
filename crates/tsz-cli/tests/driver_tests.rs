@@ -156,6 +156,222 @@ export type SomeType = import('./inner').SomeType;
 }
 
 #[test]
+fn declaration_emit_default_object_assign_reports_non_portable_nested_reference() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/styled-components/node_modules/hoist-non-react-statics/index.d.ts"),
+        r#"interface Statics {
+    "$$whatever": string;
+}
+declare namespace hoistNonReactStatics {
+    type NonReactStatics<T> = {[X in Exclude<keyof T, keyof Statics>]: T[X]}
+}
+export = hoistNonReactStatics;
+"#,
+    );
+    write_file(
+        &base.join("node_modules/styled-components/index.d.ts"),
+        r#"import * as hoistNonReactStatics from "hoist-non-react-statics";
+export interface DefaultTheme {}
+export type StyledComponent<TTag extends string, TTheme = DefaultTheme, TStyle = {}, TWhatever = never> =
+    string
+    & StyledComponentBase<TTag, TTheme, TStyle, TWhatever>
+    & hoistNonReactStatics.NonReactStatics<TTag>;
+export interface StyledComponentBase<TTag extends string, TTheme = DefaultTheme, TStyle = {}, TWhatever = never> {
+    tag: TTag;
+    theme: TTheme;
+    style: TStyle;
+    whatever: TWhatever;
+}
+export interface StyledInterface {
+    div: (a: TemplateStringsArray) => StyledComponent<"div">;
+}
+declare const styled: StyledInterface;
+export default styled;
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import styled from "styled-components";
+
+const A = styled.div``;
+const B = styled.div``;
+export const C = styled.div``;
+
+export default Object.assign(A, {
+    B,
+    C
+});
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert!(
+        ts2883_messages.iter().any(|message| {
+            message.contains("default")
+                && message.contains("NonReactStatics")
+                && message.contains("styled-components/node_modules/hoist-non-react-statics")
+        }),
+        "expected TS2883 on default Object.assign export, got: {ts2883_messages:#?}"
+    );
+}
+
+#[test]
+fn declaration_emit_reports_non_serializable_foreign_unique_symbol_property() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("a.d.ts"),
+        r#"export declare const timestampSymbol: unique symbol;
+
+export declare const Timestamp: {
+    [TKey in typeof timestampSymbol]: true;
+};
+
+export declare function now(): typeof Timestamp;
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import * as x from "./a";
+export const timestamp = x.now();
+"#,
+    );
+    write_file(
+        &base.join("c.ts"),
+        r#"import { now } from "./a";
+
+export const timestamp = now();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["b.ts", "c.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts4118_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 4118)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert_eq!(ts4118_messages.len(), 2, "expected two TS4118 diagnostics, got: {ts4118_messages:#?}");
+    assert!(ts4118_messages.iter().all(|message| {
+        message.contains("[timestampSymbol]")
+    }), "expected TS4118 to mention [timestampSymbol], got: {ts4118_messages:#?}");
+}
+
+#[test]
+fn declaration_emit_reports_ts7056_for_private_import_type_alias() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("http-client.ts"),
+        r#"type TPromise<ResolveType, RejectType = any> = Omit<Promise<ResolveType>, "then" | "catch"> & {
+    then<TResult1 = ResolveType, TResult2 = never>(
+        onfulfilled?: ((value: ResolveType) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+        onrejected?: ((reason: RejectType) => TResult2 | PromiseLike<TResult2>) | undefined | null,
+    ): TPromise<TResult1 | TResult2, RejectType>;
+    catch<TResult = never>(
+        onrejected?: ((reason: RejectType) => TResult | PromiseLike<TResult>) | undefined | null,
+    ): TPromise<ResolveType | TResult, RejectType>;
+};
+
+export interface HttpResponse<D extends unknown, E extends unknown = unknown> extends Response {
+    data: D;
+    error: E;
+}
+
+export class HttpClient<SecurityDataType = unknown> {
+    public request = <T = any, E = any>(): TPromise<HttpResponse<T, E>> => {
+        return '' as any;
+    };
+}
+"#,
+    );
+    write_file(
+        &base.join("Api.ts"),
+        r#"import { HttpClient } from "./http-client";
+
+export class Api<SecurityDataType = unknown> {
+    constructor(private http: HttpClient<SecurityDataType>) { }
+
+    abc1 = () => this.http.request();
+    abc2 = () => this.http.request();
+    abc3 = () => this.http.request();
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true,
+    "skipLibCheck": true
+  },
+  "files": ["http-client.ts", "Api.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts7056_count = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 7056)
+        .count();
+
+    assert_eq!(
+        ts7056_count, 3,
+        "expected three TS7056 diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_project_namespace_import_qualified_type_sees_module_augmentation_exports() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -212,6 +428,112 @@ model.cache;
                 || d.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER),
         "Expected namespace-import type position to see module augmentation members, got: {:#?}",
         result.diagnostics
+    );
+}
+
+#[test]
+fn compile_project_umd_global_class_surface_stays_unaugmented() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/math2d/index.d.ts"),
+        r#"export as namespace Math2d;
+
+export interface Point {
+    x: number;
+    y: number;
+}
+
+export class Vector implements Point {
+    x: number;
+    y: number;
+    constructor(x: number, y: number);
+
+    translate(dx: number, dy: number): Vector;
+}
+
+export function getLength(p: Vector): number;
+"#,
+    );
+    write_file(
+        &base.join("math2d-augment.d.ts"),
+        r#"import * as Math2d from "math2d";
+
+declare module "math2d" {
+    interface Vector {
+        reverse(): Math2d.Point;
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        r#"/// <reference path="node_modules/math2d/index.d.ts" />
+/// <reference path="math2d-augment.d.ts" />
+
+let v = new Math2d.Vector(3, 2);
+v.reverse();
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"/// <reference path="math2d-augment.d.ts" />
+import * as m from "math2d";
+
+let v = new m.Vector(3, 2);
+v.reverse();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.global.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "noEmit": true,
+    "noImplicitReferences": true
+  },
+  "files": ["a.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("tsconfig.import.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "noEmit": true,
+    "noImplicitReferences": true
+  },
+  "files": ["b.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.global.json"));
+    let global_result = compile(&args, base).expect("global compile should succeed");
+    assert!(
+        global_result.diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && d.message_text
+                    .contains("Property 'reverse' does not exist on type 'Vector'.")
+        }),
+        "Expected bare UMD global access to keep the class declaration surface and report TS2339 on Vector. Actual diagnostics: {:#?}",
+        global_result.diagnostics
+    );
+
+    args.project = Some(base.join("tsconfig.import.json"));
+    let import_result = compile(&args, base).expect("import compile should succeed");
+    assert!(
+        import_result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected real module imports to keep the class augmentation visible. Actual diagnostics: {:#?}",
+        import_result.diagnostics
     );
 }
 

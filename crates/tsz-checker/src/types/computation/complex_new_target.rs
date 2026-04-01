@@ -216,10 +216,7 @@ impl<'a> CheckerState<'a> {
 
         let sym_id = self
             .resolve_identifier_symbol(expr_idx)
-            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
-            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
-            .or_else(|| self.ctx.binder.file_locals.get(class_name))
-            .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name))?;
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))?;
         let symbol = self.ctx.binder.get_symbol(sym_id).or_else(|| {
             self.ctx
                 .resolve_symbol_file_index(sym_id)

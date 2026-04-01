@@ -355,6 +355,78 @@ fn test_compile_emits_ts18003_in_batch_style_project_mode() {
     assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
 }
 
+#[test]
+fn test_compile_project_keeps_nolib_global_diagnostics_with_deprecation_errors() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "amd",
+    "noLib": true,
+    "declaration": true,
+    "outFile": "bundle.js"
+  },
+  "files": ["fakelib.ts", "file1.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("fakelib.ts"),
+        r#"interface Object {}
+interface Array<T> {}
+interface String {}
+interface Boolean {}
+interface Number {}
+interface Function {}
+interface RegExp {}
+interface IArguments {}
+"#,
+    )
+    .expect("write fakelib");
+    fs::write(
+        dir.path().join("file1.ts"),
+        r#"/// <reference lib="dom" />
+export declare interface HTMLElement { field: string; }
+export const elem: HTMLElement = { field: "a" };
+"#,
+    )
+    .expect("write file1");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&5107), "expected TS5107, got: {codes:?}");
+    assert!(codes.contains(&5101), "expected TS5101, got: {codes:?}");
+
+    let ts2318: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2318).collect();
+    assert!(
+        ts2318
+            .iter()
+            .any(|d| d.message_text.contains("CallableFunction")),
+        "expected TS2318 for CallableFunction, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts2318
+            .iter()
+            .any(|d| d.message_text.contains("NewableFunction")),
+        "expected TS2318 for NewableFunction, got: {:?}",
+        result.diagnostics
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn test_compile_preserve_symlinks_emits_ts2307_for_original_target() {

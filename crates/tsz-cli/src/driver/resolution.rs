@@ -1592,7 +1592,19 @@ pub(crate) fn build_duplicate_package_redirects(
             }
             Entry::Occupied(mut e) => {
                 let (existing_root, existing_depth) = e.get().clone();
-                if depth < existing_depth {
+                let current_rank = (
+                    depth,
+                    normalize_resolved_path(pkg_root, options)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+                let existing_rank = (
+                    existing_depth,
+                    normalize_resolved_path(&existing_root, options)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+                if current_rank < existing_rank {
                     root_redirects.insert(existing_root, pkg_root.clone());
                     e.insert((pkg_root.clone(), depth));
                 } else {

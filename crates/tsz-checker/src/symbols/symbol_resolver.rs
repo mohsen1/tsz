@@ -673,7 +673,9 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(sym_id);
         }
 
-        if let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name) {
+        if let Some(sym_id) =
+            self.resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)
+        {
             return TypeSymbolResolution::Type(sym_id);
         }
 
@@ -997,7 +999,7 @@ impl<'a> CheckerState<'a> {
             }
             if self.ctx.binder.file_locals.get(name) == Some(local_sym_id)
                 && let Some(ns_sym_id) =
-                    self.resolve_unqualified_name_in_enclosing_namespace(idx, name)
+                    self.resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)
                 && ns_sym_id != local_sym_id
             {
                 return TypeSymbolResolution::Type(ns_sym_id);
@@ -1005,7 +1007,9 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(local_sym_id);
         }
 
-        if let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name) {
+        if let Some(sym_id) =
+            self.resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)
+        {
             return TypeSymbolResolution::Type(sym_id);
         }
 

@@ -461,6 +461,23 @@ fn export_default_class_duplicates_no_ts2300() {
     );
 }
 
+#[test]
+fn export_default_reexports_participate_in_duplicate_default_checks() {
+    let diagnostics = verify_errors(
+        "export default function () {} export { default } from './hi'; export { aa as default } from './hi';",
+        &[],
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2323),
+        "Expected TS2323 when a declaration-form default export conflicts with default re-exports, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2528),
+        "Expected TS2528 for multiple default exports, got codes: {codes:?}"
+    );
+}
+
 /// Test that duplicate well-known Symbol properties in interfaces do NOT produce TS2300.
 /// tsc allows duplicate Symbol-keyed properties because symbols are structurally unique.
 #[test]

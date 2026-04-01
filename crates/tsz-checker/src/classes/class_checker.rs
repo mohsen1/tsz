@@ -4,6 +4,7 @@ use crate::classes_domain::class_summary::ClassChainSummary;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
+    should_report_own_member_type_mismatch,
 };
 use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
@@ -318,7 +319,6 @@ impl<'a> CheckerState<'a> {
 
             // Check property type compatibility with base (TS2416)
             if let Some(base_type_id) = base_instance_type
-                && base_member_names.contains(&info.name)
                 && !info.is_static
             {
                 let member_type = info.type_id;
@@ -343,7 +343,7 @@ impl<'a> CheckerState<'a> {
                                 info.name_idx,
                             )
                         } else {
-                            should_report_member_type_mismatch(
+                            should_report_own_member_type_mismatch(
                                 self,
                                 resolved_member_type,
                                 resolved_base_type,

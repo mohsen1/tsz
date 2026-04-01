@@ -565,6 +565,118 @@ let x: Outer.Inner.DoesNotExist;
     );
 }
 
+#[test]
+fn boundary_string_module_parent_does_not_qualify_namespace_ts2694() {
+    let diags = check(
+        r#"
+declare namespace X { export interface bar { } }
+declare module "m" {
+    namespace X { export interface foo { } }
+    export { X };
+    export function foo(): X.foo;
+    export function bar(): X.bar;
+}
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace 'X' has no exported member 'bar'."),
+        "Expected TS2694 to use the local namespace name, got: {ts2694:?}"
+    );
+    assert!(
+        !ts2694.message_text.contains("m.X"),
+        "TS2694 should not qualify namespaces through string-literal modules: {ts2694:?}"
+    );
+}
+
+#[test]
+fn boundary_external_module_parent_qualifies_namespace_ts2694() {
+    let diags = check(
+        r#"
+export namespace Promise {}
+let x: Promise.Resolver<string>;
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace '\"test\".Promise' has no exported member 'Resolver'."),
+        "Expected TS2694 to qualify exported external-module namespace, got: {ts2694:?}"
+    );
+}
+
+#[test]
+fn boundary_external_module_nested_export_qualifies_root_namespace_ts2694() {
+    let diags = check(
+        r#"
+export namespace Outer {
+    export namespace Inner {
+        export type Exists = number;
+    }
+}
+let x: Outer.Inner.DoesNotExist;
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing nested namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace '\"test\".Outer.Inner' has no exported member 'DoesNotExist'."),
+        "Expected TS2694 to qualify nested exported namespaces through the file module name, got: {ts2694:?}"
+    );
+}
+
+#[test]
+fn boundary_external_module_local_namespace_does_not_gain_file_prefix_ts2694() {
+    let diags = check(
+        r#"
+namespace foo {
+    export namespace bar {
+        export namespace baz {
+            export class boo {}
+        }
+    }
+}
+import booz = foo.bar.baz;
+let x: booz.bar;
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace 'foo.bar.baz' has no exported member 'bar'."),
+        "Expected local module namespace chains to stay unqualified, got: {ts2694:?}"
+    );
+    assert!(
+        !ts2694.message_text.contains("\"test\"."),
+        "Local namespaces should not be prefixed with the file module name: {ts2694:?}"
+    );
+}
+
 // =========================================================================
 // Phase 2.5: Wrong-meaning migration through boundary
 // =========================================================================
@@ -618,6 +730,20 @@ fn phase2_keyword_type_in_new_routes_through_boundary() {
         diags.iter().any(|d| d.code == 2693),
         "Expected TS2693 for 'new string()', got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn phase2_unresolved_new_target_reports_ts2304_not_ts2693() {
+    let diags = check("new A().b();");
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "Expected TS2304 for unresolved constructor target, got: {diags:?}"
+    );
+    assert!(
+        !codes.contains(&2693),
+        "Should not emit TS2693 for unresolved constructor target, got: {diags:?}"
     );
 }
 

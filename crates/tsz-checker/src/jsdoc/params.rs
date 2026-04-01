@@ -977,7 +977,61 @@ impl<'a> CheckerState<'a> {
             return Some(tsz_solver::TypeId::ERROR);
         }
 
-        let mut base_type = self.resolve_jsdoc_type_str(&effective_type_expr)?;
+        let mut base_type = if let Some((module_specifier, segments)) =
+            Self::parse_jsdoc_typeof_import_query(&effective_type_expr)
+        {
+            match self.resolve_jsdoc_typeof_import_reference_parts(&module_specifier, &segments) {
+                Ok(resolved) => resolved,
+                Err((member_offset, member_name)) => {
+                    if let Some(comment_start) = jsdoc_comment_start {
+                        let display_name = self.imported_namespace_display_module_name(&module_specifier);
+                        let anchored_member_offset = effective_type_expr
+                            .rfind(&format!(".{member_name}"))
+                            .map(|offset| offset + 1)
+                            .unwrap_or(member_offset);
+                        let message = format!(
+                            "Namespace '\"{display_name}\".export=' has no exported member '{member_name}'."
+                        );
+                        let source_start = self
+                            .ctx
+                            .arena
+                            .source_files
+                            .first()
+                            .and_then(|source_file| {
+                                let source_text = source_file.text.as_ref();
+                                let exact = format!("@param {{{effective_type_expr}}} {param_name}");
+                                let optional = format!("@param {{{effective_type_expr}}} [{param_name}]");
+                                source_text
+                                    .find(&exact)
+                                    .or_else(|| source_text.find(&optional))
+                            })
+                            .map(|offset| {
+                                offset + "@param {".len() + anchored_member_offset
+                            });
+                        let start = source_start
+                            .map(|offset| offset as u32)
+                            .unwrap_or(
+                                comment_start
+                                    + type_expr_offset as u32
+                                    + anchored_member_offset as u32,
+                            );
+                        let length = member_name.len() as u32;
+                        let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                            diagnostic.code == 2694
+                                && diagnostic.start == start
+                                && diagnostic.length == length
+                                && diagnostic.message_text == message
+                        });
+                        if !already_reported {
+                            self.error_at_position(start, length, &message, 2694);
+                        }
+                    }
+                    tsz_solver::TypeId::ANY
+                }
+            }
+        } else {
+            self.resolve_jsdoc_type_str(&effective_type_expr)?
+        };
 
         // Handle JSDoc destructured parameter type literals.
         // When the base type is Object/object (possibly with []), nested @param tags

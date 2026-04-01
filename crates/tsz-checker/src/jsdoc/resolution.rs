@@ -223,6 +223,38 @@ impl<'a> CheckerState<'a> {
                     .or(Some(module_type))
             })
     }
+
+    pub(crate) fn resolve_jsdoc_typeof_import_reference_parts(
+        &mut self,
+        module_specifier: &str,
+        segments: &[(usize, String)],
+    ) -> Result<TypeId, (usize, String)> {
+        let mut current = self
+            .commonjs_module_value_type(module_specifier, Some(self.ctx.current_file_idx))
+            .or_else(|| self.build_typeof_import_namespace_type(module_specifier, None))
+            .ok_or_else(|| {
+                segments
+                    .first()
+                    .cloned()
+                    .unwrap_or((0, String::from("import")))
+            })?;
+
+        if segments.is_empty() {
+            return Ok(current);
+        }
+
+        for (offset, segment) in segments {
+            let access = self.resolve_property_access_with_env(current, segment);
+            current = match access {
+                crate::query_boundaries::common::PropertyAccessResult::Success {
+                    type_id, ..
+                } => self.resolve_type_query_type(type_id),
+                _ => return Err((*offset, segment.clone())),
+            };
+        }
+
+        Ok(current)
+    }
     /// Parse a JSDoc-style `@type` expression into a concrete type.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
@@ -349,6 +381,17 @@ impl<'a> CheckerState<'a> {
             _ => {
                 if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
                     return Some(*tp);
+                }
+                if let Some((module_specifier, segments)) =
+                    Self::parse_jsdoc_typeof_import_query(type_expr)
+                {
+                    return Some(
+                        self.resolve_jsdoc_typeof_import_reference_parts(
+                            &module_specifier,
+                            &segments,
+                        )
+                        .unwrap_or(TypeId::ERROR),
+                    );
                 }
                 if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
                     return Some(resolved);

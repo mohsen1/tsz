@@ -7510,6 +7510,22 @@ impl<'a> DeclarationEmitter<'a> {
                             name_node.end - name_node.pos,
                         );
                     }
+                    if self.diagnostics.len() == diagnostics_before {
+                        let _ = self.emit_non_serializable_import_type_diagnostic(
+                            &printed_type_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
+                    if self.diagnostics.len() == diagnostics_before {
+                        let _ = self.emit_non_serializable_property_diagnostic(
+                            &printed_type_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
                 }
 
                 if keyword == "const"
@@ -9795,9 +9811,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return false;
         };
-        let Some(source_arena) = binder.symbol_arenas.get(&sym_id) else {
-            return false;
-        };
+        let source_arena = binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.arena);
 
         for decl_idx in symbol.declarations.iter().copied() {
             let Some(decl_node) = source_arena.get(decl_idx) else {
@@ -9813,8 +9831,124 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     return true;
                 }
+                if self.emit_non_portable_expression_declared_return_diagnostic(
+                    var_decl.initializer,
+                    decl_name,
+                    file,
+                    pos,
+                    length,
+                ) {
+                    return true;
+                }
                 if self.emit_non_portable_expression_symbol_diagnostic(
                     var_decl.initializer,
+                    decl_name,
+                    file,
+                    pos,
+                    length,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn emit_non_portable_expression_declared_return_diagnostic(
+        &mut self,
+        expr_idx: NodeIndex,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let sym_id = match expr_node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .arena
+                .get_call_expr(expr_node)
+                .and_then(|call| self.value_reference_symbol(call.expression)),
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => self
+                .arena
+                .get_tagged_template(expr_node)
+                .and_then(|tagged| self.value_reference_symbol(tagged.tag)),
+            _ => None,
+        };
+
+        let Some(sym_id) = sym_id else {
+            return false;
+        };
+        self.emit_non_portable_callable_symbol_declared_return_diagnostic(
+            sym_id, decl_name, file, pos, length,
+        )
+    }
+
+    fn emit_non_portable_callable_symbol_declared_return_diagnostic(
+        &mut self,
+        sym_id: SymbolId,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        let Some(source_arena) = binder.symbol_arenas.get(&sym_id) else {
+            return false;
+        };
+        let Some(source_file) = self.arena_source_file(source_arena.as_ref()) else {
+            return false;
+        };
+        if !source_file.is_declaration_file {
+            return false;
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+
+            if let Some(function) = source_arena.get_function(decl_node)
+                && function.type_annotation.is_some()
+                && self.emit_non_portable_type_node_diagnostic_from_arena(
+                    source_arena.as_ref(),
+                    function.type_annotation,
+                    decl_name,
+                    file,
+                    pos,
+                    length,
+                )
+            {
+                return true;
+            }
+
+            if let Some(signature) = source_arena.get_signature(decl_node) {
+                let return_type_node = if decl_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
+                    let Some(type_node) = source_arena.get(signature.type_annotation) else {
+                        continue;
+                    };
+                    source_arena
+                        .get_function_type(type_node)
+                        .map_or(signature.type_annotation, |function_type| {
+                            function_type.type_annotation
+                        })
+                } else {
+                    signature.type_annotation
+                };
+                if self.emit_non_portable_type_node_diagnostic_from_arena(
+                    source_arena.as_ref(),
+                    return_type_node,
                     decl_name,
                     file,
                     pos,
@@ -10233,7 +10367,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_non_portable_symbol_declaration_diagnostic(sym_id, decl_name, file, pos, length)
     }
 
-    fn emit_non_portable_import_type_text_diagnostics(
+    pub(crate) fn emit_non_portable_import_type_text_diagnostics(
         &mut self,
         printed_type_text: &str,
         decl_name: &str,
@@ -10245,7 +10379,8 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         let mut references = self.collect_non_portable_references_in_symbol_declaration(sym_id);
-        if let Some(parsed_reference) = self.parse_import_type_text(printed_type_text)
+        if self.import_type_uses_private_package_subpath(printed_type_text)
+            && let Some(parsed_reference) = self.parse_import_type_text(printed_type_text)
             && !references.contains(&parsed_reference)
         {
             references.insert(0, parsed_reference);
@@ -10256,6 +10391,203 @@ impl<'a> DeclarationEmitter<'a> {
         {
             references.push(root_reference);
         }
+        if references.is_empty() {
+            return false;
+        }
+        for (from_path, type_name) in references {
+            self.emit_non_portable_named_reference_diagnostic(
+                decl_name, file, pos, length, &from_path, &type_name,
+            );
+        }
+        true
+    }
+
+    fn emit_non_serializable_property_diagnostic(
+        &mut self,
+        printed_type_text: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        use tsz_common::diagnostics::Diagnostic;
+
+        let Some(property_name) =
+            self.find_non_serializable_property_name_in_printed_type(printed_type_text)
+        else {
+            return false;
+        };
+
+        self.diagnostics.push(Diagnostic::from_code(
+            4118,
+            file,
+            pos,
+            length,
+            &[&property_name],
+        ));
+        true
+    }
+
+    pub(crate) fn emit_non_serializable_import_type_diagnostic(
+        &mut self,
+        printed_type_text: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        use tsz_common::diagnostics::Diagnostic;
+
+        if self
+            .find_unexported_import_type_reference_in_printed_type(printed_type_text)
+            .is_none()
+        {
+            return false;
+        }
+
+        self.diagnostics
+            .push(Diagnostic::from_code(7056, file, pos, length, &[]));
+        true
+    }
+
+    fn find_non_serializable_property_name_in_printed_type(
+        &self,
+        printed_type_text: &str,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let current_path = self.current_file_path.as_deref()?;
+        let mut search = printed_type_text;
+        let needle = " in typeof ";
+
+        while let Some(index) = search.find(needle) {
+            let rest = &search[index + needle.len()..];
+            let symbol_expr: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                .collect();
+            if symbol_expr.is_empty() {
+                search = rest;
+                continue;
+            }
+
+            let accessible_symbol = binder
+                .file_locals
+                .get(&symbol_expr)
+                .or_else(|| binder.current_scope.get(&symbol_expr));
+
+            let Some(accessible_symbol) = accessible_symbol else {
+                return Some(format!("[{symbol_expr}]"));
+            };
+
+            let accessible_source_path = self.get_symbol_source_path(accessible_symbol, binder);
+            if accessible_source_path.as_deref().is_some_and(|source_path| {
+                self.paths_refer_to_same_source_file(current_path, source_path)
+            }) {
+                search = rest;
+                continue;
+            }
+
+            let original_sym_id = binder
+                .resolve_import_symbol(accessible_symbol)
+                .filter(|resolved| *resolved != accessible_symbol)
+                .unwrap_or(accessible_symbol);
+
+            let original_source_path = self.get_symbol_source_path(original_sym_id, binder);
+            if original_source_path.as_deref().is_some_and(|source_path| {
+                !self.paths_refer_to_same_source_file(current_path, source_path)
+                    && binder.module_exports.contains_key(source_path)
+            }) {
+                return Some(format!("[{symbol_expr}]"));
+            }
+
+            search = rest;
+        }
+
+        None
+    }
+
+    fn find_unexported_import_type_reference_in_printed_type(
+        &self,
+        printed_type_text: &str,
+    ) -> Option<(String, String)> {
+        let binder = self.binder?;
+        let current_path = self.current_file_path.as_deref()?;
+        let mut remaining = printed_type_text;
+
+        while let Some(start) = remaining.find("import(\"") {
+            let after_prefix = &remaining[start + "import(\"".len()..];
+            let Some((module_specifier, tail)) = after_prefix.split_once("\")") else {
+                break;
+            };
+            let Some(tail) = tail.strip_prefix('.') else {
+                remaining = after_prefix;
+                continue;
+            };
+            let Some(first_name) = tail
+                .split(['.', '<', '[', ' ', '&', '|', '>', ',', ')', ';', '\n', '\r'])
+                .find(|part| !part.is_empty())
+            else {
+                remaining = after_prefix;
+                continue;
+            };
+
+            let exports = binder.module_exports.iter().find_map(|(module_path, exports)| {
+                let candidate =
+                    if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+                        Some(self.strip_ts_extensions(
+                            &self.calculate_relative_path(current_path, module_path),
+                        ))
+                    } else {
+                        self.package_specifier_for_node_modules_path(current_path, module_path)
+                    }?;
+                (candidate == module_specifier).then_some(exports)
+            });
+
+            if let Some(exports) = exports
+                && !exports.has(first_name)
+            {
+                return Some((module_specifier.to_string(), first_name.to_string()));
+            }
+
+            remaining = after_prefix;
+        }
+
+        None
+    }
+
+    fn emit_non_portable_type_node_diagnostic_from_arena(
+        &mut self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        if !node_idx.is_some() {
+            return false;
+        }
+
+        let arena_addr = arena as *const NodeArena as usize;
+        let Some(source_path) = self.arena_to_path.get(&arena_addr).cloned() else {
+            return false;
+        };
+
+        let mut visited_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_nodes = rustc_hash::FxHashSet::default();
+        let mut visited_types = rustc_hash::FxHashSet::default();
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut references = Vec::new();
+        self.collect_non_portable_references_in_type_node(
+            arena,
+            node_idx,
+            &source_path,
+            &mut references,
+            &mut seen,
+            &mut visited_types,
+            &mut visited_symbols,
+            &mut visited_declaration_symbols,
+            &mut visited_nodes,
+        );
         if references.is_empty() {
             return false;
         }
@@ -10675,7 +11007,7 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    fn import_type_uses_private_package_subpath(&self, printed: &str) -> bool {
+    pub(crate) fn import_type_uses_private_package_subpath(&self, printed: &str) -> bool {
         let Some(rest) = printed.strip_prefix("import(\"") else {
             return false;
         };
