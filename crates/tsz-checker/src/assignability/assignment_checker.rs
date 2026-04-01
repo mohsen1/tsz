@@ -1,7 +1,7 @@
 //! Assignment expression checking (simple, compound, logical, readonly).
 
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::context::TypingRequest;
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -28,7 +28,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn build_contextual_type_from_assignment_pattern(&mut self, pattern_idx: NodeIndex) -> Option<TypeId> {
+    fn build_contextual_type_from_assignment_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+    ) -> Option<TypeId> {
         let pattern_node = self.ctx.arena.get(pattern_idx)?;
         let factory = self.ctx.types.factory();
 
@@ -64,12 +67,11 @@ impl<'a> CheckerState<'a> {
                             .skip_parenthesized_and_assertions(spread_target);
                         let spread_target_type =
                             self.contextual_type_for_assignment_target(spread_target);
-                        let rest_elem_type =
-                            crate::query_boundaries::common::array_element_type(
-                                self.ctx.types,
-                                spread_target_type,
-                            )
-                            .unwrap_or(TypeId::ANY);
+                        let rest_elem_type = crate::query_boundaries::common::array_element_type(
+                            self.ctx.types,
+                            spread_target_type,
+                        )
+                        .unwrap_or(TypeId::ANY);
                         (rest_elem_type, true)
                     } else if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                         || elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -131,21 +133,24 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let (name, target_idx) =
-                    if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                        (self.get_property_name_resolved(prop.name), Some(prop.initializer))
-                    } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
-                    {
-                        let name = self
-                            .ctx
-                            .arena
-                            .get(shorthand.name)
-                            .and_then(|node| self.ctx.arena.get_identifier(node))
-                            .map(|ident| ident.escaped_text.clone());
-                        (name, Some(shorthand.name))
-                    } else {
-                        (None, None)
-                    };
+                let (name, target_idx) = if let Some(prop) =
+                    self.ctx.arena.get_property_assignment(elem_node)
+                {
+                    (
+                        self.get_property_name_resolved(prop.name),
+                        Some(prop.initializer),
+                    )
+                } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
+                    let name = self
+                        .ctx
+                        .arena
+                        .get(shorthand.name)
+                        .and_then(|node| self.ctx.arena.get_identifier(node))
+                        .map(|ident| ident.escaped_text.clone());
+                    (name, Some(shorthand.name))
+                } else {
+                    (None, None)
+                };
 
                 let Some(name) = name else {
                     continue;
@@ -155,15 +160,10 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let target_idx = self.ctx.arena.skip_parenthesized_and_assertions(target_idx);
-                let prop_type = if self
-                    .ctx
-                    .arena
-                    .get(target_idx)
-                    .is_some_and(|node| {
-                        node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                            || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                    })
-                {
+                let prop_type = if self.ctx.arena.get(target_idx).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                }) {
                     self.build_contextual_type_from_assignment_pattern(target_idx)
                         .unwrap_or(TypeId::ANY)
                 } else if self
@@ -178,16 +178,10 @@ impl<'a> CheckerState<'a> {
                         .filter(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16)
                         .map(|bin| {
                             let lhs = self.ctx.arena.skip_parenthesized_and_assertions(bin.left);
-                            if self
-                                .ctx
-                                .arena
-                                .get(lhs)
-                                .is_some_and(|lhs_node| {
-                                    lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                        || lhs_node.kind
-                                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                })
-                            {
+                            if self.ctx.arena.get(lhs).is_some_and(|lhs_node| {
+                                lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    || lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            }) {
                                 self.build_contextual_type_from_assignment_pattern(lhs)
                                     .unwrap_or(TypeId::ANY)
                             } else {
@@ -221,7 +215,8 @@ impl<'a> CheckerState<'a> {
         let supports_context = self.ctx.arena.get(initializer_idx).is_some_and(|node| {
             matches!(
                 node.kind,
-                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             )
         });
 

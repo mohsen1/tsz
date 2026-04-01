@@ -1193,7 +1193,8 @@ impl<'a> CheckerState<'a> {
                 && tsz_solver::type_queries::get_construct_signatures(
                     self.ctx.types,
                     normalized_component_type,
-                ).is_none_or(|sigs| sigs.is_empty())
+                )
+                .is_none_or(|sigs| sigs.is_empty())
                 && let Some(inferred_props) = self
                     .infer_jsx_generic_component_props_type(
                         attributes_idx,
