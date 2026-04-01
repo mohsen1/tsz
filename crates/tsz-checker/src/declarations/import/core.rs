@@ -15,6 +15,13 @@ use tsz_scanner::SyntaxKind;
 // Import/Export Checking Methods
 // =============================================================================
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ModuleNotFoundSite {
+    Import,
+    ImportType,
+    RequireLike,
+}
+
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Helpers
@@ -199,15 +206,16 @@ impl<'a> CheckerState<'a> {
     /// the effective module resolution (considering both `module` and `moduleResolution`
     /// options), matching tsc's `getEmitModuleResolutionKind()`.
     pub(crate) fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
-        self.module_not_found_diagnostic_with_context(module_name, false)
+        self.module_not_found_diagnostic_for_site(module_name, ModuleNotFoundSite::Import)
     }
 
-    /// Like `module_not_found_diagnostic`, but preserves require-like contexts for
-    /// Node built-in module specifiers.
-    pub(crate) fn module_not_found_diagnostic_with_context(
+    /// Like `module_not_found_diagnostic`, but preserves the syntax site for
+    /// Node built-in module specifiers. `import("fs")` in a type position uses
+    /// the same TS2591 family as other require-like queries in tsc.
+    pub(crate) fn module_not_found_diagnostic_for_site(
         &self,
         module_name: &str,
-        require_like: bool,
+        site: ModuleNotFoundSite,
     ) -> (String, u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::query_boundaries::capabilities::is_known_node_module;
@@ -215,12 +223,15 @@ impl<'a> CheckerState<'a> {
         // Known Node.js built-ins use the "cannot find name" family instead of TS2307,
         // but the exact code depends on the import context:
         // - TS2580 for regular TypeScript import/export sites
-        // - TS2591 for require-like sites, JavaScript files, and noTypesAndSymbols runs
+        // - TS2591 for require-like sites, import-type expressions, JavaScript files,
+        //   and noTypesAndSymbols runs
         //
         // This takes priority over any resolution error from the driver.
         if is_known_node_module(module_name) {
-            let use_types_field_hint = require_like
-                || self.ctx.compiler_options.no_types_and_symbols
+            let use_types_field_hint = matches!(
+                site,
+                ModuleNotFoundSite::RequireLike | ModuleNotFoundSite::ImportType
+            ) || self.ctx.compiler_options.no_types_and_symbols
                 || self.ctx.is_js_file();
             let (message_template, code) = if use_types_field_hint {
                 (

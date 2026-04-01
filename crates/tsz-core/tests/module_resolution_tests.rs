@@ -552,6 +552,28 @@ void fs;
 }
 
 #[test]
+fn test_import_type_of_node_builtin_uses_ts2591() {
+    let diags = check_with_module_not_found_errors(
+        r#"export type Builtin = import("module").Module;"#,
+        "types.ts",
+        vec![],
+        vec!["module"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2591),
+        "Import-type unresolved Node builtin should emit TS2591, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2580),
+        "Import-type unresolved Node builtin should not emit TS2580, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_no_types_and_symbols_keeps_ts2591_for_node_builtin_imports() {
     let diags = check_with_module_not_found_errors(
         r#"import { parse } from "url";
