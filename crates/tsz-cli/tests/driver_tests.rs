@@ -346,8 +346,9 @@ export class Api<SecurityDataType = unknown> {
         r#"{
   "compilerOptions": {
     "target": "es2015",
-    "module": "commonjs",
+    "strict": true,
     "declaration": true,
+    "module": "commonjs",
     "skipLibCheck": true
   },
   "files": ["http-client.ts", "Api.ts"]
@@ -358,15 +359,12 @@ export class Api<SecurityDataType = unknown> {
     args.project = Some(base.join("tsconfig.json"));
 
     let result = compile(&args, base).expect("compile should succeed");
-    let ts7056_count = result
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code == 7056)
-        .count();
+    let ts7056: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 7056).collect();
 
     assert_eq!(
-        ts7056_count, 3,
-        "expected three TS7056 diagnostics, got: {:#?}",
+        ts7056.len(),
+        3,
+        "expected TS7056 on all inferred Api property declarations, got: {:#?}",
         result.diagnostics
     );
 }

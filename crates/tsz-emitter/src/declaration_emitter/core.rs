@@ -1668,6 +1668,10 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(prop) = self.arena.get_property_decl(prop_node) else {
             return;
         };
+        let prop_name_span = self
+            .arena
+            .get(prop.name)
+            .map(|name_node| (name_node.pos, name_node.end - name_node.pos));
 
         self.write_indent();
 
@@ -1798,8 +1802,23 @@ impl<'a> DeclarationEmitter<'a> {
                             name_node.end - name_node.pos,
                         );
                     }
-                    self.write(": ");
-                    self.write(&type_text);
+                    if self.printed_type_uses_private_import_type_root(&type_text) {
+                        if let (Some(file_path), Some((pos, length))) =
+                            (self.current_file_path.as_deref(), prop_name_span)
+                        {
+                            self.diagnostics.push(tsz_common::diagnostics::Diagnostic::from_code(
+                                7056,
+                                file_path,
+                                pos,
+                                length,
+                                &[],
+                            ));
+                        }
+                        self.write(": any");
+                    } else {
+                        self.write(": ");
+                        self.write(&type_text);
+                    }
                     // For optional class properties without an explicit type annotation,
                     // tsc appends `| undefined` when the inferred type doesn't already
                     // include it (e.g., `c? = 2` → `c?: number | undefined`).
@@ -1824,8 +1843,23 @@ impl<'a> DeclarationEmitter<'a> {
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.infer_fallback_type_text(prop.initializer)
             {
-                self.write(": ");
-                self.write(&type_text);
+                if self.printed_type_uses_private_import_type_root(&type_text) {
+                    if let (Some(file_path), Some((pos, length))) =
+                        (self.current_file_path.as_deref(), prop_name_span)
+                    {
+                        self.diagnostics.push(tsz_common::diagnostics::Diagnostic::from_code(
+                            7056,
+                            file_path,
+                            pos,
+                            length,
+                            &[],
+                        ));
+                    }
+                    self.write(": any");
+                } else {
+                    self.write(": ");
+                    self.write(&type_text);
+                }
                 // Same `| undefined` rule for fallback-inferred types on optional
                 // class properties.
                 if prop.question_token
