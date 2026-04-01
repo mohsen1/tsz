@@ -1027,18 +1027,34 @@ impl ParserState {
                 }
             }
             _ => {
-                // TS1146: When decorators are followed by a non-declaration token,
-                // tsc emits "Declaration expected" rather than "Decorators are not valid here"
-                // because the decorator implies the user intended to write a declaration.
-                // Use token_full_start (including leading trivia) to match tsc's error position.
-                use tsz_common::diagnostics::diagnostic_codes;
-                let err_pos = self.token_full_start();
-                self.parse_error_at(
-                    err_pos,
-                    0,
-                    "Declaration expected.",
-                    diagnostic_codes::DECLARATION_EXPECTED,
-                );
+                let type_assertion_decorator = decorators
+                    .as_ref()
+                    .and_then(|list| list.nodes.first().copied())
+                    .and_then(|decorator_idx| self.arena.get(decorator_idx))
+                    .and_then(|decorator_node| self.arena.get_decorator(decorator_node))
+                    .and_then(|decorator| self.arena.get(decorator.expression))
+                    .is_some_and(|expr| expr.kind == syntax_kind_ext::TYPE_ASSERTION);
+
+                if type_assertion_decorator && self.is_token(SyntaxKind::EndOfFileToken) {
+                    self.parse_error_at(
+                        self.token_end(),
+                        0,
+                        "'{' expected.",
+                        diagnostic_codes::EXPECTED,
+                    );
+                } else {
+                    // TS1146: When decorators are followed by a non-declaration token,
+                    // tsc emits "Declaration expected" rather than "Decorators are not valid here"
+                    // because the decorator implies the user intended to write a declaration.
+                    // Use token_full_start (including leading trivia) to match tsc's error position.
+                    let err_pos = self.token_full_start();
+                    self.parse_error_at(
+                        err_pos,
+                        0,
+                        "Declaration expected.",
+                        diagnostic_codes::DECLARATION_EXPECTED,
+                    );
+                }
                 self.parse_expression_statement()
             }
         }
@@ -1074,6 +1090,7 @@ impl ParserState {
         }
 
         let start_pos = self.token_pos();
+        let saved_diagnostics_len = self.parse_diagnostics.len();
         let snapshot = self.scanner.save_state();
         let at_token = self.current_token;
         self.next_token(); // consume @
@@ -1090,6 +1107,24 @@ impl ParserState {
         self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_DECORATOR;
         let expression = self.parse_left_hand_side_expression();
         self.context_flags = saved_flags;
+
+        if self.is_token(SyntaxKind::EndOfFileToken)
+            && let Some(expr_node) = self.arena.get(expression)
+            && expr_node.kind == syntax_kind_ext::TYPE_ASSERTION
+        {
+            let mut diagnostics = self.parse_diagnostics.split_off(saved_diagnostics_len);
+            diagnostics.retain(|diag| {
+                !(diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                    && diag.start >= self.token_full_start())
+            });
+            self.parse_diagnostics.extend(diagnostics);
+            self.parse_error_at(
+                expr_node.pos,
+                0,
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+        }
 
         let end_pos = self.token_end();
         Some(self.arena.add_decorator(

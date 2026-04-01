@@ -2847,13 +2847,13 @@ fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_
         .filter(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
     assert_eq!(
-        ts1109_count, 2,
-        "Decorator type assertion recovery should emit two TS1109 diagnostics, got {diagnostics:?}"
+        ts1109_count, 1,
+        "Decorator type assertion recovery should emit one TS1109 diagnostic at the type assertion start, got {diagnostics:?}"
     );
     assert_eq!(
         ts1109_positions,
-        vec![1, 21],
-        "TS1109 should anchor at decorator start and decorator-type-assertion tail, got positions: {ts1109_positions:?}. Full diagnostics: {diagnostics:?}"
+        vec![1],
+        "TS1109 should anchor at the decorator type assertion start, got positions: {ts1109_positions:?}. Full diagnostics: {diagnostics:?}"
     );
 
     let ts1005_count = diagnostics
@@ -2862,7 +2862,7 @@ fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_
         .count();
     assert_eq!(
         ts1005_count, 1,
-        "Decorator type assertion recovery should emit TS1005 for missing class body brace, got {diagnostics:?}"
+        "Decorator type assertion recovery should emit a single TS1005 for the missing class body brace, got {diagnostics:?}"
     );
     assert_eq!(
         ts1005_positions,
@@ -2874,7 +2874,7 @@ fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_
         .filter(|diag| diag.code == diagnostic_codes::DECLARATION_EXPECTED)
         .count();
     assert_eq!(
-        ts1146_count, 1,
-        "Decorator malformed literal path should still surface declaration recovery, got {diagnostics:?}"
+        ts1146_count, 0,
+        "Decorator type assertion recovery should not emit TS1146, got {diagnostics:?}"
     );
 }
