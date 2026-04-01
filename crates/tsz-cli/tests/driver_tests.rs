@@ -156,6 +156,91 @@ export type SomeType = import('./inner').SomeType;
 }
 
 #[test]
+fn declaration_emit_default_object_assign_reports_non_portable_nested_reference() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/styled-components/node_modules/hoist-non-react-statics/index.d.ts"),
+        r#"interface Statics {
+    "$$whatever": string;
+}
+declare namespace hoistNonReactStatics {
+    type NonReactStatics<T> = {[X in Exclude<keyof T, keyof Statics>]: T[X]}
+}
+export = hoistNonReactStatics;
+"#,
+    );
+    write_file(
+        &base.join("node_modules/styled-components/index.d.ts"),
+        r#"import * as hoistNonReactStatics from "hoist-non-react-statics";
+export interface DefaultTheme {}
+export type StyledComponent<TTag extends string, TTheme = DefaultTheme, TStyle = {}, TWhatever = never> =
+    string
+    & StyledComponentBase<TTag, TTheme, TStyle, TWhatever>
+    & hoistNonReactStatics.NonReactStatics<TTag>;
+export interface StyledComponentBase<TTag extends string, TTheme = DefaultTheme, TStyle = {}, TWhatever = never> {
+    tag: TTag;
+    theme: TTheme;
+    style: TStyle;
+    whatever: TWhatever;
+}
+export interface StyledInterface {
+    div: (a: TemplateStringsArray) => StyledComponent<"div">;
+}
+declare const styled: StyledInterface;
+export default styled;
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import styled from "styled-components";
+
+const A = styled.div``;
+const B = styled.div``;
+export const C = styled.div``;
+
+export default Object.assign(A, {
+    B,
+    C
+});
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert!(
+        ts2883_messages.iter().any(|message| {
+            message.contains("default")
+                && message.contains("NonReactStatics")
+                && message.contains("styled-components/node_modules/hoist-non-react-statics")
+        }),
+        "expected TS2883 on default Object.assign export, got: {ts2883_messages:#?}"
+    );
+}
+
+#[test]
 fn compile_project_namespace_import_qualified_type_sees_module_augmentation_exports() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
