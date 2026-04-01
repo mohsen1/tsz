@@ -731,7 +731,12 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
-            if self.is_assignable_to(type_arg, constraint) {
+            // Evaluate the constraint before checking assignability. Constraints
+            // like `WeakKeyTypes[keyof WeakKeyTypes]` (indexed access types) need
+            // to be reduced to their concrete form (e.g., `object | symbol`) for
+            // the assignability check to work correctly.
+            let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
+            if self.is_assignable_to(type_arg, evaluated_constraint) {
                 continue;
             }
             let widened_arg =
@@ -1541,6 +1546,11 @@ impl<'a> CheckerState<'a> {
                         if query::contains_type_parameters(self.ctx.types, inst_constraint) {
                             continue;
                         }
+                        // Evaluate indexed access / keyof types in the constraint
+                        // before checking. E.g., `WeakKeyTypes[keyof WeakKeyTypes]`
+                        // must be reduced to `object | symbol` for the assignability
+                        // check to work correctly.
+                        let inst_constraint = self.evaluate_type_for_assignability(inst_constraint);
                         let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
                             || self.satisfies_array_like_constraint(base, inst_constraint);
                         if !is_satisfied {
