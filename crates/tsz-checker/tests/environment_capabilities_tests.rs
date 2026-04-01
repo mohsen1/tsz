@@ -188,8 +188,8 @@ fn test_import_attributes_no_ts2823_with_preserve() {
 
 #[test]
 fn test_nolib_emits_ts2318_via_capabilities() {
-    // When core types are defined but CallableFunction/NewableFunction are missing,
-    // tsc does NOT emit TS2318 for them (they're auxiliary Function extensions).
+    // With explicit --noLib, tsc still requires CallableFunction/NewableFunction
+    // even if the user manually declares Function and the other core globals.
     let diags_with_function = check_with_options(
         r#"
 interface Array<T> {}
@@ -212,12 +212,20 @@ declare function foo(): void;
         .filter(|d| d.code == 2318)
         .collect();
     assert!(
-        ts2318_with_fn.is_empty(),
-        "Should NOT emit TS2318 for CallableFunction/NewableFunction when Function is defined, got: {ts2318_with_fn:?}"
+        ts2318_with_fn
+            .iter()
+            .any(|d| d.message_text.contains("CallableFunction")),
+        "Expected TS2318 for missing CallableFunction with --noLib, got: {diags_with_function:?}"
+    );
+    assert!(
+        ts2318_with_fn
+            .iter()
+            .any(|d| d.message_text.contains("NewableFunction")),
+        "Expected TS2318 for missing NewableFunction with --noLib, got: {diags_with_function:?}"
     );
 
     // When Function itself is missing (true --noLib with nothing defined),
-    // tsc DOES emit TS2318 for CallableFunction/NewableFunction.
+    // tsc also emits the broader TS2318 set including the auxiliary types.
     let diags_no_types = check_with_options(
         "declare function foo(): void;",
         CheckerOptions {
@@ -229,6 +237,41 @@ declare function foo(): void;
     assert!(
         !ts2318_no_types.is_empty(),
         "Expected TS2318 for all missing core types with --noLib and no declarations, got: {diags_no_types:?}"
+    );
+}
+
+#[test]
+fn test_nolib_respects_explicit_function_aux_declarations() {
+    let diags = check_with_options(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction extends Function {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction extends Function {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+declare function foo(): void;
+"#,
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2318_for_aux: Vec<_> = diags
+        .iter()
+        .filter(|d| {
+            d.code == 2318
+                && (d.message_text.contains("CallableFunction")
+                    || d.message_text.contains("NewableFunction"))
+        })
+        .collect();
+    assert!(
+        ts2318_for_aux.is_empty(),
+        "Did not expect TS2318 for explicitly declared function aux types, got: {diags:?}"
     );
 }
 
