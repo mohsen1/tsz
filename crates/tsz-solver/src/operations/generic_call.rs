@@ -1018,7 +1018,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Without this, `let x: 0|1|2 = invoke(() => 1)` would widen T to
             // `number` because the contextual `0|1|2` upper bound is never set.
             let return_is_bare_var = var_map.contains_key(&return_type_with_placeholders);
+            // When the contextual type is a generic function (has type parameters),
+            // always seed from it regardless of coverage. Higher-order generic
+            // patterns like `compose(list, box)` need the contextual type's
+            // TypeParameters (e.g., T from `<T>(x: T) => Box<T[]>`) to flow into
+            // the inference — argument processing alone only establishes
+            // inter-placeholder relationships without concrete type anchors.
+            let contextual_is_generic_function =
+                crate::type_queries::get_function_shape(self.interner.as_type_database(), ctx_type)
+                    .is_some_and(|shape| !shape.type_params.is_empty());
             let all_return_vars_covered = !return_is_bare_var
+                && !contextual_is_generic_function
                 && !return_seed_vars.is_empty()
                 && return_seed_vars
                     .iter()
@@ -3498,56 +3508,89 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
             });
 
-        // When any target parameter type is a type parameter (inference placeholder
-        // from an outer generic call), erase source type params to their constraints
-        // (or `unknown`). This matches tsc's `getErasedSignature` behavior: during
-        // inference, a generic function argument like `identity<T>(v: T) => T` should
-        // not create false return-type constraints that pollute the outer inference
-        // by conflating the inner T with the outer placeholder.
+        // Handle generic function arguments when target params are inference
+        // placeholders from an outer generic call. Three cases:
+        //
+        // 1. Naked type params (e.g., `list<T>(a: T)`): Skip erasure, let
+        //    instantiation proceed. The params match 1:1 against target placeholders.
+        //
+        // 2. Non-naked type params (e.g., `unbox<W>(x: Box<W>)`) WITH a generic
+        //    contextual type: Return source_ty unchanged so `constrain_types_impl`'s
+        //    generic function branch creates fresh inference variables in the shared
+        //    context, enabling proper higher-order inference (e.g., compose(unbox, unlist)).
+        //
+        // 3. Non-naked type params WITHOUT a generic contextual type: Erase source
+        //    type params to constraints/unknown (old behavior). Without a generic
+        //    contextual type, the fresh inference variables would leak unresolved.
+        let any_target_param_is_type_param = target_param_types.iter().any(|&param_type| {
+            matches!(
+                self.interner.lookup(param_type),
+                Some(TypeData::TypeParameter(_))
+            )
+        });
         if source_type_params_fully_determined_by_params {
-            let any_target_param_is_type_param = target_param_types.iter().any(|&param_type| {
-                matches!(
-                    self.interner.lookup(param_type),
-                    Some(TypeData::TypeParameter(_))
-                )
-            });
             if any_target_param_is_type_param {
-                let mut erasure_sub = TypeSubstitution::new();
-                for tp in &source_fn.type_params {
-                    erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                let source_type_params_are_naked = source_fn.type_params.iter().all(|tp| {
+                    source_fn.params.iter().any(|param| {
+                        matches!(
+                            self.interner.lookup(param.type_id),
+                            Some(TypeData::TypeParameter(info)) if info.name == tp.name
+                        )
+                    })
+                });
+                if !source_type_params_are_naked {
+                    let has_generic_contextual_type = self.contextual_type.map_or(false, |ctx| {
+                        crate::type_queries::get_function_shape(
+                            self.interner.as_type_database(),
+                            ctx,
+                        )
+                        .is_some_and(|shape| !shape.type_params.is_empty())
+                    });
+                    if has_generic_contextual_type {
+                        // Case 2: let constrain_types handle it with fresh variables
+                        return source_ty;
+                    }
+                    // Case 3: erase to constraints/unknown
+                    let mut erasure_sub = TypeSubstitution::new();
+                    for tp in &source_fn.type_params {
+                        erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                    }
+                    let erased = FunctionShape {
+                        params: source_fn
+                            .params
+                            .iter()
+                            .map(|p| ParamInfo {
+                                name: p.name,
+                                type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
+                                optional: p.optional,
+                                rest: p.rest,
+                            })
+                            .collect(),
+                        return_type: instantiate_type(
+                            self.interner,
+                            source_fn.return_type,
+                            &erasure_sub,
+                        ),
+                        this_type: source_fn
+                            .this_type
+                            .map(|t| instantiate_type(self.interner, t, &erasure_sub)),
+                        type_params: vec![],
+                        type_predicate: source_fn.type_predicate.as_ref().map(|pred| {
+                            TypePredicate {
+                                asserts: pred.asserts,
+                                target: pred.target,
+                                type_id: pred
+                                    .type_id
+                                    .map(|tid| instantiate_type(self.interner, tid, &erasure_sub)),
+                                parameter_index: pred.parameter_index,
+                            }
+                        }),
+                        is_constructor: source_fn.is_constructor,
+                        is_method: source_fn.is_method,
+                    };
+                    return self.interner.function(erased);
                 }
-                let erased = FunctionShape {
-                    params: source_fn
-                        .params
-                        .iter()
-                        .map(|p| ParamInfo {
-                            name: p.name,
-                            type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
-                            optional: p.optional,
-                            rest: p.rest,
-                        })
-                        .collect(),
-                    return_type: instantiate_type(
-                        self.interner,
-                        source_fn.return_type,
-                        &erasure_sub,
-                    ),
-                    this_type: source_fn
-                        .this_type
-                        .map(|t| instantiate_type(self.interner, t, &erasure_sub)),
-                    type_params: vec![],
-                    type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
-                        asserts: pred.asserts,
-                        target: pred.target,
-                        type_id: pred
-                            .type_id
-                            .map(|tid| instantiate_type(self.interner, tid, &erasure_sub)),
-                        parameter_index: pred.parameter_index,
-                    }),
-                    is_constructor: source_fn.is_constructor,
-                    is_method: source_fn.is_method,
-                };
-                return self.interner.function(erased);
+                // Case 1: naked type params — fall through to instantiation
             }
         }
 
@@ -3570,7 +3613,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // couldn't be structurally matched against the source's Application
         // type), fall back to erasure.  This prevents leaking `__infer_*`
         // placeholders into argument types and diagnostic messages.
+        //
+        // Skip this fallback when the target params are inference placeholders
+        // from an outer generic call. In that case, the result is expected to
+        // contain those placeholders — they represent proper higher-order
+        // generic relationships (e.g., compose(list, box)) and will be resolved
+        // by the outer inference context.
         if source_type_params_fully_determined_by_params
+            && !any_target_param_is_type_param
             && crate::type_queries::contains_infer_types_db(
                 self.interner.as_type_database(),
                 result,
