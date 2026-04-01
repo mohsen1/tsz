@@ -115,3 +115,30 @@ fn parameter_property_rest_error_anchors_at_modifier() {
         "Expected TS1317 to anchor at the parameter property modifier. Actual diagnostics: {ts1317:#?}"
     );
 }
+
+#[test]
+fn js_function_overload_reports_ts8017_at_semicolon() {
+    let source = "function foo();";
+
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts8017: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 8017).collect();
+
+    assert_eq!(ts8017.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
+
+    let name_start = source.find("foo").expect("function name") as u32;
+    assert_eq!(
+        ts8017[0].start, name_start,
+        "Expected TS8017 to anchor at the function name. Actual diagnostics: {ts8017:#?}"
+    );
+    assert_eq!(ts8017[0].length, 1, "unexpected diagnostic length: {ts8017:#?}");
+}
