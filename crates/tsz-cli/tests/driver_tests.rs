@@ -5589,6 +5589,73 @@ export function runApp(): string {
 }
 
 #[test]
+fn compile_default_interface_and_default_value_export_merge_without_default_conflicts() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs"
+  },
+  "files": ["a.ts", "b.ts", "index.ts"]
+}"#,
+    );
+
+    write_file(
+        &base.join("b.ts"),
+        r#"export const zzz = 123;
+export default zzz;
+"#,
+    );
+
+    write_file(
+        &base.join("a.ts"),
+        r#"export default interface zzz {
+    x: string;
+}
+
+import zzz from "./b";
+
+const x: zzz = { x: "" };
+zzz;
+
+export { zzz as default };
+"#,
+    );
+
+    write_file(
+        &base.join("index.ts"),
+        r#"import zzz from "./a";
+
+const x: zzz = { x: "" };
+zzz;
+
+import originalZZZ from "./b";
+originalZZZ;
+
+const y: originalZZZ = x;
+"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != 2323 && d.code != 2528),
+        "Expected interface/value default export merge without TS2323/TS2528, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_multi_file_project_with_type_imports() {
     // Test type-only imports compile correctly
     let temp = TempDir::new().expect("temp dir");
