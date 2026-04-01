@@ -864,6 +864,14 @@ impl PendingDiagnosticBuilder {
         };
         PendingDiagnostic::error(codes::ARG_COUNT_MISMATCH, vec![expected_arg, got.into()])
     }
+
+    /// Create a "This type mismatch" pending diagnostic.
+    pub fn this_type_mismatch(expected_this: TypeId, actual_this: TypeId) -> PendingDiagnostic {
+        PendingDiagnostic::error(
+            codes::THIS_TYPE_MISMATCH,
+            vec![actual_this.into(), expected_this.into()],
+        )
+    }
 }
 
 #[cfg(test)]

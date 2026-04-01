@@ -2338,6 +2338,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None; // (index, expected, actual)
         let mut all_mismatches_identical = true;
         let mut has_non_count_non_type_failure = false;
+        // Also track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
+        // when all failures are identical this-type mismatches)
+        let mut this_mismatch_count: usize = 0;
+        let mut first_this_mismatch: Option<(TypeId, TypeId)> = None; // (expected, actual)
+        let mut all_this_mismatches_identical = true;
 
         for sig in &callable.call_signatures {
             // Convert CallSignature to FunctionShape
@@ -2399,6 +2404,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         ),
                     );
                 }
+                // Track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
+                // when all count-compatible overloads fail with the same this-type mismatch)
+                CallResult::ThisTypeMismatch {
+                    expected_this,
+                    actual_this,
+                } => {
+                    all_arg_count_mismatches = false;
+                    this_mismatch_count += 1;
+                    if this_mismatch_count == 1 {
+                        first_this_mismatch = Some((expected_this, actual_this));
+                    } else if first_this_mismatch != Some((expected_this, actual_this)) {
+                        all_this_mismatches_identical = false;
+                    }
+                    failures.push(
+                        crate::diagnostics::PendingDiagnosticBuilder::this_type_mismatch(
+                            expected_this, actual_this,
+                        ),
+                    );
+                }
                 _ => {
                     all_arg_count_mismatches = false;
                     has_non_count_non_type_failure = true;
@@ -2454,6 +2478,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 index,
                 expected,
                 actual,
+                fallback_return: TypeId::ERROR,
+            };
+        }
+
+        // If all this-type mismatches are identical (or there's exactly one), and no other failures
+        // occurred, report TS2345 instead of TS2769. Use index 0 for the this-type mismatch.
+        if !has_non_count_non_type_failure
+            && this_mismatch_count > 0
+            && all_this_mismatches_identical
+            && type_mismatch_count == 0
+            && let Some((expected_this, actual_this)) = first_this_mismatch
+        {
+            return CallResult::ArgumentTypeMismatch {
+                index: 0,
+                expected: expected_this,
+                actual: actual_this,
                 fallback_return: TypeId::ERROR,
             };
         }
