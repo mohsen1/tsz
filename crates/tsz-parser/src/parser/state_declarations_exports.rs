@@ -918,37 +918,55 @@ impl ParserState {
             self.next_token();
         }
 
-        let then_statement =
-            if self.is_token(SyntaxKind::Unknown) || self.is_token(SyntaxKind::AsteriskToken) {
-                while self.is_token(SyntaxKind::Unknown) {
-                    self.next_token();
-                }
-                // Recovery for malformed `if (a) * expr;` cases: parse an empty
-                // then-statement and let `* expr;` be parsed as the next statement.
-                self.arena.add_token(
-                    syntax_kind_ext::EMPTY_STATEMENT,
-                    self.token_pos(),
-                    self.token_pos(),
-                )
-            } else if self.is_token(SyntaxKind::CloseBraceToken) {
-                // TS1109: `if (cond) }` — missing then-clause. Emit "Expression expected"
-                // at the `}` position and create an empty statement. Don't consume `}` so
-                // it can close the enclosing block.
-                self.error_expression_expected();
-                self.arena.add_token(
-                    syntax_kind_ext::EMPTY_STATEMENT,
-                    self.token_pos(),
-                    self.token_pos(),
-                )
-            } else {
-                // Set IN_BLOCK flag so that `export`/`declare` in a single-
-                // statement if-body emit TS1184, matching tsc's behavior.
-                let saved_flags = self.context_flags;
-                self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_BLOCK;
-                let stmt = self.parse_statement();
-                self.context_flags = saved_flags;
-                stmt
-            };
+        let then_statement = if self.is_token(SyntaxKind::Unknown) {
+            // Emit TS1127 for any unexpected characters before this malformed body,
+            // then continue to check for the next token.
+            while self.is_token(SyntaxKind::Unknown) {
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+                self.next_token();
+            }
+
+            // tsc reports TS1109 at the `*` when it immediately follows invalid
+            // junk in `if (cond) *...` bodies.
+            if self.is_token(SyntaxKind::AsteriskToken) {
+                self.parse_error_at_current_token(
+                    diagnostic_messages::EXPRESSION_EXPECTED,
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+                self.next_token();
+            }
+            NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::AsteriskToken) {
+            // Recovery for malformed `if (a) * expr;` cases: report the missing
+            // expression (TS1109) at the asterisk and continue with the tail.
+            self.parse_error_at_current_token(
+                diagnostic_messages::EXPRESSION_EXPECTED,
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            self.next_token();
+            NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::CloseBraceToken) {
+            // TS1109: `if (cond) }` — missing then-clause. Emit "Expression expected"
+            // at the `}` position and create an empty statement. Don't consume `}` so
+            // it can close the enclosing block.
+            self.error_expression_expected();
+            self.arena.add_token(
+                syntax_kind_ext::EMPTY_STATEMENT,
+                self.token_pos(),
+                self.token_pos(),
+            )
+        } else {
+            // Set IN_BLOCK flag so that `export`/`declare` in a single-
+            // statement if-body emit TS1184, matching tsc's behavior.
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_BLOCK;
+            let stmt = self.parse_statement();
+            self.context_flags = saved_flags;
+            stmt
+        };
         self.check_using_outside_block(then_statement);
 
         // TS1313: Check if the body of the if statement is an empty statement
