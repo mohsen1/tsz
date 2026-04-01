@@ -660,7 +660,8 @@ impl<'a> CheckerState<'a> {
             // the solver handles generic-to-generic comparison correctly via alpha-renaming.
             // Also skip when only the source has type parameters and target is concrete —
             // this is a real mismatch (e.g., <T>(x: T) => T vs (x: string) => boolean).
-            || (is_callable_or_function(source)
+            || (!self.ctx.skip_callable_type_param_suppression.get()
+                && is_callable_or_function(source)
                 && is_callable_or_function(target)
                 && contains_type_parameters(source)
                 && !self.callable_types_have_disjoint_type_parameters(source, target)
