@@ -649,6 +649,7 @@ mod tests {
         let mut graph = ModuleGraph::new();
         let resolved = ResolvedModule {
             resolved_path: create_test_path("node_modules/pkg/index.js"),
+            resolved_using_ts_extension: false,
             is_external: true,
             package_name: Some("pkg".to_string()),
             original_specifier: "pkg".to_string(),
@@ -871,6 +872,7 @@ mod tests {
             "pkg",
             &ResolvedModule {
                 resolved_path: create_test_path("node_modules/pkg/index.js"),
+                resolved_using_ts_extension: false,
                 is_external: true,
                 package_name: Some("pkg".to_string()),
                 original_specifier: "pkg".to_string(),

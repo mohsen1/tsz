@@ -425,6 +425,7 @@ impl ModuleResolver {
                 return (
                     Ok(ResolvedModule {
                         resolved_path: resolved.clone(),
+                        resolved_using_ts_extension: false,
                         is_external: false,
                         package_name: None,
                         original_specifier: specifier.to_string(),
@@ -522,6 +523,9 @@ impl ModuleResolver {
                     )
                 } else {
                     ModuleLookupResult::resolved(resolved_module.resolved_path)
+                        .with_resolved_using_ts_extension(
+                            resolved_module.resolved_using_ts_extension,
+                        )
                 }
             }
             Err(failure) => {

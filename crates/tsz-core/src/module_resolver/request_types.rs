@@ -49,6 +49,9 @@ pub struct ModuleLookupRequest<'a> {
 pub struct ModuleLookupResult {
     /// Resolved file path, if resolution succeeded.
     pub resolved_path: Option<PathBuf>,
+    /// Whether the resolution consumed the TypeScript extension from the original
+    /// specifier, matching tsc's `resolvedUsingTsExtension` behavior.
+    pub resolved_using_ts_extension: bool,
     /// Whether to treat this specifier as "resolved" even without a mapped path.
     /// True for: ambient modules, untyped JS modules, `JsxNotEnabled` with valid file.
     pub treat_as_resolved: bool,
@@ -70,6 +73,7 @@ impl ModuleLookupResult {
     pub const fn resolved(path: PathBuf) -> Self {
         Self {
             resolved_path: Some(path),
+            resolved_using_ts_extension: false,
             treat_as_resolved: false,
             error: None,
         }
@@ -79,6 +83,7 @@ impl ModuleLookupResult {
     pub const fn failed(code: u32, message: String) -> Self {
         Self {
             resolved_path: None,
+            resolved_using_ts_extension: false,
             treat_as_resolved: false,
             error: Some(ModuleLookupError { code, message }),
         }
@@ -88,6 +93,7 @@ impl ModuleLookupResult {
     pub const fn ambient() -> Self {
         Self {
             resolved_path: None,
+            resolved_using_ts_extension: false,
             treat_as_resolved: true,
             error: None,
         }
@@ -97,6 +103,7 @@ impl ModuleLookupResult {
     pub const fn resolved_with_error(code: u32, message: String) -> Self {
         Self {
             resolved_path: None,
+            resolved_using_ts_extension: false,
             treat_as_resolved: true,
             error: Some(ModuleLookupError { code, message }),
         }
@@ -106,6 +113,7 @@ impl ModuleLookupResult {
     pub fn untyped_js(js_path: PathBuf, no_implicit_any: bool, specifier: &str) -> Self {
         Self {
             resolved_path: None,
+            resolved_using_ts_extension: false,
             treat_as_resolved: true,
             error: if no_implicit_any {
                 Some(ModuleLookupError {
@@ -143,8 +151,14 @@ impl ModuleLookupResult {
                 None
             },
             resolved_path: Some(resolved_path),
+            resolved_using_ts_extension: false,
             treat_as_resolved: false,
         }
+    }
+
+    pub fn with_resolved_using_ts_extension(mut self, value: bool) -> Self {
+        self.resolved_using_ts_extension = value;
+        self
     }
 
     /// Classify this lookup result into a driver-facing outcome.
@@ -161,6 +175,7 @@ impl ModuleLookupResult {
         let is_resolved = self.resolved_path.is_some() || self.treat_as_resolved;
         ModuleLookupOutcome {
             resolved_path: self.resolved_path,
+            resolved_using_ts_extension: self.resolved_using_ts_extension,
             is_resolved,
             error: self.error,
         }
@@ -199,6 +214,9 @@ impl ModuleLookupResult {
 pub struct ModuleLookupOutcome {
     /// Resolved file path, if resolution succeeded to a concrete file.
     pub resolved_path: Option<PathBuf>,
+    /// Whether the resolution consumed the TypeScript extension from the original
+    /// specifier, matching tsc's `resolvedUsingTsExtension` behavior.
+    pub resolved_using_ts_extension: bool,
     /// Whether this specifier should be treated as "known" by the checker.
     /// True when resolved to a file, or when the module is ambient/untyped-JS.
     pub is_resolved: bool,
@@ -211,6 +229,9 @@ pub struct ModuleLookupOutcome {
 pub struct ResolvedModule {
     /// Resolved file path
     pub resolved_path: PathBuf,
+    /// Whether the successful lookup consumed a TypeScript extension from the
+    /// original specifier, matching tsc's `resolvedUsingTsExtension`.
+    pub resolved_using_ts_extension: bool,
     /// Whether the module is an external package (from `node_modules`)
     pub is_external: bool,
     /// Package name if resolved from `node_modules`
