@@ -401,23 +401,30 @@ impl TypeInterner {
 
     fn try_merge_callables_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
         let mut call_signatures: Vec<CallSignature> = Vec::new();
+        let mut construct_signatures: Vec<CallSignature> = Vec::new();
         let mut properties: Vec<PropertyInfo> = Vec::new();
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
+        let mut is_abstract = false;
 
-        // Collect all call signatures and properties
+        // Collect all call/construct signatures and properties.
         for &member in members {
             match self.lookup(member) {
                 Some(TypeData::Function(func_id)) => {
                     let func = self.function_shape(func_id);
-                    call_signatures.push(CallSignature {
+                    let signature = CallSignature {
                         type_params: func.type_params.clone(),
                         params: func.params.clone(),
                         this_type: func.this_type,
                         return_type: func.return_type,
                         type_predicate: func.type_predicate,
                         is_method: func.is_method,
-                    });
+                    };
+                    if func.is_constructor {
+                        construct_signatures.push(signature);
+                    } else {
+                        call_signatures.push(signature);
+                    }
                 }
                 Some(TypeData::Callable(callable_id)) => {
                     let callable = self.callable_shape(callable_id);
@@ -425,6 +432,11 @@ impl TypeInterner {
                     for sig in &callable.call_signatures {
                         call_signatures.push(sig.clone());
                     }
+                    // Add all construct signatures
+                    for sig in &callable.construct_signatures {
+                        construct_signatures.push(sig.clone());
+                    }
+                    is_abstract |= callable.is_abstract;
                     // Merge properties
                     for prop in &callable.properties {
                         if let Some(existing) = properties.iter_mut().find(|p| p.name == prop.name)
@@ -480,7 +492,7 @@ impl TypeInterner {
             }
         }
 
-        if call_signatures.is_empty() {
+        if call_signatures.is_empty() && construct_signatures.is_empty() {
             return None;
         }
 
@@ -489,12 +501,12 @@ impl TypeInterner {
 
         let callable_shape = CallableShape {
             call_signatures,
-            construct_signatures: Vec::new(),
+            construct_signatures,
             properties,
             string_index,
             number_index,
             symbol: None,
-            is_abstract: false,
+            is_abstract,
         };
 
         let shape_id = self.intern_callable_shape(callable_shape);

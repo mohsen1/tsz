@@ -1974,4 +1974,26 @@ class DerivedFromAbstract extends MixedBase {
             "TS2515 message should reference 'AbstractBase & Mixin', got: {msg}"
         );
     }
+
+    #[test]
+    fn double_mixin_conditional_type_base_class_has_no_extra_ts2345() {
+        let diags = check_source_diagnostics(
+            r#"
+type Constructor = new (...args: any[]) => {};
+declare const Object: Constructor;
+
+const Mixin1 = <C extends Constructor>(Base: C) => class extends Base { private _fooPrivate!: {}; };
+
+type FooConstructor = typeof Mixin1 extends (a: Constructor) => infer Cls ? Cls : never;
+const Mixin2 = <C extends FooConstructor>(Base: C) => class extends Base {};
+
+class C extends Mixin2(Mixin1(Object)) {}
+"#,
+        );
+        let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&2345),
+            "Expected no TS2345 for double mixin conditional base class, got codes: {codes:?}"
+        );
+    }
 }

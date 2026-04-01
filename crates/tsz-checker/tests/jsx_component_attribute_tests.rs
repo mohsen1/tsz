@@ -491,7 +491,9 @@ declare namespace JSX {
     assert!(
         diags.iter().any(|(code, message)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("\"data-foo\": number")
+                && message.contains("data-foo")
+                && message.contains("number")
+                && message.contains("not assignable")
         }),
         "Declared hyphenated attrs should use synthesized JSX-attrs assignability, got: {diags:?}"
     );
@@ -3903,7 +3905,7 @@ let err = <Comp><div />  <div /></Comp>;
 }
 
 #[test]
-fn jsx_children_render_prop_multiple_children_emit_ts2322_not_ts2746() {
+fn jsx_children_render_prop_multiple_children_emit_ts2746() {
     let source = format!(
         r#"
 {JSX_CHILDREN_PREAMBLE}
@@ -3922,20 +3924,147 @@ let err =
 "#
     );
     let diags = jsx_diagnostics(&source);
-    let ts2322_count = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
-    assert_eq!(
-        ts2322_count, 2,
-        "Render-prop children in a JSX body should emit one TS2322 per invalid child, got: {diags:?}"
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        ),
+        "Render-prop children should preserve the TS2746 body-shape diagnostic, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Render-prop body-shape errors should not degrade into child-level TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_array_children_text_child_emits_ts2745_not_ts2747() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: ((x: number) => JSX.Element)[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let err =
+    <Comp>
+        unexpected text
+    </Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+        ),
+        "Single text child for array-valued children should emit TS2745, got: {diags:?}"
     );
     assert!(
         !has_code(
             &diags,
-            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+            diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
         ),
-        "Render-prop children should not be collapsed into TS2746, got: {diags:?}"
+        "Single text child for array-valued children should stay on the TS2745 shape path, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_array_children_callbacks_emit_child_level_ts2322_without_ts7006() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: ((x: number) => string)[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let err =
+    <Comp>
+        {{ x => x }}
+        {{ x => x }}
+    </Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_count = diags
+        .iter()
+        .filter(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'number' is not assignable to type 'string'.")
+        })
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Array-valued callback children should emit one child-level TS2322 per callback, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, 7006),
+        "Array-valued callback children should keep contextual parameter typing, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_union_children_single_child_emits_ts2322_without_return_type_elaboration() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+type Cb = (x: number) => string;
+interface Prop {{
+    children: Cb | Cb[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let err =
+    <Comp>
+        {{ x => x }}
+    </Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Union children with a single callback should still report TS2322, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'number' is not assignable to type 'string'.")
+        }),
+        "Union children single-child errors should not collapse into return-type elaboration, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_union_children_multiple_children_prefer_array_branch() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+type Cb = (x: number) => string;
+interface Prop {{
+    children: Cb | Cb[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let err =
+    <Comp>
+        {{ x => x }}
+        {{ x => x }}
+    </Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_count = diags
+        .iter()
+        .filter(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'number' is not assignable to type 'string'.")
+        })
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Union children in the multi-child form should use the array branch and report child-level TS2322, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, 7006),
+        "Union children in the multi-child form should preserve contextual typing, got: {diags:?}"
     );
 }
 

@@ -83,6 +83,109 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(super) fn select_jsx_single_children_target_type(&mut self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_type_for_property_access(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        else {
+            return resolved;
+        };
+
+        let single_members: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&member| !self.type_requires_multiple_children(member))
+            .collect();
+        match single_members.as_slice() {
+            [] => resolved,
+            [single_member] => *single_member,
+            _ => self.ctx.types.factory().union(single_members),
+        }
+    }
+
+    pub(super) fn select_jsx_multiple_children_target_type(&mut self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_type_for_property_access(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        else {
+            return resolved;
+        };
+
+        let multiple_members: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&member| self.type_allows_multiple_children(member))
+            .collect();
+        match multiple_members.as_slice() {
+            [] => resolved,
+            [multiple_member] => *multiple_member,
+            _ => self.ctx.types.factory().union(multiple_members),
+        }
+    }
+
+    pub(super) fn jsx_multiple_children_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let resolved = self.select_jsx_multiple_children_target_type(type_id);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolved = self.evaluate_type_with_env(resolved);
+
+        if let Some(element_type) =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, resolved)
+        {
+            return Some(self.refine_jsx_callable_contextual_type(element_type));
+        }
+
+        if let Some(elements) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, resolved)
+        {
+            let element_types: Vec<TypeId> = elements
+                .iter()
+                .map(|elem| self.refine_jsx_callable_contextual_type(elem.type_id))
+                .collect();
+            return match element_types.as_slice() {
+                [] => None,
+                [element_type] => Some(*element_type),
+                _ => Some(self.ctx.types.factory().union(element_types)),
+            };
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        {
+            let mut element_types = Vec::new();
+            for member in members {
+                if let Some(element_type) = self.jsx_multiple_children_element_type(member) {
+                    element_types.push(element_type);
+                }
+            }
+            return match element_types.as_slice() {
+                [] => None,
+                [element_type] => Some(*element_type),
+                _ => Some(self.ctx.types.factory().union(element_types)),
+            };
+        }
+
+        tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved)
+            .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
+            .map(|value_type| self.refine_jsx_callable_contextual_type(value_type))
+    }
+
+    fn jsx_children_contextual_type_for_body_shape(
+        &mut self,
+        children_type: TypeId,
+        child_count: usize,
+    ) -> TypeId {
+        if child_count > 1 {
+            return self
+                .jsx_multiple_children_element_type(children_type)
+                .unwrap_or(children_type);
+        }
+
+        let single_children_type = self.select_jsx_single_children_target_type(children_type);
+        self.refine_jsx_callable_contextual_type(single_children_type)
+    }
+
     fn file_has_same_line_adjacent_jsx_recovery_pattern(&self) -> bool {
         // Previously this used text-based heuristics to detect adjacent JSX
         // recovery patterns (e.g., `/><` or `></`), but those patterns also
@@ -512,10 +615,15 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::computation::call_inference::should_preserve_contextual_application_shape;
 
+        let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
         let function_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
             self.ctx.types,
             component_type,
-        )?;
+        )
+        .filter(|shape| !shape.type_params.is_empty() && !shape.params.is_empty())
+        .or_else(|| {
+            self.infer_jsx_generic_class_component_signature(opening_idx, component_type)
+        })?;
         if function_shape.type_params.is_empty() || function_shape.params.is_empty() {
             return None;
         }
@@ -529,7 +637,6 @@ impl<'a> CheckerState<'a> {
         // contextual typing from inferred type params.
         let mut concrete_attrs: Vec<(String, TypeId)> = Vec::new();
         let mut has_function_valued_attrs = false;
-        let mut has_function_valued_children = false;
         for (name, ty) in &provided_attrs {
             match ty {
                 Some(ty) => {
@@ -538,14 +645,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 None => {
-                    if name == &children_prop_name {
-                        has_function_valued_children = true;
-                    } else {
+                    if name != &children_prop_name {
                         has_function_valued_attrs = true;
                     }
                 }
             }
         }
+
+        // Function-valued body children should be checked against the inferred children context,
+        // not feed back into type-parameter inference.
+        let has_function_valued_children = false;
 
         // === Round 1: Infer type params from concrete attrs only ===
         let mut substitution = if concrete_attrs.is_empty() {
@@ -1081,6 +1190,11 @@ impl<'a> CheckerState<'a> {
             self.get_jsx_props_type_for_component(component_type, element_idx)
         {
             if raw_has_type_params
+                && tsz_solver::type_queries::get_construct_signatures(
+                    self.ctx.types,
+                    normalized_component_type,
+                )
+                .is_none_or(|sigs| sigs.is_empty())
                 && let Some(inferred_props) = self
                     .infer_jsx_generic_component_props_type(
                         attributes_idx,
@@ -1098,25 +1212,49 @@ impl<'a> CheckerState<'a> {
             return Some((props_type, raw_has_type_params));
         }
 
-        self.infer_jsx_generic_component_props_type(attributes_idx, normalized_component_type)
-            .or_else(|| {
-                self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+        let has_function_valued_jsx_attrs = self
+            .collect_jsx_union_resolution_attrs(attributes_idx)
+            .is_some_and(|attrs| {
+                let children_prop_name = self.get_jsx_children_prop_name();
+                attrs
+                    .into_iter()
+                    .any(|(name, ty)| name != children_prop_name && ty.is_none())
+            });
+        let is_class_like_component = self
+            .ctx
+            .arena
+            .get_extended(attributes_idx)
+            .map(|ext| ext.parent)
+            .and_then(|opening_idx| {
+                self.infer_jsx_generic_class_component_signature(
+                    opening_idx,
+                    normalized_component_type,
+                )
             })
-            .map(|props_type| (props_type, false))
+            .is_some();
+
+        let fallback_props = if is_class_like_component && !has_function_valued_jsx_attrs {
+            self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+        } else {
+            self.infer_jsx_generic_component_props_type(attributes_idx, normalized_component_type)
+                .or_else(|| {
+                    self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+                })
+        };
+
+        fallback_props.map(|props_type| (props_type, false))
     }
 
     pub(super) fn infer_jsx_generic_class_component_signature(
         &mut self,
-        element_idx: NodeIndex,
+        _element_idx: NodeIndex,
         component_type: TypeId,
     ) -> Option<tsz_solver::FunctionShape> {
-        let node = self.ctx.arena.get(element_idx)?;
-        let opening = self.ctx.arena.get_jsx_opening(node)?;
         let call_sig =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?
                 .first()?
                 .clone();
-        let function_shape = tsz_solver::FunctionShape {
+        let mut function_shape = tsz_solver::FunctionShape {
             type_params: call_sig.type_params,
             params: call_sig.params,
             this_type: call_sig.this_type,
@@ -1125,39 +1263,57 @@ impl<'a> CheckerState<'a> {
             is_constructor: true,
             is_method: call_sig.is_method,
         };
-        if function_shape.type_params.is_empty() || function_shape.params.is_empty() {
+        if function_shape.type_params.is_empty() {
             return None;
         }
 
-        let children_prop_name = self.get_jsx_children_prop_name();
-        let provided_attrs = self.collect_jsx_union_resolution_attrs(opening.attributes)?;
-        let provided_attrs: Vec<(String, TypeId)> = provided_attrs
-            .into_iter()
-            .map(|(name, ty)| {
-                if name == children_prop_name {
-                    return (name, TypeId::ERROR);
+        if function_shape.params.is_empty() {
+            use crate::query_boundaries::common::PropertyAccessResult;
+
+            let evaluated_return_type = self.evaluate_type_with_env(function_shape.return_type);
+            let synthesized_param_type = match self
+                .get_element_attributes_property_name_with_check(None)
+            {
+                None => {
+                    match self.resolve_property_access_with_env(function_shape.return_type, "props")
+                    {
+                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                        _ => match self
+                            .resolve_property_access_with_env(evaluated_return_type, "props")
+                        {
+                            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                            _ => None,
+                        },
+                    }
                 }
-                (name, ty.unwrap_or(TypeId::ANY))
-            })
-            .filter(|(name, ty)| name != &children_prop_name && *ty != TypeId::ERROR)
-            .collect();
-        if provided_attrs.is_empty() {
+                Some(name) if name.is_empty() => Some(function_shape.return_type),
+                Some(name) => {
+                    match self.resolve_property_access_with_env(function_shape.return_type, &name) {
+                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                        _ => match self
+                            .resolve_property_access_with_env(evaluated_return_type, &name)
+                        {
+                            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                            _ => None,
+                        },
+                    }
+                }
+            }
+            .filter(|type_id| !matches!(*type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
+
+            if let Some(type_id) = synthesized_param_type {
+                let props_name = self.ctx.types.intern_string("props");
+                function_shape
+                    .params
+                    .push(tsz_solver::ParamInfo::required(props_name, type_id));
+            }
+        }
+
+        if function_shape.params.is_empty() {
             return None;
         }
 
-        let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-        let substitution = {
-            let env = self.ctx.type_env.borrow();
-            crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
-                self.ctx.types,
-                &self.ctx,
-                &env,
-                &function_shape,
-                &[attrs_type],
-                None,
-            )
-        };
-        Some(self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution))
+        Some(function_shape)
     }
 
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
@@ -2011,8 +2167,14 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        let child_count = self
+            .get_jsx_body_child_nodes(jsx_opening.attributes)
+            .map_or(0, |children| children.len());
+
         self.get_jsx_children_prop_type(props_type)
-            .map(|children_type| self.refine_jsx_callable_contextual_type(children_type))
+            .map(|children_type| {
+                self.jsx_children_contextual_type_for_body_shape(children_type, child_count)
+            })
     }
     // JSX Attribute Name Extraction
 

@@ -12,8 +12,11 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
-    fn js_prototype_owner_expression_for_function(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = func_idx;
+    pub(crate) fn js_prototype_owner_expression_for_node(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let mut current = node_idx;
         for _ in 0..6 {
             let parent = self.ctx.arena.get_extended(current)?.parent;
             if parent.is_none() {
@@ -41,6 +44,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn js_prototype_owner_expression_for_function(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
+        self.js_prototype_owner_expression_for_node(func_idx)
+    }
+
     fn js_prototype_owner_expression_from_assignment_left(
         &self,
         left_idx: NodeIndex,
@@ -61,7 +68,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn js_prototype_owner_function_target(&self, owner_expr: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn js_prototype_owner_function_target(
+        &self,
+        owner_expr: NodeIndex,
+    ) -> Option<NodeIndex> {
         let owner_text = self.expression_text(owner_expr)?;
 
         if !owner_text.contains('.')

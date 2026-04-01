@@ -1344,7 +1344,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// When all union members are callable with compatible signatures, this returns
     /// a union of their return types.
-    fn union_call_signature_bounds(&self, members: &[TypeId]) -> UnionCallSignatureCompatibility {
+    fn union_call_signature_bounds(
+        &mut self,
+        members: &[TypeId],
+    ) -> UnionCallSignatureCompatibility {
         let mut has_rest = false;
         let mut has_non_rest = false;
         let mut min_required = 0usize;
@@ -1437,7 +1440,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    fn extract_union_call_signature(&self, member: TypeId) -> Option<Vec<ParamInfo>> {
+    fn extract_union_call_signature(&mut self, member: TypeId) -> Option<Vec<ParamInfo>> {
         let member = self.normalize_union_member(member);
         match self.interner.lookup(member) {
             Some(TypeData::Function(func_id)) => {
@@ -1445,7 +1448,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if !function.type_params.is_empty() {
                     return None;
                 }
-                Some(function.params.clone())
+                Some(self.normalize_union_signature_params(&function.params))
             }
             Some(TypeData::Callable(callable_id)) => {
                 let callable = self.interner.callable_shape(callable_id);
@@ -1456,10 +1459,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if !signature.type_params.is_empty() {
                     return None;
                 }
-                Some(signature.params.clone())
+                Some(self.normalize_union_signature_params(&signature.params))
             }
             _ => None,
         }
+    }
+
+    fn normalize_union_signature_params(&mut self, params: &[ParamInfo]) -> Vec<ParamInfo> {
+        params
+            .iter()
+            .flat_map(|param| {
+                let mut normalized = *param;
+                if normalized.rest {
+                    normalized.type_id = match self.interner.lookup(normalized.type_id) {
+                        Some(
+                            TypeData::Application(_)
+                            | TypeData::Mapped(_)
+                            | TypeData::Intersection(_)
+                            | TypeData::Conditional(_)
+                            | TypeData::Lazy(_),
+                        ) => self.checker.evaluate_type(normalized.type_id),
+                        _ => normalized.type_id,
+                    };
+                }
+                crate::type_queries::unpack_tuple_rest_parameter(self.interner, &normalized)
+            })
+            .collect()
     }
 
     fn is_single_signature_callable_member(&self, member: TypeId) -> bool {
@@ -1484,7 +1509,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// Returns `None` if any member is not callable or has multiple/generic signatures.
     fn try_compute_combined_union_signature(
-        &self,
+        &mut self,
         members: &[TypeId],
     ) -> Option<CombinedUnionSignature> {
         if members.is_empty() {
@@ -1502,8 +1527,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if !function.type_params.is_empty() {
                         return None; // generic functions need separate handling
                     }
-                    let has_rest = function.params.iter().any(|p| p.rest);
-                    all_signatures.push((function.params.clone(), function.return_type, has_rest));
+                    let params = self.normalize_union_signature_params(&function.params);
+                    let has_rest = params.iter().any(|p| p.rest);
+                    all_signatures.push((params, function.return_type, has_rest));
                 }
                 Some(TypeData::Callable(callable_id)) => {
                     let callable = self.interner.callable_shape(callable_id);
@@ -1514,8 +1540,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if !sig.type_params.is_empty() {
                         return None;
                     }
-                    let has_rest = sig.params.iter().any(|p| p.rest);
-                    all_signatures.push((sig.params.clone(), sig.return_type, has_rest));
+                    let params = self.normalize_union_signature_params(&sig.params);
+                    let has_rest = params.iter().any(|p| p.rest);
+                    all_signatures.push((params, sig.return_type, has_rest));
                 }
                 _ => return None, // not callable
             }
@@ -1949,6 +1976,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
         // Phase 3: Result aggregation.
+        if let Some(ref combined) = combined
+            && !arg_types.iter().any(|&arg_type| {
+                crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
+            })
+        {
+            for (i, &arg_type) in arg_types.iter().enumerate() {
+                if i < combined.param_types.len() {
+                    let param_type = combined.param_types[i];
+                    if !self.checker.is_assignable_to(arg_type, param_type) {
+                        return CallResult::ArgumentTypeMismatch {
+                            index: i,
+                            expected: param_type,
+                            actual: arg_type,
+                            fallback_return: combined.return_type,
+                        };
+                    }
+                }
+            }
+        }
+
         // When we have a combined signature and some members fail on arity
         // (because they have fewer params than the combined requires),
         // use the combined return type since the overall call is valid.
@@ -2419,7 +2466,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::this_type_mismatch(
-                            expected_this, actual_this,
+                            expected_this,
+                            actual_this,
                         ),
                     );
                 }

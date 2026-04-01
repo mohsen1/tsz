@@ -2255,7 +2255,9 @@ impl<'a> CheckerState<'a> {
         if arg_type == param_type
             || arg_type == TypeId::ERROR
             || param_type == TypeId::ERROR
-            || arg_type == TypeId::ANY
+            // `any` suppresses most call-site assignability errors, but tsc still
+            // reports TS2345 for the bottom-type case `any -> never`.
+            || (arg_type == TypeId::ANY && param_type != TypeId::NEVER)
             || param_type == TypeId::ANY
             || arg_type == TypeId::UNKNOWN
             || param_type == TypeId::UNKNOWN
