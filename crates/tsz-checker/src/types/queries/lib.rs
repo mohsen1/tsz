@@ -627,6 +627,25 @@ impl<'a> CheckerState<'a> {
             member_id
         };
 
+        let parent_is_umd_export = self
+            .get_cross_file_symbol(parent_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+            .is_some_and(|symbol| symbol.is_umd_export);
+        if parent_is_umd_export
+            && let Some(member_symbol) = self
+                .get_cross_file_symbol(resolved_member_id)
+                .or_else(|| self.ctx.binder.get_symbol(resolved_member_id))
+            && (member_symbol.flags & symbol_flags::CLASS) != 0
+            && member_symbol.value_declaration.is_some()
+        {
+            return Some(
+                self.type_of_value_declaration_for_symbol_without_module_augmentations(
+                    resolved_member_id,
+                    member_symbol.value_declaration,
+                ),
+            );
+        }
+
         self.get_validated_member_type(resolved_member_id, property_name)
     }
 

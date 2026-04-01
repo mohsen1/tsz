@@ -430,6 +430,21 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn type_of_value_declaration(&mut self, decl_idx: NodeIndex) -> TypeId {
+        self.type_of_value_declaration_with_mode(decl_idx, true)
+    }
+
+    pub(crate) fn type_of_value_declaration_without_module_augmentations(
+        &mut self,
+        decl_idx: NodeIndex,
+    ) -> TypeId {
+        self.type_of_value_declaration_with_mode(decl_idx, false)
+    }
+
+    fn type_of_value_declaration_with_mode(
+        &mut self,
+        decl_idx: NodeIndex,
+        apply_module_augmentations: bool,
+    ) -> TypeId {
         if decl_idx.is_none() {
             return TypeId::ERROR;
         }
@@ -482,7 +497,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(class_data) = self.ctx.arena.get_class(node) {
-            return self.get_class_constructor_type(decl_idx, class_data);
+            return if apply_module_augmentations {
+                self.get_class_constructor_type(decl_idx, class_data)
+            } else {
+                self.get_class_constructor_type_without_module_augmentations(decl_idx, class_data)
+            };
         }
 
         // For expression nodes (e.g. `export default expr`), evaluate
@@ -511,6 +530,23 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         decl_idx: NodeIndex,
     ) -> TypeId {
+        self.type_of_value_declaration_for_symbol_with_mode(sym_id, decl_idx, true)
+    }
+
+    pub(crate) fn type_of_value_declaration_for_symbol_without_module_augmentations(
+        &mut self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> TypeId {
+        self.type_of_value_declaration_for_symbol_with_mode(sym_id, decl_idx, false)
+    }
+
+    fn type_of_value_declaration_for_symbol_with_mode(
+        &mut self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+        apply_module_augmentations: bool,
+    ) -> TypeId {
         if decl_idx.is_none() {
             return TypeId::ERROR;
         }
@@ -528,7 +564,10 @@ impl<'a> CheckerState<'a> {
             .and_then(|v| v.first())
         {
             if std::ptr::eq(da.as_ref(), self.ctx.arena) {
-                return self.type_of_value_declaration(decl_idx);
+                return self.type_of_value_declaration_with_mode(
+                    decl_idx,
+                    apply_module_augmentations,
+                );
             }
             Some(std::sync::Arc::clone(da))
         } else if self.ctx.arena.get(decl_idx).is_some() {
@@ -536,7 +575,10 @@ impl<'a> CheckerState<'a> {
             // For non-lib symbols: this is the correct arena — use fast path.
             // For lib symbols: this may be a cross-arena collision — use symbol_arenas.
             if !self.ctx.binder.symbol_arenas.contains_key(&sym_id) {
-                return self.type_of_value_declaration(decl_idx);
+                return self.type_of_value_declaration_with_mode(
+                    decl_idx,
+                    apply_module_augmentations,
+                );
             }
             self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
         } else {
@@ -606,7 +648,26 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        let result = checker.type_of_value_declaration(decl_idx);
+        let result = checker.type_of_value_declaration_with_mode(decl_idx, apply_module_augmentations);
+
+        if let Some(node) = decl_arena.get(decl_idx)
+            && decl_arena.get_class(node).is_some()
+        {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx.definition_store.register_type_to_def(result, def_id);
+            if let Some(construct_signatures) =
+                crate::query_boundaries::common::construct_signatures_for_type(
+                    self.ctx.types,
+                    result,
+                )
+            {
+                for signature in construct_signatures {
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(signature.return_type, def_id);
+                }
+            }
+        }
 
         // DO NOT merge child's symbol_types back. See delegate_cross_arena_symbol_resolution
         // for the full explanation: node_symbols collisions across arenas cause cache poisoning.

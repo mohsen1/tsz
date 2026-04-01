@@ -215,6 +215,112 @@ model.cache;
     );
 }
 
+#[test]
+fn compile_project_umd_global_class_surface_stays_unaugmented() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/math2d/index.d.ts"),
+        r#"export as namespace Math2d;
+
+export interface Point {
+    x: number;
+    y: number;
+}
+
+export class Vector implements Point {
+    x: number;
+    y: number;
+    constructor(x: number, y: number);
+
+    translate(dx: number, dy: number): Vector;
+}
+
+export function getLength(p: Vector): number;
+"#,
+    );
+    write_file(
+        &base.join("math2d-augment.d.ts"),
+        r#"import * as Math2d from "math2d";
+
+declare module "math2d" {
+    interface Vector {
+        reverse(): Math2d.Point;
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        r#"/// <reference path="node_modules/math2d/index.d.ts" />
+/// <reference path="math2d-augment.d.ts" />
+
+let v = new Math2d.Vector(3, 2);
+v.reverse();
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"/// <reference path="math2d-augment.d.ts" />
+import * as m from "math2d";
+
+let v = new m.Vector(3, 2);
+v.reverse();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.global.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "noEmit": true,
+    "noImplicitReferences": true
+  },
+  "files": ["a.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("tsconfig.import.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "noEmit": true,
+    "noImplicitReferences": true
+  },
+  "files": ["b.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.global.json"));
+    let global_result = compile(&args, base).expect("global compile should succeed");
+    assert!(
+        global_result.diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && d.message_text
+                    .contains("Property 'reverse' does not exist on type 'Vector'.")
+        }),
+        "Expected bare UMD global access to keep the class declaration surface and report TS2339 on Vector. Actual diagnostics: {:#?}",
+        global_result.diagnostics
+    );
+
+    args.project = Some(base.join("tsconfig.import.json"));
+    let import_result = compile(&args, base).expect("import compile should succeed");
+    assert!(
+        import_result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected real module imports to keep the class augmentation visible. Actual diagnostics: {:#?}",
+        import_result.diagnostics
+    );
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct SymbolSnapshot {
     flags: u32,
