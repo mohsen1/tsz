@@ -784,6 +784,28 @@ impl ParserState {
 
         // Parse tag name
         let tag_name = self.parse_jsx_element_name();
+        let tag_name_is_missing = self
+            .arena
+            .get(tag_name)
+            .and_then(|node| self.arena.get_identifier(node))
+            .is_some_and(|ident| ident.escaped_text.is_empty());
+
+        // In JS/JSX recovery, `~< <` should produce TS1003 on the malformed tag
+        // name and then a trailing TS1109 after we consume the dangling `<`.
+        if tag_name_is_missing && self.is_js_file() && self.is_token(SyntaxKind::LessThanToken) {
+            while !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+            {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                self.parse_error_at_current_token(
+                    "Expression expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
+        }
 
         // Parse optional type arguments (not in JS files, matching tsc's
         // `(contextFlags & NodeFlags.JavaScriptFile) === 0 ? tryParseTypeArguments() : undefined`)

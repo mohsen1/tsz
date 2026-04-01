@@ -2755,6 +2755,31 @@ const y = + <> x;
 }
 
 #[test]
+fn test_js_unary_tilde_then_malformed_jsx_reports_ts1003() {
+    let source = "~< <";
+    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+
+    assert!(
+        codes.contains(&1003),
+        "Expected TS1003 for malformed JSX after unary `~`, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1003_count, 1,
+        "Expected exactly one TS1003 for malformed JSX after unary `~`, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1109_count, 1,
+        "Expected exactly one trailing TS1109 for malformed JSX after unary `~`, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_tsx_fragment_errors_conformance_shape_has_no_diagnostics() {
     let source = r#"
 declare namespace JSX {
