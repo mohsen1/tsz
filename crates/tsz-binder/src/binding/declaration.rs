@@ -2519,8 +2519,10 @@ impl BinderState {
             let has_type_annotation = var_decl.type_annotation.is_some();
             let is_function_like = init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                 || init_node.kind == syntax_kind_ext::ARROW_FUNCTION;
+            let is_property_access_lhs = lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
             let is_expando_init = is_function_like
-                || (!has_type_annotation
+                || (is_property_access_lhs
+                    && !has_type_annotation
                     && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
                         || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION));
             if is_expando_init {

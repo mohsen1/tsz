@@ -84,6 +84,108 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_no_implicit_any_string_indexer_uses_get_set_call_suggestions() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+var c = {
+  get: (key: string) => 'foobar'
+};
+c['hello'];
+const foo = c['hello'];
+
+var d = {
+  set: (key: string) => 'foobar'
+};
+const bar = d['hello'];
+
+let e = {
+  get: (key: string) => 'foobar',
+  set: (key: string, value: string) => 'foobar'
+};
+e['hello'];
+e['hello'] = 'modified';
+
+({ get: (key: string) => 'hello', set: (key: string, value: string) => {} })['hello'] = 'modified';
+
+interface MyMap<K, T> {
+  get(key: K): T;
+  set(key: K, value: T): void;
+}
+
+interface I {
+  prop: MyMap<string, string>
+}
+declare const m: I;
+m.prop['a'];
+
+const o = { a: 0 };
+enum NumEnum { a, b }
+declare let numEnumKey: NumEnum;
+o[numEnumKey];
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts7052_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7052)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    let ts7053_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'c.get'?")),
+        "Expected named read-side method suggestion for `c['hello']`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'e.get'?")),
+        "Expected named read-side method suggestion for `e['hello']`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'e.set'?")),
+        "Expected named write-side method suggestion for `e['hello'] = ...`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'set'?")),
+        "Expected bare write-side method suggestion for object-literal receivers. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'm.prop.get'?")),
+        "Expected nested property receiver suggestion for `m.prop['a']`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7053_messages.iter().any(|message| {
+            message.contains("expression of type '\"hello\"' can't be used to index type '{ set: (key: string) => string; }'")
+        }),
+        "Set-only reads should remain TS7053 instead of switching to TS7052. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7053_messages
+            .iter()
+            .any(|message| message.contains("expression of type 'NumEnum' can't be used to index type '{ a: number; }'")),
+        "Numeric enum keys should still report TS7053 on plain objects. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_invokable_union_assignments_keep_both_ts2322_diagnostics() {
     let source = r#"
 interface ConstructableA {
