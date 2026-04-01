@@ -45,6 +45,7 @@ impl ModuleResolver {
                         return PathMappingAttempt {
                             resolved: Some(ResolvedModule {
                                 resolved_path: resolved,
+                                resolved_using_ts_extension: false,
                                 is_external: false,
                                 package_name: None,
                                 original_specifier: specifier.to_string(),

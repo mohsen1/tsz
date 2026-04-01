@@ -691,6 +691,26 @@ pub(super) fn collect_diagnostics(
         ),
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
+    let should_rewrite_relative_ts_specifier = |specifier: &str| {
+        (specifier.starts_with("./") || specifier.starts_with("../"))
+            && (specifier.ends_with(".ts")
+                || specifier.ends_with(".tsx")
+                || specifier.ends_with(".mts")
+                || specifier.ends_with(".cts"))
+            && !specifier.ends_with(".d.ts")
+            && !specifier.ends_with(".d.mts")
+            && !specifier.ends_with(".d.cts")
+    };
+    let may_emit_input_source = |path: &Path| {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        if normalized.contains("/node_modules/") {
+            return false;
+        }
+        !normalized.ends_with(".d.ts")
+            && !normalized.ends_with(".d.mts")
+            && !normalized.ends_with(".d.cts")
+            && !normalized.ends_with(".json")
+    };
 
     // Cache module specifiers per file — collected once, reused in prepare_binders
     // and check_file_for_parallel to avoid 3× redundant AST traversals.
@@ -786,6 +806,37 @@ pub(super) fn collect_diagnostics(
                             (file_idx, specifier.clone(), request_resolution_mode),
                             target_idx,
                         );
+                        if options.rewrite_relative_import_extensions
+                            && outcome.resolved_using_ts_extension
+                            && !should_rewrite_relative_ts_specifier(specifier)
+                            && may_emit_input_source(Path::new(&program.files[target_idx].file_name))
+                        {
+                            let ts_ext = if specifier.ends_with(".tsx") {
+                                ".tsx"
+                            } else if specifier.ends_with(".mts") {
+                                ".mts"
+                            } else if specifier.ends_with(".cts") {
+                                ".cts"
+                            } else {
+                                ".ts"
+                            };
+                            let error = tsz::checker::context::ResolutionError {
+                                code: tsz::checker::diagnostics::diagnostic_codes::THIS_IMPORT_USES_A_EXTENSION_TO_RESOLVE_TO_AN_INPUT_TYPESCRIPT_FILE_BUT_WILL_NOT,
+                                message: tsz::checker::diagnostics::format_message(
+                                    tsz::checker::diagnostics::diagnostic_messages::THIS_IMPORT_USES_A_EXTENSION_TO_RESOLVE_TO_AN_INPUT_TYPESCRIPT_FILE_BUT_WILL_NOT,
+                                    &[ts_ext],
+                                ),
+                            };
+                            resolved_module_errors.insert((file_idx, specifier.clone()), error.clone());
+                            resolved_module_request_errors.insert(
+                                (
+                                    file_idx,
+                                    specifier.clone(),
+                                    checker_resolution_mode_override(*resolution_mode_override),
+                                ),
+                                error,
+                            );
+                        }
                     }
                 } else if outcome.is_resolved {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));

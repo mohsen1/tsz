@@ -145,6 +145,7 @@ impl ModuleResolver {
                         ) {
                             return Some(ResolvedModule {
                                 resolved_path: resolved.clone(),
+                                resolved_using_ts_extension: false,
                                 is_external: false,
                                 package_name: Some(package_name.to_string()),
                                 original_specifier: original_specifier.to_string(),
