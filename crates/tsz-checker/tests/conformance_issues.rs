@@ -10373,6 +10373,14 @@ function f(...string) { }
         has_error(&diagnostics, 7051),
         "Should emit TS7051 for rest param with type-keyword name.\nActual errors: {diagnostics:#?}"
     );
+    let ts7051 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 7051)
+        .expect("expected TS7051 diagnostic");
+    assert!(
+        ts7051.1.contains("arg0: string[]"),
+        "Rest TS7051 should suggest an array type, got: {ts7051:?}"
+    );
 }
 
 /// TS7051 should fire for uppercase-starting parameter names.
