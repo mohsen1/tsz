@@ -32,16 +32,11 @@ impl<'a> CheckerState<'a> {
         let body_node = self.ctx.arena.get(func.body)?;
         let return_expr = if body_node.kind == syntax_kind_ext::BLOCK {
             let block = self.ctx.arena.get_block(body_node)?;
-            block
-                .statements
-                .nodes
-                .iter()
-                .rev()
-                .find_map(|&stmt_idx| {
-                    let stmt = self.ctx.arena.get(stmt_idx)?;
-                    let ret = self.ctx.arena.get_return_statement(stmt)?;
-                    (!ret.expression.is_none()).then_some(ret.expression)
-                })?
+            block.statements.nodes.iter().rev().find_map(|&stmt_idx| {
+                let stmt = self.ctx.arena.get(stmt_idx)?;
+                let ret = self.ctx.arena.get_return_statement(stmt)?;
+                (!ret.expression.is_none()).then_some(ret.expression)
+            })?
         } else {
             func.body
         };
@@ -75,8 +70,7 @@ impl<'a> CheckerState<'a> {
         while i < chars.len() {
             let matches = i + needle.len() <= chars.len()
                 && chars[i..i + needle.len()] == needle[..]
-                && (i == 0
-                    || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_')
+                && (i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_')
                 && (i + needle.len() == chars.len()
                     || !chars[i + needle.len()].is_alphanumeric()
                         && chars[i + needle.len()] != '_');
@@ -108,14 +102,21 @@ impl<'a> CheckerState<'a> {
 
         let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
         let parent = self.ctx.arena.get(parent_idx)?;
-        let (callee_expr, args, type_args): (NodeIndex, &[NodeIndex], &tsz_parser::parser::NodeList) =
-            match parent.kind {
-                k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
-                    let call = self.ctx.arena.get_call_expr(parent)?;
-                    (call.expression, &call.arguments.as_ref()?.nodes, call.type_arguments.as_ref()?)
-                }
-                _ => return None,
-            };
+        let (callee_expr, args, type_args): (
+            NodeIndex,
+            &[NodeIndex],
+            &tsz_parser::parser::NodeList,
+        ) = match parent.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                let call = self.ctx.arena.get_call_expr(parent)?;
+                (
+                    call.expression,
+                    &call.arguments.as_ref()?.nodes,
+                    call.type_arguments.as_ref()?,
+                )
+            }
+            _ => return None,
+        };
         if type_args.nodes.is_empty() {
             return None;
         }
@@ -147,8 +148,7 @@ impl<'a> CheckerState<'a> {
         for (tp, &arg_type_node) in raw_sig.type_params.iter().zip(type_args.nodes.iter()) {
             let replacement = self.sanitized_type_node_display(arg_type_node)?;
             let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
-            display =
-                Self::replace_type_param_name_in_display(&display, &tp_name, &replacement);
+            display = Self::replace_type_param_name_in_display(&display, &tp_name, &replacement);
         }
 
         Some(display)
@@ -516,7 +516,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let call = self.ctx.arena.get_call_expr(node)?;
-        if call.arguments.as_ref().is_none_or(|args| args.nodes.is_empty()) {
+        if call
+            .arguments
+            .as_ref()
+            .is_none_or(|args| args.nodes.is_empty())
+        {
             Some("[]".to_string())
         } else {
             None
@@ -627,8 +631,7 @@ impl<'a> CheckerState<'a> {
 
             let type_display = if param.type_annotation.is_some() {
                 let annotated_type = self.get_type_from_type_node(param.type_annotation);
-                let rendered_annotated =
-                    self.format_type_for_assignability_message(annotated_type);
+                let rendered_annotated = self.format_type_for_assignability_message(annotated_type);
                 if rendered_annotated == "error" {
                     self.sanitized_type_node_display(param.type_annotation)
                         .unwrap_or(rendered_annotated)

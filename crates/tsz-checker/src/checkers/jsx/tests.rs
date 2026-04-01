@@ -239,8 +239,12 @@ fn jsx_key_error_in_excessive_stack_depth_flat_array_fixture_is_not_dropped() {
     assert!(
         diagnostics.iter().any(|diag| {
             diag.code == 2322
-                && diag.message_text.contains("is not assignable to type 'HTMLAttributes<HTMLLIElement>'")
-                && diag.message_text.contains("'key' does not exist in type 'HTMLAttributes<HTMLLIElement>'")
+                && diag
+                    .message_text
+                    .contains("is not assignable to type 'HTMLAttributes<HTMLLIElement>'")
+                && diag
+                    .message_text
+                    .contains("'key' does not exist in type 'HTMLAttributes<HTMLLIElement>'")
                 && diag.message_text.contains("HTMLAttributes<HTMLLIElement>")
         }),
         "Expected real excessiveStackDepthFlatArray shape to keep the nested JSX key TS2322, got: {diagnostics:?}"

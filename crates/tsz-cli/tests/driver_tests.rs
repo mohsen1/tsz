@@ -357,7 +357,9 @@ export default Object.assign(A, {
         "expected TS2883 on default Object.assign export, got: {ts2883_messages:#?}"
     );
     assert!(
-        ts2883_messages.iter().all(|message| !message.contains("'C'")),
+        ts2883_messages
+            .iter()
+            .all(|message| !message.contains("'C'")),
         "expected no TS2883 on exported helper C, got: {ts2883_messages:#?}"
     );
 }
@@ -539,7 +541,12 @@ export const c = [null as any as {[K in manyprops]: {[K2 in manyprops]: `${K}.${
         .filter(|d| d.code == 7056)
         .collect();
 
-    assert_eq!(ts7056.len(), 1, "expected one TS7056, got: {:#?}", result.diagnostics);
+    assert_eq!(
+        ts7056.len(),
+        1,
+        "expected one TS7056, got: {:#?}",
+        result.diagnostics
+    );
     assert!(
         base.join("test.js").exists(),
         "expected JS emit to continue after TS7056"
@@ -11588,8 +11595,11 @@ cbThing(type => {
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.iter().all(|d| d.code
-            != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code
+                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
         "Expected JSDoc @enum references on Object.freeze exports to resolve to the enum value type, got diagnostics: {:?}",
         result.diagnostics
     );

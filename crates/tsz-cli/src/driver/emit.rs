@@ -427,8 +427,9 @@ pub(crate) fn emit_outputs(
 
                 let mut contents = emitter.emit(file.source_file);
                 let emitter_diagnostics = normalize_ts2883_diagnostics(emitter.take_diagnostics());
-                let declaration_emit_blocked =
-                    emitter_diagnostics.iter().any(|diagnostic| diagnostic.code == 7056);
+                let declaration_emit_blocked = emitter_diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == 7056);
                 emit_diagnostics.extend(emitter_diagnostics);
                 if declaration_emit_blocked {
                     declaration_bundle_blocked = true;

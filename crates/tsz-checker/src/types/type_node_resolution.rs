@@ -888,10 +888,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     } else {
                         None
                     };
-                    let is_const = decl_arena.has_modifier(
-                        &param_data.modifiers,
-                        tsz_scanner::SyntaxKind::ConstKeyword,
-                    );
+                    let is_const = decl_arena
+                        .has_modifier(&param_data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
                     let info = tsz_solver::TypeParamInfo {
                         name: atom,
                         constraint,
