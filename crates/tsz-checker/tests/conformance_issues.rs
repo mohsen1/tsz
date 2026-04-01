@@ -17716,6 +17716,59 @@ class Test {
 }
 
 #[test]
+fn test_object_entries_mapped_callable_values_report_ts2345_not_ts2349() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type ArrayLike<T> = {
+  length: number;
+  [n: number]: T;
+};
+
+declare const Object: {
+  entries<T>(o: { [s: string]: T; } | ArrayLike<T>): [string, T][];
+  entries(o: {}): [string, any][];
+};
+
+type T1 = "A" | "B";
+
+type T2 = {
+  C: [string];
+  D: [number];
+};
+
+declare const map: {
+  [K in T1 | keyof T2]: (...args: K extends keyof T2 ? T2[K] : []) => unknown;
+};
+
+declare const args: any;
+
+for (const [key, fn] of Object.entries(map)) {
+  fn(...args);
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2017,
+            strict: true,
+            ..Default::default()
+        },
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains("Argument of type 'any'")
+                && message.contains("parameter of type 'never'")
+        }),
+        "Expected TS2345 for Object.entries mapped callable values.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2349),
+        "Should not emit TS2349 for Object.entries mapped callable values.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_literal_computed_object_properties_report_ts1117_duplicates() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
