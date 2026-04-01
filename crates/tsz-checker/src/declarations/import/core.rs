@@ -2433,7 +2433,15 @@ impl<'a> CheckerState<'a> {
         // - Function overloads (multiple `export default function foo(...)`) are one symbol
         // Only emit TS2528 when there are truly conflicting default exports.
         // Special case: function + class default exports emit TS2323 + TS2813 + TS2814 instead.
-        if export_default_indices.len() > 1 {
+        let bridged_default_exports =
+            self.default_export_interface_merge_bridge_indices(&export_default_indices);
+        let effective_default_indices: Vec<NodeIndex> = export_default_indices
+            .iter()
+            .copied()
+            .filter(|idx| !bridged_default_exports.contains(idx))
+            .collect();
+
+        if effective_default_indices.len() > 1 {
             // Classify each default export
             let mut has_interface = false;
             let mut has_class = false;
@@ -2443,7 +2451,7 @@ impl<'a> CheckerState<'a> {
             let mut function_value_count = 0;
             let mut function_name: Option<String> = None;
 
-            for &export_idx in &export_default_indices {
+            for &export_idx in &effective_default_indices {
                 if self.export_decl_has_named_default_export(export_idx) {
                     has_named_default_export = true;
                 }
@@ -2502,12 +2510,12 @@ impl<'a> CheckerState<'a> {
             let interface_can_merge =
                 has_interface && (has_function || has_class) && value_count == 1;
             let is_conflict =
-                value_count > 1 || (export_default_indices.len() > 1 && !interface_can_merge);
+                value_count > 1 || (effective_default_indices.len() > 1 && !interface_can_merge);
             if is_conflict {
                 if has_function && has_class {
                     // When function + class both export as default, tsc emits
                     // TS2323 + TS2813 + TS2814 (merge conflict diagnostics).
-                    self.emit_function_class_default_merge_errors(&export_default_indices);
+                    self.emit_function_class_default_merge_errors(&effective_default_indices);
                 } else if has_class && value_count > 1 && {
                     // tsc emits TS2323 only when a named variable reference
                     // (export default foo) accompanies a class, not for anonymous
@@ -2515,7 +2523,7 @@ impl<'a> CheckerState<'a> {
                     // have class + object literal and expect TS2528.
                     // Also, if the identifier refers to a type-only binding (e.g.,
                     // a type alias), tsc uses TS2528 instead of TS2323.
-                    export_default_indices.iter().any(|&idx| {
+                    effective_default_indices.iter().any(|&idx| {
                         self.ctx
                             .arena
                             .get_export_decl_at(idx)
@@ -2551,7 +2559,7 @@ impl<'a> CheckerState<'a> {
                     let mut has_type_only_export = false;
                     let mut per_export: Vec<(NodeIndex, NodeIndex, bool, bool, bool)> = Vec::new();
 
-                    for &export_idx in &export_default_indices {
+                    for &export_idx in &effective_default_indices {
                         let default_anchor = self.get_default_export_anchor(export_idx);
                         let clause_idx = self
                             .ctx
@@ -2629,7 +2637,7 @@ impl<'a> CheckerState<'a> {
                     // When additional non-function value exports exist (e.g., identifier
                     // references to classes), tsc uses TS2528 instead, so we fall through
                     // to the else.
-                    for &export_idx in &export_default_indices {
+                    for &export_idx in &effective_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
                             anchor,
@@ -2638,7 +2646,7 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 } else if has_named_default_export
-                    && export_default_indices.iter().any(|&idx| {
+                    && effective_default_indices.iter().any(|&idx| {
                         let Some(clause_idx) = self
                             .ctx
                             .arena
@@ -2665,7 +2673,7 @@ impl<'a> CheckerState<'a> {
                         }
                     })
                 {
-                    for &export_idx in &export_default_indices {
+                    for &export_idx in &effective_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         let clause_idx = self
                             .ctx
@@ -2707,7 +2715,7 @@ impl<'a> CheckerState<'a> {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
                     // tsc skips interface declarations when emitting TS2528 (interfaces
                     // merge with values and don't count as conflicting defaults).
-                    for &export_idx in &export_default_indices {
+                    for &export_idx in &effective_default_indices {
                         let is_interface = self
                             .ctx
                             .arena
@@ -2730,7 +2738,7 @@ impl<'a> CheckerState<'a> {
                 // When multiple `export default function` declarations have bodies,
                 // tsc emits TS2393 on each, regardless of whether they are named or anonymous.
                 if has_function {
-                    let func_impls: Vec<NodeIndex> = export_default_indices
+                    let func_impls: Vec<NodeIndex> = effective_default_indices
                         .iter()
                         .filter_map(|&idx| {
                             let ed = self.ctx.arena.get_export_decl_at(idx)?;
@@ -2759,7 +2767,7 @@ impl<'a> CheckerState<'a> {
                 //   export default interface A {}
                 //   export default B;  // B is an interface
                 // TSC reports TS2528 because these can't merge.
-                for &export_idx in &export_default_indices {
+                for &export_idx in &effective_default_indices {
                     let anchor = self.get_default_export_anchor(export_idx);
                     self.error_at_node(
                         anchor,
@@ -2854,6 +2862,68 @@ impl<'a> CheckerState<'a> {
                     .get_identifier_text_from_idx(specifier.name)
                     .is_some_and(|name| name == "default")
         })
+    }
+
+    fn default_export_interface_merge_bridge_indices(
+        &mut self,
+        export_default_indices: &[NodeIndex],
+    ) -> FxHashSet<NodeIndex> {
+        let interface_default_names: FxHashSet<String> = export_default_indices
+            .iter()
+            .filter_map(|&export_idx| {
+                let clause_idx = self.ctx.arena.get_export_decl_at(export_idx)?.export_clause;
+                let clause = self.ctx.arena.get(clause_idx)?;
+                if clause.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                    return None;
+                }
+                let interface_decl = self.ctx.arena.get_interface(clause)?;
+                self.get_identifier_text_from_idx(interface_decl.name)
+            })
+            .collect();
+
+        if interface_default_names.is_empty() {
+            return FxHashSet::default();
+        }
+
+        export_default_indices
+            .iter()
+            .filter_map(|&export_idx| {
+                let clause_idx = self.ctx.arena.get_export_decl_at(export_idx)?.export_clause;
+                let clause_node = self.ctx.arena.get(clause_idx)?;
+                let named_exports = self.ctx.arena.get_named_imports(clause_node)?;
+
+                let bridges_interface_merge = named_exports.elements.nodes.iter().any(
+                    |&specifier_idx| {
+                        let specifier_node = match self.ctx.arena.get(specifier_idx) {
+                            Some(node) => node,
+                            None => return false,
+                        };
+                        let specifier = match self.ctx.arena.get_specifier(specifier_node) {
+                            Some(specifier) if !specifier.is_type_only => specifier,
+                            _ => return false,
+                        };
+                        let exported_name = match self.get_identifier_text_from_idx(specifier.name)
+                        {
+                            Some(name) if name == "default" => name,
+                            _ => return false,
+                        };
+                        let _ = exported_name;
+                        let local_name_idx = if specifier.property_name.is_some() {
+                            specifier.property_name
+                        } else {
+                            specifier.name
+                        };
+                        let Some(local_name) = self.get_identifier_text_from_idx(local_name_idx)
+                        else {
+                            return false;
+                        };
+                        interface_default_names.contains(&local_name)
+                    },
+                );
+
+                bridges_interface_merge.then_some(export_idx)
+            })
+            .collect()
     }
 
     /// Emit TS2323 + TS2813 + TS2814 for function + class default export merge conflicts.

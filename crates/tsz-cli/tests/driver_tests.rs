@@ -1300,6 +1300,56 @@ fn compile_excessive_stack_depth_flat_array_fixture_reports_normalized_jsx_key_t
 }
 
 #[test]
+fn compile_allow_import_clauses_to_merge_with_types_fixture_has_no_default_export_conflict() {
+    let Some(source) =
+        load_typescript_fixture("TypeScript/tests/cases/compiler/allowImportClausesToMergeWithTypes.ts")
+    else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    for segment in source.split("// @filename: ").skip(1) {
+        let mut lines = segment.lines();
+        let Some(filename) = lines.next().map(str::trim) else {
+            continue;
+        };
+        let contents = lines.collect::<Vec<_>>().join("\n");
+        write_file(&base.join(filename), &contents);
+    }
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.module = Some(crate::args::Module::CommonJs);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("index.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let default_export_conflicts: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.code,
+                diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE
+                    | diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS
+            )
+        })
+        .collect();
+
+    assert!(
+        default_export_conflicts.is_empty(),
+        "Expected merged import-clause/type default exports to avoid TS2323/TS2528, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_default_import_of_merged_interface_and_const_export_is_callable() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

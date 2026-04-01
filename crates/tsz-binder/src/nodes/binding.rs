@@ -1632,6 +1632,23 @@ impl BinderState {
             return true;
         }
 
+        // Allow ALIAS (import) to merge with local type declarations.
+        // Import clauses can legally share a name with interfaces/type aliases
+        // and form a single merged symbol that's usable in both namespaces:
+        //   export default interface Foo {}
+        //   import Foo from "./mod";
+        //   export { Foo as default };
+        if (existing_flags & symbol_flags::ALIAS) != 0
+            && (new_flags & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)) != 0
+        {
+            return true;
+        }
+        if (new_flags & symbol_flags::ALIAS) != 0
+            && (existing_flags & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)) != 0
+        {
+            return true;
+        }
+
         // Allow ALIAS to merge with MODULE (namespace/module).
         // In TypeScript, AliasExcludes = Alias (only conflicts with other aliases)
         // and NamespaceModuleExcludes = 0 (can merge with anything).
