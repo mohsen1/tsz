@@ -706,16 +706,26 @@ impl<'a> CheckerState<'a> {
     fn callable_types_have_disjoint_type_parameters(&self, source: TypeId, target: TypeId) -> bool {
         let get_direct_type_params = |type_id: TypeId| -> Vec<TypeId> {
             let mut params = Vec::new();
-            if let Some(shape) =
-                tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
-            {
-                if tsz_solver::visitor::is_type_parameter(self.ctx.types, shape.return_type) {
-                    params.push(shape.return_type);
-                }
-                for p in &shape.params {
-                    if tsz_solver::visitor::is_type_parameter(self.ctx.types, p.type_id) {
-                        params.push(p.type_id);
+            let mut current = type_id;
+            // Walk through nested function return types to find type parameters
+            // at any depth (e.g., () => (item: any) => T has T in the nested return)
+            for _ in 0..4 {
+                if let Some(shape) =
+                    tsz_solver::type_queries::get_function_shape(self.ctx.types, current)
+                {
+                    for p in &shape.params {
+                        if tsz_solver::visitor::is_type_parameter(self.ctx.types, p.type_id) {
+                            params.push(p.type_id);
+                        }
                     }
+                    if tsz_solver::visitor::is_type_parameter(self.ctx.types, shape.return_type) {
+                        params.push(shape.return_type);
+                        break;
+                    }
+                    // If return type is another function, recurse into it
+                    current = shape.return_type;
+                } else {
+                    break;
                 }
             }
             params

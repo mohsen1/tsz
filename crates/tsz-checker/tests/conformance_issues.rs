@@ -22264,3 +22264,29 @@ var i: I = x;
         "Expected TS2322 for incompatible assignment, got: {d:?}"
     );
 }
+
+#[test]
+fn test_type_parameter_nested_function_return_type_not_equivalent() {
+    // Nested function types with different type parameter return types should NOT be assignable.
+    // This is the typeParameterArgumentEquivalence5 conformance test.
+
+    // () => (item: any) => T is NOT assignable to () => (item: any) => U (and vice versa)
+    let d = compile_and_get_diagnostics(
+        "function foo<T,U>() { var x!: () => (item: any) => U; var y!: () => (item: any) => T; x = y; y = x; }",
+    );
+    let ts2322_count = d.iter().filter(|(c, _)| *c == 2322).count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected 2 TS2322 for () => (item: any) => T vs () => (item: any) => U, got: {d:?}"
+    );
+
+    // But same type parameter through nesting IS assignable
+    let d = compile_and_get_diagnostics(
+        "function foo<T>() { var x!: () => (item: any) => T; var y!: () => (item: any) => T; x = y; }",
+    );
+    let ts2322_count = d.iter().filter(|(c, _)| *c == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Same type param through nesting should be assignable, got: {d:?}"
+    );
+}
