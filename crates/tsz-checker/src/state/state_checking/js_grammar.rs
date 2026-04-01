@@ -372,6 +372,24 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         if has_no_body {
+            if let Some(node) = self.ctx.arena.get(node_idx) {
+                let start = match node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_function(node)
+                        .and_then(|func| self.ctx.arena.get(func.name))
+                        .map_or(node.end.saturating_sub(1), |name| name.pos),
+                    _ => node.end.saturating_sub(1),
+                };
+                self.error_at_position(
+                    start,
+                    1,
+                    diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+                return;
+            }
             self.error_at_node(
                 node_idx,
                 diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
