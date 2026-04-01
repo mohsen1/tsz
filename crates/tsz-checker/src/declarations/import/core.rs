@@ -120,6 +120,11 @@ impl<'a> CheckerState<'a> {
         if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
             return crate::context::ResolutionModeOverride::Require;
         }
+        if self.ctx.compiler_options.module == ModuleKind::Preserve
+            || self.ctx.compiler_options.module.is_es_module()
+        {
+            return crate::context::ResolutionModeOverride::Import;
+        }
         if let Some(map) = self.ctx.file_is_esm_map.as_ref() {
             let normalized = file_name.replace('\\', "/");
             let trimmed = normalized.trim_start_matches('/');
@@ -165,13 +170,24 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         declaration_is_type_only: bool,
     ) -> Option<crate::context::ResolutionModeOverride> {
-        let raw_mode = self.get_resolution_mode_override(attributes_idx)?;
-        if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only) {
-            return Some(raw_mode);
+        if let Some(raw_mode) = self.get_resolution_mode_override(attributes_idx) {
+            if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only)
+            {
+                return Some(raw_mode);
+            }
+            if self.ctx.capabilities.module == ModuleKind::Node16 && !declaration_is_type_only {
+                return Some(self.current_file_emit_resolution_mode());
+            }
+            return None;
         }
-        if self.ctx.capabilities.module == ModuleKind::Node16 && !declaration_is_type_only {
+
+        if !declaration_is_type_only
+            && (self.ctx.compiler_options.module.is_node_module()
+                || self.ctx.compiler_options.module.is_es_module())
+        {
             return Some(self.current_file_emit_resolution_mode());
         }
+
         None
     }
 
@@ -956,6 +972,8 @@ impl<'a> CheckerState<'a> {
             self.requested_resolution_mode(import.attributes, clause.is_type_only);
         let uses_fallback_branch_resolution = resolution_mode.is_some()
             && !self.resolution_mode_override_is_effective(import.attributes, clause.is_type_only);
+        let exports_table =
+            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
 
         let resolved_target = if resolution_mode.is_some() {
             self.ctx.resolve_import_target_from_file_with_mode(
@@ -976,7 +994,10 @@ impl<'a> CheckerState<'a> {
                     || file_name.ends_with(".jsx")
                     || file_name.ends_with(".mjs")
                     || file_name.ends_with(".cjs");
-                if is_js_like {
+                let has_export_surface = exports_table
+                    .as_ref()
+                    .is_some_and(|exports| !exports.is_empty());
+                if is_js_like && !has_export_surface && resolution_mode.is_none() {
                     return;
                 }
             }
@@ -1036,8 +1057,6 @@ impl<'a> CheckerState<'a> {
         // TSC includes source-level quotes in module diagnostic messages:
         // Module '"./foo"' has no exported member 'X'
         let quoted_module = format!("\"{module_name}\"");
-        let exports_table =
-            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
         // can only be referenced via default import. Applies to namespace imports

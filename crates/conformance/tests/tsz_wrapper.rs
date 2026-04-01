@@ -694,6 +694,11 @@ fn test_prepare_test_dir_implicit_include_includes_module_extensions() {
         ("/index.js".to_string(), "export {};".to_string()),
         ("/index.mjs".to_string(), "export {};".to_string()),
         ("/index.cjs".to_string(), "export {};".to_string()),
+        ("/index.ts".to_string(), "export {};".to_string()),
+        (
+            "/node_modules/pkg/index.d.ts".to_string(),
+            "export declare const x: number;".to_string(),
+        ),
     ];
     let options = HashMap::from([
         ("allowjs".to_string(), "true".to_string()),
@@ -742,6 +747,18 @@ fn test_prepare_test_dir_implicit_include_includes_module_extensions() {
     assert!(
         file_values.contains(&"index.cjs"),
         "index.cjs should be in files"
+    );
+    assert!(
+        file_values.contains(&"index.ts"),
+        "plain .ts roots should stay in files when module-extension inputs are explicit"
+    );
+    assert!(
+        file_values.contains(&"node_modules/pkg/index.d.ts"),
+        "authored node_modules fixtures should stay in files when explicit roots are used"
+    );
+    assert!(
+        parsed.get("exclude").is_none(),
+        "explicit root-file tests should not exclude node_modules"
     );
 }
 

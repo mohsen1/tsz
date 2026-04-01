@@ -210,12 +210,21 @@ impl ModuleResolver {
         // driver-provided resolution-mode override from import attributes.
         let importing_module_kind =
             importing_module_kind_override.unwrap_or_else(|| match self.module_kind {
-                ModuleKind::Preserve => match import_kind {
-                    ImportKind::EsmImport | ImportKind::DynamicImport | ImportKind::EsmReExport => {
+                ModuleKind::Preserve => {
+                    let extension = ModuleExtension::from_path(containing_file);
+                    if extension.forces_esm() {
                         ImportingModuleKind::Esm
+                    } else if extension.forces_cjs() {
+                        ImportingModuleKind::CommonJs
+                    } else {
+                        match import_kind {
+                            ImportKind::EsmImport
+                            | ImportKind::DynamicImport
+                            | ImportKind::EsmReExport => ImportingModuleKind::Esm,
+                            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                        }
                     }
-                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
-                },
+                }
                 _ => self.get_importing_module_kind(containing_file),
             });
         let cache_key = (

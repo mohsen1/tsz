@@ -35,6 +35,72 @@ fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
 
+fn declaration_companion_path(path: &Path) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_str()?;
+    let companion_name = if let Some(stem) = file_name.strip_suffix(".mjs") {
+        format!("{stem}.d.mts")
+    } else if let Some(stem) = file_name.strip_suffix(".cjs") {
+        format!("{stem}.d.cts")
+    } else if let Some(stem) = file_name.strip_suffix(".js") {
+        format!("{stem}.d.ts")
+    } else if let Some(stem) = file_name.strip_suffix(".jsx") {
+        format!("{stem}.d.ts")
+    } else {
+        return None;
+    };
+
+    Some(path.with_file_name(companion_name))
+}
+
+fn effective_request_resolution_mode(
+    module_resolver: &mut ModuleResolver,
+    options: &ResolvedCompilerOptions,
+    file_path: &Path,
+    import_kind: tsz::module_resolver::ImportKind,
+    explicit_override: Option<tsz::module_resolver::ImportingModuleKind>,
+) -> Option<tsz::checker::context::ResolutionModeOverride> {
+    checker_resolution_mode_override(explicit_override.or_else(|| match options.checker.module {
+        ModuleKind::Preserve => {
+            let extension = tsz::module_resolver::ModuleExtension::from_path(file_path);
+            Some(if extension.forces_esm() {
+                tsz::module_resolver::ImportingModuleKind::Esm
+            } else if extension.forces_cjs() {
+                tsz::module_resolver::ImportingModuleKind::CommonJs
+            } else {
+                match import_kind {
+                    tsz::module_resolver::ImportKind::EsmImport
+                    | tsz::module_resolver::ImportKind::DynamicImport
+                    | tsz::module_resolver::ImportKind::EsmReExport => {
+                        tsz::module_resolver::ImportingModuleKind::Esm
+                    }
+                    tsz::module_resolver::ImportKind::CjsRequire => {
+                        tsz::module_resolver::ImportingModuleKind::CommonJs
+                    }
+                }
+            })
+        }
+        _ => Some(module_resolver.get_importing_module_kind(file_path)),
+    }))
+}
+
+fn resolved_path_target_idx(
+    resolved_path: &Path,
+    options: &ResolvedCompilerOptions,
+    package_redirects: &FxHashMap<PathBuf, PathBuf>,
+    canonical_to_file_idx: &FxHashMap<PathBuf, usize>,
+) -> Option<usize> {
+    let redirect = |path: PathBuf| package_redirects.get(&path).cloned().unwrap_or(path);
+
+    let canonical = redirect(normalize_resolved_path(resolved_path, options));
+    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+        return Some(target_idx);
+    }
+
+    let companion = declaration_companion_path(resolved_path)?;
+    let canonical_companion = redirect(normalize_resolved_path(&companion, options));
+    canonical_to_file_idx.get(&canonical_companion).copied()
+}
+
 /// Load lib.d.ts files and create `LibContext` objects for the checker.
 ///
 /// The binding pipeline mutates per-file binder state while injecting lib symbols into the
@@ -700,22 +766,24 @@ pub(super) fn collect_diagnostics(
                 }
 
                 // Map resolved path to file index
+                let request_resolution_mode = effective_request_resolution_mode(
+                    &mut module_resolver,
+                    options,
+                    file_path,
+                    *import_kind,
+                    *resolution_mode_override,
+                );
                 if let Some(ref resolved_path) = outcome.resolved_path {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                    let canonical = normalize_resolved_path(resolved_path, options);
-                    // Apply duplicate package redirect
-                    let canonical = package_redirects
-                        .get(&canonical)
-                        .cloned()
-                        .unwrap_or(canonical);
-                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                    if let Some(target_idx) = resolved_path_target_idx(
+                        resolved_path,
+                        options,
+                        &package_redirects,
+                        &canonical_to_file_idx,
+                    ) {
                         resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                         resolved_module_request_paths.insert(
-                            (
-                                file_idx,
-                                specifier.clone(),
-                                checker_resolution_mode_override(*resolution_mode_override),
-                            ),
+                            (file_idx, specifier.clone(), request_resolution_mode),
                             target_idx,
                         );
                     }
@@ -733,11 +801,7 @@ pub(super) fn collect_diagnostics(
                         },
                     );
                     resolved_module_request_errors.insert(
-                        (
-                            file_idx,
-                            specifier.clone(),
-                            checker_resolution_mode_override(*resolution_mode_override),
-                        ),
+                        (file_idx, specifier.clone(), request_resolution_mode),
                         tsz::checker::context::ResolutionError {
                             code: error.code,
                             message: error.message.clone(),
