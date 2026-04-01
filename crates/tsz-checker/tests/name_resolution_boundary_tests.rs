@@ -652,6 +652,20 @@ fn phase2_keyword_type_in_new_routes_through_boundary() {
     );
 }
 
+#[test]
+fn phase2_unresolved_new_target_reports_ts2304_not_ts2693() {
+    let diags = check("new A().b();");
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "Expected TS2304 for unresolved constructor target, got: {diags:?}"
+    );
+    assert!(
+        !codes.contains(&2693),
+        "Should not emit TS2693 for unresolved constructor target, got: {diags:?}"
+    );
+}
+
 /// Heritage clause with unresolved name routes through boundary for suggestions
 #[test]
 fn phase2_heritage_unresolved_routes_through_boundary() {
