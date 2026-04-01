@@ -503,6 +503,62 @@ export class Api<SecurityDataType = unknown> {
 }
 
 #[test]
+fn compile_huge_declaration_output_truncation_skips_dts_but_keeps_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("test.ts"),
+        r#"type props = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z";
+
+type manyprops = `${props}${props}`;
+
+export const c = [null as any as {[K in manyprops]: {[K2 in manyprops]: `${K}.${K2}`}}][0];
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "commonjs"
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts7056: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7056)
+        .collect();
+
+    assert_eq!(ts7056.len(), 1, "expected one TS7056, got: {:#?}", result.diagnostics);
+    assert!(
+        base.join("test.js").exists(),
+        "expected JS emit to continue after TS7056"
+    );
+    assert!(
+        !base.join("test.d.ts").exists(),
+        "expected declaration emit to skip test.d.ts when TS7056 is reported"
+    );
+    assert!(
+        result
+            .emitted_files
+            .iter()
+            .all(|path| path.file_name().and_then(|name| name.to_str()) != Some("test.d.ts")),
+        "test.d.ts should not be reported as emitted: {:#?}",
+        result.emitted_files
+    );
+}
+
+#[test]
 fn declaration_emit_reports_ts2883_for_transitive_react_styled_form() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
