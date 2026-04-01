@@ -424,7 +424,11 @@ impl<'a> CheckerState<'a> {
                         declarations.push((decl_idx, flags, is_exported));
                     } else if name == "default"
                         && let Some(target_sym_id) = self
-                            .default_export_alias_target_symbol_in_file(binder, decl_arena.as_ref(), decl_idx)
+                            .default_export_alias_target_symbol_in_file(
+                                binder,
+                                decl_arena.as_ref(),
+                                decl_idx,
+                            )
                     {
                         self.push_export_surface_symbol_declarations_in_file(
                             binder,
@@ -501,18 +505,20 @@ impl<'a> CheckerState<'a> {
                     if !std::ptr::eq(decl_arena.as_ref(), arena) || !seen.insert(decl_idx.0) {
                         continue;
                     }
-                    if let Some(flags) = self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
+                    if let Some(flags) =
+                        self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
                     {
-                        let is_exported = exported_override
-                            .unwrap_or_else(|| self.is_declaration_exported(decl_arena.as_ref(), decl_idx));
+                        let is_exported = exported_override.unwrap_or_else(|| {
+                            self.is_declaration_exported(decl_arena.as_ref(), decl_idx)
+                        });
                         declarations.push((decl_idx, flags, is_exported));
                     }
                 }
             } else if seen.insert(decl_idx.0)
                 && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
             {
-                let is_exported =
-                    exported_override.unwrap_or_else(|| self.is_declaration_exported(arena, decl_idx));
+                let is_exported = exported_override
+                    .unwrap_or_else(|| self.is_declaration_exported(arena, decl_idx));
                 declarations.push((decl_idx, flags, is_exported));
             }
         }

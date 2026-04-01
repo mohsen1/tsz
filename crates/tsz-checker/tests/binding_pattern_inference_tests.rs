@@ -177,8 +177,10 @@ class A {
             ..CheckerOptions::default()
         },
     );
-    let ts2493_errors: Vec<&(u32, String)> =
-        diagnostics.iter().filter(|(code, _)| *code == 2493).collect();
+    let ts2493_errors: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2493)
+        .collect();
 
     assert!(
         ts2493_errors.is_empty(),
