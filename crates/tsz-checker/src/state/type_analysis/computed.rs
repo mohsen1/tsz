@@ -221,24 +221,28 @@ impl<'a> CheckerState<'a> {
             && let Some(ref module_spec) = import_module
         {
             let target_name = import_name.as_deref().unwrap_or(&escaped_name);
-            let target_sym_id = self
-                .ctx
-                .binder
-                .resolve_import_with_reexports_type_only(module_spec, target_name)
-                .map(|(sym_id, _is_type_only)| sym_id);
-
-            if let Some(target_sym_id) = target_sym_id
-                && target_sym_id != sym_id
-                && let Some(target_symbol) = self.get_symbol_globally(target_sym_id)
-                && (target_symbol.flags & symbol_flags::CLASS) != 0
+            if !(target_name == "default"
+                && self.source_file_import_uses_system_default_namespace_fallback(module_spec))
             {
-                let target_type = self.get_type_of_symbol(target_sym_id);
-                // Also cache the instance type so type-position references
-                // (`let x: Observable<number>`) continue to work.
-                if let Some(&inst) = self.ctx.symbol_instance_types.get(&target_sym_id) {
-                    self.ctx.symbol_instance_types.insert(sym_id, inst);
+                let target_sym_id = self
+                    .ctx
+                    .binder
+                    .resolve_import_with_reexports_type_only(module_spec, target_name)
+                    .map(|(sym_id, _is_type_only)| sym_id);
+
+                if let Some(target_sym_id) = target_sym_id
+                    && target_sym_id != sym_id
+                    && let Some(target_symbol) = self.get_symbol_globally(target_sym_id)
+                    && (target_symbol.flags & symbol_flags::CLASS) != 0
+                {
+                    let target_type = self.get_type_of_symbol(target_sym_id);
+                    // Also cache the instance type so type-position references
+                    // (`let x: Observable<number>`) continue to work.
+                    if let Some(&inst) = self.ctx.symbol_instance_types.get(&target_sym_id) {
+                        self.ctx.symbol_instance_types.insert(sym_id, inst);
+                    }
+                    return (target_type, Vec::new());
                 }
-                return (target_type, Vec::new());
             }
         }
 
@@ -2060,6 +2064,64 @@ impl<'a> CheckerState<'a> {
                     return (json_type, Vec::new());
                 }
 
+                if export_name == "default"
+                    && self.source_file_import_uses_system_default_namespace_fallback(module_name)
+                {
+                    if self
+                        .ctx
+                        .module_namespace_resolution_set
+                        .contains(module_name)
+                    {
+                        return (TypeId::ANY, Vec::new());
+                    }
+                    self.ctx
+                        .module_namespace_resolution_set
+                        .insert(module_name.to_string());
+
+                    if let Some(exports_table) = self.resolve_effective_module_exports(module_name) {
+                        use tsz_solver::PropertyInfo;
+                        let mut props: Vec<PropertyInfo> = Vec::new();
+                        for (name, &export_sym_id) in exports_table.iter() {
+                            if self.should_skip_namespace_export_name(
+                                &exports_table,
+                                name,
+                                export_sym_id,
+                            ) {
+                                continue;
+                            }
+                            let declaration_order = if name == "default" {
+                                1
+                            } else {
+                                props.len() as u32 + 2
+                            };
+                            let prop_type = self.get_type_of_symbol(export_sym_id);
+                            let name_atom = self.ctx.types.intern_string(name);
+                            props.push(PropertyInfo {
+                                name: name_atom,
+                                type_id: prop_type,
+                                write_type: prop_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                is_class_prototype: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                                declaration_order,
+                                is_string_named: false,
+                            });
+                        }
+                        let module_type = factory.object(props);
+                        self.ctx.namespace_module_names.insert(
+                            module_type,
+                            self.imported_namespace_display_module_name(module_name),
+                        );
+                        self.ctx.module_namespace_resolution_set.remove(module_name);
+                        return (module_type, Vec::new());
+                    }
+
+                    self.ctx.module_namespace_resolution_set.remove(module_name);
+                }
+
                 // Check if the module exists first (for proper error differentiation)
                 let module_exists = self.ctx.binder.module_exports.contains_key(module_name)
                     || self.module_exists_cross_file(module_name);
@@ -2203,11 +2265,17 @@ impl<'a> CheckerState<'a> {
                             return (TypeId::ERROR, Vec::new());
                         }
 
+                        let uses_system_namespace_default = self
+                            .source_file_import_uses_system_default_namespace_fallback(module_name);
+
                         // For missing default exports, check_imported_members already
                         // emits TS1192 for positional default imports (`import X from "mod"`).
                         // Don't emit a duplicate TS2305 here — just return ERROR and let
-                        // the import checker handle the diagnostic.
-                        if !self.ctx.allow_synthetic_default_imports() {
+                        // the import checker handle the diagnostic unless the module
+                        // transform itself provides a namespace-shaped default.
+                        if !self.ctx.allow_synthetic_default_imports()
+                            && !uses_system_namespace_default
+                        {
                             tracing::debug!(
                                 "default export missing and allowSyntheticDefaultImports is false, returning ERROR (TS1192 handled by import checker)"
                             );
@@ -2217,7 +2285,9 @@ impl<'a> CheckerState<'a> {
                         // For default imports without a default export, only
                         // synthesize a namespace fallback for CommonJS-shaped
                         // modules. Pure ESM modules must still report TS1192.
-                        if self.module_can_use_synthetic_default_import(module_name) {
+                        if uses_system_namespace_default
+                            || self.module_can_use_synthetic_default_import(module_name)
+                        {
                             // Same circular module guard as namespace imports above
                             if self
                                 .ctx

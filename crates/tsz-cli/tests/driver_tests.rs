@@ -578,6 +578,12 @@ export default Form
         .filter(|diagnostic| diagnostic.code == 2883)
         .map(|diagnostic| diagnostic.message_text.clone())
         .collect();
+    let ts2300_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::DUPLICATE_IDENTIFIER)
+        .map(|diagnostic| diagnostic.message_text.clone())
+        .collect();
 
     assert_eq!(
         ts2883_messages.len(),
@@ -598,6 +604,10 @@ export default Form
             .count()
             >= 2,
         "expected TS2883 diagnostics for react transitive types, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2300_messages.is_empty(),
+        "expected module augmentation interface merge to avoid TS2300, got: {ts2300_messages:#?}"
     );
 }
 
@@ -4714,6 +4724,57 @@ export { pkg };
             .iter()
             .any(|diag| diag.code == diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT),
         "Expected TS1192 for default import from ESM declaration package with no default export, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn system_module_source_default_import_without_allow_synthetic_flag_uses_namespace_fallback() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "system",
+            "allowSyntheticDefaultImports": false,
+            "ignoreDeprecations": "6.0",
+            "strict": false,
+            "noEmit": true
+          },
+          "files": ["a.ts", "b.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        r#"import Namespace from "./b";
+export const value = new Namespace.Foo();
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"export class Foo {
+  member: string;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT),
+        "Expected module=system source default import to avoid TS1192. Actual diagnostics: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics once system deprecations are silenced. Actual diagnostics: {:#?}",
         result.diagnostics
     );
 }
