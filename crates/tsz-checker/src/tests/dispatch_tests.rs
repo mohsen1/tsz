@@ -1532,3 +1532,111 @@ class Test9 {
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2416_interface_class_merge_method_override_incompatible() {
+    // When a class and interface share the same name (declaration merging),
+    // the derived class override check must see interface members from the base.
+    // Here Bar.method returns string | undefined (from optionalProperty?)
+    // but interface Foo declares method(a: number): string — TS2416 should fire.
+    let diags = check_source_diagnostics(
+        r#"
+interface Foo {
+    method(a: number): string;
+    optionalMethod?(a: number): string;
+    property: string;
+    optionalProperty?: string;
+}
+
+class Foo {
+    additionalProperty!: string;
+
+    additionalMethod(a: number): string {
+        return this.method(0);
+    }
+}
+
+class Bar extends Foo {
+    method(a: number) {
+        return this.optionalProperty;
+    }
+}
+"#,
+    );
+    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    assert_eq!(
+        ts2416.len(),
+        1,
+        "Expected TS2416 for Bar.method incompatible with merged interface Foo.method, got: {:?}",
+        ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        ts2416[0].message_text.contains("method"),
+        "TS2416 should reference the 'method' property, got: {}",
+        ts2416[0].message_text
+    );
+}
+
+#[test]
+fn ts2416_interface_class_merge_property_override_incompatible() {
+    // Property signatures from merged interfaces should also be visible
+    // in the base chain summary. Here Bar.prop is number but interface
+    // Foo declares prop: string — TS2416 should fire.
+    let diags = check_source_diagnostics(
+        r#"
+interface Foo {
+    prop: string;
+}
+
+class Foo {
+    extra!: number;
+}
+
+class Bar extends Foo {
+    prop: number = 42;
+}
+"#,
+    );
+    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    assert_eq!(
+        ts2416.len(),
+        1,
+        "Expected TS2416 for Bar.prop incompatible with merged interface Foo.prop, got: {:?}",
+        ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        ts2416[0].message_text.contains("prop"),
+        "TS2416 should reference the 'prop' property, got: {}",
+        ts2416[0].message_text
+    );
+}
+
+#[test]
+fn no_false_ts2416_interface_class_merge_compatible_override() {
+    // When the derived override IS compatible with the merged interface member,
+    // TS2416 should NOT fire.
+    let diags = check_source_diagnostics(
+        r#"
+interface Foo {
+    method(a: number): string;
+}
+
+class Foo {
+    extra!: string;
+}
+
+class Bar extends Foo {
+    method(a: number): string {
+        return "hello";
+    }
+}
+"#,
+    );
+    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    assert_eq!(
+        ts2416.len(),
+        0,
+        "Expected no TS2416 for compatible override, got: {:?}",
+        ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
