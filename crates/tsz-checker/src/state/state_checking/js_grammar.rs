@@ -391,6 +391,12 @@ impl<'a> CheckerState<'a> {
             );
             if let Some(node) = self.ctx.arena.get(node_idx) {
                 let optional_start = match node.kind {
+                    syntax_kind_ext::PARAMETER => self
+                        .ctx
+                        .arena
+                        .get_parameter(node)
+                        .and_then(|param| self.ctx.arena.get(param.name))
+                        .map(|name| name.end),
                     syntax_kind_ext::METHOD_DECLARATION => self
                         .ctx
                         .arena
@@ -607,15 +613,7 @@ impl<'a> CheckerState<'a> {
 
             // TS8009: Optional parameter (question token)
             if param.question_token {
-                let message = crate::diagnostics::format_message(
-                    diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    &["?"],
-                );
-                self.error_at_node(
-                    param_idx,
-                    &message,
-                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
+                self.error_if_ts_only_optional(param.question_token, param_idx);
             }
         }
     }
