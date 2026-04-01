@@ -4231,3 +4231,58 @@ let a = <div/>;
         "Factory namespace X.JSX should be found; got TS7026: {diags:?}"
     );
 }
+
+#[test]
+fn jsx_factory_namespace_type_alias_does_not_break_dom_create_element_literal_inference() {
+    let source = r#"
+export class X {
+    static jsx() {
+        return document.createElement('p');
+    }
+}
+
+export namespace X {
+    export namespace JSX {
+        export type IntrinsicElements = {
+            [name: string]: any;
+        };
+    }
+}
+
+function A() {
+    return (<p>Hello</p>);
+}
+"#;
+    let options = CheckerOptions {
+        jsx_mode: JsxMode::React,
+        jsx_factory: "X.jsx".to_string(),
+        jsx_factory_from_config: true,
+        ..CheckerOptions::default()
+    };
+
+    let file_name = "test.tsx";
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+    let diags: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2741),
+        "String-literal DOM generic inference should stay narrow enough to avoid TS2741, got: {diags:?}"
+    );
+}
