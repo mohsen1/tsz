@@ -11464,6 +11464,82 @@ var y = "ok";
 }
 
 #[test]
+fn compile_js_enum_object_frozen_value_type_survives_jsdoc_references() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "module": "commonjs"
+          },
+          "files": ["index.js", "usage.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"/** @enum {string} */
+const Thing = Object.freeze({
+    a: "thing",
+    b: "chill"
+});
+
+exports.Thing = Thing;
+
+/**
+ * @param {Thing} x
+ */
+function useThing(x) {}
+
+exports.useThing = useThing;
+
+/**
+ * @param {(x: Thing) => void} x
+ */
+function cbThing(x) {}
+
+exports.cbThing = cbThing;
+"#,
+    );
+    write_file(
+        &base.join("usage.js"),
+        r#"const { Thing, useThing, cbThing } = require("./index");
+
+useThing(Thing.a);
+
+/**
+ * @typedef {Object} LogEntry
+ * @property {string} type
+ * @property {number} time
+ */
+
+cbThing(type => {
+    /** @type {LogEntry} */
+    const logEntry = {
+        time: Date.now(),
+        type,
+    };
+});
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|d| d.code
+            != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected JSDoc @enum references on Object.freeze exports to resolve to the enum value type, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

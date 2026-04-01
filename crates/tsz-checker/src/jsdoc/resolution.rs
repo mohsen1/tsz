@@ -1340,6 +1340,15 @@ impl<'a> CheckerState<'a> {
             & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
             != 0
         {
+            if let Some(enum_type) = symbol
+                .declarations
+                .iter()
+                .copied()
+                .filter(|decl| decl.is_some())
+                .find_map(|decl| self.jsdoc_enum_annotation_type_for_symbol_decl(sym_id, decl))
+            {
+                return enum_type;
+            }
             if symbol.value_declaration.is_some()
                 && let Some(instance_type) = self.resolve_jsdoc_commonjs_binding_element_type(
                     symbol.value_declaration,
@@ -1366,6 +1375,69 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeId::ERROR
+    }
+
+    fn jsdoc_enum_annotation_type_for_symbol_decl(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        decl: NodeIndex,
+    ) -> Option<TypeId> {
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+
+        if file_idx == self.ctx.current_file_idx && self.ctx.arena.get(decl).is_some() {
+            return self.jsdoc_enum_annotation_type_for_current_checker(decl);
+        }
+
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+        let arena = all_arenas.get(file_idx)?;
+        let binder = all_binders.get(file_idx)?;
+        let source_file = arena.source_files.first()?;
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            arena.as_ref(),
+            binder.as_ref(),
+            self.ctx.types,
+            source_file.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.current_file_idx = file_idx;
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+        let result = checker.jsdoc_enum_annotation_type_for_current_checker(decl);
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        result
+    }
+
+    fn jsdoc_enum_annotation_type_for_current_checker(
+        &mut self,
+        decl: NodeIndex,
+    ) -> Option<TypeId> {
+        let sf = self.source_file_data_for_node(decl)?;
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
+
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let node = self.ctx.arena.get(decl)?;
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(decl, &comments, &source_text)?;
+        if !jsdoc.contains("@enum") {
+            return None;
+        }
+
+        let type_expr = Self::extract_jsdoc_enum_type_expression(&jsdoc)?.trim();
+        let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+        self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
+        let result = self.resolve_jsdoc_reference(type_expr);
+        self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+        result.filter(|ty| *ty != TypeId::ERROR && *ty != TypeId::UNKNOWN)
     }
 
     fn jsdoc_declared_value_symbol_prefers_value_type(
