@@ -809,27 +809,28 @@ impl Server {
         let emitter_target = Self::parse_target(&options.target);
         let checker_target = checker_target_from_emitter(emitter_target);
 
-        // Start with CheckerOptions::default() which has TypeScript 6.0 defaults
-        // (strict: true and all strict-family flags enabled)
-        // Then apply explicit overrides from the request options
-        let defaults = CheckerOptions::default();
+        // Note: We don't use CheckerOptions::default() as a base here.
+        // When strict is explicitly set (true or false), all strict-family flags
+        // that are not explicitly set should inherit from strict's value.
+        // This matches tsc behavior where @strict: false disables all strict checks.
+        // Only use defaults for flags that are truly not specified.
 
         CheckerOptions {
             strict: options.strict,
-            strict_null_checks: options.strict_null_checks.unwrap_or(options.strict || defaults.strict_null_checks),
-            strict_function_types: options.strict_function_types.unwrap_or(options.strict || defaults.strict_function_types),
-            strict_bind_call_apply: options.strict_bind_call_apply.unwrap_or(options.strict || defaults.strict_bind_call_apply),
+            strict_null_checks: options.strict_null_checks.unwrap_or(options.strict),
+            strict_function_types: options.strict_function_types.unwrap_or(options.strict),
+            strict_bind_call_apply: options.strict_bind_call_apply.unwrap_or(options.strict),
             strict_property_initialization: options
                 .strict_property_initialization
-                .unwrap_or(options.strict || defaults.strict_property_initialization),
-            no_implicit_any: options.no_implicit_any.unwrap_or(options.strict || defaults.no_implicit_any),
-            no_implicit_this: options.no_implicit_this.unwrap_or(options.strict || defaults.no_implicit_this),
+                .unwrap_or(options.strict),
+            no_implicit_any: options.no_implicit_any.unwrap_or(options.strict),
+            no_implicit_this: options.no_implicit_this.unwrap_or(options.strict),
             no_implicit_returns: options.no_implicit_returns,
             exact_optional_property_types: options.exact_optional_property_types,
             no_unchecked_indexed_access: options.no_unchecked_indexed_access,
             use_unknown_in_catch_variables: options
                 .use_unknown_in_catch_variables
-                .unwrap_or(options.strict || defaults.use_unknown_in_catch_variables),
+                .unwrap_or(options.strict),
             isolated_modules: options.isolated_modules,
             no_lib: options.no_lib,
             no_types_and_symbols: false,
@@ -858,7 +859,7 @@ impl Server {
             es_module_interop: options.es_module_interop,
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports
-                .unwrap_or(options.es_module_interop || defaults.allow_synthetic_default_imports),
+                .unwrap_or(options.es_module_interop),
             allow_unreachable_code: options.allow_unreachable_code,
             allow_unused_labels: options.allow_unused_labels,
             no_property_access_from_index_signature: options
@@ -867,7 +868,7 @@ impl Server {
             experimental_decorators: options.experimental_decorators,
             no_unused_locals: options.no_unused_locals,
             no_unused_parameters: options.no_unused_parameters,
-            always_strict: options.always_strict.unwrap_or(options.strict || defaults.always_strict),
+            always_strict: options.always_strict.unwrap_or(options.strict),
             resolve_json_module: options.resolve_json_module,
             check_js: options.check_js,
             allow_js: false,
@@ -893,7 +894,7 @@ impl Server {
             ignore_deprecations: false,
             allow_umd_global_access: false,
             preserve_const_enums: false,
-            strict_builtin_iterator_return: options.strict || defaults.strict_builtin_iterator_return,
+            strict_builtin_iterator_return: options.strict,
             erasable_syntax_only: false,
         }
     }
