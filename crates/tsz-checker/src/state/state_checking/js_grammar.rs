@@ -389,6 +389,32 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                 &["?"],
             );
+            if let Some(node) = self.ctx.arena.get(node_idx) {
+                let optional_start = match node.kind {
+                    syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(node)
+                        .and_then(|method| self.ctx.arena.get(method.name))
+                        .map(|name| name.end.saturating_sub(1)),
+                    syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(node)
+                        .and_then(|prop| self.ctx.arena.get(prop.name))
+                        .map(|name| name.end.saturating_sub(1)),
+                    _ => None,
+                };
+                if let Some(start) = optional_start {
+                    self.error_at_position(
+                        start,
+                        1,
+                        &message,
+                        diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    );
+                    return;
+                }
+            }
             self.error_at_node(
                 node_idx,
                 &message,
