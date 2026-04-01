@@ -1561,12 +1561,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     fn get_property_name_resolved(&self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.ctx.arena.get(name_idx)?;
 
-        if let Some(name) = self.get_property_name(name_idx) {
-            return Some(name);
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return self.get_property_name(name_idx);
         }
 
-        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return None;
+        if let Some(name) = self.get_property_name(name_idx)
+            && (name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+        {
+            return Some(name);
         }
 
         let computed = self.ctx.arena.get_computed_property(name_node)?;
@@ -1576,8 +1578,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         let sym_id = self.resolve_computed_property_symbol(computed.expression)?;
-        self.symbol_refers_to_unique_symbol(sym_id)
-            .then(|| format!("__unique_{}", sym_id.0))
+        if self.symbol_refers_to_unique_symbol(sym_id) {
+            return Some(format!("__unique_{}", sym_id.0));
+        }
+
+        self.get_property_name(name_idx)
     }
 
     fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
@@ -1628,7 +1633,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self.resolve_value_symbol_with_libs(expr_idx).map(SymbolId);
+            let sym_id = self.resolve_value_symbol_with_libs(expr_idx).map(SymbolId)?;
+            let mut current = sym_id;
+            let mut hops = 0usize;
+            while hops < 32 {
+                hops += 1;
+                let Some(next) = self.ctx.binder.resolve_import_symbol(current) else {
+                    break;
+                };
+                if next == current {
+                    break;
+                }
+                current = next;
+            }
+            return Some(current);
         }
 
         let qualified = self.expression_name_text(expr_idx)?;
@@ -1668,26 +1686,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn symbol_refers_to_unique_symbol(&self, sym_id: SymbolId) -> bool {
-        let lib_binders: Vec<_> = self
-            .ctx
-            .lib_contexts
-            .iter()
-            .map(|ctx| std::sync::Arc::clone(&ctx.binder))
-            .collect();
-        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
-            return false;
-        };
-
-        let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some()
-            && !decl_candidates.contains(&symbol.value_declaration)
-        {
-            decl_candidates.push(symbol.value_declaration);
-        }
-
-        decl_candidates
-            .into_iter()
-            .any(|decl_idx| self.declaration_is_unique_symbol(sym_id, decl_idx))
+        self.symbol_refers_to_unique_symbol_anywhere(sym_id)
     }
 
     fn declaration_is_unique_symbol(&self, sym_id: SymbolId, decl_idx: NodeIndex) -> bool {

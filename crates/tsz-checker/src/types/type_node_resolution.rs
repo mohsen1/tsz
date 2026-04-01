@@ -444,7 +444,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         None
     }
 
-    fn symbol_refers_to_unique_symbol_anywhere(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(super) fn symbol_refers_to_unique_symbol_anywhere(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
         let Some(symbol) = self.get_symbol_from_any_context(sym_id) else {
             return false;
         };
