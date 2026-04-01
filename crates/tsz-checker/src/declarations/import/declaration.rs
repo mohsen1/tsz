@@ -7,6 +7,7 @@
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -527,6 +528,89 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// TS1453/TS1455/TS1456/TS1463/TS1464: validate type-only `resolution-mode`
+    /// import attributes before the regular module-option and assignability checks.
+    ///
+    /// This mirrors tsc's `getResolutionModeOverride(..., grammarErrorOnNode)` path:
+    /// whole-declaration type-only imports get extra grammar validation for the
+    /// `resolution-mode` attribute shape, key, and literal value.
+    pub(crate) fn check_type_only_resolution_mode_attribute_grammar(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
+        if attributes_idx.is_none() || !declaration_is_type_only {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+
+        let uses_with_keyword = attrs_data.token == SyntaxKind::WithKeyword as u16;
+        let (invalid_key_message, invalid_key_code, invalid_shape_message, invalid_shape_code) =
+            if uses_with_keyword {
+                (
+                    diagnostic_messages::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ATTRIBUTES,
+                    diagnostic_codes::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ATTRIBUTES,
+                    diagnostic_messages::TYPE_IMPORT_ATTRIBUTES_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                    diagnostic_codes::TYPE_IMPORT_ATTRIBUTES_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                )
+            } else {
+                (
+                    diagnostic_messages::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ASSERTIONS,
+                    diagnostic_codes::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ASSERTIONS,
+                    diagnostic_messages::TYPE_IMPORT_ASSERTIONS_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                    diagnostic_codes::TYPE_IMPORT_ASSERTIONS_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                )
+            };
+
+        if attrs_data.elements.nodes.len() != 1 {
+            self.error_at_node(attributes_idx, invalid_shape_message, invalid_shape_code);
+            return;
+        }
+
+        let elem_idx = attrs_data.elements.nodes[0];
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return;
+        };
+        let Some(attr_data) = self.ctx.arena.get_import_attribute_data(elem_node) else {
+            return;
+        };
+
+        let name = if let Some(name_node) = self.ctx.arena.get(attr_data.name) {
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                Some(ident.escaped_text.as_str())
+            } else {
+                self.ctx.arena.get_literal_text(attr_data.name).map(|lit| {
+                    lit.trim_matches('"').trim_matches('\'')
+                })
+            }
+        } else {
+            None
+        };
+
+        if name != Some("resolution-mode") {
+            self.error_at_node(attr_data.name, invalid_key_message, invalid_key_code);
+            return;
+        }
+
+        let Some(value_text) = self.ctx.arena.get_literal_text(attr_data.value) else {
+            return;
+        };
+        let value_text = value_text.trim_matches('"').trim_matches('\'');
+        if value_text != "import" && value_text != "require" {
+            self.error_at_node(
+                attr_data.value,
+                diagnostic_messages::RESOLUTION_MODE_SHOULD_BE_EITHER_REQUIRE_OR_IMPORT,
+                diagnostic_codes::RESOLUTION_MODE_SHOULD_BE_EITHER_REQUIRE_OR_IMPORT,
+            );
+        }
+    }
+
     /// Check an import declaration for unresolved modules and missing exports.
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
@@ -576,6 +660,11 @@ impl<'a> CheckerState<'a> {
         self.check_import_attributes_deprecated_assert(import.attributes);
 
         if !has_parse_errors {
+            self.check_type_only_resolution_mode_attribute_grammar(
+                import.attributes,
+                is_type_only_import,
+            );
+
             // TS2823: Import attributes require specific module options
             self.check_import_attributes_module_option(import.attributes, is_type_only_import);
 

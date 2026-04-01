@@ -134,6 +134,30 @@ import type { RequireInterface } from "pkg" with { "resolution-mode": "require" 
 }
 
 #[test]
+fn node16_invalid_type_only_resolution_mode_reports_grammar_error() {
+    let diagnostics = check_node16_resolution_mode(
+        r#"
+import type { RequireInterface } from "pkg" with { "resolution-mode": "foobar" };
+"#,
+        2,
+        Some(false),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1453),
+        "Expected TS1453 for an invalid type-only resolution-mode, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2823),
+        "Expected TS2823 alongside TS1453 under node16, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2305),
+        "Did not expect TS2305 when the default route still resolves RequireInterface, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn node16_inline_type_specifier_resolution_mode_falls_back_to_default_route() {
     let diagnostics = check_node16_resolution_mode(
         r#"import { type ImportInterface as Imp } from "pkg" with { "resolution-mode": "import" };"#,
