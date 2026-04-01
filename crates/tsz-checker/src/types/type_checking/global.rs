@@ -81,10 +81,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check CallableFunction/NewableFunction when strictBindCallApply is enabled.
-        // These types provide proper typing for .call()/.apply()/.bind() and are
-        // required when strict (which implies strictBindCallApply) is active.
-        // When strict is false / strictBindCallApply is off, tsc does NOT require them.
-        if self.ctx.compiler_options.strict_bind_call_apply && !self.ctx.has_name_in_lib("Function")
+        // These types provide proper typing for .call()/.apply()/.bind().
+        // TypeScript requires them whenever --noLib is explicitly set, even if the
+        // user manually defines Function, because the user is then responsible for
+        // the whole built-in global surface. Outside --noLib, tsc only requires them
+        // when Function itself is also missing.
+        if self.ctx.compiler_options.strict_bind_call_apply
+            && (self.ctx.capabilities.no_lib || !self.ctx.has_name_in_lib("Function"))
         {
             for &type_name in FUNCTION_AUX_TYPES {
                 if !self.ctx.has_name_in_lib(type_name) {

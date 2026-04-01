@@ -762,10 +762,17 @@ pub(crate) fn compile_with_cache_and_changes(
 /// When deprecated compiler options produce TS5107, tsc makes them fatal (stops
 /// compilation early). However, tsc suppresses TS5107 when real file-level grammar
 /// errors exist. This function identifies which diagnostic codes count as "grammar
-#[cfg(test)]
 fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
-    matches!(code, 17006 | 17007 | 1003 | 1005 | 1125 | 1128 | 1436)
-        || ((8000..9000).contains(&code) && code != 8024)
+    matches!(code,
+        8002 | 8003 | 8004 | 8006 | 8008 | 8009 | 8010 | 8011 | 8013 | 8015 | 8016 | 8017
+            | 8018
+    ) || matches!(code, 17002 | 17006 | 17007 | 17008 | 17012)
+        || matches!(code,
+            1002 | 1003 | 1005 | 1011 | 1034 | 1109 | 1110 | 1121 | 1124 | 1125 | 1126 | 1127
+                | 1128 | 1131 | 1134 | 1137 | 1144 | 1145 | 1198 | 1199 | 1389 | 1433 | 1434
+                | 1436 | 1440 | 1442 | 1489
+        )
+        || matches!(code, 2458 | 2754)
 }
 
 fn compile_inner(
@@ -845,27 +852,6 @@ fn compile_inner(
                 == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
     });
 
-    // TS5107/TS5101 (deprecation warnings for deprecated options/values) are fatal in tsc 6.0.
-    // They stop compilation and only config-level diagnostics are reported.
-    // Match this behavior to avoid extra file-level diagnostics.
-    if has_deprecation_diagnostics {
-        return Ok(CompilationResult {
-            diagnostics: config_diagnostics,
-            emitted_files: Vec::new(),
-            files_read: Vec::new(),
-            file_infos: Vec::new(),
-            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
-            interned_types_count: 0,
-            interner_estimated_bytes: 0,
-            query_cache_stats: None,
-            def_store_stats: None,
-            phase_timings: PhaseTimings::default(),
-            residency_stats: None,
-            module_dep_stats: None,
-            invalidation_summaries: Vec::new(),
-        });
-    }
-
     let mut resolved = match resolve_compiler_options(
         config
             .as_ref()
@@ -914,6 +900,23 @@ fn compile_inner(
     if resolved.rewrite_relative_import_extensions {
         resolved.checker.rewrite_relative_import_extensions = true;
         resolved.printer.rewrite_relative_import_extensions = true;
+    }
+    if has_deprecation_diagnostics && !resolved.checker.no_lib {
+        return Ok(CompilationResult {
+            diagnostics: config_diagnostics,
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            interner_estimated_bytes: 0,
+            query_cache_stats: None,
+            def_store_stats: None,
+            phase_timings: PhaseTimings::default(),
+            residency_stats: None,
+            module_dep_stats: None,
+            invalidation_summaries: Vec::new(),
+        });
     }
     if config.is_none()
         && args.module.is_none()
@@ -1525,20 +1528,29 @@ fn compile_inner(
     // 2. If TS5107 exists without grammar errors, TS5107 is shown but function implementation
     //    errors (TS2389, TS2390, TS2391) are suppressed to match tsc behavior
     if has_deprecation_diagnostics {
-        let has_grammar_errors = diagnostics.iter().any(|d| {
-            let code = d.code;
-            // Parser/grammar errors (1xxx range) and JS grammar errors (8xxx range)
-            (code >= 1000 && code < 2000) || (code >= 8000 && code < 9000)
-        });
+        let is_deprecation = |code: u32| {
+            code == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+                || code
+                    == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+        };
+        let has_grammar_errors = diagnostics
+            .iter()
+            .any(|d| is_grammar_error_for_deprecation_priority(d.code));
 
-        if has_grammar_errors {
-            // Grammar errors take precedence - suppress TS5107/TS5101
+        if resolved.checker.no_lib {
             diagnostics.retain(|d| {
-                d.code
-                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-                    && d.code
-                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+                if d.code == diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE {
+                    return true;
+                }
+                if has_grammar_errors {
+                    return !is_deprecation(d.code)
+                        && is_grammar_error_for_deprecation_priority(d.code);
+                }
+                is_deprecation(d.code)
             });
+        } else if has_grammar_errors {
+            // Grammar errors take precedence - suppress TS5107/TS5101
+            diagnostics.retain(|d| !is_deprecation(d.code));
         } else {
             // TS5107 present without grammar errors - suppress function implementation errors
             diagnostics.retain(|d| {
