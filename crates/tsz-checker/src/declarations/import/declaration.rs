@@ -4,6 +4,7 @@
 //! Import-equals validation (`import X = require("y")` / `import X = Namespace`)
 //! lives in the sibling `equals` module.
 
+use crate::context::is_declaration_file_name;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -832,6 +833,32 @@ impl<'a> CheckerState<'a> {
                 spec_length,
                 &message,
                 diagnostic_codes::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+            );
+            emitted_extension_diagnostic = true;
+        }
+
+        // TS2877: rewriteRelativeImportExtensions — non-relative imports with
+        // a TypeScript extension that resolve to an input TypeScript file are not
+        // rewritten during emit.
+        if !emitted_extension_diagnostic
+            && self.ctx.compiler_options.rewrite_relative_import_extensions
+            && !is_type_only_import
+            && !self.ctx.is_declaration_file()
+            && !should_rewrite_module_specifier(module_name)
+            && !self.resolved_via_directory_index(module_name)
+            && self.module_target_is_typescript_input_file(module_name)
+            && let Some(ext) = ts_extension_suffix(module_name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::THIS_IMPORT_USES_A_EXTENSION_TO_RESOLVE_TO_AN_INPUT_TYPESCRIPT_FILE_BUT_WILL_NOT,
+                &[ext],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::THIS_IMPORT_USES_A_EXTENSION_TO_RESOLVE_TO_AN_INPUT_TYPESCRIPT_FILE_BUT_WILL_NOT,
             );
             emitted_extension_diagnostic = true;
         }
@@ -2017,6 +2044,32 @@ impl<'a> CheckerState<'a> {
         } else {
             format!("./{resolved}")
         }
+    }
+
+    /// Returns `true` if `specifier` resolves to a non-declaration TypeScript input
+    /// file (`.ts`, `.tsx`, `.mts`, `.cts`) that can participate in emit rewriting.
+    fn module_target_is_typescript_input_file(&self, specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return false;
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return false;
+        };
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+        if is_declaration_file_name(file_name) {
+            return false;
+        }
+
+        file_name.ends_with(".ts")
+            || file_name.ends_with(".tsx")
+            || file_name.ends_with(".mts")
+            || file_name.ends_with(".cts")
     }
 }
 
