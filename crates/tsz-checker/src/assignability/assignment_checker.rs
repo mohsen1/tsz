@@ -2563,9 +2563,40 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // tsc anchors some void-assignment diagnostics to the function identifier on
+        // the RHS when the assignment target is `void` and the RHS is a function
+        // symbol reference (e.g. `function f<T>(a: T) { ... }; x = f;`).
+        if target_type == TypeId::VOID
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, source_type)
+            && self.is_identifier_rhs(right_idx)
+        {
+            let _ = self.check_assignable_or_report_at_exact_anchor(
+                source_type,
+                target_type,
+                right_idx,
+                right_idx,
+            );
+            return;
+        }
+
         // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
         // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
         let _ = self.check_assignable_or_report_at(source_type, target_type, right_idx, left_idx);
+    }
+
+    fn is_function_reference(&self, node_idx: NodeIndex) -> bool {
+        self.is_identifier_rhs(node_idx)
+    }
+
+    fn is_identifier_rhs(&self, node_idx: NodeIndex) -> bool {
+        let node_idx = self.ctx.arena.skip_parenthesized_and_assertions(node_idx);
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        true
     }
 
     fn deferred_generic_element_write_target(
