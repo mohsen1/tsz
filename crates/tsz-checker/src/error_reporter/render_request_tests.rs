@@ -356,6 +356,74 @@ x.nonexistent;
     );
 }
 
+#[test]
+fn ts2339_merged_class_namespace_instance_uses_instance_display() {
+    let source = r#"
+class Sammy {
+    foo() { return "hi"; }
+}
+namespace Sammy {
+    export const x = 1;
+}
+const instance = new Sammy();
+instance.x;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2339 = diagnostics
+        .iter()
+        .find(|d| d.code == 2339 && d.message_text.contains("Property 'x'"))
+        .expect(&format!(
+            "Expected TS2339 for merged class namespace access, got: {diagnostics:?}"
+        ));
+    assert!(
+        ts2339.message_text.contains("type 'Sammy'."),
+        "Expected instance-side display in TS2339, got: {:?}",
+        ts2339.message_text
+    );
+    assert!(
+        !ts2339.message_text.contains("typeof Sammy"),
+        "Merged class namespace instance access should not render typeof Sammy: {:?}",
+        ts2339.message_text
+    );
+}
+
+#[test]
+fn ts2339_merged_class_namespace_interface_property_uses_instance_display() {
+    let source = r#"
+class Sammy {
+   foo() { return "hi"; }
+  static bar() {
+    return -1;
+   }
+}
+namespace Sammy {
+    export var x = 1;
+}
+interface JQueryStatic {
+    sammy: Sammy;
+}
+declare var $: JQueryStatic;
+var r4 = $.sammy.x;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2339 = diagnostics
+        .iter()
+        .find(|d| d.code == 2339 && d.message_text.contains("Property 'x'"))
+        .expect(&format!(
+            "Expected TS2339 for interface-typed merged class namespace access, got: {diagnostics:?}"
+        ));
+    assert!(
+        ts2339.message_text.contains("type 'Sammy'."),
+        "Expected instance-side display in TS2339, got: {:?}",
+        ts2339.message_text
+    );
+    assert!(
+        !ts2339.message_text.contains("typeof Sammy"),
+        "Merged class namespace property access through interface should not render typeof Sammy: {:?}",
+        ts2339.message_text
+    );
+}
+
 /// Verify that object type formatting includes trailing semicolons.
 #[test]
 fn ts2322_object_type_message_has_semicolons() {

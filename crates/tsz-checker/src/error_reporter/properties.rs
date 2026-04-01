@@ -1177,6 +1177,12 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::{SymbolId, symbol_flags};
         use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
 
+        const fn is_pure_namespace(symbol: &tsz_binder::Symbol) -> bool {
+            (symbol.flags & symbol_flags::MODULE) != 0
+                && (symbol.flags & symbol_flags::ENUM) == 0
+                && (symbol.flags & symbol_flags::CLASS) == 0
+        }
+
         let kind = classify_namespace_member(self.ctx.types, type_id);
         let sym_id = match kind {
             NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
@@ -1190,8 +1196,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        // Only namespace/module types (not enums, which are handled separately)
-        if (symbol.flags & symbol_flags::MODULE) != 0 && (symbol.flags & symbol_flags::ENUM) == 0 {
+        // Keep class+namespace merges on their class-instance display path.
+        if is_pure_namespace(symbol) {
             Some(symbol.escaped_name.clone())
         } else {
             None
