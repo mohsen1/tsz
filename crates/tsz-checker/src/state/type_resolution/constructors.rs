@@ -4,8 +4,8 @@
 //! Extracted from `type_resolution/module.rs` to keep files focused and
 //! under the 2 000-line architectural limit.
 
-use crate::query_boundaries::state::type_resolution as query;
 use crate::query_boundaries::common::call_signatures_for_type;
+use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
@@ -395,11 +395,14 @@ impl<'a> CheckerState<'a> {
                 if let Some(call_expr) = self.ctx.arena.get_call_expr(expr_node) {
                     if let Some(type_args) = call_expr.type_arguments.as_ref() {
                         let callee_type = self.get_type_of_node(call_expr.expression);
-                        let invoked_type =
-                            self.apply_type_arguments_to_callable_type(callee_type, Some(type_args));
-                        if let Some(call_signatures) = call_signatures_for_type(self.ctx.types, invoked_type)
+                        let invoked_type = self
+                            .apply_type_arguments_to_callable_type(callee_type, Some(type_args));
+                        if let Some(call_signatures) =
+                            call_signatures_for_type(self.ctx.types, invoked_type)
                         {
-                            call_signatures.first().map_or(cached_expr_type, |sig| sig.return_type)
+                            call_signatures
+                                .first()
+                                .map_or(cached_expr_type, |sig| sig.return_type)
                         } else {
                             cached_expr_type
                         }
