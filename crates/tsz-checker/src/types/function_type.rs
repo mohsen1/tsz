@@ -7,7 +7,6 @@ use crate::context::speculation::DiagnosticSpeculationGuard;
 use crate::diagnostics::format_message;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
@@ -449,8 +448,6 @@ impl<'a> CheckerState<'a> {
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
-        let mut jsdoc_type_param_types: FxHashMap<String, TypeId> = FxHashMap::default();
-
         // TS2730: Arrow functions cannot have a 'this' parameter.
         // In JS files, a @this JSDoc tag on an arrow function is an error because
         // arrow functions capture `this` lexically.
@@ -515,21 +512,20 @@ impl<'a> CheckerState<'a> {
             && let Some(owner_target) = prototype_owner_target
             && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
         {
-            let factory = self.ctx.types.factory();
-            for name in Self::jsdoc_template_type_params(&owner_jsdoc) {
-                let atom = self.ctx.types.intern_string(&name);
-                let info = TypeParamInfo {
-                    name: atom,
+                let factory = self.ctx.types.factory();
+                for name in Self::jsdoc_template_type_params(&owner_jsdoc) {
+                    let atom = self.ctx.types.intern_string(&name);
+                    let info = TypeParamInfo {
+                        name: atom,
                     constraint: None,
-                    default: None,
-                    is_const: false,
-                };
-                let ty = factory.type_param(info);
-                jsdoc_type_param_types.insert(name.clone(), ty);
-                let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-                jsdoc_type_param_updates.push((name, previous, false));
+                        default: None,
+                        is_const: false,
+                    };
+                    let ty = factory.type_param(info);
+                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+                    jsdoc_type_param_updates.push((name, previous, false));
+                }
             }
-        }
         if self.is_js_file()
             && type_params.is_empty()
             && let Some(ref jsdoc) = func_jsdoc
@@ -547,7 +543,6 @@ impl<'a> CheckerState<'a> {
                         is_const: false,
                     };
                     let ty = factory.type_param(info);
-                    jsdoc_type_param_types.insert(name.clone(), ty);
                     jsdoc_type_params.push(info);
                     // Register in type_parameter_scope so inline JSDoc casts
                     // like `/** @type {T} */(expr)` can resolve `T`.
@@ -559,8 +554,8 @@ impl<'a> CheckerState<'a> {
         }
         let jsdoc_return_context = func_jsdoc
             .as_ref()
-            .and_then(|j| Self::jsdoc_returns_type_name(j))
-            .and_then(|name| jsdoc_type_param_types.get(&name).copied());
+            .and_then(|j| Self::jsdoc_returns_type_expression(j))
+            .and_then(|expr| self.resolve_jsdoc_reference(&expr));
 
         let js_constructor_instance_type = js_constructor_target.and_then(|target_idx| {
             self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
@@ -1801,7 +1796,7 @@ impl<'a> CheckerState<'a> {
             // Only apply when the function has an explicit type annotation;
             // contextually-typed functions may carry `ThisType` from their
             // contextual signature but substituting would produce false positives.
-            let body_return_type = if has_type_annotation
+            let body_return_type = if (has_type_annotation || jsdoc_return_context.is_some())
                 && tsz_solver::contains_this_type(self.ctx.types, body_return_type)
             {
                 if let Some(concrete_this) = self.current_this_type() {

@@ -2066,6 +2066,30 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Extract the raw type expression from `@returns {Type}` / `@return {Type}`.
+    pub(crate) fn jsdoc_returns_type_expression(jsdoc: &str) -> Option<String> {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let Some(rest) = trimmed
+                .strip_prefix("@returns")
+                .or_else(|| trimmed.strip_prefix("@return"))
+            else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            if !rest.starts_with('{') {
+                continue;
+            }
+            let after_open = &rest[1..];
+            let end = after_open.find('}')?;
+            let type_expr = after_open[..end].trim();
+            if !type_expr.is_empty() {
+                return Some(type_expr.to_string());
+            }
+        }
+        None
+    }
+
     /// Extract a type predicate from `@returns {x is Type}` / `@return {this is Entry}`.
     ///
     /// Returns `Some((is_asserts, param_name, type_str))` if the `@returns` tag
