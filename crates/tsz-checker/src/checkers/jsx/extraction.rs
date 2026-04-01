@@ -384,6 +384,14 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn is_jsx_string_tag_type(&self, type_id: TypeId) -> bool {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, type_id)
+            && let Some(constraint) =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+            && constraint != type_id
+        {
+            return self.is_jsx_string_tag_type(constraint);
+        }
+
         if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
             || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
         {
