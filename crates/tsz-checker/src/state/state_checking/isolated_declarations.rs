@@ -197,6 +197,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Object literals with non-simple computed property names get
+                // per-property TS9038 diagnostics (and may also report TS9010 on
+                // referenced helper variables) instead of a generic TS9010 on the
+                // exported variable itself.
+                if self.report_isolated_decl_computed_property_names(decl_idx, decl.initializer) {
+                    continue;
+                }
+
                 // tsc emits TS9010 only when the initializer type genuinely
                 // can't be inferred.
                 if self.is_isolated_decl_type_inferrable(decl.initializer) {
