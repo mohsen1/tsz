@@ -7511,6 +7511,14 @@ impl<'a> DeclarationEmitter<'a> {
                         );
                     }
                     if self.diagnostics.len() == diagnostics_before {
+                        let _ = self.emit_non_serializable_import_type_diagnostic(
+                            &printed_type_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
+                    if self.diagnostics.len() == diagnostics_before {
                         let _ = self.emit_non_serializable_property_diagnostic(
                             &printed_type_text,
                             &file_path,
@@ -10419,6 +10427,27 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
+    pub(crate) fn emit_non_serializable_import_type_diagnostic(
+        &mut self,
+        printed_type_text: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        use tsz_common::diagnostics::Diagnostic;
+
+        if self
+            .find_unexported_import_type_reference_in_printed_type(printed_type_text)
+            .is_none()
+        {
+            return false;
+        }
+
+        self.diagnostics
+            .push(Diagnostic::from_code(7056, file, pos, length, &[]));
+        true
+    }
+
     fn find_non_serializable_property_name_in_printed_type(
         &self,
         printed_type_text: &str,
@@ -10470,6 +10499,55 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             search = rest;
+        }
+
+        None
+    }
+
+    fn find_unexported_import_type_reference_in_printed_type(
+        &self,
+        printed_type_text: &str,
+    ) -> Option<(String, String)> {
+        let binder = self.binder?;
+        let current_path = self.current_file_path.as_deref()?;
+        let mut remaining = printed_type_text;
+
+        while let Some(start) = remaining.find("import(\"") {
+            let after_prefix = &remaining[start + "import(\"".len()..];
+            let Some((module_specifier, tail)) = after_prefix.split_once("\")") else {
+                break;
+            };
+            let Some(tail) = tail.strip_prefix('.') else {
+                remaining = after_prefix;
+                continue;
+            };
+            let Some(first_name) = tail
+                .split(['.', '<', '[', ' ', '&', '|', '>', ',', ')', ';', '\n', '\r'])
+                .find(|part| !part.is_empty())
+            else {
+                remaining = after_prefix;
+                continue;
+            };
+
+            let exports = binder.module_exports.iter().find_map(|(module_path, exports)| {
+                let candidate =
+                    if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+                        Some(self.strip_ts_extensions(
+                            &self.calculate_relative_path(current_path, module_path),
+                        ))
+                    } else {
+                        self.package_specifier_for_node_modules_path(current_path, module_path)
+                    }?;
+                (candidate == module_specifier).then_some(exports)
+            });
+
+            if let Some(exports) = exports
+                && !exports.has(first_name)
+            {
+                return Some((module_specifier.to_string(), first_name.to_string()));
+            }
+
+            remaining = after_prefix;
         }
 
         None
