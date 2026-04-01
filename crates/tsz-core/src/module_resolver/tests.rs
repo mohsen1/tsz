@@ -1595,6 +1595,56 @@ fn test_resolver_empty_types_field_uses_types_versions() {
 }
 
 #[test]
+fn test_resolver_subpath_ambient_module_falls_back_to_types_entry() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_subpath_ambient_module");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules").join("ext").join("ts3.1")).unwrap();
+
+    fs::write(dir.join("app.ts"), "import { b } from \"ext/other\";").unwrap();
+    fs::write(
+        dir.join("node_modules")
+            .join("ext")
+            .join("ts3.1")
+            .join("index.d.ts"),
+        r#"declare module "ext" { export const a: "ts3.1 a"; }
+declare module "ext/other" { export const b: "ts3.1 b"; }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("ext").join("package.json"),
+        r#"{
+            "name": "ext",
+            "types": "index",
+            "typesVersions": {
+                ">=3.1.0-0": { "*": ["ts3.1/*"] }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let options = crate::config::ResolvedCompilerOptions {
+        module_resolution: Some(crate::config::ModuleResolutionKind::Node),
+        types_versions_compiler_version: Some("6.0.1".to_string()),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("ext/other", &dir.join("app.ts"), Span::new(0, 11));
+
+    let resolved =
+        result.expect("ambient subpath should resolve through package types entry fallback");
+    assert_eq!(
+        resolved.resolved_path,
+        dir.join("node_modules")
+            .join("ext")
+            .join("ts3.1")
+            .join("index.d.ts")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_missing_file() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_missing");
