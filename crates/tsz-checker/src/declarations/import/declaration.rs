@@ -973,6 +973,11 @@ impl<'a> CheckerState<'a> {
             && resolved.contains(module_name)
         {
             if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+                let resolution_mode =
+                    self.requested_resolution_mode(import.attributes, is_type_only_import);
+                let has_typed_export_surface = self
+                    .resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+                    .is_some();
                 let mut skip_export_checks = false;
                 // Extract data we need before any mutable borrows
                 let (_target_is_declaration_file, file_info) = {
@@ -983,7 +988,9 @@ impl<'a> CheckerState<'a> {
                             || file_name.ends_with(".jsx")
                             || file_name.ends_with(".mjs")
                             || file_name.ends_with(".cjs");
-                        let skip_exports = is_js_like && !source_file.is_declaration_file;
+                        let skip_exports = is_js_like
+                            && !source_file.is_declaration_file
+                            && !has_typed_export_surface;
                         // Determine if target file is ESM. .mjs/.mts are always ESM.
                         // For .js/.ts targets, also check package.json "type" field via
                         // file_is_esm_map. TSC does not emit TS1479 when a .js source file

@@ -30,11 +30,67 @@ fn check_node16_resolution_mode(
     default_target_idx: usize,
     file_is_esm: Option<bool>,
 ) -> Vec<Diagnostic> {
-    let (arena_main, binder_main, root_main) = parse_and_bind("main.ts", source);
-    let (arena_import, binder_import, _) =
-        parse_and_bind("pkg-import.ts", "export interface ImportInterface {}");
-    let (arena_require, binder_require, _) =
-        parse_and_bind("pkg-require.ts", "export interface RequireInterface {}");
+    check_resolution_mode(
+        "main.ts",
+        source,
+        default_target_idx,
+        ModuleKind::Node16,
+        file_is_esm,
+    )
+}
+
+fn check_resolution_mode(
+    main_file_name: &str,
+    source: &str,
+    default_target_idx: usize,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+) -> Vec<Diagnostic> {
+    check_resolution_mode_with_targets(
+        main_file_name,
+        source,
+        default_target_idx,
+        module,
+        file_is_esm,
+        ("pkg-import.ts", "export interface ImportInterface {}"),
+        ("pkg-require.ts", "export interface RequireInterface {}"),
+    )
+}
+
+fn check_resolution_mode_with_targets(
+    main_file_name: &str,
+    source: &str,
+    default_target_idx: usize,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+    import_target: (&str, &str),
+    require_target: (&str, &str),
+) -> Vec<Diagnostic> {
+    check_resolution_mode_with_targets_and_file_map(
+        main_file_name,
+        source,
+        default_target_idx,
+        module,
+        file_is_esm,
+        None,
+        import_target,
+        require_target,
+    )
+}
+
+fn check_resolution_mode_with_targets_and_file_map(
+    main_file_name: &str,
+    source: &str,
+    default_target_idx: usize,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+    file_is_esm_map: Option<FxHashMap<String, bool>>,
+    import_target: (&str, &str),
+    require_target: (&str, &str),
+) -> Vec<Diagnostic> {
+    let (arena_main, binder_main, root_main) = parse_and_bind(main_file_name, source);
+    let (arena_import, binder_import, _) = parse_and_bind(import_target.0, import_target.1);
+    let (arena_require, binder_require, _) = parse_and_bind(require_target.0, require_target.1);
 
     let all_arenas = Arc::new(vec![
         Arc::clone(&arena_main),
@@ -73,9 +129,9 @@ fn check_node16_resolution_mode(
         arena_main.as_ref(),
         binder_main.as_ref(),
         &types,
-        "main.ts".to_string(),
+        main_file_name.to_string(),
         CheckerOptions {
-            module: ModuleKind::Node16,
+            module,
             no_lib: true,
             ..CheckerOptions::default()
         },
@@ -85,6 +141,7 @@ fn check_node16_resolution_mode(
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(0);
     checker.ctx.file_is_esm = file_is_esm;
+    checker.ctx.file_is_esm_map = file_is_esm_map.map(Arc::new);
     checker
         .ctx
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
@@ -115,6 +172,53 @@ fn check_node16_resolution_mode(
 
     checker.check_source_file(root_main);
     checker.ctx.diagnostics.clone()
+}
+
+#[test]
+fn preserve_plain_ts_imports_use_import_branch_without_attributes() {
+    let diagnostics = check_resolution_mode(
+        "main.ts",
+        r#"import { ImportInterface, RequireInterface } from "pkg";"#,
+        2,
+        ModuleKind::Preserve,
+        None,
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2305),
+        "Expected TS2305 when preserve-mode .ts import stays on the import branch, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message_text.contains("RequireInterface")),
+        "Expected the missing export to be RequireInterface from the require-only branch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preserve_plain_ts_imports_ignore_cjs_file_map_for_es_imports() {
+    let diagnostics = check_resolution_mode_with_targets_and_file_map(
+        "main.ts",
+        r#"import { ImportInterface, RequireInterface } from "pkg";"#,
+        2,
+        ModuleKind::Preserve,
+        Some(false),
+        Some(FxHashMap::from_iter([("main.ts".to_string(), false)])),
+        ("pkg-import.ts", "export interface ImportInterface {}"),
+        ("pkg-require.ts", "export interface RequireInterface {}"),
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2305),
+        "Expected TS2305 when preserve-mode .ts import keeps using the import branch even if file_is_esm_map marks the file CJS, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message_text.contains("RequireInterface")),
+        "Expected the missing export to stay on the require-only symbol, got: {diagnostics:?}"
+    );
 }
 
 #[test]
