@@ -577,21 +577,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if s_eval != source_type || t_eval != target_type {
                     self.check_subtype(s_eval, t_eval)
                 } else if same_application_family {
-                    // Compatibility fallback: when both applications share the same base and
-                    // cannot be structurally expanded or evaluated, apply a covariant
-                    // argument check before failing hard.
-                    let mut all_ok = true;
-                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        if !self.check_subtype(*s_arg, *t_arg).is_true() {
-                            all_ok = false;
-                            break;
-                        }
-                    }
-                    if all_ok {
-                        SubtypeResult::True
-                    } else {
-                        SubtypeResult::False
-                    }
+                    // When both applications share the same base but cannot be structurally
+                    // expanded or evaluated, we cannot safely assume covariant assignability.
+                    // The variance-aware check above already attempted to determine the
+                    // correct variance; if that failed (e.g., variance unavailable or needs
+                    // structural fallback but evaluation didn't change types), we must
+                    // reject the assignability rather than using an unsound covariant fallback.
+                    // This fixes cases like `Promise<Bar>` being incorrectly assignable to
+                    // `Promise<Foo>` when T is contravariant (appears in function parameter
+                    // position in the Promise interface).
+                    SubtypeResult::False
                 } else {
                     SubtypeResult::False
                 }
