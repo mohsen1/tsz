@@ -762,6 +762,12 @@ pub(crate) fn compile_with_cache_and_changes(
 /// When deprecated compiler options produce TS5107, tsc makes them fatal (stops
 /// compilation early). However, tsc suppresses TS5107 when real file-level grammar
 /// errors exist. This function identifies which diagnostic codes count as "grammar
+#[cfg(test)]
+fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
+    matches!(code, 17006 | 17007 | 1003 | 1005 | 1125 | 1128 | 1436)
+        || ((8000..9000).contains(&code) && code != 8024)
+}
+
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,

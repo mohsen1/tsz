@@ -473,6 +473,20 @@ fn contains_error_type_recursive(
                 .iter()
                 .any(|&m| contains_error_type_recursive(types, m, memo))
         }
+        TypeData::Tuple(tuple_list_id) => {
+            let elements = types.tuple_list(tuple_list_id);
+            elements
+                .iter()
+                .any(|elem| contains_error_type_recursive(types, elem.type_id, memo))
+        }
+        TypeData::Function(shape_id) => {
+            let shape = types.function_shape(shape_id);
+            contains_error_type_recursive(types, shape.return_type, memo)
+                || shape
+                    .params
+                    .iter()
+                    .any(|p| contains_error_type_recursive(types, p.type_id, memo))
+        }
         _ => false,
     };
     memo.insert(type_id, result);

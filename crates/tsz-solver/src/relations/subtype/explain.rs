@@ -813,6 +813,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
                 None => {
+                    if source_shape.number_index.is_none()
+                        && self.requires_explicit_declared_index_signature(source_shape)
+                    {
+                        return Some(SubtypeFailureReason::MissingIndexSignature {
+                            index_kind: "string",
+                        });
+                    }
+
                     for prop in &source_shape.properties {
                         // Strip `undefined` from optional property types when checking
                         // against index signatures, matching tsc behavior.

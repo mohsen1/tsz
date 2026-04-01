@@ -573,6 +573,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    pub(crate) fn requires_explicit_declared_index_signature(&self, shape: &ObjectShape) -> bool {
+        if shape.flags.contains(ObjectFlags::ENUM_NAMESPACE) {
+            return false;
+        }
+
+        let Some(sym_id) = shape.symbol else {
+            return false;
+        };
+
+        let symbol_ref = crate::SymbolRef(sym_id.0);
+        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+            return matches!(
+                self.resolver.get_def_kind(def_id),
+                Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
+            );
+        }
+
+        self.is_class_symbol
+            .is_some_and(|is_class_symbol| is_class_symbol(symbol_ref))
+    }
+
     /// Check string index signature compatibility between source and target.
     ///
     /// Validates that string index signatures are compatible, handling:
@@ -633,6 +654,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                     // Don't return here — fall through to also check named properties
                     // against the target string index (implicit index signature path).
+                }
+
+                // Class and interface instance types must declare an explicit index
+                // signature. Namespace-like value objects can still satisfy the
+                // target structurally through their exported members.
+                if source.number_index.is_none()
+                    && self.requires_explicit_declared_index_signature(source)
+                {
+                    return SubtypeResult::False;
                 }
 
                 // An empty source vacuously satisfies the string index constraint.

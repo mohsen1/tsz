@@ -833,7 +833,7 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
-        pending_props: &mut FxHashMap<String, (NodeIndex, Option<String>)>,
+        pending_props: &mut FxHashMap<String, Vec<(NodeIndex, Option<String>)>>,
         ordered_names: &mut Vec<String>,
         export_aliases: &FxHashSet<String>,
     ) {
@@ -925,7 +925,10 @@ impl<'a> CheckerState<'a> {
                 if !pending_props.contains_key(&name_text) {
                     ordered_names.push(name_text.clone());
                 }
-                pending_props.insert(name_text, (binary.right, expando_root));
+                pending_props
+                    .entry(name_text)
+                    .or_default()
+                    .push((binary.right, expando_root));
             }
         }
 
@@ -935,6 +938,130 @@ impl<'a> CheckerState<'a> {
             pending_props,
             ordered_names,
             export_aliases,
+        );
+    }
+
+    fn collect_late_bound_commonjs_assignment_candidate(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+        property_name: &str,
+        read_pos: u32,
+        export_aliases: &FxHashSet<String>,
+        best_match: &mut Option<(u32, NodeIndex, Option<String>)>,
+    ) {
+        let Some(node) = arena.get(expr_idx) else {
+            return;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return;
+        }
+        let Some(binary) = arena.get_binary_expr(node) else {
+            return;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return;
+        }
+
+        let direct_exports = arena
+            .get(binary.left)
+            .filter(|left_node| {
+                left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            })
+            .and_then(|left_node| arena.get_access_expr(left_node))
+            .and_then(|left_access| {
+                arena.get_identifier_at(left_access.expression).and_then(|ident| {
+                    (ident.escaped_text == "exports").then(|| {
+                        Self::commonjs_static_member_name_in_arena(
+                            arena,
+                            left_access.name_or_argument,
+                        )
+                        .map(|name| (name, None))
+                    })
+                })
+            })
+            .flatten();
+
+        let module_exports = arena
+            .get(binary.left)
+            .filter(|left_node| {
+                left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            })
+            .and_then(|left_node| arena.get_access_expr(left_node))
+            .and_then(|left_access| {
+                arena.get(left_access.expression).and_then(|container_node| {
+                    (container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+                        .then(|| arena.get_access_expr(container_node))
+                        .flatten()
+                        .and_then(|container_access| {
+                            let base_is_module = arena
+                                .get_identifier_at(container_access.expression)
+                                .is_some_and(|ident| ident.escaped_text == "module");
+                            let member_is_exports =
+                                Self::commonjs_static_member_name_in_arena(
+                                    arena,
+                                    container_access.name_or_argument,
+                                )
+                                .is_some_and(|name| name == "exports");
+                            (base_is_module && member_is_exports).then(|| {
+                                let expando_root = arena
+                                    .get_identifier_at(left_access.expression)
+                                    .map(|ident| ident.escaped_text.clone());
+                                Self::commonjs_static_member_name_in_arena(
+                                    arena,
+                                    left_access.name_or_argument,
+                                )
+                                .map(|name| (name, expando_root))
+                            })
+                        })
+                })
+            })
+            .flatten();
+
+        let alias_exports = if direct_exports.is_none() && module_exports.is_none() {
+            arena
+                .get(binary.left)
+                .filter(|left_node| {
+                    left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                })
+                .and_then(|left_node| arena.get_access_expr(left_node))
+                .and_then(|left_access| {
+                    arena.get_identifier_at(left_access.expression).and_then(|ident| {
+                        export_aliases.contains(ident.escaped_text.as_str()).then(|| {
+                            Self::commonjs_static_member_name_in_arena(
+                                arena,
+                                left_access.name_or_argument,
+                            )
+                            .map(|name| (name, None))
+                        })
+                    })
+                })
+                .flatten()
+        } else {
+            None
+        };
+
+        if let Some((name_text, expando_root)) =
+            direct_exports.or(module_exports).or(alias_exports)
+            && name_text == property_name
+            && node.pos > read_pos
+            && best_match
+                .as_ref()
+                .is_none_or(|(best_pos, _, _)| node.pos >= *best_pos)
+        {
+            *best_match = Some((node.pos, binary.right, expando_root));
+        }
+
+        self.collect_late_bound_commonjs_assignment_candidate(
+            arena,
+            binary.right,
+            property_name,
+            read_pos,
+            export_aliases,
+            best_match,
         );
     }
 
@@ -1015,6 +1142,88 @@ impl<'a> CheckerState<'a> {
         };
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
+    }
+
+    pub(crate) fn current_file_commonjs_late_bound_named_export_type(
+        &mut self,
+        property_name: &str,
+        read_pos: u32,
+    ) -> Option<TypeId> {
+        let target_file_idx = self.ctx.current_file_idx;
+        let target_arena = self.ctx.arena.clone();
+        let source_file = target_arena.source_files.first()?;
+        let export_aliases = Self::collect_commonjs_export_aliases_in_arena(&target_arena);
+        let mut best_match: Option<(u32, NodeIndex, Option<String>)> = None;
+
+        let mut all_stmts: Vec<NodeIndex> = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            all_stmts.push(stmt_idx);
+            if let Some(stmt_node) = target_arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                && let Some(stmt) = target_arena.get_expression_statement(stmt_node)
+                && let Some(iife_stmts) =
+                    Self::get_iife_body_statements(&target_arena, stmt.expression)
+            {
+                all_stmts.extend_from_slice(iife_stmts);
+            }
+        }
+
+        for stmt_idx in all_stmts {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            self.collect_late_bound_commonjs_assignment_candidate(
+                &target_arena,
+                stmt.expression,
+                property_name,
+                read_pos,
+                &export_aliases,
+                &mut best_match,
+            );
+        }
+
+        let (_, rhs_expr, expando_root) = best_match?;
+        let rhs_type =
+            self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, expando_root.as_deref());
+        (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
+    }
+
+    fn commonjs_string_literal_rhs_type(
+        &mut self,
+        target_file_idx: usize,
+        rhs_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let literal = if target_file_idx == self.ctx.current_file_idx {
+            self.literal_type_from_initializer(rhs_expr)
+        } else {
+            let all_arenas = self.ctx.all_arenas.clone()?;
+            let all_binders = self.ctx.all_binders.clone()?;
+            let arena = all_arenas.get(target_file_idx)?;
+            let binder = all_binders.get(target_file_idx)?;
+            let source_file = arena.source_files.first()?;
+
+            let mut checker = Box::new(CheckerState::with_parent_cache(
+                arena.as_ref(),
+                binder.as_ref(),
+                self.ctx.types,
+                source_file.file_name.clone(),
+                self.ctx.compiler_options.clone(),
+                self,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
+            checker.ctx.current_file_idx = target_file_idx;
+            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+            checker.literal_type_from_initializer(rhs_expr)
+        }?;
+
+        tsz_solver::type_queries::is_string_literal(self.ctx.types, literal).then_some(literal)
     }
 
     fn augment_commonjs_export_object_type_with_expandos(
@@ -1967,7 +2176,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let export_aliases = Self::collect_commonjs_export_aliases_in_arena(&target_arena);
-        let mut pending_props: FxHashMap<String, (NodeIndex, Option<String>)> =
+        let mut pending_props: FxHashMap<String, Vec<(NodeIndex, Option<String>)>> =
             FxHashMap::default();
         let mut ordered_names: Vec<String> = Vec::new();
 
@@ -2012,35 +2221,54 @@ impl<'a> CheckerState<'a> {
 
         for name_text in ordered_names {
             let name_atom = self.ctx.types.intern_string(&name_text);
-            let Some((rhs_expr, expando_root)) = pending_props.get(&name_text).cloned() else {
+            let Some(assignments) = pending_props.remove(&name_text) else {
                 continue;
             };
-            let rhs_type = self.infer_commonjs_export_rhs_type(
-                target_file_idx,
-                rhs_expr,
-                expando_root.as_deref(),
-            );
-            if rhs_type == TypeId::UNDEFINED {
-                continue;
+            for (rhs_expr, expando_root) in assignments {
+                let rhs_type = self
+                    .commonjs_string_literal_rhs_type(target_file_idx, rhs_expr)
+                    .unwrap_or_else(|| {
+                        self.infer_commonjs_export_rhs_type(
+                            target_file_idx,
+                            rhs_expr,
+                            expando_root.as_deref(),
+                        )
+                    });
+                if rhs_type == TypeId::UNDEFINED {
+                    continue;
+                }
+                if let Some(existing) = props.iter_mut().find(|prop| prop.name == name_atom) {
+                    existing.type_id = if existing.type_id == rhs_type {
+                        existing.type_id
+                    } else {
+                        self.ctx.types.factory().union2(existing.type_id, rhs_type)
+                    };
+                    existing.write_type = if existing.write_type == rhs_type {
+                        existing.write_type
+                    } else {
+                        self.ctx
+                            .types
+                            .factory()
+                            .union2(existing.write_type, rhs_type)
+                    };
+                    existing.optional = false;
+                    existing.readonly = false;
+                    continue;
+                }
+                props.push(tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id: rhs_type,
+                    write_type: rhs_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: props.len() as u32,
+                    is_string_named: false,
+                });
             }
-            if let Some(existing) = props.iter_mut().find(|prop| prop.name == name_atom) {
-                existing.type_id = rhs_type;
-                existing.write_type = rhs_type;
-                continue;
-            }
-            props.push(tsz_solver::PropertyInfo {
-                name: name_atom,
-                type_id: rhs_type,
-                write_type: rhs_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: props.len() as u32,
-                is_string_named: false,
-            });
         }
     }
 

@@ -1231,6 +1231,36 @@ impl<'a> CheckerState<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn symbol_has_nonambient_local_declaration(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx.arena.get(decl_idx).is_some()
+                && !self.ctx.arena.is_in_ambient_context(decl_idx)
+        })
+    }
+
+    fn is_declaration_file_runtime_shim_symbol(&self, sym_id: SymbolId, name: &str) -> bool {
+        if self.is_cross_file_declaration_runtime_shim(sym_id, name) {
+            return true;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.escaped_name != name || symbol.decl_file_idx == u32::MAX {
+            return false;
+        }
+
+        self.ctx
+            .get_arena_for_file(symbol.decl_file_idx)
+            .source_files
+            .first()
+            .is_some_and(|source_file| source_file.is_declaration_file)
+    }
+
     fn is_cross_file_declaration_runtime_shim(&self, sym_id: SymbolId, name: &str) -> bool {
         let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
             return false;
@@ -1275,14 +1305,21 @@ impl<'a> CheckerState<'a> {
             .get(&idx.0)
             .copied()
             .or_else(|| self.resolve_identifier_symbol(idx));
+        if resolved_symbol
+            .is_some_and(|sym_id| self.is_declaration_file_runtime_shim_symbol(sym_id, "require"))
+        {
+            return true;
+        }
+
         if let Some(sym_id) = resolved_symbol
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            if symbol.decl_file_idx == self.ctx.current_file_idx as u32
+            if (symbol.decl_file_idx == self.ctx.current_file_idx as u32
                 || symbol
                     .declarations
                     .iter()
-                    .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_some())
+                    .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_some()))
+                && self.symbol_has_nonambient_local_declaration(sym_id)
             {
                 return false;
             }
@@ -1290,13 +1327,19 @@ impl<'a> CheckerState<'a> {
 
         if self.is_js_file() {
             if let Some(sym_id) = self.ctx.binder.file_locals.get("require")
+                && self.is_declaration_file_runtime_shim_symbol(sym_id, "require")
+            {
+                return true;
+            }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get("require")
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
-                if symbol.decl_file_idx == self.ctx.current_file_idx as u32
+                if (symbol.decl_file_idx == self.ctx.current_file_idx as u32
                     || symbol
                         .declarations
                         .iter()
-                        .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_some())
+                        .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_some()))
+                    && self.symbol_has_nonambient_local_declaration(sym_id)
                 {
                     return false;
                 }

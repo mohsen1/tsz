@@ -172,3 +172,43 @@ const result = test({
         "Expected no TS2345 for object template reverse inference, got: {codes:?}"
     );
 }
+
+#[test]
+fn reverse_mapped_reducer_pattern_no_false_ts2322() {
+    // Repro from reverseMappedTypeInferenceSameSource1.ts:
+    // When a generic function accepts `ReducersMapObject<S, A>` which is
+    // `{ [K in keyof S]: Reducer<S[K], A> }`, inference should reverse
+    // `Reducer<number>` → `S[K] = number` → `S = { counter1: number }`.
+    let code = r#"
+type Action<T extends string = string> = { type: T };
+interface UnknownAction extends Action { [extraProps: string]: unknown }
+type Reducer<S = any, A extends Action = UnknownAction> = (
+  state: S | undefined,
+  action: A,
+) => S;
+
+type ReducersMapObject<S = any, A extends Action = UnknownAction> = {
+  [K in keyof S]: Reducer<S[K], A>;
+};
+
+interface ConfigureStoreOptions<S = any, A extends Action = UnknownAction> {
+  reducer: Reducer<S, A> | ReducersMapObject<S, A>;
+}
+
+declare function configureStore<S = any, A extends Action = UnknownAction>(
+  options: ConfigureStoreOptions<S, A>,
+): void;
+
+const counterReducer1: Reducer<number> = () => 0;
+const store2 = configureStore({
+  reducer: {
+    counter1: counterReducer1,
+  },
+});
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for reducer-pattern reverse mapped inference, got: {codes:?}"
+    );
+}

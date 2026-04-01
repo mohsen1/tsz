@@ -483,3 +483,63 @@ fn test_grammar_error_classification() {
     assert!(!is_grammar_error_for_deprecation_priority(2358));
     assert!(!is_grammar_error_for_deprecation_priority(2559));
 }
+
+#[test]
+fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::create_dir_all(base.join("typings")).expect("create typings dir");
+    fs::create_dir_all(base.join("node_modules/phaser/types"))
+        .expect("create phaser types dir");
+    fs::write(base.join("typings/dummy.d.ts"), "declare const dummy: number;\n")
+        .expect("write dummy type root");
+    fs::write(
+        base.join("node_modules/phaser/types/phaser.d.ts"),
+        "declare const phaserValue: number;\n",
+    )
+    .expect("write phaser d.ts");
+    fs::write(
+        base.join("node_modules/phaser/package.json"),
+        r#"{ "name": "phaser", "version": "1.2.3", "types": "types/phaser.d.ts" }"#,
+    )
+    .expect("write phaser package.json");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "typeRoots": ["typings"],
+            "types": ["phaser"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(base.join("index.ts"), "phaserValue;\n").expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"])
+        .expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 when explicit typeRoots does not contain the requested package, got: {:?}",
+        result.diagnostics
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Expected fallback package globals to stay visible, got: {:?}",
+        result.diagnostics
+    );
+}

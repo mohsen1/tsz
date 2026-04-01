@@ -13,9 +13,9 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_generic, i
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
     CallSignature, CallableShapeId, FunctionShape, FunctionShapeId, InferencePriority,
-    IntrinsicKind, LiteralValue, MappedTypeId, ObjectShapeId, ParamInfo, TemplateLiteralId,
-    TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
-    Variance,
+    IntrinsicKind, LiteralValue, MappedTypeId, ObjectShapeId, ParamInfo, PropertyInfo,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
+    TypeId, TypeListId, Variance,
 };
 use tsz_common::interner::Atom;
 
@@ -218,6 +218,39 @@ impl<'a> InferenceContext<'a> {
             ) => {
                 self.infer_from_types(source_obj, target_obj, priority)?;
                 self.infer_from_types(source_idx, target_idx, priority)?;
+            }
+
+            // Reverse mapped type inference: target is T[K] where T is an
+            // inference parameter and K is a concrete literal key.
+            // This arises from homomorphic mapped types like
+            //   { [K in keyof T]: Reducer<T[K], A> }
+            // After substituting K with a property name, the template contains
+            // T["propName"]. We accumulate (key, source_type) pairs so that
+            // `infer_from_mapped_type` can build a single object candidate for T.
+            (_, Some(TypeData::IndexAccess(target_obj, target_idx))) => {
+                // Resolve Lazy wrappers on the object part — type parameters
+                // may be stored as Lazy(DefId) rather than TypeParameter directly.
+                let resolved_obj =
+                    if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target_obj) {
+                        self.resolve_lazy_for_inference(def_id, target_obj)
+                            .unwrap_or(target_obj)
+                    } else {
+                        target_obj
+                    };
+                if let Some(TypeData::TypeParameter(ref param_info)) =
+                    self.interner.lookup(resolved_obj)
+                {
+                    if let Some(var) = self.find_type_param(param_info.name) {
+                        if let Some(TypeData::Literal(LiteralValue::String(key_atom))) =
+                            self.interner.lookup(target_idx)
+                        {
+                            self.reverse_mapped_properties
+                                .entry(var)
+                                .or_default()
+                                .push((key_atom, source));
+                        }
+                    }
+                }
             }
 
             // Preserve structure through keyof when inferring mapped/apparent relations.
@@ -489,6 +522,32 @@ impl<'a> InferenceContext<'a> {
             // which includes MappedTypeConstraint: when multiple properties each
             // contribute a different type for T, the result should be their union
             // (e.g., Box<number> | Box<string> | Box<boolean>), not a single "best" type.
+            // Detect homomorphic mapped type: constraint is `keyof T` where T
+            // is an inference parameter. For these, we collect reverse-mapped
+            // properties during template inference and add a single object
+            // candidate for T after the loop.
+            let homomorphic_var =
+                if let Some(TypeData::KeyOf(inner)) = self.interner.lookup(mapped.constraint) {
+                    // Resolve Lazy wrappers — type parameters may be stored as
+                    // Lazy(DefId) rather than TypeParameter directly.
+                    let resolved_inner =
+                        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(inner) {
+                            self.resolve_lazy_for_inference(def_id, inner)
+                                .unwrap_or(inner)
+                        } else {
+                            inner
+                        };
+                    if let Some(TypeData::TypeParameter(ref param_info)) =
+                        self.interner.lookup(resolved_inner)
+                    {
+                        self.find_type_param(param_info.name)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
             let template_priority = InferencePriority::MappedType;
             for prop in &source.properties {
                 let key_literal = self.interner.literal_string_atom(prop.name);
@@ -506,6 +565,23 @@ impl<'a> InferenceContext<'a> {
                     instantiated_template,
                     template_priority,
                 )?;
+            }
+
+            // Flush accumulated reverse-mapped properties into a single object
+            // candidate for the homomorphic type parameter. This handles cases
+            // like `{ [K in keyof T]: Reducer<T[K], A> }` matched against
+            // `{ counter1: Reducer<number> }` → T = { counter1: number }.
+            if let Some(var) = homomorphic_var {
+                if let Some(props) = self.reverse_mapped_properties.remove(&var) {
+                    if !props.is_empty() {
+                        let obj_props: Vec<PropertyInfo> = props
+                            .into_iter()
+                            .map(|(name, type_id)| PropertyInfo::new(name, type_id))
+                            .collect();
+                        let obj_type = self.interner.object(obj_props);
+                        self.add_candidate(var, obj_type, InferencePriority::HomomorphicMappedType);
+                    }
+                }
             }
         } else if let Some(ref string_index) = source.string_index {
             // Source has no named properties but has a string index signature

@@ -328,6 +328,9 @@ pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
     if value.is_empty() {
         return None;
     }
+    let value = value
+        .split_once(['-', '+'])
+        .map_or(value, |(core, _)| core);
     let mut parts = value.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next().unwrap_or("0").parse().ok()?;
@@ -651,6 +654,26 @@ mod tests {
         assert_eq!(
             types_versions_compiler_version(None),
             TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
+        );
+    }
+
+    #[test]
+    fn parse_semver_ignores_prerelease_and_build_metadata() {
+        assert_eq!(
+            parse_semver("3.1.0-0"),
+            Some(SemVer {
+                major: 3,
+                minor: 1,
+                patch: 0,
+            })
+        );
+        assert_eq!(
+            parse_semver("5.4.1+dev"),
+            Some(SemVer {
+                major: 5,
+                minor: 4,
+                patch: 1,
+            })
         );
     }
 
