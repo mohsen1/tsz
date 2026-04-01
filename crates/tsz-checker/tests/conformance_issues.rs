@@ -184,7 +184,9 @@ declare namespace Ambient {
         "Expected exactly one TS1280 for the first top-level namespace in a global script. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts1280[0].1.contains("Namespaces are not allowed in global script files"),
+        ts1280[0]
+            .1
+            .contains("Namespaces are not allowed in global script files"),
         "Expected the TS1280 message for isolatedModules global-script namespaces. Actual diagnostics: {diagnostics:#?}"
     );
 }
@@ -17067,8 +17069,7 @@ function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Sha
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2862
-                && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+            *code == 2862 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
         }),
         "Expected TS2862 for broad string write through generic mapped type.\nActual diagnostics: {diagnostics:#?}"
     );
@@ -22629,5 +22630,40 @@ class Foo<T> {
     assert_eq!(
         ts2394_count, 0,
         "Vector<MyCond<T>> should be compatible with Vector<any> in overload check, got: {d:?}"
+    );
+}
+
+#[test]
+fn test_generic_identity_callback_arg_emits_ts2345() {
+    // When a generic function like `<T>(value: T) => T` is passed as an argument
+    // to a parameter expecting a non-generic callback, the display target must use
+    // the TARGET's return type (not the source's instantiated return) so the
+    // re-check in check_argument_assignable_or_report doesn't suppress the error.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare function identity<T>(value: T): T;
+declare function take(cb: (value: string | number) => boolean): void;
+take(identity);
+"#,
+    );
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for generic identity not assignable to callback, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_identity_callback_valid_case_no_error() {
+    // When the generic callback IS compatible, no error should be emitted.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare function identity<T>(value: T): T;
+declare function take(cb: (value: string) => string): void;
+take(identity);
+"#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Should NOT emit TS2345 when generic callback is compatible, got: {diagnostics:?}"
     );
 }
