@@ -140,12 +140,24 @@ fn post_process_checker_diagnostics(
     }
 
     // When TS5107/TS5101 deprecation diagnostics are present, tsc 6.0 stops
-    // type checking but continues parsing. We filter out type-level diagnostics
-    // (2000-8999) while keeping parser/syntax diagnostics (<2000) and JS
-    // grammar diagnostics (8000-9000).
+    // type checking but continues parsing. Type-checking errors (type
+    // relationships, assignability, inference) are suppressed, but other
+    // semantic errors may still be emitted.
     if has_deprecation_diagnostics {
+        // Suppress type relationship errors (TS2xxx except TS2458 amd module names)
         checker_diagnostics.retain(|diag| {
-            diag.code < 2000 || (8000..9000).contains(&diag.code)
+            let code = diag.code;
+            // Always keep parser errors (<2000) and JS grammar (8000-9000)
+            if code < 2000 || (8000..9000).contains(&code) {
+                return true;
+            }
+            // Suppress type relationship errors: TS2300-TS2999 except specific codes
+            if (2300..3000).contains(&code) {
+                // Keep AMD module name error (TS2458)
+                return code == 2458;
+            }
+            // Keep other semantic errors (TS1xxx was already handled, TS3xxx+, TS5xxx+, TS6xxx+, TS7xxx+)
+            true
         });
     }
 
