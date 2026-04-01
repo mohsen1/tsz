@@ -12,6 +12,40 @@ use tsz_solver::TypeId;
 use crate::query_boundaries::assignability::RelationRequest;
 
 impl<'a> CheckerState<'a> {
+    fn symbol_is_uninstantiated_namespace(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        use tsz_binder::symbol_flags;
+
+        let mut visited_aliases = Vec::new();
+        let sym_to_check = self
+            .resolve_alias_symbol(sym_id, &mut visited_aliases)
+            .unwrap_or(sym_id);
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(sym_to_check, &lib_binders)?;
+
+        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+        if !is_namespace || has_other_value {
+            return None;
+        }
+
+        let is_instantiated = symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
+        if is_instantiated {
+            None
+        } else {
+            Some(sym_to_check)
+        }
+    }
+
     fn skip_ts2314_for_heritage_symbol(
         &self,
         heritage_sym: tsz_binder::SymbolId,
@@ -38,18 +72,13 @@ impl<'a> CheckerState<'a> {
         is_extends_clause: bool,
     ) -> bool {
         use crate::query_boundaries::name_resolution::{NameLookupKind, NameResolutionRequest};
-        use tsz_binder::symbol_flags;
 
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
 
-        let (left_idx, right_idx) = if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) else {
-                return false;
-            };
-            (qn.left, qn.right)
-        } else if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+        let (left_idx, right_idx) = if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
             let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
                 return false;
             };
@@ -70,26 +99,27 @@ impl<'a> CheckerState<'a> {
         let Some(left_sym) = self.resolve_heritage_symbol(left_idx) else {
             return false;
         };
-
-        let lib_binders = self.get_lib_binders();
-        let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
+        let Some(namespace_sym) = self.symbol_is_uninstantiated_namespace(left_sym) else {
             return false;
         };
 
         if is_class_declaration && is_extends_clause {
-            let is_namespace = (left_symbol.flags & symbol_flags::MODULE) != 0;
-            let has_non_namespace_value =
-                (left_symbol.flags & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)) != 0;
-            if is_namespace && !has_non_namespace_value {
-                let ns_name = self
-                    .entity_name_text(left_idx)
-                    .unwrap_or_else(|| left_symbol.escaped_name.clone());
-                self.report_wrong_meaning_diagnostic(&ns_name, left_idx, NameLookupKind::Namespace);
-                return true;
-            }
+            let ns_name = self
+                .entity_name_text(left_idx)
+                .unwrap_or_else(|| right_name.clone());
+            self.report_wrong_meaning_diagnostic(&ns_name, left_idx, NameLookupKind::Namespace);
+            return true;
         }
 
         if is_extends_clause && !is_class_declaration {
+            let lib_binders = self.get_lib_binders();
+            let Some(left_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(namespace_sym, &lib_binders)
+            else {
+                return false;
+            };
             let export_names: Vec<String> = left_symbol
                 .exports
                 .as_ref()
@@ -98,7 +128,7 @@ impl<'a> CheckerState<'a> {
             let req = NameResolutionRequest::exported_member(
                 &right_name,
                 right_idx,
-                left_sym,
+                namespace_sym,
                 export_names,
             );
             if let Err(failure) = self.resolve_name_structured(&req) {
