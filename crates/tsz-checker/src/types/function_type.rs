@@ -617,6 +617,15 @@ impl<'a> CheckerState<'a> {
                     .collect()
             })
             .unwrap_or_default();
+        if is_closure
+            && self.is_js_file()
+            && parameters.nodes.is_empty()
+            && self.body_has_arguments_reference(body)
+            && let Some(ref jsdoc) = func_jsdoc
+            && !jsdoc.contains("@callback")
+        {
+            self.check_jsdoc_param_tag_names(jsdoc, &parameters.nodes, idx);
+        }
 
         // Track whether any parameter actually receives a contextual type from
         // ctx_helper. Used after the loop to decide whether to mark the closure as
