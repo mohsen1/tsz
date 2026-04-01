@@ -738,7 +738,13 @@ impl<'a> CheckerState<'a> {
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 let prop = self.ctx.arena.get_property_decl(member_node)?;
-                let name = self.get_property_name(prop.name)?;
+                let name_node = self.ctx.arena.get(prop.name)?;
+                let name = if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    self.get_property_name_resolved(prop.name)
+                        .or_else(|| self.get_property_name(prop.name))?
+                } else {
+                    self.get_property_name(prop.name)?
+                };
                 if skip_private && self.has_private_modifier(&prop.modifiers) {
                     return None;
                 }
@@ -882,7 +888,13 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 let accessor = self.ctx.arena.get_accessor(member_node)?;
-                let name = self.get_property_name(accessor.name)?;
+                let name_node = self.ctx.arena.get(accessor.name)?;
+                let name = if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    self.get_property_name_resolved(accessor.name)
+                        .or_else(|| self.get_property_name(accessor.name))?
+                } else {
+                    self.get_property_name(accessor.name)?
+                };
                 if skip_private && self.has_private_modifier(&accessor.modifiers) {
                     return None;
                 }
@@ -919,7 +931,13 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
                 let accessor = self.ctx.arena.get_accessor(member_node)?;
-                let name = self.get_property_name(accessor.name)?;
+                let name_node = self.ctx.arena.get(accessor.name)?;
+                let name = if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    self.get_property_name_resolved(accessor.name)
+                        .or_else(|| self.get_property_name(accessor.name))?
+                } else {
+                    self.get_property_name(accessor.name)?
+                };
                 if skip_private && self.has_private_modifier(&accessor.modifiers) {
                     return None;
                 }
@@ -1167,6 +1185,12 @@ impl<'a> CheckerState<'a> {
                         })
                         .unwrap_or_else(|| self.format_type(instance_type));
                     let base_member_names = self.collect_property_names_from_type(instance_type);
+                    self.check_non_public_member_inheritance_conflicts_against_type(
+                        class_data,
+                        instance_type,
+                        &derived_class_name,
+                        &type_base_name,
+                    );
 
                     self.check_override_members_against_type(
                         class_data,
@@ -1517,7 +1541,6 @@ impl<'a> CheckerState<'a> {
             let base_any_info = base_chain_summary
                 .lookup(&member_name, is_static, false)
                 .cloned();
-
             if let Some(ref base_any_info) = base_any_info
                 && self
                     .class_member_visibility_conflicts(member_visibility, base_any_info.visibility)
@@ -1946,6 +1969,92 @@ impl<'a> CheckerState<'a> {
                     return; // Only one TS2415 per class
                 }
             }
+        }
+    }
+
+    fn check_non_public_member_inheritance_conflicts_against_type(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        base_instance_type: TypeId,
+        derived_class_name: &str,
+        base_class_name: &str,
+    ) {
+        use tsz_solver::Visibility;
+
+        let mut class_extends_error_reported = false;
+        let tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } =
+            tsz_solver::objects::collect_properties(
+                self.resolve_lazy_type(base_instance_type),
+                self.ctx.types,
+                &self.ctx,
+            )
+        else {
+            return;
+        };
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(info) = self.extract_class_member_info(member_idx, false) else {
+                continue;
+            };
+            if info.name.starts_with('#') || info.is_static {
+                continue;
+            }
+
+            let Some(base_prop) = properties.iter().find(|prop| {
+                self.ctx.types.resolve_atom_ref(prop.name).as_ref() == info.name
+            }) else {
+                continue;
+            };
+            let base_visibility = match base_prop.visibility {
+                Visibility::Public => MemberVisibility::Public,
+                Visibility::Protected => MemberVisibility::Protected,
+                Visibility::Private => MemberVisibility::Private,
+            };
+
+            if !self.class_member_visibility_conflicts(info.visibility, base_visibility) {
+                continue;
+            }
+
+            if info.visibility == MemberVisibility::Private
+                && base_visibility == MemberVisibility::Private
+            {
+                let base_type = base_prop.type_id;
+                if info.type_id != TypeId::ANY
+                    && base_type != TypeId::ANY
+                    && should_report_member_type_mismatch(self, info.type_id, base_type, info.name_idx)
+                {
+                    self.error_at_node(
+                        info.name_idx,
+                        &format!(
+                            "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
+                            info.name, derived_class_name, base_class_name
+                        ),
+                        diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                    );
+                    let member_type_str = self.format_type(info.type_id);
+                    let base_type_str = self.format_type(base_type);
+                    self.report_type_not_assignable_detail(
+                        info.name_idx,
+                        &member_type_str,
+                        &base_type_str,
+                        diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                    );
+                    continue;
+                }
+            }
+
+            if class_extends_error_reported {
+                continue;
+            }
+
+            self.error_at_node(
+                class_data.name,
+                &format!(
+                    "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'."
+                ),
+                diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
+            );
+            class_extends_error_reported = true;
         }
     }
 

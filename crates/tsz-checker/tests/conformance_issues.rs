@@ -15797,6 +15797,55 @@ export type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
+fn test_ts2415_reports_private_imported_unique_symbol_override_in_derived_class() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "a.ts",
+                r#"
+export const x = Symbol();
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import { x } from "./a";
+
+export class C {
+  private [x]: number = 1;
+}
+"#,
+            ),
+            (
+                "c.ts",
+                r#"
+import { x } from "./a";
+import { C } from "./b";
+
+export class D extends C {
+  private [x]: 12 = 12;
+}
+"#,
+            ),
+        ],
+        "c.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.0 == 2415
+                && d.1.contains("Class 'D' incorrectly extends base class 'C'")
+        }),
+        "Expected TS2415 for private imported unique-symbol override, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2344_for_self_mapped_index_access_return_type() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
