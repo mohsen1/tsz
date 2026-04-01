@@ -10719,6 +10719,58 @@ foo.m()
 }
 
 #[test]
+fn compile_commonjs_export_alias_define_property_overlap_reports_ts2323() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["namespacey.js", "namespacer.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("namespacey.js"),
+        r#"const A = {};
+A.bar = class Q {};
+module.exports = A;
+"#,
+    );
+    write_file(
+        &base.join("namespacer.js"),
+        r#"const B = {};
+B.NS = require("./namespacey");
+Object.defineProperty(B, "NS", { value: "why though", writable: true });
+module.exports = B;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2323: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE
+                && d.message_text.contains("'NS'")
+        })
+        .collect();
+    assert_eq!(
+        ts2323.len(),
+        2,
+        "Expected TS2323 on overlapping CommonJS alias defineProperty exports, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_js_static_expando_members_from_assignments_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
