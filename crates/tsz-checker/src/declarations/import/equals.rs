@@ -803,8 +803,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
+        // When inside a namespace, TS1147 was already emitted; don't also emit TS2307.
         let module_key = module_name.to_string();
-        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+        if !inside_namespace && let Some(error) = self.ctx.get_resolution_error(module_name) {
             // Extract error values before mutable borrow
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
@@ -828,8 +829,9 @@ impl<'a> CheckerState<'a> {
 
         // Fallback: Emit module-not-found error if no specific error was found
         // Check if we've already emitted for this module (prevents duplicate emissions)
+        // When inside a namespace, TS1147 was already emitted; don't also emit TS2307.
         let module_key = module_name.to_string();
-        if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+        if self.ctx.modules_with_ts2307_emitted.contains(&module_key) || inside_namespace {
             return;
         }
 
