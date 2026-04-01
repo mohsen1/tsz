@@ -12,6 +12,7 @@
 
 use tsz_binder::SymbolId;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 
 // ---------------------------------------------------------------------------
 // Request model
@@ -429,6 +430,11 @@ impl<'a> CheckerState<'a> {
                     if p.escaped_name.is_empty() || p.escaped_name == "__global" {
                         break;
                     }
+                    // `declare module "x" { namespace N { ... } }` should report `N`,
+                    // not `x.N`, in TS2694 namespace-member diagnostics.
+                    if self.is_string_literal_module_symbol_for_display(p) {
+                        break;
+                    }
                     parts.push(p.escaped_name.clone());
                     // Stop after adding this symbol if its parent is the root
                     if p.parent == SymbolId::NONE {
@@ -449,6 +455,28 @@ impl<'a> CheckerState<'a> {
             let _ = sym_id; // suppress unused warning
             symbol.escaped_name.clone()
         }
+    }
+
+    fn is_string_literal_module_symbol_for_display(&self, symbol: &tsz_binder::Symbol) -> bool {
+        if (symbol.flags & symbol_flags::MODULE) == 0 || symbol.declarations.is_empty() {
+            return false;
+        }
+
+        symbol.declarations.iter().all(|&decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                return false;
+            }
+            let Some(module) = self.ctx.arena.get_module(node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(module.name)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16)
+        })
     }
 
     /// Report a wrong-meaning diagnostic for a symbol that was found but has
