@@ -745,9 +745,23 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
     // Build a set of equivalent root prefixes. On macOS, the same temp directory
     // may appear as either /var/... or /private/var/... in diagnostics.
     let mut roots = Vec::new();
-    roots.push(project_root.to_string_lossy().replace('\\', "/"));
+    let project_root_str = project_root.to_string_lossy().replace('\\', "/");
+    roots.push(project_root_str.clone());
+
+    // Also add the canonicalized version (with /private prefix on macOS)
+    let project_canonical = if project_root_str.starts_with("/var/") {
+        format!("/private{}", project_root_str)
+    } else {
+        project_root_str.clone()
+    };
+    roots.push(project_canonical);
+
+    // Try to canonicalize the project root if possible
     if let Ok(canon_root) = project_root.canonicalize() {
-        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
+        let canon_str = canon_root.to_string_lossy().replace('\\', "/");
+        if !roots.contains(&canon_str) {
+            roots.push(canon_str);
+        }
     }
 
     let mut expanded_roots = Vec::new();
@@ -756,69 +770,68 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
             continue;
         }
         expanded_roots.push(root.clone());
-        if let Some(stripped) = root.strip_prefix("/private") {
-            if stripped.starts_with("/var/") {
+        // Add /private variant for /var paths (macOS)
+        if root.starts_with("/var/") && !root.starts_with("/private/") {
+            expanded_roots.push(format!("/private{}", root));
+        }
+        // Add non-/private variant for /private/var paths
+        if root.starts_with("/private/var/") {
+            if let Some(stripped) = root.strip_prefix("/private") {
                 expanded_roots.push(stripped.to_string());
             }
-        }
-        if root.starts_with("/var/") {
-            expanded_roots.push(format!("/private{}", root));
         }
     }
 
     expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
     expanded_roots.dedup();
 
+    // First, try to strip any of the known root prefixes directly
     for root in &expanded_roots {
         if normalized.starts_with(root) {
             return normalized[root.len()..].trim_start_matches('/').to_string();
         }
     }
 
-    // If the diagnostic path is absolute or relative with ../ components,
-    // try resolving to an absolute path and strip the project root.
-    let diag_path = Path::new(&normalized);
-    let resolved = if diag_path.is_absolute() {
-        diag_path.to_path_buf()
-    } else if normalized.contains("../") {
-        // Relative path with ../ — resolve against project_root to get absolute
-        project_root.join(&normalized)
-    } else {
-        // Simple relative path (e.g., "test.ts") — already normalized
+    // If the path is already a simple relative path (no ../), return it
+    if !normalized.contains("../") {
         return normalized;
+    }
+
+    // For paths with ../ components (from batch mode), manually resolve them
+    // and then strip the project root
+    let joined_path = if Path::new(&normalized).is_absolute() {
+        normalized.clone()
+    } else {
+        // Join with project root and resolve
+        format!("{}/{}", project_root_str, normalized)
     };
 
-    // Try canonicalizing the resolved path and strip the project root
-    let canon_diag = resolved
-        .canonicalize()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| {
-            // If canonicalize fails (file doesn't exist), manually resolve ../ components
-            let abs = if resolved.is_absolute() {
-                resolved.to_string_lossy().replace('\\', "/")
-            } else {
-                return normalized.clone();
-            };
-            // Simple ../ resolution for paths that can't be canonicalized
-            let parts: Vec<&str> = abs.split('/').collect();
-            let mut resolved_parts: Vec<&str> = Vec::new();
-            for part in &parts {
-                if *part == ".." {
-                    resolved_parts.pop();
-                } else if *part != "." {
-                    resolved_parts.push(part);
-                }
-            }
-            resolved_parts.join("/")
-        });
-
-    for root in &expanded_roots {
-        if canon_diag.starts_with(root) {
-            return canon_diag[root.len()..].trim_start_matches('/').to_string();
+    // Manually resolve ../ components
+    let parts: Vec<&str> = joined_path.split('/').collect();
+    let mut resolved_parts: Vec<&str> = Vec::new();
+    for part in &parts {
+        if *part == ".." {
+            resolved_parts.pop();
+        } else if !part.is_empty() && *part != "." {
+            resolved_parts.push(part);
         }
     }
 
-    normalized
+    let resolved = format!("/{}", resolved_parts.join("/"));
+
+    // Try to strip any of the expanded roots from the resolved path
+    for root in &expanded_roots {
+        if let Some(stripped) = resolved.strip_prefix(root) {
+            return stripped.trim_start_matches('/').to_string();
+        }
+    }
+
+    // If we couldn't strip any root, return just the filename
+    // (fallback for safety)
+    Path::new(&resolved)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| resolved.clone())
 }
 
 /// Strip temp directory paths embedded in diagnostic messages.
