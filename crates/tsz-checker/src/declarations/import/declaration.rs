@@ -7,8 +7,8 @@
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -585,9 +585,10 @@ impl<'a> CheckerState<'a> {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 Some(ident.escaped_text.as_str())
             } else {
-                self.ctx.arena.get_literal_text(attr_data.name).map(|lit| {
-                    lit.trim_matches('"').trim_matches('\'')
-                })
+                self.ctx
+                    .arena
+                    .get_literal_text(attr_data.name)
+                    .map(|lit| lit.trim_matches('"').trim_matches('\''))
             }
         } else {
             None

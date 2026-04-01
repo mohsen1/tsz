@@ -1373,6 +1373,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         Some(crate::checkers_domain::JsxChildrenContext {
                             child_count: normalized_child_count,
                             has_text_child,
+                            contextual_type: children_ctx_type,
                             synthesized_type,
                             text_child_indices,
                         })

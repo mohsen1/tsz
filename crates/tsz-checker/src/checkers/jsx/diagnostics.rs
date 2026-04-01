@@ -124,6 +124,30 @@ impl<'a> CheckerState<'a> {
         self.get_jsx_component_props_display_text_for_symbol(sym_id, &props_name)
     }
 
+    pub(super) fn get_jsx_component_prop_annotation_text(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decls = Vec::new();
+        if symbol.value_declaration.is_some() {
+            decls.push(symbol.value_declaration);
+        }
+        decls.extend(symbol.declarations.iter().copied());
+
+        for decl_idx in decls {
+            if let Some(text) =
+                self.get_jsx_component_prop_annotation_text_from_declaration(decl_idx, prop_name)
+            {
+                return Some(text);
+            }
+        }
+
+        None
+    }
+
     fn get_jsx_component_props_display_text_for_symbol(
         &mut self,
         sym_id: SymbolId,
@@ -191,6 +215,139 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
+    }
+
+    fn get_jsx_component_prop_annotation_text_from_declaration(
+        &mut self,
+        decl_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        let mut decl_idx = decl_idx;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && parent.is_some()
+        {
+            decl_idx = parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+
+        match decl_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                let func = self.ctx.arena.get_function(decl_node)?;
+                let first_param_idx = *func.parameters.nodes.first()?;
+                let first_param_node = self.ctx.arena.get(first_param_idx)?;
+                let param = self.ctx.arena.get_parameter(first_param_node)?;
+                if param.type_annotation.is_none() {
+                    return None;
+                }
+                self.get_object_prop_annotation_text_from_type_node(
+                    param.type_annotation,
+                    prop_name,
+                )
+            }
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                if decl.type_annotation.is_none() {
+                    return None;
+                }
+                self.get_object_prop_annotation_text_from_type_node(decl.type_annotation, prop_name)
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                let iface = self.ctx.arena.get_interface(decl_node)?;
+                self.get_object_prop_annotation_text_from_members(&iface.members, prop_name)
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                let alias = self.ctx.arena.get_type_alias(decl_node)?;
+                self.get_object_prop_annotation_text_from_type_node(alias.type_node, prop_name)
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
+                let class = self.ctx.arena.get_class(decl_node)?;
+                let type_params = class.type_parameters.as_ref()?;
+                let first_param_idx = *type_params.nodes.first()?;
+                let first_param_node = self.ctx.arena.get(first_param_idx)?;
+                let first_param = self.ctx.arena.get_type_parameter(first_param_node)?;
+                if first_param.constraint == NodeIndex(0) {
+                    return None;
+                }
+                self.get_object_prop_annotation_text_from_type_node(
+                    first_param.constraint,
+                    prop_name,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn get_object_prop_annotation_text_from_type_node(
+        &mut self,
+        type_node_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        let type_node = self.ctx.arena.get(type_node_idx)?;
+        match type_node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let type_ref = self.ctx.arena.get_type_ref(type_node)?;
+                let TypeSymbolResolution::Type(target_sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                else {
+                    return None;
+                };
+                let symbol = self.ctx.binder.get_symbol(target_sym_id)?;
+                let mut decls = Vec::new();
+                if symbol.value_declaration.is_some() {
+                    decls.push(symbol.value_declaration);
+                }
+                decls.extend(symbol.declarations.iter().copied());
+                for decl_idx in decls {
+                    if let Some(text) = self
+                        .get_jsx_component_prop_annotation_text_from_declaration(
+                            decl_idx, prop_name,
+                        )
+                    {
+                        return Some(text);
+                    }
+                }
+                None
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                let type_lit = self.ctx.arena.get_type_literal(type_node)?;
+                self.get_object_prop_annotation_text_from_members(&type_lit.members, prop_name)
+            }
+            _ => None,
+        }
+    }
+
+    fn get_object_prop_annotation_text_from_members(
+        &mut self,
+        members: &tsz_parser::parser::NodeList,
+        prop_name: &str,
+    ) -> Option<String> {
+        for &member_idx in &members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
+                && member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION
+            {
+                continue;
+            }
+
+            let sig = self.ctx.arena.get_signature(member_node)?;
+            let name_text = self.node_text(sig.name)?.trim().to_string();
+            if name_text != prop_name || sig.type_annotation.is_none() {
+                continue;
+            }
+
+            return self
+                .node_text(sig.type_annotation)
+                .map(|text| text.trim().to_string());
+        }
+
+        None
     }
 
     fn get_jsx_component_props_display_text_from_class(
@@ -385,7 +542,9 @@ impl<'a> CheckerState<'a> {
 
         // Get component name for the diagnostic message.
         let component_name = self.get_jsx_tag_name_text(tag_name_idx);
-        let children_type_str = self.format_type(children_type);
+        let children_type_str = self
+            .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
+            .unwrap_or_else(|| self.jsx_children_type_display(props_type, children_type));
 
         use crate::diagnostics::diagnostic_codes;
         for &text_idx in text_child_indices {

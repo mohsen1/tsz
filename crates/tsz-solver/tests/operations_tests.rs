@@ -9650,6 +9650,56 @@ fn test_union_call_incompatible_param_types() {
     );
 }
 
+#[test]
+fn test_union_call_tuple_rest_combines_to_never() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+    let args_name = interner.intern_string("args");
+
+    let empty_tuple = interner.tuple(vec![]);
+    let string_tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let number_tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    let make_rest_fn = |tuple_type| {
+        interner.function(FunctionShape::new(
+            vec![ParamInfo::rest(args_name, tuple_type)],
+            TypeId::UNKNOWN,
+        ))
+    };
+
+    let union = interner.union(vec![
+        make_rest_fn(empty_tuple),
+        make_rest_fn(string_tuple),
+        make_rest_fn(number_tuple),
+    ]);
+
+    let result = evaluator.resolve_call(union, &[TypeId::ANY]);
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected,
+            actual,
+            ..
+        } => {
+            assert_eq!(index, 0);
+            assert_eq!(expected, TypeId::NEVER);
+            assert_eq!(actual, TypeId::ANY);
+        }
+        other => panic!("Expected combined never mismatch, got {other:?}"),
+    }
+}
+
 /// Regression test for Application-Application mapped type inference.
 ///
 /// Models the pattern from mappedTypes3.ts:

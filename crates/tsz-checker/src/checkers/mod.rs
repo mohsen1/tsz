@@ -96,6 +96,8 @@ pub struct JsxChildrenContext {
     pub child_count: usize,
     /// Whether any `JsxText` children exist.
     pub has_text_child: bool,
+    /// The contextual `children` type computed before body children are evaluated.
+    pub contextual_type: Option<TypeId>,
     /// The type to use as the `children` prop value.
     pub synthesized_type: TypeId,
     /// Node indices of `JsxText` children (for TS2747 location reporting).
