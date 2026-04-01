@@ -1608,6 +1608,29 @@ mod.bar;
     );
 }
 
+#[test]
+fn test_repeated_named_export_assignment_consumer_uses_final_value_type() {
+    let diagnostics = check_commonjs_two_files(
+        "lib.js",
+        r#"
+exports.apply = function() { };
+exports.apply = { ok: 1 };
+"#,
+        "consumer.js",
+        r#"
+const { apply } = require("./lib.js");
+apply.ok;
+"#,
+        "./lib.js",
+    );
+
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected repeated named-export assignments to expose the final value type to consumers, got: {diagnostics:#?}"
+    );
+}
+
 // --- Current-file namespace type via surface ---
 
 #[test]
@@ -1630,6 +1653,41 @@ var x = exports.alpha;
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for same-file exports.alpha access, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_current_file_exports_reads_use_prior_assignment_types() {
+    let diagnostics = check_commonjs_single_file(
+        "self.js",
+        r#"
+exports.apply = undefined;
+exports.apply = undefined;
+function a() { return 1; }
+exports.apply = a;
+exports.apply();
+exports.apply = { ok: 1 };
+var ok = exports.apply.ok;
+exports.apply = 1;
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for same-file CommonJS reads after reassignment, got: {ts2339:#?}"
+    );
+
+    let ts2349: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2349).collect();
+    assert!(
+        ts2349.is_empty(),
+        "Expected no TS2349 for same-file CommonJS calls after reassignment, got: {ts2349:#?}"
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for same-file CommonJS reassignments after the member becomes dynamic, got: {ts2322:#?}"
     );
 }
 

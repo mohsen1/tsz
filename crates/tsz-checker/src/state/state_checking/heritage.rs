@@ -619,7 +619,7 @@ impl<'a> CheckerState<'a> {
                                 // Instead of directly checking is_constructor_type and emitting TS2507,
                                 // we evaluate the type through the boundary first, then check.
                                 // This ensures proper type resolution and consistent error handling.
-                                let should_check_constructor = lib_var_override.is_none() 
+                                let should_check_constructor = lib_var_override.is_none()
                                     && symbol_type != TypeId::ERROR
                                     && !self.symbol_has_js_constructor_evidence(sym_to_check)
                                     // Skip for symbols with INTERFACE+VARIABLE but NOT CLASS
