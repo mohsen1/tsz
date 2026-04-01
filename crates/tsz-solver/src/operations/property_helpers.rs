@@ -304,14 +304,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // cannot resolve Lazy(DefId) constraints, so `keyof P` stays deferred
             // even when P has a concrete constraint (e.g., P extends Props).
             //
-            // Strategy: inspect the keyof *operand* to decide:
-            //  - Unconstrained type parameter → false (no property guaranteed;
-            //    tsc reports TS2339 for `Pick<T, K>.foo` with unconstrained T).
-            //  - Constrained type parameter / Lazy / other → true (conservative;
-            //    the constraint MIGHT include the property but we can't tell
-            //    without the checker's type environment).
+            // Strategy: only accept a concrete property name when it is guaranteed
+            // by the operand's constraint as an explicit property. Broad index
+            // signatures on the constraint do NOT guarantee that `keyof T`
+            // includes an arbitrary concrete name for every instantiation of T.
             TypeData::KeyOf(operand) => match self.interner().lookup(operand) {
-                Some(TypeData::TypeParameter(info)) => info.constraint.is_some(),
+                Some(TypeData::TypeParameter(info)) => info
+                    .constraint
+                    .is_some_and(|constraint| {
+                        self.constraint_guarantees_named_property(constraint, prop_name)
+                    }),
                 _ => true,
             },
 
@@ -325,6 +327,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Other types - be conservative and reject
             _ => false,
         }
+    }
+
+    fn constraint_guarantees_named_property(&self, constraint: TypeId, prop_name: &str) -> bool {
+        let prop_atom = self.interner().intern_string(prop_name);
+        matches!(
+            self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom)),
+            PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            }
+        )
     }
 
     /// Check if a mapped type has a string index signature (constraint includes `string`).

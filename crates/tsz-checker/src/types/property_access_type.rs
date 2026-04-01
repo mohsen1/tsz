@@ -1000,6 +1000,11 @@ impl<'a> CheckerState<'a> {
                         write_type,
                         from_index_signature,
                     } => {
+                        let generic_mapped_missing_named_property = from_index_signature
+                            && self.generic_mapped_receiver_lacks_explicit_property(
+                                original_object_type,
+                                property_name,
+                            );
                         if from_index_signature
                             && self
                                 .ctx
@@ -1011,6 +1016,12 @@ impl<'a> CheckerState<'a> {
                             // Preserve the optional-chain fast path for regular
                             // property reads, but fall back to the full path when
                             // TS4111 must be reported.
+                        } else if generic_mapped_missing_named_property {
+                            // Generic mapped receivers like
+                            // `Record<keyof T | "x", V>` can surface a broad index
+                            // signature in the fast solver path even when a specific
+                            // named property is not guaranteed for every instantiation.
+                            // Fall through so the full path can emit TS2339/TS2551.
                         } else {
                             let refined_type_id = self.refine_expando_property_read_type(
                                 idx,
@@ -1815,6 +1826,21 @@ impl<'a> CheckerState<'a> {
                         self.error_property_not_exist_at(
                             property_name,
                             object_type,
+                            access.name_or_argument,
+                        );
+                        return TypeId::ERROR;
+                    }
+
+                    if skip_flow_narrowing
+                        && from_index_signature
+                        && self.generic_mapped_receiver_lacks_explicit_property(
+                            original_object_type,
+                            property_name,
+                        )
+                    {
+                        self.error_property_not_exist_at(
+                            property_name,
+                            original_object_type,
                             access.name_or_argument,
                         );
                         return TypeId::ERROR;

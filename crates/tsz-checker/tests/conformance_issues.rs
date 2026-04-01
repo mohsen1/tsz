@@ -17036,6 +17036,45 @@ function f<T extends Item, K extends keyof T>(obj: T, k: K) {
 }
 
 #[test]
+fn test_generic_mapped_type_known_keys_emit_ts2551_and_ts2862() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Shape) {
+    const obj = {} as Record<keyof Shape | "knownLiteralKey", number>;
+
+    obj.knownLiteralKey = 1;
+    obj[key] = 2;
+
+    obj.unknownLiteralKey = 3;
+    obj['' as string] = 4;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2551
+                && message.contains("unknownLiteralKey")
+                && message.contains("knownLiteralKey")
+        }),
+        "Expected TS2551 for unknown literal property on generic mapped type.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2862
+                && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+        }),
+        "Expected TS2862 for broad string write through generic mapped type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_assignment_diagnostic_preserves_generic_mapped_intersection_index_access_target() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

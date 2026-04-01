@@ -35,7 +35,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluated_type = self.evaluate_type_for_assignability(type_id);
-        let property_names = self.collect_accessible_type_property_names(evaluated_type);
+        let property_names = self.collect_accessible_type_property_names(type_id, evaluated_type);
         if property_names.is_empty() {
             return None;
         }
@@ -124,7 +124,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn collect_accessible_type_property_names(&self, type_id: TypeId) -> Vec<String> {
+    fn collect_accessible_type_property_names(
+        &mut self,
+        original_type_id: TypeId,
+        type_id: TypeId,
+    ) -> Vec<String> {
         // For enum types, the solver can't access binder exports.
         // Collect enum member names directly from the binder's symbol exports.
         if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)
@@ -156,14 +160,23 @@ impl<'a> CheckerState<'a> {
             .resolve_primitive_to_boxed_type(type_id)
             .unwrap_or(type_id);
 
-        crate::query_boundaries::diagnostics::collect_accessible_property_names_for_suggestion(
+        let mut property_names =
+            crate::query_boundaries::diagnostics::collect_accessible_property_names_for_suggestion(
             self.ctx.types,
             resolved_type,
             5,
         )
         .into_iter()
         .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
-        .collect()
+        .collect::<Vec<_>>();
+
+        for name in self.generic_mapped_receiver_explicit_property_names(original_type_id) {
+            if !property_names.iter().any(|existing| existing == &name) {
+                property_names.push(name);
+            }
+        }
+
+        property_names
     }
 
     /// Map a primitive type to its boxed interface type for property name collection.

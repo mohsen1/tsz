@@ -1666,6 +1666,159 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn mapped_type_has_explicit_property(
+        &self,
+        mapped_id: tsz_solver::MappedTypeId,
+        prop_name: &str,
+    ) -> bool {
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+            self.ctx.types,
+            mapped_id,
+            prop_name,
+        )
+        .is_some()
+            || crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+                self.ctx.types,
+                mapped_id,
+            )
+            .is_some_and(|names| names.contains(&self.ctx.types.intern_string(prop_name)))
+            || crate::query_boundaries::state::checking::extract_string_literal_keys(
+                self.ctx.types,
+                mapped.constraint,
+            )
+            .iter()
+            .any(|name| self.ctx.types.resolve_atom(*name) == prop_name)
+    }
+
+    fn mapped_explicit_property_names(
+        &self,
+        mapped_id: tsz_solver::MappedTypeId,
+    ) -> Vec<String> {
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        let mut names: Vec<String> =
+            crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+                self.ctx.types,
+                mapped_id,
+            )
+            .into_iter()
+            .flatten()
+            .map(|name| self.ctx.types.resolve_atom(name))
+            .collect();
+
+        for name in crate::query_boundaries::state::checking::extract_string_literal_keys(
+            self.ctx.types,
+            mapped.constraint,
+        ) {
+            let name = self.ctx.types.resolve_atom(name);
+            if !names.iter().any(|existing| existing == &name) {
+                names.push(name);
+            }
+        }
+
+        names
+    }
+
+    fn generic_mapped_application_lacks_explicit_property(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> Option<bool> {
+        use crate::query_boundaries::common::{TypeSubstitution, application_info, instantiate_type};
+
+        let (base, args) = application_info(self.ctx.types, object_type)?;
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        let mapped_id = crate::query_boundaries::common::mapped_type_id(self.ctx.types, body_type)?;
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, mapped.constraint)
+        {
+            return None;
+        }
+
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+        let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
+        let instantiated_mapped_id =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, instantiated)?;
+        Some(
+            !self
+                .mapped_explicit_property_names(instantiated_mapped_id)
+                .iter()
+                .any(|name| name == prop_name)
+                && !self.mapped_type_has_explicit_property(instantiated_mapped_id, prop_name),
+        )
+    }
+
+    pub(crate) fn generic_mapped_receiver_explicit_property_names(
+        &mut self,
+        object_type: TypeId,
+    ) -> Vec<String> {
+        use crate::query_boundaries::common::{TypeSubstitution, application_info, instantiate_type};
+
+        if let Some((base, args)) = application_info(self.ctx.types, object_type)
+            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+        {
+            let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+            if let Some(mapped_id) =
+                crate::query_boundaries::common::mapped_type_id(self.ctx.types, body_type)
+            {
+                let mapped = self.ctx.types.mapped_type(mapped_id);
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    mapped.constraint,
+                ) {
+                    let substitution = TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+                    let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
+                    if let Some(instantiated_mapped_id) =
+                        crate::query_boundaries::common::mapped_type_id(self.ctx.types, instantiated)
+                    {
+                        return self.mapped_explicit_property_names(instantiated_mapped_id);
+                    }
+                }
+            }
+        }
+
+        if let Some(mapped_id) = crate::query_boundaries::common::mapped_type_id(
+            self.ctx.types,
+            object_type,
+        ) {
+            return self.mapped_explicit_property_names(mapped_id);
+        }
+
+        Vec::new()
+    }
+
+    pub(crate) fn generic_mapped_receiver_lacks_explicit_property(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        use crate::query_boundaries::common as common_query;
+
+        if let Some(lacks_explicit_property) =
+            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name)
+        {
+            return lacks_explicit_property;
+        }
+
+        let resolved = self.resolve_type_for_property_access(object_type);
+        let evaluated = self.evaluate_type_with_env(resolved);
+
+        for candidate in [resolved, evaluated] {
+            if !common_query::contains_type_parameters(self.ctx.types, candidate) {
+                continue;
+            }
+
+            let Some(mapped_id) = common_query::mapped_type_id(self.ctx.types, candidate) else {
+                continue;
+            };
+
+            return !self.mapped_type_has_explicit_property(mapped_id, prop_name);
+        }
+
+        false
+    }
+
     pub(super) fn strict_bind_call_apply_method_type(
         &mut self,
         object_type: TypeId,

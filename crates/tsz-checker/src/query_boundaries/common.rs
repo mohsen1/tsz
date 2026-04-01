@@ -124,6 +124,13 @@ pub(crate) fn application_id(
     tsz_solver::visitor::application_id(db, type_id)
 }
 
+pub(crate) fn mapped_type_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::MappedTypeId> {
+    tsz_solver::type_queries::get_mapped_type_id(db, type_id)
+}
+
 pub(crate) fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::has_construct_signatures(db, type_id)
 }
