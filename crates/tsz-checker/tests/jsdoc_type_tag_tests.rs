@@ -7,8 +7,8 @@
 use rustc_hash::FxHashSet;
 use std::path::Path;
 use std::sync::Arc;
-use tsz_binder::lib_loader::LibFile;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::context::LibContext;
 use tsz_checker::diagnostics::Diagnostic;
@@ -56,7 +56,10 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
                 if !seen_files.insert(file_name.to_string()) {
                     break;
                 }
-                lib_files.push(Arc::new(LibFile::from_source(file_name.to_string(), content)));
+                lib_files.push(Arc::new(LibFile::from_source(
+                    file_name.to_string(),
+                    content,
+                )));
                 break;
             }
         }

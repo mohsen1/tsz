@@ -838,7 +838,7 @@ fn compile_inner(
             || d.code
                 == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
     });
-    
+
     // TS5107/TS5101 (deprecation warnings for deprecated options/values) are fatal in tsc 6.0.
     // They stop compilation and only config-level diagnostics are reported.
     // Match this behavior to avoid extra file-level diagnostics like TS2390, TS2391.

@@ -2085,11 +2085,10 @@ impl<'a> CheckerState<'a> {
                                     let other_type = cross_checker.get_type_of_node(other_decl);
                                     CheckerState::leave_cross_arena_delegation();
                                     if other_type != TypeId::ERROR
-                                        && !self
-                                            .are_var_decl_types_compatible(
-                                                other_type,
-                                                raw_declared_type,
-                                            )
+                                        && !self.are_var_decl_types_compatible(
+                                            other_type,
+                                            raw_declared_type,
+                                        )
                                     {
                                         self.error_subsequent_variable_declaration(
                                             name_str,
