@@ -121,6 +121,47 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // `namespace global {}` in a non-module file is a regular namespace, not
             // a global augmentation.
             let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0;
+            // TS1280: Namespaces are not allowed in global script files when
+            // isolatedModules is enabled. tsc emits a single diagnostic per file,
+            // anchored on the first top-level namespace declaration.
+            if self.ctx.isolated_modules()
+                && !self.is_external_module()
+                && !is_string_named
+                && !is_global_augmentation
+                && let Some(ext) = self.ctx.arena.get_extended(module_idx)
+                && ext.parent.is_some()
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                let is_first_top_level_namespace = self
+                    .ctx
+                    .arena
+                    .get_source_file(parent_node)
+                    .is_some_and(|source_file| {
+                        let statements = &source_file.statements;
+                        statements.nodes.iter().copied().find(|&stmt_idx| {
+                            self.ctx
+                                .arena
+                                .get(stmt_idx)
+                                .is_some_and(|stmt_node| {
+                                    stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                })
+                        }) == Some(module_idx)
+                    });
+                if is_first_top_level_namespace {
+                    let message = format_message(
+                        diagnostic_messages::NAMESPACES_ARE_NOT_ALLOWED_IN_GLOBAL_SCRIPT_FILES_WHEN_IS_ENABLED_IF_THIS_FILE_I,
+                        &["isolatedModules"],
+                    );
+                    let error_node = self.ctx.arena.get(module.name).unwrap_or(node);
+                    self.ctx.error(
+                        error_node.pos,
+                        error_node.end - error_node.pos,
+                        message,
+                        diagnostic_codes::NAMESPACES_ARE_NOT_ALLOWED_IN_GLOBAL_SCRIPT_FILES_WHEN_IS_ENABLED_IF_THIS_FILE_I,
+                    );
+                }
+            }
             if is_global_augmentation {
                 let mut allowed_context = false;
                 if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
