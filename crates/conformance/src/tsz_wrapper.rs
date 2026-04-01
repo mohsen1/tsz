@@ -1069,9 +1069,11 @@ fn convert_options_to_tsconfig(
     if strict_explicit {
         if let Some(serde_json::Value::Bool(strict_val)) = opts.get("strict").cloned() {
             // Expand strict sub-options for both strict: true and strict: false.
-            // The tsc cache generator writes these explicitly in both directions,
-            // and tsc 6.0 emits TS5107 for deprecated options like alwaysStrict
-            // regardless of the boolean value.
+            // The tsc cache generator writes these explicitly in both directions.
+            // NOTE: alwaysStrict is intentionally excluded from automatic expansion.
+            // When alwaysStrict=false is added to tsconfig, tsc 6.0 emits TS5107
+            // (deprecation warning) which suppresses all file-level errors. Tests
+            // that need alwaysStrict behavior should specify it explicitly.
             for key in [
                 "noImplicitAny",
                 "noImplicitThis",
@@ -1080,7 +1082,6 @@ fn convert_options_to_tsconfig(
                 "strictBindCallApply",
                 "strictPropertyInitialization",
                 "useUnknownInCatchVariables",
-                "alwaysStrict",
             ] {
                 opts.entry(key.to_string())
                     .or_insert(serde_json::Value::Bool(strict_val));
