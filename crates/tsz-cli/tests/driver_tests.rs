@@ -1157,6 +1157,50 @@ fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_oute
 }
 
 #[test]
+fn compile_excessive_stack_depth_flat_array_fixture_reports_normalized_jsx_key_target() {
+    let Some(source) =
+        load_typescript_fixture("TypeScript/tests/cases/compiler/excessiveStackDepthFlatArray.ts")
+    else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("test.tsx"), &source);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.jsx = Some(crate::args::JsxEmit::React);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.tsx")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let jsx_key_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text
+                    .contains("Type '{ key: string; }' is not assignable to type")
+        })
+        .collect();
+
+    assert!(
+        jsx_key_diags.iter().any(|diag| {
+            diag.message_text.contains("HTMLAttributes<HTMLLIElement>")
+                && !diag.message_text.contains("DetailedHTMLProps")
+        }),
+        "Expected JSX key TS2322 to target normalized HTMLAttributes<HTMLLIElement>, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_default_import_of_merged_interface_and_const_export_is_callable() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
