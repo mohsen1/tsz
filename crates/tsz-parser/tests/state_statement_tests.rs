@@ -54,6 +54,28 @@ fn parse_with_statement_with_recovery_when_expression_missing() {
 }
 
 #[test]
+fn if_statement_with_invalid_character_and_asterisk_reports_ts1127_and_ts1109() {
+    let source = "class C {\n  foo() {\n    if (a) ¬ * bar;\n  }\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::INVALID_CHARACTER),
+        "expected TS1127 for the invalid character before `*`, got {diags:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected TS1109 for malformed `*` body, got {diags:?}"
+    );
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::THE_BODY_OF_AN_IF_STATEMENT_CANNOT_BE_THE_EMPTY_STATEMENT),
+        "should not emit TS1313 for this pattern, got {diags:?}"
+    );
+}
+
+#[test]
 fn function_declaration_missing_open_paren_recovers_into_body() {
     assert_function_body_recovery_uses_statement_errors(
         "function boo {\n  static test()\n  static test(name: string)\n  static test(name?: any) {}\n}\nconst ok = 1;",

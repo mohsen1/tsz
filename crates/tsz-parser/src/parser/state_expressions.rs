@@ -2492,16 +2492,14 @@ impl ParserState {
             // createMissingNode(getNodePos()), then TS1005 at token start (after trivia)
             // to match tsc's parseErrorAtPosition(scanner.getTokenStart()). When there's
             // leading whitespace, the positions differ and both errors are emitted.
-            {
-                let full_start = self.u32_from_usize(self.scanner.get_token_full_start());
-                let end = self.u32_from_usize(self.scanner.get_token_end());
-                self.parse_error_at(
-                    full_start,
-                    end.saturating_sub(full_start),
-                    "Expression expected.",
-                    diagnostic_codes::EXPRESSION_EXPECTED,
-                );
-            }
+            let full_start = self.u32_from_usize(self.scanner.get_token_full_start());
+            let end = self.u32_from_usize(self.scanner.get_token_end());
+            self.parse_error_at(
+                full_start,
+                end.saturating_sub(full_start),
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
 
             // Emit TS1005 with message matching what tsc's parser recovery produces.
             // When followed by `function` keyword (e.g., `@dec function() {}`), tsc
