@@ -18,6 +18,7 @@ use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
+use tsz_common::checker_options::JsxMode;
 use tsz_common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -12112,6 +12113,294 @@ export import JSX = JSXInternal;
     assert!(
         has_error(&diagnostics, 1269),
         "Expected TS1269 for export import aliasing a type-only namespace under isolatedModules. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_export_import_jsx_namespace_preserves_ambient_namespace_members() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/node_modules/preact/index.d.ts",
+                r#"
+type Defaultize<Props, Defaults> =
+    Props extends any
+        ? Partial<Pick<Props, Extract<keyof Props, keyof Defaults>>> &
+            Pick<Props, Exclude<keyof Props, keyof Defaults>>
+        : never;
+export namespace JSXInternal {
+    interface HTMLAttributes<T = {}> {}
+    interface SVGAttributes<T = {}> {}
+    type LibraryManagedAttributes<Component, Props> = Component extends {
+        defaultProps: infer Defaults;
+    } ? Defaultize<Props, Defaults> : Props;
+    interface IntrinsicAttributes { key?: any; }
+    interface Element extends VNode<any> {}
+    interface ElementClass extends Component<any, any> {}
+    interface ElementAttributesProperty { props: any; }
+    interface ElementChildrenAttribute { children: any; }
+    interface IntrinsicElements { div: HTMLAttributes; }
+}
+export const Fragment: unique symbol;
+export type ComponentType<T = {}> = {};
+export type ComponentChild = {};
+export type ComponentChildren = {};
+export type VNode<T = {}> = {};
+export type Attributes = {};
+export type Component<T = {}, U = {}> = {};
+"#,
+            ),
+            (
+                "/node_modules/preact/jsx-runtime/index.d.ts",
+                r#"
+export { Fragment } from "..";
+import { ComponentType, ComponentChild, ComponentChildren, VNode, Attributes } from "..";
+import { JSXInternal } from "..";
+
+export function jsx(
+    type: string,
+    props: JSXInternal.HTMLAttributes &
+        JSXInternal.SVGAttributes &
+        Record<string, any> & { children?: ComponentChild },
+    key?: string
+): VNode<any>;
+export function jsx<P>(
+    type: ComponentType<P>,
+    props: Attributes & P & { children?: ComponentChild },
+    key?: string
+): VNode<any>;
+
+export function jsxs(
+    type: string,
+    props: JSXInternal.HTMLAttributes &
+        JSXInternal.SVGAttributes &
+        Record<string, any> & { children?: ComponentChild[] },
+    key?: string
+): VNode<any>;
+export function jsxs<P>(
+    type: ComponentType<P>,
+    props: Attributes & P & { children?: ComponentChild[] },
+    key?: string
+): VNode<any>;
+
+export function jsxDEV(
+    type: string,
+    props: JSXInternal.HTMLAttributes &
+        JSXInternal.SVGAttributes &
+        Record<string, any> & { children?: ComponentChildren },
+    key?: string
+): VNode<any>;
+export function jsxDEV<P>(
+    type: ComponentType<P>,
+    props: Attributes & P & { children?: ComponentChildren },
+    key?: string
+): VNode<any>;
+
+export import JSX = JSXInternal;
+"#,
+            ),
+            ("/index.tsx", r#"export const Comp = () => <div></div>;"#),
+        ],
+        "/index.tsx",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::ReactJsx,
+            jsx_import_source: "preact".to_string(),
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2694),
+        "Expected ambient namespace members inside declaration-file JSXInternal to stay visible through export import JSX aliasing, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_declare_global_export_import_jsx_namespace_keeps_global_jsx_surface() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/node_modules/preact/index.d.ts",
+                r#"
+type Defaultize<Props, Defaults> =
+    Props extends any
+        ? Partial<Pick<Props, Extract<keyof Props, keyof Defaults>>> &
+            Pick<Props, Exclude<keyof Props, keyof Defaults>>
+        : never;
+export namespace JSXInternal {
+    interface HTMLAttributes<T = {}> {}
+    interface SVGAttributes<T = {}> {}
+    type LibraryManagedAttributes<Component, Props> = Component extends {
+        defaultProps: infer Defaults;
+    } ? Defaultize<Props, Defaults> : Props;
+    interface IntrinsicAttributes { key?: any; }
+    interface Element extends VNode<any> {}
+    interface ElementClass extends Component<any, any> {}
+    interface ElementAttributesProperty { props: any; }
+    interface ElementChildrenAttribute { children: any; }
+    interface IntrinsicElements { div: HTMLAttributes; }
+}
+export const Fragment: unique symbol;
+export type ComponentType<T = {}> = {};
+export type ComponentChild = {};
+export type ComponentChildren = {};
+export type VNode<T = {}> = {};
+export type Attributes = {};
+export type Component<T = {}, U = {}> = {};
+"#,
+            ),
+            (
+                "/node_modules/preact/jsx-runtime/index.d.ts",
+                r#"
+export { Fragment } from "..";
+import { ComponentType, ComponentChild, ComponentChildren, VNode, Attributes } from "..";
+import { JSXInternal } from "..";
+
+export function jsx(
+    type: string,
+    props: JSXInternal.HTMLAttributes &
+        JSXInternal.SVGAttributes &
+        Record<string, any> & { children?: ComponentChild },
+    key?: string
+): VNode<any>;
+export function jsx<P>(
+    type: ComponentType<P>,
+    props: Attributes & P & { children?: ComponentChild },
+    key?: string
+): VNode<any>;
+
+export function jsxs(
+    type: string,
+    props: JSXInternal.HTMLAttributes &
+        JSXInternal.SVGAttributes &
+        Record<string, any> & { children?: ComponentChild[] },
+    key?: string
+): VNode<any>;
+export function jsxs<P>(
+    type: ComponentType<P>,
+    props: Attributes & P & { children?: ComponentChild[] },
+    key?: string
+): VNode<any>;
+
+export function jsxDEV(
+    type: string,
+    props: JSXInternal.HTMLAttributes &
+        JSXInternal.SVGAttributes &
+        Record<string, any> & { children?: ComponentChildren },
+    key?: string
+): VNode<any>;
+export function jsxDEV<P>(
+    type: ComponentType<P>,
+    props: Attributes & P & { children?: ComponentChildren },
+    key?: string
+): VNode<any>;
+
+declare global {
+    export import JSX = JSXInternal;
+}
+"#,
+            ),
+            ("/index.tsx", r#"export const Comp = () => <div></div>;"#),
+        ],
+        "/index.tsx",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::Preserve,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected declare global export import JSX alias to be accepted and provide JSX globals without bogus TS2666/TS2694/TS7026 diagnostics, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_declare_global_export_import_missing_alias_target_keeps_jsx_missing_interface_error() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/node_modules/preact/index.d.ts",
+                r#"
+type Defaultize<Props, Defaults> =
+    Props extends any
+        ? Partial<Pick<Props, Extract<keyof Props, keyof Defaults>>> &
+            Pick<Props, Exclude<keyof Props, keyof Defaults>>
+        : never;
+export namespace JSXInternal {
+    interface HTMLAttributes<T = {}> {}
+    interface SVGAttributes<T = {}> {}
+    type LibraryManagedAttributes<Component, Props> = Component extends {
+        defaultProps: infer Defaults;
+    } ? Defaultize<Props, Defaults> : Props;
+    interface IntrinsicAttributes { key?: any; }
+    interface Element extends VNode<any> {}
+    interface ElementClass extends Component<any, any> {}
+    interface ElementAttributesProperty { props: any; }
+    interface ElementChildrenAttribute { children: any; }
+    interface IntrinsicElements { div: HTMLAttributes; }
+}
+export const Fragment: unique symbol;
+export type ComponentType<T = {}> = {};
+export type ComponentChild = {};
+export type ComponentChildren = {};
+export type VNode<T = {}> = {};
+export type Attributes = {};
+export type Component<T = {}, U = {}> = {};
+"#,
+            ),
+            (
+                "/node_modules/preact/jsx-runtime/index.d.ts",
+                r#"
+export { Fragment } from "..";
+import { ComponentType, ComponentChild, ComponentChildren, VNode, Attributes } from "..";
+import { JSXInternal } from "..";
+
+export function jsx(
+    type: string,
+    props: JSXInternal.HTMLAttributes &
+        JSXInternal.SVGAttributes &
+        Record<string, any> & { children?: ComponentChild },
+    key?: string
+): VNode<any>;
+export function jsx<P>(
+    type: ComponentType<P>,
+    props: Attributes & P & { children?: ComponentChild },
+    key?: string
+): VNode<any>;
+
+declare global {
+    export import JSX = NotFound;
+}
+"#,
+            ),
+            ("/index.tsx", r#"export const Comp = () => <div></div>;"#),
+        ],
+        "/index.tsx",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::Preserve,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7026),
+        "Expected TS7026 when missing global JSX alias target leaves IntrinsicElements unavailable in the local harness, got: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2666 || *code == 2694),
+        "Expected missing alias target case to avoid bogus augmentation-export and namespace-member diagnostics, got: {diagnostics:#?}"
     );
 }
 

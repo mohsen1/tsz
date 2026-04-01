@@ -232,6 +232,13 @@ impl BinderState {
                 // declare_symbol handles adding to current_scope and node_symbols.
                 // We still need to explicit export handling if declare_symbol didn't handle it fully?
                 // declare_symbol takes is_exported flag.
+                if self.in_global_augmentation {
+                    self.file_locals.set(name.to_string(), sym_id);
+                    self.global_augmentations
+                        .entry(name.to_string())
+                        .or_default()
+                        .push(crate::state::GlobalAugmentation::new(idx));
+                }
             }
         }
     }

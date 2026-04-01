@@ -500,11 +500,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
 
-            // TS2666/TS2667: Imports/exports are not permitted in module augmentations.
-            // For string-literal augmentations, only emit these diagnostics when the
-            // target module exists to match TS's transient behavior.
-            // For `declare global`, there is no module specifier target, so always
-            // apply these checks in external modules.
+            // TS2666/TS2667: Imports/exports are not permitted in string-literal
+            // module augmentations. `declare global { ... }` is namespace-like:
+            // its body may contain exported members such as `export import JSX = ...`,
+            // so it must not be checked through the module-augmentation ban.
             let module_augmentation_target_exists = if has_declare {
                 if is_string_named {
                     self.ctx
@@ -512,17 +511,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         .get(module.name)
                         .and_then(|n| self.ctx.arena.get_literal(n))
                         .is_some_and(|lit| self.module_exists(&lit.text))
-                } else if is_global_augmentation {
-                    true
                 } else {
                     false
                 }
             } else {
                 false
             } && self.is_external_module();
-            let should_check_augmentation_body = has_declare
-                && (is_string_named || is_global_augmentation)
-                && self.is_external_module();
+            let should_check_augmentation_body =
+                has_declare && is_string_named && self.is_external_module();
             if should_check_augmentation_body {
                 let module_specifier = self
                     .ctx

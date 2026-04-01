@@ -4,9 +4,10 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
-use tsz_binder::SymbolId;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -1539,21 +1540,15 @@ impl<'a> CheckerState<'a> {
             //    comes from the import source module, not the global scope. TS7026 must not fire.
             // 3. When the file has parser-level errors (e.g. malformed JSX attributes → TS1145),
             //    tsc suppresses TS7026 to avoid double-reporting in error-recovery situations.
-            use tsz_common::checker_options::JsxMode;
-            let jsx_mode = self.ctx.compiler_options.jsx_mode;
-            // Suppress TS7026 when the JSX runtime uses an import source:
-            // - react-jsx/react-jsxdev modes always use import source
-            // - jsxImportSource config option also indicates import source usage
-            // Note: a @jsxImportSource pragma alone (without the config option) does NOT
-            // suppress TS7026 in preserve mode — the pragma is only effective in react-jsx modes.
-            let uses_import_source = jsx_mode == JsxMode::ReactJsx
-                || jsx_mode == JsxMode::ReactJsxDev
-                || !self.ctx.compiler_options.jsx_import_source.is_empty();
+            let suppress_for_import_source = self.should_suppress_ts7026_for_import_source();
             let file_has_any_parse_diag =
                 self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
             let recovered_adjacent_sibling =
                 self.file_has_same_line_adjacent_jsx_recovery_pattern();
-            if !uses_import_source && !file_has_any_parse_diag && !recovered_adjacent_sibling {
+            if !suppress_for_import_source
+                && !file_has_any_parse_diag
+                && !recovered_adjacent_sibling
+            {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
                     idx,
@@ -1992,17 +1987,13 @@ impl<'a> CheckerState<'a> {
             false
         };
         // Same suppression rules as the opening-element TS7026 check.
-        use tsz_common::checker_options::JsxMode;
-        let jsx_mode = self.ctx.compiler_options.jsx_mode;
-        let uses_import_source = jsx_mode == JsxMode::ReactJsx
-            || jsx_mode == JsxMode::ReactJsxDev
-            || !self.ctx.compiler_options.jsx_import_source.is_empty();
+        let suppress_for_import_source = self.should_suppress_ts7026_for_import_source();
         let file_has_any_parse_diag =
             self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
         let recovered_adjacent_sibling = self.file_has_same_line_adjacent_jsx_recovery_pattern();
         if is_intrinsic
             && self.get_intrinsic_elements_type().is_none()
-            && !uses_import_source
+            && !suppress_for_import_source
             && !file_has_any_parse_diag
             && !recovered_adjacent_sibling
         {
@@ -2027,6 +2018,14 @@ impl<'a> CheckerState<'a> {
             return Some(jsx_sym);
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
+            if self.ctx.binder.global_augmentations.contains_key("JSX") {
+                return Some(sym_id);
+            }
+        }
+        if let Some(sym_id) = self.get_cross_file_global_augmentation_symbol_id("JSX") {
+            return Some(sym_id);
+        }
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
             return Some(sym_id);
         }
         let lib_binders = self.get_lib_binders();
@@ -2041,17 +2040,209 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn should_suppress_ts7026_for_import_source(&mut self) -> bool {
+        use tsz_common::checker_options::JsxMode;
+
+        let jsx_mode = self.ctx.compiler_options.jsx_mode;
+        let uses_import_source = jsx_mode == JsxMode::ReactJsx
+            || jsx_mode == JsxMode::ReactJsxDev
+            || !self.ctx.compiler_options.jsx_import_source.is_empty();
+        if !uses_import_source {
+            return false;
+        }
+
+        match self.get_jsx_namespace_type() {
+            Some(jsx_sym_id) => self.resolve_jsx_namespace_target_symbol_id(jsx_sym_id).is_some(),
+            None => true,
+        }
+    }
+
+    fn get_cross_file_global_augmentation_symbol_id(&self, name: &str) -> Option<SymbolId> {
+        let all_binders = self.ctx.all_binders.as_ref()?;
+
+        if let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+        {
+            for &(file_idx, sym_id) in entries {
+                let Some(binder) = all_binders.get(file_idx) else {
+                    continue;
+                };
+                if !binder.global_augmentations.contains_key(name) {
+                    continue;
+                }
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+                return Some(sym_id);
+            }
+        }
+
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            if !binder.global_augmentations.contains_key(name) {
+                continue;
+            }
+            if let Some(sym_id) = binder.file_locals.get(name) {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    fn get_jsx_namespace_export_symbol_id(&mut self, export_name: &str) -> Option<SymbolId> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let jsx_sym_id = self.resolve_jsx_namespace_target_symbol_id(jsx_sym_id)?;
+        let file_idx = self.ctx.resolve_symbol_file_index(jsx_sym_id);
+        let export_sym_id = if let Some(symbol) = self.get_cross_file_symbol(jsx_sym_id) {
+            symbol.exports.as_ref()?.get(export_name)?
+        } else {
+            let lib_binders = self.get_lib_binders();
+            let symbol = self.ctx.binder.get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+            symbol.exports.as_ref()?.get(export_name)?
+        };
+        if let Some(file_idx) = file_idx {
+            self.ctx.register_symbol_file_target(export_sym_id, file_idx);
+        }
+        Some(export_sym_id)
+    }
+
+    fn resolve_jsx_namespace_target_symbol_id(&mut self, sym_id: SymbolId) -> Option<SymbolId> {
+        self.resolve_symbol_id_from_origin(sym_id, &mut Vec::new())
+    }
+
+    fn resolve_symbol_id_from_origin(
+        &mut self,
+        sym_id: SymbolId,
+        visited: &mut Vec<SymbolId>,
+    ) -> Option<SymbolId> {
+        if visited.contains(&sym_id) {
+            return None;
+        }
+        visited.push(sym_id);
+
+        let source_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+
+        let (import_module, import_name, escaped_name, decl_idx) =
+            if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
+                if (symbol.flags & symbol_flags::ALIAS) == 0 {
+                    return Some(sym_id);
+                }
+                (
+                    symbol.import_module.clone(),
+                    symbol.import_name.clone(),
+                    symbol.escaped_name.clone(),
+                    if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else {
+                        *symbol.declarations.first()?
+                    },
+                )
+            } else {
+                let lib_binders = self.get_lib_binders();
+                let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+                if (symbol.flags & symbol_flags::ALIAS) == 0 {
+                    return Some(sym_id);
+                }
+                (
+                    symbol.import_module.clone(),
+                    symbol.import_name.clone(),
+                    symbol.escaped_name.clone(),
+                    if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else {
+                        *symbol.declarations.first()?
+                    },
+                )
+            };
+
+        if let Some(module_name) = import_module.as_deref() {
+            let export_name = import_name.as_deref().unwrap_or(escaped_name.as_str());
+            let target_sym_id =
+                self.resolve_cross_file_export_from_file(module_name, export_name, Some(source_file_idx))?;
+            return self.resolve_symbol_id_from_origin(target_sym_id, visited);
+        }
+
+        let arena = self.ctx.get_arena_for_file(source_file_idx as u32);
+        let decl_node = arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return Some(sym_id);
+        }
+        let import = arena.get_import_decl(decl_node)?;
+        let entity_name = Self::entity_name_text_in_arena(arena, import.module_specifier)?;
+        let target_sym_id = self.resolve_entity_name_from_file(source_file_idx, &entity_name, visited)?;
+        Some(target_sym_id)
+    }
+
+    fn resolve_entity_name_from_file(
+        &mut self,
+        file_idx: usize,
+        name: &str,
+        visited: &mut Vec<SymbolId>,
+    ) -> Option<SymbolId> {
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        let mut current_sym = binder.file_locals.get(root_name)?;
+        self.ctx.register_symbol_file_target(current_sym, file_idx);
+        current_sym = self
+            .resolve_symbol_id_from_origin(current_sym, visited)
+            .unwrap_or(current_sym);
+
+        for segment in segments {
+            let current_file_idx = self.ctx.resolve_symbol_file_index(current_sym).unwrap_or(file_idx);
+            let member_sym_id = if let Some(symbol) = self.get_cross_file_symbol(current_sym) {
+                symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(segment))
+                    .or_else(|| symbol.members.as_ref().and_then(|members| members.get(segment)))?
+            } else {
+                let lib_binders = self.get_lib_binders();
+                let symbol = self.ctx.binder.get_symbol_with_libs(current_sym, &lib_binders)?;
+                symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(segment))
+                    .or_else(|| symbol.members.as_ref().and_then(|members| members.get(segment)))?
+            };
+            self.ctx.register_symbol_file_target(member_sym_id, current_file_idx);
+            current_sym = self
+                .resolve_symbol_id_from_origin(member_sym_id, visited)
+                .unwrap_or(member_sym_id);
+        }
+
+        Some(current_sym)
+    }
+
+    fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let node = arena.get(idx)?;
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = arena.get_qualified_name(node)?;
+            let left = Self::entity_name_text_in_arena(arena, qn.left)?;
+            let right = Self::entity_name_text_in_arena(arena, qn.right)?;
+            let mut combined = String::with_capacity(left.len() + 1 + right.len());
+            combined.push_str(&left);
+            combined.push('.');
+            combined.push_str(&right);
+            return Some(combined);
+        }
+        None
+    }
+
     // JSX Intrinsic Elements Type
 
     fn get_intrinsic_elements_symbol_id(&mut self) -> Option<SymbolId> {
-        let jsx_sym_id = self.get_jsx_namespace_type()?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let exports = symbol.exports.as_ref()?;
-        exports.get("IntrinsicElements")
+        self.get_jsx_namespace_export_symbol_id("IntrinsicElements")
     }
 
     /// Get the JSX.IntrinsicElements interface type (maps tag names to prop types).
@@ -2062,14 +2253,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the JSX.IntrinsicAttributes type (e.g. `{ key?: string }` in React).
     pub(super) fn get_intrinsic_attributes_type(&mut self) -> Option<TypeId> {
-        let jsx_sym_id = self.get_jsx_namespace_type()?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let exports = symbol.exports.as_ref()?;
-        let ia_sym_id = exports.get("IntrinsicAttributes")?;
+        let ia_sym_id = self.get_jsx_namespace_export_symbol_id("IntrinsicAttributes")?;
         let ty = self.type_reference_symbol_type(ia_sym_id);
         let evaluated = self.evaluate_type_with_env(ty);
         if evaluated == TypeId::ANY || evaluated == TypeId::ERROR || evaluated == TypeId::UNKNOWN {
@@ -2087,17 +2271,8 @@ impl<'a> CheckerState<'a> {
         self.check_jsx_fragment_factory(node_idx);
 
         // Try to resolve JSX.Element from the JSX namespace
-        if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
-            let lib_binders = self.get_lib_binders();
-            if let Some(symbol) = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(jsx_sym_id, &lib_binders)
-                && let Some(exports) = symbol.exports.as_ref()
-                && let Some(element_sym_id) = exports.get("Element")
-            {
-                return self.type_reference_symbol_type(element_sym_id);
-            }
+        if let Some(element_sym_id) = self.get_jsx_namespace_export_symbol_id("Element") {
+            return self.type_reference_symbol_type(element_sym_id);
         }
         // Note: tsc 6.0 never emits TS7026 about "JSX.Element" (0 occurrences).
         // TS7026 is only emitted about "JSX.IntrinsicElements" for intrinsic elements.
@@ -2106,27 +2281,13 @@ impl<'a> CheckerState<'a> {
     }
     /// Get JSX.Element type for return type checking (no factory diagnostics).
     pub(crate) fn get_jsx_element_type_for_check(&mut self) -> Option<TypeId> {
-        let jsx_sym_id = self.get_jsx_namespace_type()?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let exports = symbol.exports.as_ref()?;
-        let element_sym_id = exports.get("Element")?;
+        let element_sym_id = self.get_jsx_namespace_export_symbol_id("Element")?;
         Some(self.type_reference_symbol_type(element_sym_id))
     }
 
     /// Get JSX.ElementClass type for class component return type checking.
     pub(super) fn get_jsx_element_class_type(&mut self) -> Option<TypeId> {
-        let jsx_sym_id = self.get_jsx_namespace_type()?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let exports = symbol.exports.as_ref()?;
-        let element_class_sym_id = exports.get("ElementClass")?;
+        let element_class_sym_id = self.get_jsx_namespace_export_symbol_id("ElementClass")?;
         Some(self.type_reference_symbol_type(element_class_sym_id))
     }
     pub(super) fn get_jsx_children_prop_name(&mut self) -> String {
@@ -2139,21 +2300,8 @@ impl<'a> CheckerState<'a> {
             return "children".to_string();
         }
 
-        let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
-            return "children".to_string();
-        };
-        let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+        let Some(eca_sym_id) = self.get_jsx_namespace_export_symbol_id("ElementChildrenAttribute")
         else {
-            return "children".to_string();
-        };
-        let Some(exports) = symbol.exports.as_ref() else {
-            return "children".to_string();
-        };
-        let Some(eca_sym_id) = exports.get("ElementChildrenAttribute") else {
             return "children".to_string();
         };
 
