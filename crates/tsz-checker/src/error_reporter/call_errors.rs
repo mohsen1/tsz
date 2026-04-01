@@ -1688,8 +1688,9 @@ impl<'a> CheckerState<'a> {
                 cached_prop_type
             };
 
+            // For function values, emit TS2322 at the property level when there's a type mismatch.
+            // This applies to both optional and required function properties.
             if is_function_value
-                && target_prop_type != target_prop_type_for_diagnostic
                 && source_prop_type != TypeId::ERROR
                 && source_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
@@ -1698,9 +1699,16 @@ impl<'a> CheckerState<'a> {
             {
                 let source_prop_type_for_diagnostic =
                     self.widen_function_like_call_source(source_prop_type);
+                // Use the diagnostic target type if available (for optional properties),
+                // otherwise use the effective target type
+                let target_for_diag = if target_prop_type != target_prop_type_for_diagnostic {
+                    target_prop_type_for_diagnostic
+                } else {
+                    target_prop_type
+                };
                 self.error_type_not_assignable_at_with_anchor(
                     source_prop_type_for_diagnostic,
-                    target_prop_type_for_diagnostic,
+                    target_for_diag,
                     prop_name_idx,
                 );
                 elaborated = true;
