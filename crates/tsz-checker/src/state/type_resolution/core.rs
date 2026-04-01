@@ -175,12 +175,19 @@ impl<'a> CheckerState<'a> {
                 // evaluation with unresolved params causes false TS2589.
                 // Actual TS2589 detection happens at instantiation with concrete types.
                 let lib_binders = self.get_lib_binders();
-                let is_type_alias = self
+                let symbol_info = self
                     .ctx
                     .binder
-                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .get_symbol_with_libs(sym_id, &lib_binders);
+                let is_type_alias = symbol_info
                     .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
-                if is_type_alias {
+                // TS2589 detection for class types with generic type arguments that may
+                // recursively expand (e.g., `Foo<[...Elements, "abc"]>` where mapped types
+                // in the class cause infinite type instantiation)
+                let is_class = symbol_info
+                    .is_some_and(|s| s.flags & symbol_flags::CLASS != 0);
+                
+                if is_type_alias || is_class {
                     let args_have_type_params = query::get_application_info(
                         self.ctx.types,
                         type_id,
@@ -189,16 +196,52 @@ impl<'a> CheckerState<'a> {
                         args.iter()
                             .any(|&arg| query::contains_type_parameters(self.ctx.types, arg))
                     });
-                    if !args_have_type_params {
+                    // For type aliases: skip TS2589 detection if args contain type params
+                    // to avoid false positives with recursive conditional types.
+                    // For classes: always check because recursive tuple spreads (e.g.,
+                    // `Foo<[...Elements, "abc"]>`) need depth detection even with type params.
+                    let should_check_depth = is_class || !args_have_type_params;
+                    if should_check_depth {
                         self.ctx.depth_exceeded.set(false);
                         let _ = self.evaluate_type_with_env_uncached(type_id);
-                        if self.ctx.depth_exceeded.get() {
+
+                        // TS2589: emit at the type reference node if depth was exceeded
+                        let exceeded = self.ctx.depth_exceeded.get();
+
+                        // Also detect circular mapped-type aliases that the evaluator
+                        // can't expand: if the alias body is a mapped type that
+                        // references itself in the template (e.g.,
+                        // `type Circular<T> = {[P in keyof T]: Circular<T>}`),
+                        // any concrete instantiation is infinitely recursive.
+                        let circular_mapped = !exceeded && is_type_alias
+                            && query::get_application_info(self.ctx.types, type_id)
+                                .and_then(|(base, _)| {
+                                    query::get_lazy_def_id(self.ctx.types, base)
+                                })
+                                .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                                .is_some_and(|ref_sym| {
+                                    // The base is a type alias whose body is a mapped
+                                    // type that references itself in its template
+                                    self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
+                                        symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                                            && symbol.declarations.iter().any(|&decl_idx| {
+                                                self.alias_has_self_referencing_mapped_body(
+                                                    ref_sym, decl_idx,
+                                                )
+                                            })
+                                    })
+                                });
+
+                        if exceeded || circular_mapped {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.error_at_node(
                                 idx,
                                 diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                                 diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                             );
+                            // tsc returns `any` for excessively deep types to
+                            // suppress cascading errors (e.g., TS2322).
+                            return TypeId::ANY;
                         }
                     }
                 }
