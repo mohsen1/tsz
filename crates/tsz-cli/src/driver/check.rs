@@ -35,6 +35,12 @@ fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
 
+fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
+    importing_file
+        .components()
+        .any(|component| component.as_os_str() == "node_modules")
+}
+
 /// Load lib.d.ts files and create `LibContext` objects for the checker.
 ///
 /// The binding pipeline mutates per-file binder state while injecting lib symbols into the
@@ -708,10 +714,14 @@ pub(super) fn collect_diagnostics(
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
                         let canonical = normalize_resolved_path(resolved_path, options);
                         // Apply duplicate package redirect
-                        let canonical = package_redirects
-                            .get(&canonical)
-                            .cloned()
-                            .unwrap_or(canonical);
+                        let canonical = if should_apply_duplicate_package_redirect(file_path) {
+                            package_redirects
+                                .get(&canonical)
+                                .cloned()
+                                .unwrap_or(canonical)
+                        } else {
+                            canonical
+                        };
                         if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                             resolved_module_request_paths.insert(
@@ -1184,10 +1194,14 @@ pub(super) fn collect_diagnostics(
                     &program_paths,
                 ) {
                     let canonical = normalize_resolved_path(&resolved, options);
-                    let canonical = package_redirects
-                        .get(&canonical)
-                        .cloned()
-                        .unwrap_or(canonical);
+                    let canonical = if should_apply_duplicate_package_redirect(&file_path) {
+                        package_redirects
+                            .get(&canonical)
+                            .cloned()
+                            .unwrap_or(canonical)
+                    } else {
+                        canonical
+                    };
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                         propagate_module_export_maps(
                             &mut binder,
@@ -1941,6 +1955,7 @@ pub(super) fn check_file_for_parallel<'a>(
 mod tests {
     use super::*;
     use crate::args::CliArgs;
+    use std::fs;
     use std::path::PathBuf;
     use tsz_common::common::ModuleKind;
 
@@ -1958,6 +1973,33 @@ mod tests {
             &program,
             &ResolvedCompilerOptions::default(),
             std::path::Path::new("/"),
+            None,
+            &[],
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics
+    }
+
+    fn collect_test_diagnostics_with_options(
+        files: &[(&str, &str)],
+        options: &ResolvedCompilerOptions,
+        base_dir: &Path,
+    ) -> Vec<Diagnostic> {
+        let bind_results: Vec<_> = files
+            .iter()
+            .map(|(file_name, source)| {
+                parallel::parse_and_bind_single((*file_name).to_string(), (*source).to_string())
+            })
+            .collect();
+        let program = parallel::merge_bind_results(bind_results);
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &program,
+            options,
+            base_dir,
             None,
             &[],
             (false, false, false),
@@ -2935,6 +2977,92 @@ let x2: string = f;
             2,
             "Expected the import to still resolve and produce two downstream TS2322 diagnostics. Diagnostics: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn test_collect_diagnostics_preserves_source_local_duplicate_package_paths() {
+        let dir = std::env::temp_dir().join("tsz_check_duplicate_package_global_merge");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(dir.join("tests")).unwrap();
+        fs::create_dir_all(dir.join("node_modules/@types/react")).unwrap();
+        fs::create_dir_all(dir.join("tests/node_modules/@types/react")).unwrap();
+
+        fs::write(
+            dir.join("node_modules/@types/react/package.json"),
+            r#"{"name":"@types/react","version":"16.4.6"}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("tests/node_modules/@types/react/package.json"),
+            r#"{"name":"@types/react","version":"16.4.6"}"#,
+        )
+        .unwrap();
+
+        let root_react_path = dir.join("node_modules/@types/react/index.d.ts");
+        let tests_react_path = dir.join("tests/node_modules/@types/react/index.d.ts");
+        fs::write(&root_react_path, "declare global { }\n").unwrap();
+        fs::write(&tests_react_path, "").unwrap();
+
+        let src_index = dir.join("src/index.ts");
+        let tests_index = dir.join("tests/index.ts");
+
+        let options = ResolvedCompilerOptions {
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::CommonJS,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::CommonJS,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            module_suffixes: vec![String::new()],
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    src_index.to_str().unwrap(),
+                    "import * as React from 'react';\nexport var x = 1;\n",
+                ),
+                (
+                    tests_index.to_str().unwrap(),
+                    "import * as React from 'react';\nexport var y = 2;\n",
+                ),
+                (
+                    root_react_path.to_str().unwrap(),
+                    "declare global { }\n",
+                ),
+                (
+                    tests_react_path.to_str().unwrap(),
+                    "",
+                ),
+            ],
+            &options,
+            &dir,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2669 && Path::new(&diag.file) == root_react_path.as_path()
+            }),
+            "expected TS2669 on the root @types/react file, got: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2306
+                    && Path::new(&diag.file) == tests_index.as_path()
+                    && diag
+                        .message_text
+                        .contains("tests/node_modules/@types/react/index.d.ts")
+            }),
+            "expected TS2306 in tests/index.ts to preserve the tests-local package path, got: {diagnostics:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
