@@ -180,6 +180,146 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    pub(crate) fn missing_property_related_information(
+        &self,
+        target_type: TypeId,
+        property_name: tsz_common::interner::Atom,
+        anchor_idx: Option<NodeIndex>,
+    ) -> Option<DiagnosticRelatedInformation> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let decl_idx = if let Some(prop_info) =
+            self.property_info_for_display(target_type, property_name)
+            && let Some(prop_symbol_id) = prop_info.parent_id
+            && let Some(prop_symbol) = self.ctx.binder.get_symbol(prop_symbol_id)
+        {
+            if prop_symbol.value_declaration.is_some() {
+                prop_symbol.value_declaration
+            } else {
+                *prop_symbol.declarations.first()?
+            }
+        } else if let Some(anchor_idx) = anchor_idx {
+            let (anchor_start, _) = self.get_node_span(anchor_idx)?;
+            let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+            let mut best: Option<(NodeIndex, u32)> = None;
+
+            for symbol in self.ctx.binder.symbols.iter() {
+                if symbol.escaped_name.as_str() != prop_name.as_ref()
+                    || (symbol.decl_file_idx != u32::MAX
+                        && symbol.decl_file_idx != self.ctx.current_file_idx as u32)
+                {
+                    continue;
+                }
+
+                let candidate_idx = if symbol.value_declaration.is_some() {
+                    symbol.value_declaration
+                } else if let Some(&decl_idx) = symbol.declarations.first() {
+                    decl_idx
+                } else {
+                    continue;
+                };
+
+                let Some(candidate_node) = self.ctx.arena.get(candidate_idx) else {
+                    continue;
+                };
+                let is_prop_like = if candidate_node.kind == SyntaxKind::Identifier as u16 {
+                    self.ctx
+                        .arena
+                        .get_extended(candidate_idx)
+                        .and_then(|ext| self.ctx.arena.get(ext.parent))
+                        .is_some_and(|parent| {
+                            parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                                || parent.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        })
+                } else {
+                    candidate_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                        || candidate_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                };
+                if !is_prop_like {
+                    continue;
+                }
+
+                let Some((start, _)) = self.get_node_span(candidate_idx) else {
+                    continue;
+                };
+                if start >= anchor_start {
+                    continue;
+                }
+                if best.is_none_or(|(_, best_start)| start > best_start) {
+                    best = Some((candidate_idx, start));
+                }
+            }
+
+            if let Some((decl_idx, _)) = best {
+                decl_idx
+            } else {
+                let source_file = self.ctx.arena.source_files.first()?;
+                let anchor_limit = anchor_start as usize;
+                let text = source_file.text.get(..anchor_limit)?;
+                let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+                let mut search_from = 0usize;
+                let mut last_match = None;
+
+                while let Some(offset) = text[search_from..].find(prop_name.as_ref()) {
+                    let abs = search_from + offset;
+                    let before = text[..abs].chars().next_back();
+                    let after_name = abs + prop_name.len();
+                    let after = text[after_name..].chars().next();
+                    let ident_before = before
+                        .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+                    let ident_after = after
+                        .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+                    if !ident_before && !ident_after {
+                        let rest = &text[after_name..];
+                        let trimmed = rest.trim_start();
+                        if trimmed.starts_with(':') || trimmed.starts_with("?:") {
+                            last_match = Some(abs as u32);
+                        }
+                    }
+                    search_from = after_name;
+                }
+
+                if let Some(start) = last_match {
+                    return Some(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::IS_DECLARED_HERE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length: prop_name.len() as u32,
+                        message_text: format_message(
+                            diagnostic_messages::IS_DECLARED_HERE,
+                            &[&prop_name],
+                        ),
+                    });
+                }
+
+                return None;
+            }
+        } else {
+            return None;
+        };
+        let (start, end) = self.get_node_span(decl_idx)?;
+        let (start, length) =
+            self.normalized_anchor_span(decl_idx, start, end.saturating_sub(start));
+        let file = self
+            .source_file_data_for_node(decl_idx)
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        Some(DiagnosticRelatedInformation {
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::IS_DECLARED_HERE,
+            file,
+            start,
+            length,
+            message_text: format_message(
+                diagnostic_messages::IS_DECLARED_HERE,
+                &[&self.ctx.types.resolve_atom_ref(property_name)],
+            ),
+        })
+    }
+
     pub(super) fn private_or_protected_member_missing_display(
         &self,
         source_type: TypeId,

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::CheckerState;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
-use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -46,6 +46,32 @@ fn jsx_diagnostics_with_mode(source: &str, jsx_mode: JsxMode) -> Vec<(u32, Strin
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+fn jsx_full_diagnostics_with_mode(source: &str, jsx_mode: JsxMode) -> Vec<Diagnostic> {
+    let file_name = "test.tsx";
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let options = CheckerOptions {
+        jsx_mode,
+        ..CheckerOptions::default()
+    };
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
 }
 
 fn has_code(diags: &[(u32, String)], code: u32) -> bool {
@@ -3569,6 +3595,50 @@ declare const MockComponent: MockComponentInterface;
             .iter()
             .any(|(_, msg)| msg.contains("Type '{}' is not assignable to type")),
         "Custom ElementChildrenAttribute should format the synthesized JSX attrs object as '{{}}', got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_react_jsx_ignores_element_children_attribute_and_keeps_related_info() {
+    let source = r#"
+declare namespace JSX {
+    interface IntrinsicElements {
+        h1: { children: string }
+    }
+
+    type Element = string;
+
+    interface ElementChildrenAttribute {
+        offspring: any;
+    }
+}
+
+const Title = (props: { children: string }) => <h1>{props.children}</h1>;
+<Title>Hello, world!</Title>;
+
+const Wrong = (props: { offspring: string }) => <h1>{props.offspring}</h1>;
+<Wrong>Byebye, world!</Wrong>;
+"#;
+    let diags = jsx_full_diagnostics_with_mode(source, JsxMode::ReactJsx);
+    let ts2741 = diags
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        })
+        .expect("Expected TS2741 for missing 'offspring' prop under react-jsx");
+
+    assert!(
+        ts2741
+            .message_text
+            .contains("Property 'offspring' is missing in type '{ children: string; }'"),
+        "TS2741 should still use synthesized children props under react-jsx, got: {ts2741:?}"
+    );
+    assert!(
+        ts2741.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::IS_DECLARED_HERE
+                && info.message_text == "'offspring' is declared here."
+        }),
+        "TS2741 should include declaration related info for the required prop, got: {ts2741:?}"
     );
 }
 

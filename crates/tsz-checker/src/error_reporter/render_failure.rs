@@ -952,13 +952,19 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             &[&prop_name, &src_str, &tgt_str_qualified],
         );
-        Diagnostic::error(
+        let mut diag = Diagnostic::error(
             file_name,
             start,
             length,
             message,
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-        )
+        );
+        if let Some(related) =
+            self.missing_property_related_information(target_type, property_name, Some(idx))
+        {
+            diag.related_information.push(related);
+        }
+        diag
     }
 
     #[allow(clippy::too_many_arguments)]
