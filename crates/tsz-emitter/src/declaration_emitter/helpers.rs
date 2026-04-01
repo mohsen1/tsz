@@ -7516,10 +7516,9 @@ impl<'a> DeclarationEmitter<'a> {
                             || printed_type_text.contains('.');
                         (printed_is_safe_fallback
                             && self.type_text_is_directly_nameable_reference(&printed_type_text))
-                            .then_some(printed_type_text.as_str())
+                        .then_some(printed_type_text.as_str())
                     });
-                let preferred_type_is_directly_nameable =
-                    directly_nameable_type_text.is_some();
+                let preferred_type_is_directly_nameable = directly_nameable_type_text.is_some();
 
                 // TS2883: Check for non-portable inferred type references
                 if let Some(name_text) = self.get_identifier_text(decl_name)
@@ -11127,8 +11126,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(alias) = self.arena.get_type_alias(decl_node)
             && let Some(alias_type_text) = self.emit_type_node_text(alias.type_node)
-            && self
-                .type_text_uses_non_emittable_local_alias_root(&alias_type_text, visited_names)
+            && self.type_text_uses_non_emittable_local_alias_root(&alias_type_text, visited_names)
         {
             return true;
         }
@@ -11175,9 +11173,21 @@ impl<'a> DeclarationEmitter<'a> {
             .get_function(decl_node)
             .map(|func| func.name)
             .or_else(|| source_arena.get_class(decl_node).map(|class| class.name))
-            .or_else(|| source_arena.get_interface(decl_node).map(|iface| iface.name))
-            .or_else(|| source_arena.get_type_alias(decl_node).map(|alias| alias.name))
-            .or_else(|| source_arena.get_enum(decl_node).map(|enum_data| enum_data.name))
+            .or_else(|| {
+                source_arena
+                    .get_interface(decl_node)
+                    .map(|iface| iface.name)
+            })
+            .or_else(|| {
+                source_arena
+                    .get_type_alias(decl_node)
+                    .map(|alias| alias.name)
+            })
+            .or_else(|| {
+                source_arena
+                    .get_enum(decl_node)
+                    .map(|enum_data| enum_data.name)
+            })
             .or_else(|| {
                 source_arena
                     .get_variable_declaration(decl_node)

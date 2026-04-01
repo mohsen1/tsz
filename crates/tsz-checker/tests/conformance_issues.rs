@@ -178,9 +178,8 @@ o[numEnumKey];
         "Set-only reads should remain TS7053 instead of switching to TS7052. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts7053_messages
-            .iter()
-            .any(|message| message.contains("expression of type 'NumEnum' can't be used to index type '{ a: number; }'")),
+        ts7053_messages.iter().any(|message| message
+            .contains("expression of type 'NumEnum' can't be used to index type '{ a: number; }'")),
         "Numeric enum keys should still report TS7053 on plain objects. Actual diagnostics: {diagnostics:#?}"
     );
 }

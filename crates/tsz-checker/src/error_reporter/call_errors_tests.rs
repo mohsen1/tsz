@@ -176,7 +176,8 @@ foo();
         .expect("expected TS2345");
 
     assert!(
-        diag.message_text.contains("Argument of type '[]' is not assignable to parameter of type 'never'."),
+        diag.message_text
+            .contains("Argument of type '[]' is not assignable to parameter of type 'never'."),
         "Expected empty argument list display for zero-argument never-rest call, got: {diag:?}"
     );
 }
@@ -211,9 +212,8 @@ export function css<S extends { [K in keyof S]: string }>(styles: S): string {
         "Expected source callback display to preserve explicit alias annotations, got: {diag:?}"
     );
     assert!(
-        diag.message_text.contains(
-            "parameter of type '(obj: ClassNameObject, key: string) => ClassNameObject'"
-        ),
+        diag.message_text
+            .contains("parameter of type '(obj: ClassNameObject, key: string) => ClassNameObject'"),
         "Expected target callback display to preserve instantiated alias annotations, got: {diag:?}"
     );
     assert!(

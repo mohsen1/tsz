@@ -2078,7 +2078,8 @@ impl<'a> CheckerState<'a> {
                         .module_namespace_resolution_set
                         .insert(module_name.to_string());
 
-                    if let Some(exports_table) = self.resolve_effective_module_exports(module_name) {
+                    if let Some(exports_table) = self.resolve_effective_module_exports(module_name)
+                    {
                         use tsz_solver::PropertyInfo;
                         let mut props: Vec<PropertyInfo> = Vec::new();
                         for (name, &export_sym_id) in exports_table.iter() {

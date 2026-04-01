@@ -955,7 +955,7 @@ impl<'a> CheckerState<'a> {
                 DiagnosticAnchorKind::ElementAccessExpr,
                 &message,
                 diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                );
+            );
             return;
         }
 
@@ -1118,7 +1118,9 @@ impl<'a> CheckerState<'a> {
         method_name: &str,
         index_type: TypeId,
     ) -> bool {
-        let Some(method_type) = (match self.resolve_property_access_with_env(object_type, method_name) {
+        let Some(method_type) = (match self
+            .resolve_property_access_with_env(object_type, method_name)
+        {
             crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
                 Some(type_id)
             }
@@ -1134,7 +1136,11 @@ impl<'a> CheckerState<'a> {
         self.callable_accepts_index_argument(method_type, index_type)
     }
 
-    fn callable_accepts_index_argument(&mut self, callable_type: TypeId, index_type: TypeId) -> bool {
+    fn callable_accepts_index_argument(
+        &mut self,
+        callable_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
         if let Some(shape) =
             crate::query_boundaries::property_access::function_shape(self.ctx.types, callable_type)
         {
@@ -1239,7 +1245,12 @@ impl<'a> CheckerState<'a> {
         let access = self.ctx.arena.get_access_expr(node)?;
         let left = self.named_method_suggestion_receiver_text(access.expression)?;
         let right_node = self.ctx.arena.get(access.name_or_argument)?;
-        let right = self.ctx.arena.get_identifier(right_node)?.escaped_text.clone();
+        let right = self
+            .ctx
+            .arena
+            .get_identifier(right_node)?
+            .escaped_text
+            .clone();
         Some(format!("{left}.{right}"))
     }
 

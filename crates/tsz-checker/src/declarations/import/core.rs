@@ -951,7 +951,8 @@ impl<'a> CheckerState<'a> {
         &self,
         module_name: &str,
     ) -> bool {
-        self.ctx.compiler_options.module == ModuleKind::System && self.is_source_file_import(module_name)
+        self.ctx.compiler_options.module == ModuleKind::System
+            && self.is_source_file_import(module_name)
     }
 
     // =========================================================================
@@ -1189,7 +1190,8 @@ impl<'a> CheckerState<'a> {
             let uses_system_namespace_default =
                 self.source_file_import_uses_system_default_namespace_fallback(module_name);
             if let Some(ref table) = exports_table {
-                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default {
+                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default
+                {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }
             } else if self
@@ -1210,7 +1212,8 @@ impl<'a> CheckerState<'a> {
             let uses_system_namespace_default =
                 self.source_file_import_uses_system_default_namespace_fallback(module_name);
             if let Some(ref table) = exports_table {
-                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default {
+                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default
+                {
                     for &specifier_node in &named_default_binding_nodes {
                         self.emit_no_default_export_error(
                             module_name,
