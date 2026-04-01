@@ -554,6 +554,87 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn resolve_unqualified_name_in_enclosing_namespace_for_type_position(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        if self.ctx.binder.is_external_module() {
+            return None;
+        }
+
+        let arena = self.ctx.arena;
+        let mut current = node_idx;
+
+        let member_is_usable_in_type_position = |sym_id: SymbolId| {
+            let lib_binders = self.get_lib_binders();
+            let flags = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map_or(0, |symbol| symbol.flags);
+            if (flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0 {
+                return true;
+            }
+            !((self.alias_resolves_to_value_only(sym_id, Some(name))
+                || self.symbol_is_value_only(sym_id, Some(name)))
+                && !self.symbol_is_type_only(sym_id, Some(name)))
+        };
+
+        for _ in 0..100 {
+            let ext = arena.get_extended(current)?;
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let parent_node = arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_data) = arena.get_module(parent_node)
+                && let Some(ns_name_ident) = arena.get_identifier_at(module_data.name)
+            {
+                if module_data.body.is_some()
+                    && let Some(&scope_id) = self.ctx.binder.node_scope_ids.get(&module_data.body.0)
+                    && let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize)
+                    && let Some(member_id) = scope.table.get(name)
+                {
+                    let is_enum_member = self
+                        .ctx
+                        .binder
+                        .get_symbol(member_id)
+                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                    if !is_enum_member && member_is_usable_in_type_position(member_id) {
+                        return Some(member_id);
+                    }
+                }
+
+                let ns_name = ns_name_ident.escaped_text.as_str();
+                if let Some(ns_sym_id) = self.ctx.binder.file_locals.get(ns_name)
+                    && let Some(ns_sym) = self.ctx.binder.get_symbol(ns_sym_id)
+                    && let Some(exports) = ns_sym.exports.as_ref()
+                    && let Some(member_id) = exports.get(name)
+                {
+                    let is_enum_member = self
+                        .ctx
+                        .binder
+                        .get_symbol(member_id)
+                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                    if !is_enum_member && member_is_usable_in_type_position(member_id) {
+                        return Some(member_id);
+                    }
+                }
+
+                if let Some(member_id) =
+                    self.resolve_namespace_member_from_all_binders(ns_name, name)
+                    && member_is_usable_in_type_position(member_id)
+                {
+                    return Some(member_id);
+                }
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
     /// Inner implementation of qualified symbol resolution with cycle detection.
     pub(crate) fn resolve_qualified_symbol_inner(
         &self,

@@ -1011,6 +1011,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        if self.is_ambient_declaration(module_idx) {
+            return;
+        }
+
         // Get the symbol for this module declaration
         let Some(&sym_id) = self.ctx.binder.node_symbols.get(&module_idx.0) else {
             return;

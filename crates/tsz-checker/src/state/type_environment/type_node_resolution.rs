@@ -459,14 +459,14 @@ impl<'a> CheckerState<'a> {
 
         let qn_sym_res = self.resolve_qualified_symbol_in_type_position(type_name_idx);
         if let TypeSymbolResolution::Type(sym_id) = qn_sym_res {
-            let required_count = self.count_required_type_params(sym_id);
+            let name = self
+                .get_symbol_globally(sym_id)
+                .map(|s| s.escaped_name.clone())
+                .or_else(|| self.entity_name_text(type_name_idx))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let required_count = self.count_required_reference_type_params(sym_id, &name);
             if required_count > 0 {
-                let name = self
-                    .get_symbol_globally(sym_id)
-                    .map(|s| s.escaped_name.clone())
-                    .or_else(|| self.entity_name_text(type_name_idx))
-                    .unwrap_or_else(|| "<unknown>".to_string());
-                let type_params = self.get_display_type_params_for_symbol(sym_id);
+                let type_params = self.get_reference_type_params_for_symbol(sym_id, &name);
                 let display_name = Self::format_generic_display_name_with_interner(
                     &name,
                     &type_params,
