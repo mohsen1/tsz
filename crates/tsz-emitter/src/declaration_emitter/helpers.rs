@@ -4906,6 +4906,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 self.call_expression_declared_return_type_text(expr_idx)
             }
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+                self.tagged_template_declared_return_type_text(expr_idx)
+            }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
@@ -5131,6 +5134,48 @@ impl<'a> DeclarationEmitter<'a> {
 
         let call = self.arena.get_call_expr(expr_node)?;
         let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let source_arena = binder.symbol_arenas.get(&sym_id)?;
+        let source_file = self.arena_source_file(source_arena.as_ref())?;
+        if !source_file.is_declaration_file {
+            return None;
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = source_arena.get_function(decl_node) else {
+                continue;
+            };
+            if func.type_annotation.is_none() {
+                continue;
+            }
+            if let Some(type_text) =
+                self.source_slice_from_arena(source_arena.as_ref(), func.type_annotation)
+            {
+                return Some(
+                    type_text
+                        .trim_end()
+                        .trim_end_matches(';')
+                        .trim_end()
+                        .to_string(),
+                );
+            }
+        }
+
+        None
+    }
+
+    fn tagged_template_declared_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+            return None;
+        }
+
+        let tagged = self.arena.get_tagged_template(expr_node)?;
+        let sym_id = self.value_reference_symbol(tagged.tag)?;
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
         let source_arena = binder.symbol_arenas.get(&sym_id)?;
@@ -7459,6 +7504,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
                 }
 
+                let preferred_portable_type_text = has_initializer
+                    .then(|| self.preferred_expression_type_text(initializer))
+                    .flatten();
+                let directly_nameable_type_text = preferred_portable_type_text
+                    .as_deref()
+                    .filter(|text| self.type_text_is_directly_nameable_reference(text))
+                    .or_else(|| {
+                        self.type_text_is_directly_nameable_reference(&printed_type_text)
+                            .then_some(printed_type_text.as_str())
+                    });
+                let preferred_type_is_directly_nameable =
+                    directly_nameable_type_text.is_some();
+
                 // TS2883: Check for non-portable inferred type references
                 if let Some(name_text) = self.get_identifier_text(decl_name)
                     && let Some(name_node) = self.arena.get(decl_name)
@@ -7473,28 +7531,34 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     let mut ran_symbol_check = false;
                     if self.diagnostics.len() == diagnostics_before {
-                        // Run the structural type check unconditionally —
-                        // the printed type text may use local names instead
-                        // of import("...") syntax, so the text-based guard
-                        // can miss non-portable references that the deep
-                        // type walker will find.
-                        ran_symbol_check = true;
-                        self.check_non_portable_type_references(
-                            type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
+                        // If declaration emit can already spell the inferred type
+                        // through a directly nameable public surface (for example
+                        // `StyledComponent<"div">`), tsc does not look through
+                        // that alias and emit TS2883 for nested implementation
+                        // details like `NonReactStatics`.
+                        if !preferred_type_is_directly_nameable {
+                            ran_symbol_check = true;
+                            self.check_non_portable_type_references(
+                                type_id,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
                     }
                     if !ran_symbol_check
                         && self.diagnostics.len() == diagnostics_before
                         && has_initializer
-                        && printed_type_text.starts_with("import(\"")
-                        && self.import_type_uses_private_package_subpath(&printed_type_text)
+                        && directly_nameable_type_text
+                            .unwrap_or(&printed_type_text)
+                            .starts_with("import(\"")
+                        && self.import_type_uses_private_package_subpath(
+                            directly_nameable_type_text.unwrap_or(&printed_type_text),
+                        )
                     {
                         let _ = self.emit_non_portable_import_type_text_diagnostics(
-                            &printed_type_text,
+                            directly_nameable_type_text.unwrap_or(&printed_type_text),
                             &name_text,
                             &file_path,
                             name_node.pos,
@@ -7508,7 +7572,10 @@ impl<'a> DeclarationEmitter<'a> {
                             name_node.end - name_node.pos,
                         );
                     }
-                    if self.diagnostics.len() == diagnostics_before && has_initializer {
+                    if self.diagnostics.len() == diagnostics_before
+                        && has_initializer
+                        && !preferred_type_is_directly_nameable
+                    {
                         self.emit_non_portable_initializer_declaration_diagnostics(
                             initializer,
                             &name_text,

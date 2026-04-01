@@ -272,6 +272,11 @@ export default Object.assign(A, {
         .map(|d| d.message_text.clone())
         .collect();
 
+    assert_eq!(
+        ts2883_messages.len(),
+        1,
+        "expected only one TS2883 for the default export, got: {ts2883_messages:#?}"
+    );
     assert!(
         ts2883_messages.iter().any(|message| {
             message.contains("default")
@@ -279,6 +284,10 @@ export default Object.assign(A, {
                 && message.contains("styled-components/node_modules/hoist-non-react-statics")
         }),
         "expected TS2883 on default Object.assign export, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages.iter().all(|message| !message.contains("'C'")),
+        "expected no TS2883 on exported helper C, got: {ts2883_messages:#?}"
     );
 }
 
