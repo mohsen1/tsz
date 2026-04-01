@@ -762,79 +762,6 @@ pub(crate) fn compile_with_cache_and_changes(
 /// When deprecated compiler options produce TS5107, tsc makes them fatal (stops
 /// compilation early). However, tsc suppresses TS5107 when real file-level grammar
 /// errors exist. This function identifies which diagnostic codes count as "grammar
-/// errors" for that suppression logic.
-///
-/// NOT a blanket 17000..18000 range: many 17xxx codes (17009 "super before this",
-/// 17011 "super before property access") are checker-level semantic errors that
-/// must NOT suppress TS5107.
-const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
-    // Only a narrow subset of 8xxx codes are true JS grammar / parse failures.
-    // JSDoc validation errors like TS8024 should not suppress TS5107.
-    matches!(code,
-        8002 // 'import ... =' can only be used in TypeScript files
-        | 8003 // Type assertion expressions can only be used in TypeScript files
-        | 8004 // 'readonly' type modifier is only permitted on array and tuple literal types
-        | 8006 // 'interface' declarations can only be used in TypeScript files
-        | 8008 // Type aliases can only be used in TypeScript files
-        | 8009 // The '?' modifier can only be used in TypeScript files
-        | 8010 // Type annotations can only be used in TypeScript files
-        | 8011 // Type arguments can only be used in TypeScript files
-        | 8013 // Non-null assertions can only be used in TypeScript files
-        | 8015 // Namespace declarations can only be used in TypeScript files
-        | 8016 // Type assertion expressions can only be used in TypeScript files
-        | 8017 // Signature declarations can only be used in TypeScript files
-        | 8018 // Type-only import/export syntax can only be used in TypeScript files
-    )
-    // Specific 17xxx grammar-level errors only.
-    || matches!(code,
-        17002 // Expected corresponding JSX closing tag
-        | 17006 // Unary expression not allowed as LHS of exponentiation
-        | 17007 // Type assertion not allowed as LHS of exponentiation
-        | 17008 // JSX element has no corresponding closing tag
-        | 17012 // 'import.meta' meta-property grammar error
-    )
-    // Specific 1xxx codes that reliably indicate real parse failures
-    // (verified against tsc: these are never false positives in our parser
-    // for tests where tsc expects TS5107)
-    || matches!(code,
-        1002  // Unterminated string literal
-        | 1003  // Identifier expected
-        | 1005  // 'X' expected (colon, comma, semicolon, etc.)
-        | 1011  // '(' or '<' expected
-        | 1034  // 'super' must be followed by argument list or member access
-        | 1109 // Expression expected
-        | 1110 // Type expected
-        | 1121 // Octal literals are not allowed in strict mode
-        | 1124 // Digit expected
-        | 1125 // Hexadecimal digit expected
-        | 1126 // Unexpected end of text
-        | 1127 // Invalid character
-        | 1128 // Declaration or statement expected
-        | 1131 // Property or signature expected
-        | 1134 // Variable declaration expected
-        | 1137 // Expression or comma expected
-        | 1144 // '{' or ';' expected
-        | 1145 // '{' or JSX element expected
-        | 1198 // An extended Unicode escape value must be between 0x0 and 0x10FFFF
-        | 1199 // Value of type '{0}' is not callable
-        // NOTE: 1359 ('await' is a reserved word) is NOT included — our parser
-        // false-positives on TS1359 in async tests where tsc expects TS5107 only.
-        | 1433 // Neither decorators nor modifiers may be applied to 'this' parameters
-        | 1434 // Top-level 'await' expressions are only allowed...
-        | 1436 // Decorators are not valid here
-        | 1389 // '{0}' is not allowed as a variable declaration name
-        | 1440 // Variable declaration not allowed at this location
-        | 1442 // Expected '=' for property initializer
-        | 1489 // Decimals with leading zeros are not allowed
-    )
-    // Specific 2xxx codes that tsc treats as syntactic/preprocessing errors
-    // (emitted during early phases, before semantic analysis)
-    || matches!(code,
-        2458 // An AMD module cannot have multiple name assignments
-        | 2754 // 'super' may not use type arguments
-    )
-}
-
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
@@ -1406,31 +1333,21 @@ fn compile_inner(
     // TS5107/TS5101 are fatal in tsc 6.0: tsc stops compilation early and never emits
     // file-level diagnostics (syntactic or semantic) alongside them.
     //
-    // tsc suppresses TS5107 when real file-level grammar errors exist (preferring file
-    // errors over config deprecation warnings). We use a narrow whitelist of grammar
-    // error codes that tsc reliably emits — our parser can produce false-positive 1xxx
-    // codes that would wrongly suppress TS5107 if we checked the full range.
+    // When TS5107 comes from deprecated config option values (like alwaysStrict=false),
+    // tsc stops compilation entirely and only emits TS5107. We should match this behavior
+    // by dropping all file-level diagnostics when TS5107 is present.
+    //
+    // Note: Previously we checked for reliable grammar errors and allowed them to suppress
+    // TS5107, but this caused mismatches with tsc behavior for tests like privacyImportParseErrors
+    // where tsc emits ONLY TS5107.
     if has_deprecation_diagnostics {
-        let has_reliable_grammar_errors = diagnostics
-            .iter()
-            .any(|d| is_grammar_error_for_deprecation_priority(d.code));
-        if has_reliable_grammar_errors {
-            // Real grammar errors take priority — drop TS5107 from config diagnostics.
-            config_diagnostics.retain(|d| {
-                d.code
-                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-                    && d.code
-                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-            });
-        } else {
-            // No reliable file-level errors — TS5107 takes priority (fatal).
-            // Preserve global-level TS2318 ("Cannot find global type") because
-            // tsc emits these alongside deprecation warnings. These are
-            // identified by empty file name and position 0 (global diagnostics),
-            // as opposed to file-level TS2318 from type checking which tsc
-            // suppresses along with other file-level errors.
-            diagnostics.retain(|d| d.code == 2318 && d.file.is_empty() && d.start == 0);
-        }
+        // TS5107 takes priority — drop all file-level diagnostics.
+        // Preserve global-level TS2318 ("Cannot find global type") because
+        // tsc emits these alongside deprecation warnings. These are
+        // identified by empty file name and position 0 (global diagnostics),
+        // as opposed to file-level TS2318 from type checking which tsc
+        // suppresses along with other file-level errors.
+        diagnostics.retain(|d| d.code == 2318 && d.file.is_empty() && d.start == 0);
     }
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
