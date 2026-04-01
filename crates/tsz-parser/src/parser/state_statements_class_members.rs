@@ -1705,10 +1705,18 @@ impl ParserState {
                 && !self.can_parse_semicolon()
             {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    "Expected '=' for property initializer.",
-                    diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
-                );
+                let (message, code) = if self.is_token(SyntaxKind::OpenParenToken) {
+                    (
+                        "Cannot start a function call in a type annotation.",
+                        diagnostic_codes::CANNOT_START_A_FUNCTION_CALL_IN_A_TYPE_ANNOTATION,
+                    )
+                } else {
+                    (
+                        "Expected '=' for property initializer.",
+                        diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
+                    )
+                };
+                self.parse_error_at_current_token(message, code);
             }
 
             // Match tsc's parseSemicolonAfterPropertyName: when a property has

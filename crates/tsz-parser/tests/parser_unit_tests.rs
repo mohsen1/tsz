@@ -2626,6 +2626,28 @@ fn class_field_type_annotation_dot_reports_ts1442() {
 }
 
 #[test]
+fn class_field_type_annotation_call_reports_ts1441() {
+    let source = "class Base {} class C extends Base { a: super(); }";
+    let (parser, _) = parse_source(source);
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::CANNOT_START_A_FUNCTION_CALL_IN_A_TYPE_ANNOTATION),
+        "expected TS1441 for class field type annotation followed by call syntax, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER),
+        "did not expect TS1442 once call syntax is classified as TS1441, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn type_mapped_with_modifiers() {
     // `type T = { readonly [K in keyof T]-?: T[K] }`
     let (parser, root) = parse_source("type T = { readonly [K in keyof T]-?: T[K] };");
