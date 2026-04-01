@@ -319,6 +319,67 @@ interface I extends M.C {}
     );
 }
 
+#[test]
+fn instantiated_namespace_member_miss_keeps_property_access_diagnostic() {
+    let source = r"
+namespace M {
+    class C {}
+    class D extends M.C {}
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2339_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .count();
+    let ts2708_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2708)
+        .count();
+
+    assert!(
+        ts2339_count >= 1,
+        "Expected TS2339 for missing member on instantiated namespace value, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2708_count,
+        0,
+        "Expected no TS2708 when namespace has a runtime value side, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Non-ambient class extending a type-only import should emit TS1361.
 /// `import type { Foo } from './foo'; class U extends Foo {}` → TS1361.
 #[test]
