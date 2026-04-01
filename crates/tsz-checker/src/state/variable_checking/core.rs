@@ -1306,7 +1306,6 @@ impl<'a> CheckerState<'a> {
             // For ambient declarations (`declare var foo;`), there's no control flow
             // so we always emit when the type is implicitly `any`.
             let is_ambient = self.is_ambient_declaration(decl_idx);
-            let is_const = self.is_const_variable_declaration(decl_idx);
             let is_exported = self.is_declaration_exported(self.ctx.arena, decl_idx);
             if is_exported {
                 if var_decl.type_annotation.is_some() {
@@ -1331,9 +1330,12 @@ impl<'a> CheckerState<'a> {
                     var_decl.initializer,
                 );
             }
+            let emit_declaration_site_implicit_any = (self.is_const_variable_declaration(decl_idx)
+                && !is_in_for_in_or_for_of)
+                || is_exported
+                || (is_ambient && !self.ctx.is_declaration_file());
             if self.ctx.no_implicit_any()
                 && !self.ctx.has_real_syntax_errors
-                && !sym_already_cached
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
                 && raw_declared_type == TypeId::ANY
@@ -1345,17 +1347,19 @@ impl<'a> CheckerState<'a> {
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                     });
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
-                    if (is_ambient || is_const || is_exported) && !self.ctx.is_declaration_file() {
-                        // TS7005: Ambient, const, and exported declarations emit at the declaration site.
-                        // tsc suppresses noImplicitAny diagnostics for .d.ts files since
-                        // declaration files inherently have ambient declarations.
+                    if emit_declaration_site_implicit_any {
+                        // TS7005: exported declarations and ambient declarations in `.ts` files
+                        // emit at the declaration site. Other source variables may still acquire
+                        // a concrete type from control flow or loop-element inference.
+                        // In `.d.ts` files, plain ambient namespace members stay suppressed,
+                        // but exported bare variables still report TS7005.
                         use crate::diagnostics::diagnostic_codes;
                         self.error_at_node_msg(
                             var_decl.name,
                             diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
                             &[name, "any"],
                         );
-                    } else {
+                    } else if !sym_already_cached {
                         // Non-ambient: defer decision between TS7034 and no-error.
                         // Bare declarations start as implicit-any even if later
                         // assignments let flow analysis recover a concrete type.

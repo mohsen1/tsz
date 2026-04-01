@@ -380,6 +380,56 @@ fn test_compile_emits_ts18003_in_batch_style_project_mode() {
 }
 
 #[test]
+fn test_batch_style_project_mode_keeps_ts7005_for_imported_dts_export() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+      "compilerOptions": {
+        "jsx": "react",
+        "module": "commonjs",
+        "target": "es2015"
+      },
+      "include": ["*.ts", "*.tsx", "*.d.ts"]
+    }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("file.tsx"),
+        r#"declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}"#,
+    )
+    .expect("write jsx declarations");
+    fs::write(dir.path().join("test.d.ts"), "export var React;\n").expect("write dts");
+    fs::write(
+        dir.path().join("react-consumer.tsx"),
+        r#"import { React } from "./test";
+var foo: any;
+var spread1 = <div x='' {...foo} y='' />;"#,
+    )
+    .expect("write consumer");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("batch-style args");
+    let result =
+        compile(&args, Path::new(env!("CARGO_MANIFEST_DIR"))).expect("batch compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&7005), "expected TS7005, got: {codes:?}");
+}
+
+#[test]
 fn test_compile_project_keeps_nolib_global_diagnostics_with_deprecation_errors() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

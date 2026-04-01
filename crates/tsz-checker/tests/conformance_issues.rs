@@ -10102,6 +10102,20 @@ fn test_exported_var_without_type_or_initializer_emits_ts7005() {
 }
 
 #[test]
+fn test_exported_var_without_type_or_initializer_emits_ts7005_in_dts() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_named("test.d.ts", "export var React;", opts);
+
+    assert!(
+        has_error(&diagnostics, 7005),
+        "Expected TS7005 for exported bare var in .d.ts. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_binding_pattern_callback_does_not_infer_generic_parameter() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -23213,6 +23227,45 @@ declare namespace m {
     assert_eq!(
         ts7005_count, 0,
         "TS7005 should not fire in .d.ts files, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7005_not_emitted_for_for_of_const_binding_with_inferred_element_type() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+for (const value of [1, 2, 3]) {
+    value.toFixed();
+}
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7005_count = diagnostics.iter().filter(|(code, _)| *code == 7005).count();
+    assert_eq!(
+        ts7005_count, 0,
+        "Loop element inference should suppress TS7005 for `for...of` bindings, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7005_emitted_for_plain_const_without_initializer() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        "const value",
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7005),
+        "Plain `const` declarations without initializers should still report TS7005, got: {diagnostics:?}"
     );
 }
 
