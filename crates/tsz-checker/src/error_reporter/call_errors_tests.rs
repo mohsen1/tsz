@@ -182,6 +182,47 @@ foo();
 }
 
 #[test]
+fn ts2345_contextual_callback_display_preserves_explicit_alias_annotations() {
+    let source = r#"
+type ClassNameObject = { [key: string]: boolean | undefined };
+declare function reduceClassNameObject(
+    cb: (obj: ClassNameObject, key: string) => ClassNameObject,
+): void;
+
+export function css<S extends { [K in keyof S]: string }>(styles: S): string {
+  reduceClassNameObject((obj: ClassNameObject, key: keyof S) => {
+    const exportedClassName = styles[key];
+    obj[exportedClassName] = true;
+    return obj;
+  });
+  return "";
+}
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text
+            .contains("Argument of type '(obj: ClassNameObject, key: keyof S) => ClassNameObject'"),
+        "Expected source callback display to preserve explicit alias annotations, got: {diag:?}"
+    );
+    assert!(
+        diag.message_text.contains(
+            "parameter of type '(obj: ClassNameObject, key: string) => ClassNameObject'"
+        ),
+        "Expected target callback display to preserve instantiated alias annotations, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("error"),
+        "Callback display should not collapse explicit annotations to `error`, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_object_literal_contextual_typing_ignores_object_prototype_members() {
     let source = r#"
 interface I {

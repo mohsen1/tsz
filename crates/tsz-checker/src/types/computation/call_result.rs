@@ -561,6 +561,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.rebuild_emitted_diagnostics_from_current();
                     }
                     if !elaborated
+                        && !suppress_inner_elaboration
                         && allow_contextual_mismatch_deferral
                         && self.should_defer_contextual_argument_mismatch(actual, expected)
                     {

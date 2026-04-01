@@ -8292,6 +8292,41 @@ var r23 = dot(id)(id);
 }
 
 #[test]
+fn test_recursive_type_relations_object_keys_reduce_reports_ts2345() {
+    let source = r#"
+type ClassNameObject = { [key: string]: boolean | undefined };
+declare function reduceClassNameObject(
+    cb: (obj: ClassNameObject, key: string) => ClassNameObject,
+): void;
+
+export function css<S extends { [K in keyof S]: string }>(styles: S): string {
+  reduceClassNameObject((obj: ClassNameObject, key: keyof S) => {
+    const exportedClassName = styles[key];
+    obj[exportedClassName] = true;
+    return obj;
+  });
+  return "";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    let ts2345 = diagnostics
+        .iter()
+        .find(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type '(obj: ClassNameObject, key: keyof S) => ClassNameObject'",
+                )
+        })
+        .cloned();
+
+    assert!(
+        ts2345.is_some(),
+        "Expected TS2345 for generic callback parameter mismatch with keyof S parameter. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_settimeout_callback_assignable_to_function_union() {
     let diagnostics = compile_and_get_diagnostics(
         r"
