@@ -1211,7 +1211,7 @@ impl<'a> CheckerState<'a> {
                             && diag.start >= arg_node.pos
                             && diag.start < arg_node.end;
                     let is_direct_callback_body_assignability =
-                        callback_body_start.is_some_and(|start| diag.start == start)
+                        callback_body_start.is_some_and(|start| diag.start >= start)
                             && is_provisional_assignability;
                     let keep = if !is_provisional_assignability && !is_provisional_implicit_any {
                         true

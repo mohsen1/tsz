@@ -1726,6 +1726,9 @@ impl<'a> CheckerState<'a> {
                                 | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL_OR_UNDEFINED
                         )
                 });
+                let is_direct_callback_body_assignability =
+                    callback_body_start.is_some_and(|start| diag.start >= start)
+                        && is_assignability;
                 if expected_is_unresolved
                     && (is_function_arg_diag
                         || (is_object_literal_diag && is_provisional_implicit_any))
@@ -1736,10 +1739,14 @@ impl<'a> CheckerState<'a> {
                 // arguments. Keep their diagnostics owned by the final contextual
                 // recheck so stale wide-generic errors (for example TS2339 from
                 // `ClientEvents[string]`) do not leak past the instantiated retry.
-                // The narrow exception here is nullish callback-body diagnostics
-                // like TS18048, which represent the actual body expression after
-                // return-context refinement and would otherwise get lost.
-                if is_function_arg_diag && !is_nullish_callback_body_diag {
+                // The narrow exceptions here are body-owned diagnostics that the
+                // later instantiated retry does not recreate: nullish checks like
+                // TS18048 and direct callback-body assignability like nested JSX
+                // TS2322. Keep those while still dropping wide-generic callback noise.
+                if is_function_arg_diag
+                    && !is_nullish_callback_body_diag
+                    && !is_direct_callback_body_assignability
+                {
                     if diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
                         && concrete_callback_context
                     {

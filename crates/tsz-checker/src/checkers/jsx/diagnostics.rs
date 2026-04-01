@@ -10,6 +10,29 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn expand_jsx_display_type_alias_application(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use crate::query_boundaries::state::type_environment::application_info;
+
+        let (base, args) = application_info(self.ctx.types, type_id)?;
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        let (body, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if body == TypeId::ANY || body == TypeId::ERROR || type_params.is_empty() {
+            return None;
+        }
+
+        let subst = TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+        let expanded = instantiate_type(self.ctx.types, body, &subst);
+        (expanded != type_id).then_some(expanded)
+    }
+
+    fn jsx_intrinsic_props_display_type(&mut self, props_type: TypeId) -> TypeId {
+        let normalized = self.normalize_jsx_required_props_target(props_type);
+        self.expand_jsx_display_type_alias_application(normalized)
+            .or_else(|| self.expand_jsx_display_type_alias_application(props_type))
+            .unwrap_or(normalized)
+    }
+
     // ── JSX Display Target ────────────────────────────────────────────────
 
     /// Get the unevaluated Lazy(DefId) type for JSX.IntrinsicAttributes.
@@ -90,7 +113,14 @@ impl<'a> CheckerState<'a> {
         // `IntrinsicAttributes & {}` to just `IntrinsicAttributes`.
         let props_str = preferred_props_display
             .map(str::to_owned)
-            .unwrap_or_else(|| self.format_type(props_type));
+            .unwrap_or_else(|| {
+                let display_props = if component_type.is_none() {
+                    self.jsx_intrinsic_props_display_type(props_type)
+                } else {
+                    props_type
+                };
+                self.format_type(display_props)
+            });
         if props_str != "{}" {
             parts.push(props_str);
         }

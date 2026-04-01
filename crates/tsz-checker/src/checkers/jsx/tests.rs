@@ -66,6 +66,127 @@ fn jsx_data_attribute_type_not_any_placeholder() {
     );
 }
 
+#[test]
+fn jsx_key_error_in_parenthesized_callback_body_is_not_dropped() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace React {
+            type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = E;
+            interface HTMLAttributes<T> {
+                children?: ReactNode;
+            }
+            type ReactNode = ReactChild | ReactFragment | boolean | null | undefined;
+            type ReactText = string | number;
+            type ReactChild = ReactText;
+            type ReactFragment = {};
+        }
+        interface HTMLLIElement {}
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {
+                li: React.DetailedHTMLProps<React.HTMLAttributes<HTMLLIElement>, HTMLLIElement>;
+            }
+        }
+        declare var React: any;
+        declare function renderCategory(render: (category: string) => JSX.Element): void;
+        renderCategory((category) => (
+            <li key={category}>{category}</li>
+        ));
+        "#,
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains("'key' does not exist")
+        }),
+        "Expected JSX key TS2322 from the parenthesized map callback body, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_key_error_in_generic_callback_body_is_not_dropped() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace React {
+            type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = E;
+            interface HTMLAttributes<T> {
+                children?: ReactNode;
+            }
+            type ReactNode = ReactChild | ReactFragment | boolean | null | undefined;
+            type ReactText = string | number;
+            type ReactChild = ReactText;
+            type ReactFragment = {};
+        }
+        interface Array<T> {
+            map<U>(callbackfn: (value: T) => U): U[];
+        }
+        interface HTMLLIElement {}
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {
+                li: React.DetailedHTMLProps<React.HTMLAttributes<HTMLLIElement>, HTMLLIElement>;
+            }
+        }
+        declare var React: any;
+
+        const categories = ["Fruit", "Vegetables"];
+        categories.map((category) => (
+            <li key={category}>{category}</li>
+        ));
+        "#,
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 2322 && diag.message_text.contains("'key' does not exist")),
+        "Expected JSX key TS2322 from the generic callback body, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_key_error_in_generic_callback_body_inside_jsx_children_is_not_dropped() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace React {
+            type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = E;
+            interface HTMLAttributes<T> {
+                children?: ReactNode;
+            }
+            type ReactNode = ReactChild | ReactFragment | boolean | null | undefined;
+            type ReactText = string | number;
+            type ReactChild = ReactText;
+            type ReactFragment = {} | ReactNodeArray;
+            interface ReactNodeArray extends Array<ReactNode> {}
+        }
+        declare namespace JSX {
+            interface IntrinsicElements {
+                ul: React.DetailedHTMLProps<React.HTMLAttributes<HTMLUListElement>, HTMLUListElement>;
+                li: React.DetailedHTMLProps<React.HTMLAttributes<HTMLLIElement>, HTMLLIElement>;
+            }
+        }
+        declare var React: any;
+
+        const Component = () => {
+            const categories = ["Fruit", "Vegetables"];
+            return (
+                <ul>
+                    <li>All</li>
+                    {categories.map((category) => (
+                        <li key={category}>{category}</li>
+                    ))}
+                </ul>
+            );
+        };
+        "#,
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 2322 && diag.message_text.contains("'key' does not exist")),
+        "Expected JSX key TS2322 from the generic callback nested inside JSX children, got: {diagnostics:?}"
+    );
+}
+
 /// TS2786: Class component whose construct signature return type doesn't
 /// satisfy JSX.ElementClass should emit "cannot be used as a JSX component".
 #[test]
