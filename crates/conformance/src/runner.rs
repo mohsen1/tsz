@@ -145,6 +145,19 @@ pub struct Runner {
 }
 
 impl Runner {
+    fn absolutize_binary_path(path: &Path) -> String {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+
+        std::fs::canonicalize(&absolute)
+            .unwrap_or(absolute)
+            .to_string_lossy()
+            .to_string()
+    }
+
     fn resolve_tsz_binary(configured: &str) -> String {
         // Prefer the workspace fast-build binary when the default "tsz" is used.
         // This avoids accidentally running a stale PATH-installed binary and
@@ -152,8 +165,12 @@ impl Runner {
         if configured == "tsz" {
             let local_fast = Path::new("./.target/dist-fast/tsz");
             if local_fast.is_file() {
-                return local_fast.to_string_lossy().to_string();
+                return Self::absolutize_binary_path(local_fast);
             }
+        }
+        let configured_path = Path::new(configured);
+        if configured_path.components().count() > 1 || configured_path.is_absolute() {
+            return Self::absolutize_binary_path(configured_path);
         }
         configured.to_string()
     }
@@ -1758,7 +1775,13 @@ mod tests {
     fn resolve_tsz_binary_prefers_local_fast_binary_when_present() {
         with_temp_cwd(true, |temp| {
             let resolved = Runner::resolve_tsz_binary("tsz");
-            assert_eq!(resolved, "./.target/dist-fast/tsz");
+            assert_eq!(
+                resolved,
+                std::fs::canonicalize(temp.join(".target/dist-fast/tsz"))
+                    .expect("fast binary path should canonicalize")
+                    .to_string_lossy()
+                    .to_string()
+            );
             assert!(temp.join(".target/dist-fast/tsz").is_file());
         });
     }
@@ -1768,6 +1791,24 @@ mod tests {
         with_temp_cwd(false, |_| {
             let resolved = Runner::resolve_tsz_binary("/usr/local/bin/tsz-custom");
             assert_eq!(resolved, "/usr/local/bin/tsz-custom");
+        });
+    }
+
+    #[test]
+    fn resolve_tsz_binary_absolutizes_relative_configured_path() {
+        with_temp_cwd(false, |temp| {
+            let rel = Path::new("bin/tsz-custom");
+            std::fs::create_dir_all(temp.join("bin")).expect("bin dir should exist");
+            std::fs::write(temp.join(rel), b"").expect("binary placeholder should exist");
+
+            let resolved = Runner::resolve_tsz_binary("bin/tsz-custom");
+            assert_eq!(
+                resolved,
+                std::fs::canonicalize(temp.join(rel))
+                    .expect("configured binary path should canonicalize")
+                    .to_string_lossy()
+                    .to_string()
+            );
         });
     }
 }
