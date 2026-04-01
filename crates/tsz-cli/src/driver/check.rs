@@ -3092,6 +3092,67 @@ let x2: string = f;
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn test_collect_diagnostics_suppresses_ts2339_after_type_only_export_equals_namespace_use() {
+        let dir = std::env::temp_dir().join("tsz_check_type_only_export_equals_namespace_use");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let a_path = dir.join("a.ts");
+        let b_path = dir.join("b.ts");
+        let f_path = dir.join("f.ts");
+
+        let a_source = "export class A {}\n";
+        let b_source = "import type * as types from './a';\nexport = types;\n";
+        let f_source = "import * as types from './b';\nnew types.A();\n";
+
+        fs::write(&a_path, a_source).unwrap();
+        fs::write(&b_path, b_source).unwrap();
+        fs::write(&f_path, f_source).unwrap();
+
+        let options = ResolvedCompilerOptions {
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::CommonJS,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::CommonJS,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            es_module_interop: true,
+            module_suffixes: vec![String::new()],
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (a_path.to_str().unwrap(), a_source),
+                (b_path.to_str().unwrap(), b_source),
+                (f_path.to_str().unwrap(), f_source),
+            ],
+            &options,
+            &dir,
+        );
+
+        let f_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| Path::new(&diag.file) == f_path.as_path() && diag.code != 2318)
+            .collect();
+
+        assert!(
+            f_diags.iter().any(|diag| diag.code == 1361),
+            "expected TS1361 on namespace use of a type-only export= chain, got: {f_diags:?}"
+        );
+        assert!(
+            f_diags.iter().all(|diag| diag.code != 2339),
+            "did not expect follow-on TS2339 once TS1361 fired, got: {f_diags:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_collect_diagnostics_preserve_symlinks_keeps_original_target_error() {
