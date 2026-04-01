@@ -278,6 +278,21 @@ impl<'a> CheckerState<'a> {
         self.literal_expression_display(arg_idx)
     }
 
+    fn zero_argument_call_list_display(&self, arg_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return None;
+        }
+        let call = self.ctx.arena.get_call_expr(node)?;
+        if call.arguments.as_ref().is_none_or(|args| args.nodes.is_empty()) {
+            Some("[]".to_string())
+        } else {
+            None
+        }
+    }
+
     fn format_call_argument_type_for_diagnostic(
         &mut self,
         arg_type: TypeId,
@@ -297,6 +312,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut display_type = if param_type == TypeId::NEVER {
+            if let Some(display) = self.zero_argument_call_list_display(arg_idx) {
+                return display;
+            }
             let direct_arg_type = self.elaboration_source_expression_type(arg_idx);
             if direct_arg_type == TypeId::ERROR || direct_arg_type == arg_type {
                 arg_type

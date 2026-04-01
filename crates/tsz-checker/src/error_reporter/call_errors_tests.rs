@@ -163,6 +163,25 @@ takes(123);
 }
 
 #[test]
+fn ts2345_zero_argument_never_rest_call_uses_empty_tuple_display() {
+    let source = r#"
+declare let foo: (...args: never) => void;
+foo();
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type '[]' is not assignable to parameter of type 'never'."),
+        "Expected empty argument list display for zero-argument never-rest call, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_object_literal_contextual_typing_ignores_object_prototype_members() {
     let source = r#"
 interface I {
