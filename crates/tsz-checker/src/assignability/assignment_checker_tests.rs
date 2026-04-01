@@ -742,6 +742,31 @@ fn generic_construct_signature_return_type_mismatch_ts2322() {
 }
 
 #[test]
+fn generic_function_to_void_assignment_anchor_rhs() {
+    let source = r#"
+var x: void;
+function f<T>(a: T) {}
+x = f;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for function-to-void assignment");
+
+    let expected_f_offset = source
+        .find("x = f;")
+        .expect("expected rhs function reference") as u32
+        + 4;
+    assert_eq!(
+        diag.start, expected_f_offset,
+        "TS2322 should anchor at the rhs function identifier"
+    );
+    assert_eq!(diag.length, 1, "TS2322 should cover only `f`");
+}
+
+#[test]
 fn generic_construct_signature_different_arity_ts2322() {
     // When source has fewer type params than target (1 vs 2), the source is
     // more restrictive and should not be assignable.
