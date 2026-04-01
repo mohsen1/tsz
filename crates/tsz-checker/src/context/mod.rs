@@ -1734,6 +1734,12 @@ impl ProjectEnv {
         } else {
             Some(GlobalDeclaredModules::default())
         };
+        let arena_to_file_idx: FxHashMap<usize, usize> = self
+            .all_arenas
+            .iter()
+            .enumerate()
+            .map(|(file_idx, arena)| (Arc::as_ptr(arena) as usize, file_idx))
+            .collect();
 
         for (file_idx, binder) in self.all_binders.iter().enumerate() {
             for (name, &sym_id) in binder.file_locals.iter() {
@@ -1790,7 +1796,16 @@ impl ProjectEnv {
                 module_augs_index
                     .entry(module_spec.clone())
                     .or_default()
-                    .extend(augmentations.iter().map(|aug| (file_idx, aug.clone())));
+                    .extend(augmentations.iter().map(|aug| {
+                        let owner_idx = aug
+                            .arena
+                            .as_ref()
+                            .and_then(|arena| {
+                                arena_to_file_idx.get(&(Arc::as_ptr(arena) as usize)).copied()
+                            })
+                            .unwrap_or(file_idx);
+                        (owner_idx, aug.clone())
+                    }));
             }
             for (&sym_id, module_spec) in binder.augmentation_target_modules.iter() {
                 aug_targets_index

@@ -212,6 +212,178 @@ impl<'a> CheckerState<'a> {
                 remote_members,
             );
         }
+
+        self.check_cross_file_module_augmentation_top_level_name_conflicts();
+    }
+
+    fn check_cross_file_module_augmentation_top_level_name_conflicts(&mut self) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(module_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(module_decl) = self.ctx.arena.get_module(module_node) else {
+                continue;
+            };
+            if module_decl.body.is_none() {
+                continue;
+            }
+
+            let Some(module_name_node) = self.ctx.arena.get(module_decl.name) else {
+                continue;
+            };
+            if module_name_node.kind != SyntaxKind::StringLiteral as u16
+                && module_name_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            {
+                continue;
+            }
+            let Some(module_name_lit) = self.ctx.arena.get_literal(module_name_node) else {
+                continue;
+            };
+            let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file(self.ctx.current_file_idx, &module_name_lit.text)
+            else {
+                continue;
+            };
+
+            let Some(body_node) = self.ctx.arena.get(module_decl.body) else {
+                continue;
+            };
+            if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                continue;
+            }
+            let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(statements) = &block.statements else {
+                continue;
+            };
+
+            for &inner_idx in &statements.nodes {
+                let Some(stmt_node) = self.ctx.arena.get(inner_idx) else {
+                    continue;
+                };
+                let decl_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
+                        continue;
+                    };
+                    export_decl.export_clause
+                } else {
+                    inner_idx
+                };
+                let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) else {
+                    continue;
+                };
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    continue;
+                };
+
+                let has_conflict = self.target_file_has_direct_export_named(
+                    target_idx,
+                    &symbol.escaped_name,
+                );
+                if !has_conflict {
+                    continue;
+                }
+
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                self.error_at_node_msg(
+                    error_node,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&symbol.escaped_name],
+                );
+            }
+        }
+
+        self.check_target_file_exports_conflicting_with_module_augmentations();
+    }
+
+    fn check_target_file_exports_conflicting_with_module_augmentations(&mut self) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+
+            for &spec_idx in &named_exports.elements.nodes {
+                let Some(spec_node) = self.ctx.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.ctx.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                let Some(export_name) = self
+                    .ctx
+                    .arena
+                    .get(spec.property_name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get(spec.name)
+                            .and_then(|n| self.ctx.arena.get_identifier(n))
+                    })
+                    .map(|ident| ident.escaped_text.clone())
+                else {
+                    continue;
+                };
+
+                if self
+                    .module_augmentation_conflict_declarations_for_current_file(&export_name)
+                    .is_empty()
+                {
+                    continue;
+                }
+
+                self.error_at_node_msg(
+                    spec_idx,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&export_name],
+                );
+            }
+        }
+    }
+
+    fn target_file_has_direct_export_named(&self, file_idx: usize, export_name: &str) -> bool {
+        let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(file_name) = arena.source_files.first().map(|sf| sf.file_name.clone()) else {
+            return false;
+        };
+        binder
+            .module_exports
+            .get(&file_name)
+            .is_some_and(|exports| exports.get(export_name).is_some())
     }
 
     fn collect_interface_member_kinds(

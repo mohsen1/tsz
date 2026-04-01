@@ -164,44 +164,269 @@ impl<'a> CheckerState<'a> {
         &self,
         name: &str,
     ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
-        let Some(_arenas) = self.ctx.all_arenas.as_ref() else {
+        let mut declarations = Vec::new();
+        let mut seen = FxHashSet::default();
+
+        let mut push_remote_decl =
+            |file_idx: usize,
+             decl_idx: NodeIndex,
+             flags: u32,
+             is_exported: bool| {
+                if seen.insert((file_idx, decl_idx.0)) {
+                    declarations.push((
+                        decl_idx,
+                        flags,
+                        false,
+                        is_exported,
+                        DuplicateDeclarationOrigin::TargetedModuleAugmentation,
+                    ));
+                }
+            };
+
+        let mut consider_augmentation =
+            |module_spec: &str, augmenting_file_idx: usize, augmentation: &tsz_binder::ModuleAugmentation| {
+                if augmentation.name != name {
+                    return;
+                }
+                let Some(target_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(augmenting_file_idx, module_spec)
+                else {
+                    return;
+                };
+
+                if target_idx == self.ctx.current_file_idx && augmenting_file_idx != target_idx {
+                    let arena = augmentation
+                        .arena
+                        .as_deref()
+                        .unwrap_or_else(|| self.ctx.get_arena_for_file(augmenting_file_idx as u32));
+                    let Some(flags) = self.declaration_symbol_flags(arena, augmentation.node) else {
+                        return;
+                    };
+                    let is_exported = self.is_declaration_exported(arena, augmentation.node);
+                    push_remote_decl(
+                        augmenting_file_idx,
+                        augmentation.node,
+                        flags,
+                        is_exported,
+                    );
+                    return;
+                }
+
+                if augmenting_file_idx == self.ctx.current_file_idx {
+                    for (decl_idx, flags, is_exported) in
+                        self.export_surface_declarations_in_file(target_idx, name)
+                    {
+                        push_remote_decl(target_idx, decl_idx, flags, is_exported);
+                    }
+                }
+            };
+
+        let augmentation_owner_file_idx = |augmentation: &tsz_binder::ModuleAugmentation| {
+            augmentation
+                .arena
+                .as_deref()
+                .and_then(|arena| self.ctx.get_file_idx_for_arena(arena))
+                .unwrap_or(self.ctx.current_file_idx)
+        };
+
+        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
+            for augmentation in augmentations {
+                consider_augmentation(
+                    module_spec,
+                    augmentation_owner_file_idx(augmentation),
+                    augmentation,
+                );
+            }
+        }
+
+        if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+            for (module_spec, entries) in aug_index.iter() {
+                for (augmenting_file_idx, augmentation) in entries {
+                    if *augmenting_file_idx == self.ctx.current_file_idx {
+                        continue;
+                    }
+                    consider_augmentation(module_spec, *augmenting_file_idx, augmentation);
+                }
+            }
+        } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for (augmenting_file_idx, binder) in all_binders.iter().enumerate() {
+                if augmenting_file_idx == self.ctx.current_file_idx {
+                    continue;
+                }
+                for (module_spec, augmentations) in &binder.module_augmentations {
+                    for augmentation in augmentations {
+                        consider_augmentation(module_spec, augmenting_file_idx, augmentation);
+                    }
+                }
+            }
+        }
+
+        declarations
+    }
+
+    pub(crate) fn export_surface_declarations_in_file(
+        &self,
+        file_idx: usize,
+        name: &str,
+    ) -> Vec<(NodeIndex, u32, bool)> {
+        let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+            return Vec::new();
+        };
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let file_name = arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.as_str())
+            .unwrap_or_default();
+        let mut export_keys = vec![file_name.to_string()];
+        if let Some(stripped) = file_name.strip_prefix("./") {
+            export_keys.push(stripped.to_string());
+        } else if !file_name.starts_with("../") && !file_name.starts_with('/') {
+            export_keys.push(format!("./{file_name}"));
+        }
+
+        let sym_id = binder
+            .file_locals
+            .get(name)
+            .or_else(|| {
+                arena.source_files.first().and_then(|source_file| {
+                    source_file.statements.nodes.iter().find_map(|stmt_idx| {
+                        let stmt_node = arena.get(*stmt_idx)?;
+                        if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                            return None;
+                        }
+                        let export_decl = arena.get_export_decl(stmt_node)?;
+                        let clause_node = arena.get(export_decl.export_clause)?;
+                        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                            return None;
+                        }
+                        let named_exports = arena.get_named_imports(clause_node)?;
+                        named_exports.elements.nodes.iter().find_map(|spec_idx| {
+                            let spec_node = arena.get(*spec_idx)?;
+                            let spec = arena.get_specifier(spec_node)?;
+                            let export_name = arena
+                                .get(spec.property_name)
+                                .and_then(|n| arena.get_identifier(n))
+                                .or_else(|| {
+                                    arena
+                                        .get(spec.name)
+                                        .and_then(|n| arena.get_identifier(n))
+                                })?;
+                            (export_name.escaped_text == name)
+                                .then(|| binder.get_node_symbol(*spec_idx))
+                                .flatten()
+                        })
+                    })
+                })
+            })
+            .or_else(|| {
+                export_keys.iter().find_map(|key| {
+                    binder
+                        .module_exports
+                        .get(key)
+                        .and_then(|exports| exports.get(name))
+                })
+            })
+            .or_else(|| {
+                binder
+                    .get_symbols()
+                    .find_all_by_name(name)
+                    .iter()
+                    .find_map(|candidate_id| {
+                    let symbol = binder.get_symbol(*candidate_id)?;
+                    if !symbol.is_exported {
+                        return None;
+                    }
+                    symbol.declarations.iter().any(|decl_idx| {
+                        if let Some(arenas) = binder.declaration_arenas.get(&(*candidate_id, *decl_idx))
+                        {
+                            arenas
+                                .iter()
+                                .any(|decl_arena| std::ptr::eq(decl_arena.as_ref(), arena))
+                        } else {
+                            true
+                        }
+                    })
+                    .then_some(*candidate_id)
+                })
+            });
+        let Some(sym_id) = sym_id else {
+            let Some(owner_binder) = self.ctx.get_binder_for_file(file_idx) else {
+                return Vec::new();
+            };
+            let owner_arena = self.ctx.get_arena_for_file(file_idx as u32);
+            let Some(owner_file_name) = owner_arena.source_files.first().map(|sf| sf.file_name.clone())
+            else {
+                return Vec::new();
+            };
+            if let Some(exports) = self.module_exports_for_file(owner_binder, &owner_file_name)
+                && let Some(resolved_sym_id) =
+                    self.resolve_export_from_table(owner_binder, exports, name)
+            {
+                let Some(symbol) = owner_binder.get_symbol(resolved_sym_id) else {
+                    return Vec::new();
+                };
+
+                let mut declarations = Vec::new();
+                let mut seen = FxHashSet::default();
+
+                for &decl_idx in &symbol.declarations {
+                    if let Some(arenas) = owner_binder
+                        .declaration_arenas
+                        .get(&(resolved_sym_id, decl_idx))
+                    {
+                        for decl_arena in arenas {
+                            if !std::ptr::eq(decl_arena.as_ref(), owner_arena)
+                                || !seen.insert(decl_idx.0)
+                            {
+                                continue;
+                            }
+                            if let Some(flags) =
+                                self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
+                            {
+                                let is_exported =
+                                    self.is_declaration_exported(decl_arena.as_ref(), decl_idx);
+                                declarations.push((decl_idx, flags, is_exported));
+                            }
+                        }
+                    } else if seen.insert(decl_idx.0)
+                        && let Some(flags) = self.declaration_symbol_flags(owner_arena, decl_idx)
+                    {
+                        let is_exported = self.is_declaration_exported(owner_arena, decl_idx);
+                        declarations.push((decl_idx, flags, is_exported));
+                    }
+                }
+
+                return declarations;
+            }
+
+            return Vec::new();
+        };
+        let Some(symbol) = binder.get_symbol(sym_id) else {
             return Vec::new();
         };
 
         let mut declarations = Vec::new();
+        let mut seen = FxHashSet::default();
 
-        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
-            for augmentation in augmentations {
-                if augmentation.name != name {
-                    continue;
+        for &decl_idx in &symbol.declarations {
+            if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for decl_arena in arenas {
+                    if !std::ptr::eq(decl_arena.as_ref(), arena) || !seen.insert(decl_idx.0) {
+                        continue;
+                    }
+                    if let Some(flags) = self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
+                    {
+                        let is_exported = self.is_declaration_exported(decl_arena.as_ref(), decl_idx);
+                        declarations.push((decl_idx, flags, is_exported));
+                    }
                 }
-
-                let Some(arena) = augmentation.arena.as_deref() else {
-                    continue;
-                };
-                let Some(source_file_idx) = self.ctx.get_file_idx_for_arena(arena) else {
-                    continue;
-                };
-                if !self.module_augmentation_targets_current_file_export(
-                    source_file_idx,
-                    module_spec,
-                    name,
-                )
-                {
-                    continue;
-                }
-
-                let Some(flags) = self.declaration_symbol_flags(arena, augmentation.node) else {
-                    continue;
-                };
-                let is_exported = self.is_declaration_exported(arena, augmentation.node);
-                declarations.push((
-                    augmentation.node,
-                    flags,
-                    false,
-                    is_exported,
-                    DuplicateDeclarationOrigin::TargetedModuleAugmentation,
-                ));
+            } else if seen.insert(decl_idx.0)
+                && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
+            {
+                let is_exported = self.is_declaration_exported(arena, decl_idx);
+                declarations.push((decl_idx, flags, is_exported));
             }
         }
 
@@ -720,5 +945,281 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CheckerState;
+    use crate::context::{CheckerOptions, ScriptTarget};
+    use crate::module_resolution::build_module_resolution_maps;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn with_checker(
+        files: &[(&str, &str)],
+        entry_file: &str,
+        f: impl FnOnce(&mut CheckerState<'_>, usize, usize),
+    ) {
+        let mut arenas = Vec::with_capacity(files.len());
+        let mut binders = Vec::with_capacity(files.len());
+        let mut roots = Vec::with_capacity(files.len());
+        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+        for (name, source) in files {
+            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+            arenas.push(Arc::new(parser.get_arena().clone()));
+            binders.push(Arc::new(binder));
+            roots.push(root);
+        }
+
+        let entry_idx = file_names
+            .iter()
+            .position(|name| name == entry_file)
+            .expect("entry file should exist");
+        let index_idx = file_names
+            .iter()
+            .position(|name| name == "/index.d.ts")
+            .expect("index.d.ts should exist");
+        let a_idx = file_names
+            .iter()
+            .position(|name| name == "/a.d.ts")
+            .expect("a.d.ts should exist");
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+        let all_arenas = Arc::new(arenas);
+        let all_binders = Arc::new(binders);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[entry_idx].as_ref(),
+            all_binders[entry_idx].as_ref(),
+            &types,
+            file_names[entry_idx].clone(),
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(entry_idx);
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+        checker.check_source_file(roots[entry_idx]);
+        f(&mut checker, a_idx, index_idx);
+    }
+
+    #[test]
+    fn module_augmentation_conflict_helper_sees_target_export_from_augmentation_file() {
+        let files = [
+            (
+                "/a.d.ts",
+                r#"
+import "./index";
+declare module "./index" {
+    type Row2 = { a: string };
+}
+"#,
+            ),
+            (
+                "/index.d.ts",
+                r#"
+export type { Row2 } from "./common";
+"#,
+            ),
+            (
+                "/common.d.ts",
+                r#"
+export interface Row2 { b: string }
+"#,
+            ),
+        ];
+
+        with_checker(&files, "/a.d.ts", |checker, _a_idx, index_idx| {
+            let conflicts =
+                checker.module_augmentation_conflict_declarations_for_current_file("Row2");
+
+            assert!(
+                !conflicts.is_empty(),
+                "Expected the augmentation file to see the target export surface as a duplicate partner"
+            );
+            assert!(
+                conflicts.iter().all(|(_, _, is_local, _, _)| !*is_local),
+                "Expected augmentation conflicts to be recorded as remote declarations: {conflicts:#?}"
+            );
+            let index_arena = checker.ctx.get_arena_for_file(index_idx as u32);
+            assert!(
+                conflicts.iter().any(|(decl_idx, _, _, _, _)| {
+                    index_arena
+                        .get(*decl_idx)
+                        .is_some_and(|node| {
+                            node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_SPECIFIER
+                        })
+                }),
+                "Expected the duplicate partner to be the local export binding in index.d.ts: {conflicts:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn module_augmentation_conflict_helper_sees_augmentation_from_target_file() {
+        let files = [
+            (
+                "/a.d.ts",
+                r#"
+import "./index";
+declare module "./index" {
+    type Row2 = { a: string };
+}
+"#,
+            ),
+            (
+                "/index.d.ts",
+                r#"
+export type { Row2 } from "./common";
+"#,
+            ),
+            (
+                "/common.d.ts",
+                r#"
+export interface Row2 { b: string }
+"#,
+            ),
+        ];
+
+        with_checker(&files, "/index.d.ts", |checker, a_idx, _index_idx| {
+            let conflicts =
+                checker.module_augmentation_conflict_declarations_for_current_file("Row2");
+
+            assert!(
+                !conflicts.is_empty(),
+                "Expected the target file to see the augmentation declaration as a duplicate partner"
+            );
+            let a_arena = checker.ctx.get_arena_for_file(a_idx as u32);
+            assert!(
+                conflicts.iter().any(|(decl_idx, _, _, _, _)| {
+                    a_arena
+                        .get(*decl_idx)
+                        .is_some_and(|node| {
+                            node.kind
+                                == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        })
+                }),
+                "Expected the duplicate partner to be the augmentation type alias in a.d.ts: {conflicts:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn module_augmentation_conflict_helper_skips_importing_consumer_file() {
+        let files = [
+            (
+                "/main.ts",
+                r#"
+import { Row2 } from "./index";
+const x: Row2 = {};
+"#,
+            ),
+            (
+                "/a.d.ts",
+                r#"
+import "./index";
+declare module "./index" {
+    type Row2 = { a: string };
+}
+"#,
+            ),
+            (
+                "/index.d.ts",
+                r#"
+export type { Row2 } from "./common";
+"#,
+            ),
+            (
+                "/common.d.ts",
+                r#"
+export interface Row2 { b: string }
+"#,
+            ),
+        ];
+
+        with_checker(&files, "/main.ts", |checker, _a_idx, _index_idx| {
+            let conflicts =
+                checker.module_augmentation_conflict_declarations_for_current_file("Row2");
+
+            assert!(
+                conflicts.is_empty(),
+                "Importing consumers should not be treated as module augmentation duplicate partners: {conflicts:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn importing_consumer_row2_alias_stays_local_to_main() {
+        let files = [
+            (
+                "/main.ts",
+                r#"
+import { Row2 } from "./index";
+const x: Row2 = {};
+"#,
+            ),
+            (
+                "/a.d.ts",
+                r#"
+import "./index";
+declare module "./index" {
+    type Row2 = { a: string };
+}
+"#,
+            ),
+            (
+                "/index.d.ts",
+                r#"
+export type { Row2 } from "./common";
+"#,
+            ),
+            (
+                "/common.d.ts",
+                r#"
+export interface Row2 { b: string }
+"#,
+            ),
+        ];
+
+        with_checker(&files, "/main.ts", |checker, _a_idx, _index_idx| {
+            let sym_id = checker
+                .ctx
+                .binder
+                .file_locals
+                .get("Row2")
+                .expect("main import alias should exist");
+            let symbol = checker
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .expect("symbol should exist");
+
+            let remote_decl_count = symbol
+                .declarations
+                .iter()
+                .filter_map(|&decl_idx| checker.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)))
+                .flat_map(|arenas| arenas.iter())
+                .filter(|arena| !std::ptr::eq(arena.as_ref(), checker.ctx.arena))
+                .count();
+
+            assert_eq!(
+                remote_decl_count, 0,
+                "Imported consumer alias should not carry remote declarations: {symbol:#?}"
+            );
+        });
     }
 }

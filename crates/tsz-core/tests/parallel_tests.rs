@@ -1770,6 +1770,98 @@ declare module "./a" {
 }
 
 #[test]
+fn test_check_files_parallel_module_augmentation_reexport_type_duplicate_stays_off_importing_consumer() {
+    let files = vec![
+        (
+            "main.ts".to_string(),
+            r#"
+import {Row2, C} from "./index"
+const x : Row2 = { }
+const y : C = { s: '' }
+"#
+            .to_string(),
+        ),
+        (
+            "a.d.ts".to_string(),
+            r#"
+import "./index"
+declare module "./index" {
+  type Row2 = { a: string }
+  type C = { s : string }
+}
+"#
+            .to_string(),
+        ),
+        (
+            "index.d.ts".to_string(),
+            r#"
+export type {Row2} from "./common";
+"#
+            .to_string(),
+        ),
+        (
+            "common.d.ts".to_string(),
+            r#"
+export interface Row2 { b: string }
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let rebuilt_main_binder =
+        crate::parallel::core::create_binder_from_bound_file(&program.files[0], &program, 0);
+    let row2_sym_id = rebuilt_main_binder
+        .file_locals
+        .get("Row2")
+        .expect("main.ts should bind imported Row2");
+    let row2_symbol = rebuilt_main_binder
+        .get_symbol(row2_sym_id)
+        .expect("rebuilt Row2 symbol should exist");
+    let remote_decl_count = row2_symbol
+        .declarations
+        .iter()
+        .filter_map(|&decl_idx| rebuilt_main_binder.declaration_arenas.get(&(row2_sym_id, decl_idx)))
+        .flat_map(|arenas| arenas.iter())
+        .filter(|arena| !std::sync::Arc::ptr_eq(arena, &program.files[0].arena))
+        .count();
+
+    let main_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "main.ts")
+        .expect("expected main.ts result");
+    let a_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "a.d.ts")
+        .expect("expected a.d.ts result");
+
+    assert!(
+        !main_file.diagnostics.iter().any(|diag| diag.code == 2300),
+        "Did not expect importing consumer to receive TS2300. Remote decls on rebuilt Row2 alias: {remote_decl_count}. Symbol: {row2_symbol:#?}. Diagnostics: {:#?}",
+        main_file.diagnostics,
+    );
+    assert!(
+        a_file.diagnostics.iter().any(|diag| diag.code == 2300),
+        "Expected augmentation declaration file to receive TS2300. Diagnostics: {:#?}",
+        a_file.diagnostics
+    );
+}
+
+#[test]
 #[ignore = "pre-existing failure"]
 fn test_umd_export_vs_declare_global_const_emits_ts2451() {
     // `export as namespace React` in module.d.ts creates a UMD global binding.
