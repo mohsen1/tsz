@@ -64,6 +64,65 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "exports")
     }
 
+    fn current_file_commonjs_direct_write_rhs(
+        &self,
+        property_access_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let prop_ext = self.ctx.arena.get_extended(property_access_idx)?;
+        let parent_idx = prop_ext.parent;
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.ctx.arena.get_binary_expr(parent_node)?;
+        (binary.left == property_access_idx && self.is_assignment_operator(binary.operator_token))
+            .then_some(binary.right)
+    }
+
+    fn current_file_commonjs_write_rhs_is_undefined_like(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "undefined");
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && self.is_assignment_operator(binary.operator_token)
+        {
+            return self.current_file_commonjs_write_rhs_is_undefined_like(binary.right);
+        }
+
+        if node.kind != syntax_kind_ext::VOID_EXPRESSION
+            && node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::VoidKeyword as u16 {
+            return false;
+        }
+        let Some(expr) = self.ctx.arena.get(unary.operand) else {
+            return false;
+        };
+
+        matches!(expr.kind, k if k == SyntaxKind::NumericLiteral as u16)
+            && self
+                .ctx
+                .arena
+                .get_literal(expr)
+                .is_some_and(|lit| lit.text == "0")
+    }
+
     pub(crate) fn is_jsdoc_annotated_this_member_declaration(&mut self, idx: NodeIndex) -> bool {
         if !self.is_js_file() {
             return false;
@@ -1159,6 +1218,18 @@ impl<'a> CheckerState<'a> {
             return prior_type;
         }
 
+        if self.is_js_file()
+            && !self.property_access_is_direct_write_target(idx)
+            && !commonjs_named_props_disallowed
+            && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
+            && let Some(member_name) = static_member_name.as_deref()
+            && let Some(node) = self.ctx.arena.get(idx)
+            && let Some(prior_type) =
+                self.current_file_commonjs_prior_named_export_type(member_name, node.pos)
+        {
+            return prior_type;
+        }
+
         let mut js_expando_before_assignment = false;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
@@ -1262,16 +1333,13 @@ impl<'a> CheckerState<'a> {
                 )
             });
             if can_add_named_props {
-                if let Some(export_name) = static_member_name.as_deref()
+                if self
+                    .current_file_commonjs_direct_write_rhs(idx)
+                    .is_some_and(|rhs| self.current_file_commonjs_write_rhs_is_undefined_like(rhs))
+                    && let Some(export_name) = static_member_name.as_deref()
                     && let Some(node) = self.ctx.arena.get(idx)
                     && let Some(export_type) = self
                         .current_file_commonjs_late_bound_named_export_type(export_name, node.pos)
-                {
-                    return export_type;
-                }
-                if let Some(export_name) = static_member_name.as_deref()
-                    && let Some(export_type) =
-                        surface.lookup_named_export(export_name, self.ctx.types)
                 {
                     return export_type;
                 }
