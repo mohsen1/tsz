@@ -700,27 +700,32 @@ pub(super) fn collect_diagnostics(
                 }
 
                 // Map resolved path to file index
-                if let Some(ref resolved_path) = outcome.resolved_path {
-                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                    let canonical = normalize_resolved_path(resolved_path, options);
-                    // Apply duplicate package redirect
-                    let canonical = package_redirects
-                        .get(&canonical)
-                        .cloned()
-                        .unwrap_or(canonical);
-                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
-                        resolved_module_request_paths.insert(
-                            (
-                                file_idx,
-                                specifier.clone(),
-                                checker_resolution_mode_override(*resolution_mode_override),
-                            ),
-                            target_idx,
-                        );
+                // NOTE: Only mark as resolved if there's NO error. When there's a resolution
+                // error (TS2307, etc.), the module should NOT be in resolved_module_specifiers
+                // so that the checker will emit the appropriate error.
+                if outcome.error.is_none() {
+                    if let Some(ref resolved_path) = outcome.resolved_path {
+                        resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                        let canonical = normalize_resolved_path(resolved_path, options);
+                        // Apply duplicate package redirect
+                        let canonical = package_redirects
+                            .get(&canonical)
+                            .cloned()
+                            .unwrap_or(canonical);
+                        if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                            resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                            resolved_module_request_paths.insert(
+                                (
+                                    file_idx,
+                                    specifier.clone(),
+                                    checker_resolution_mode_override(*resolution_mode_override),
+                                ),
+                                target_idx,
+                            );
+                        }
+                    } else if outcome.is_resolved {
+                        resolved_module_specifiers.insert((file_idx, specifier.clone()));
                     }
-                } else if outcome.is_resolved {
-                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
                 }
 
                 // Record error for the checker
