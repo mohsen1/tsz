@@ -2711,7 +2711,6 @@ k.x === j.x;
 }
 
 #[test]
-#[ignore = "aspirational: CommonJS late-bound assignment types not yet implemented"]
 fn test_current_file_commonjs_exports_use_late_bound_assignment_types() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
@@ -2723,6 +2722,7 @@ exports.y = 2;
         CheckerOptions {
             allow_js: true,
             check_js: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
             target: ScriptTarget::ES2015,
             ..CheckerOptions::default()
         },
