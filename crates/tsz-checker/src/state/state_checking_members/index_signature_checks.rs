@@ -612,7 +612,9 @@ impl<'a> CheckerState<'a> {
 
         let has_instance_index = index_info.string_index.is_some()
             || index_info.number_index.is_some()
-            || symbol_value_type.is_some();
+            || symbol_value_type.is_some()
+            || synthesized_instance_string_value_type.is_some()
+            || synthesized_instance_number_value_type.is_some();
         let has_static_index = static_string_value_type.is_some()
             || static_number_value_type.is_some()
             || static_symbol_value_type.is_some();
@@ -637,10 +639,12 @@ impl<'a> CheckerState<'a> {
             index_info.string_index = None;
         }
 
-        // If all instance signatures were invalidated and no static/symbol ones, nothing to enforce.
+        // If all instance signatures were invalidated and no static/symbol/synthesized ones, nothing to enforce.
         if index_info.string_index.is_none()
             && index_info.number_index.is_none()
             && symbol_value_type.is_none()
+            && synthesized_instance_string_value_type.is_none()
+            && synthesized_instance_number_value_type.is_none()
             && !has_static_index
         {
             return;
@@ -1325,6 +1329,40 @@ interface I {
             matching.len(),
             0,
             "Expected no TS2411 when symbol property is assignable to symbol index, got: {matching:?}"
+        );
+    }
+
+    /// Computed property names with non-entity expressions (like `[+s]`) should be
+    /// checked against synthesized index signatures from entity-expression computed
+    /// members (like `[s]: number`). Previously, the early exit in
+    /// `check_index_signature_compatibility` didn't account for synthesized index
+    /// signatures, causing TS2411 to be silently skipped.
+    #[test]
+    fn ts2411_computed_property_checked_against_synthesized_index() {
+        let diags = check_source_diagnostics(
+            r#"
+var s: string;
+var n: number;
+var a: any;
+class C {
+    [s]: number;
+    [n] = n;
+    [s + n] = 2;
+    [+s]: typeof s;
+    [a]: number;
+}
+"#,
+        );
+        let ts2411 = diags.iter().filter(|d| d.code == 2411).count();
+        assert_eq!(
+            ts2411,
+            2,
+            "Expected 2 TS2411 diagnostics for [+s] (type string) against synthesized string \
+             and number index signatures (type number).\nActual diagnostics: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
         );
     }
 }
