@@ -430,6 +430,86 @@ var spread1 = <div x='' {...foo} y='' />;"#,
 }
 
 #[test]
+fn test_compile_project_reports_template_literal_generic_constraint_ts2322() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "target": "esnext",
+    "noEmit": true
+  },
+  "include": ["*.ts", "**/*.ts"],
+  "exclude": ["node_modules"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("test.ts"),
+        r#"interface NMap {
+  1: 'A'
+  2: 'B'
+  3: 'C'
+  4: 'D'
+}
+
+declare const g: <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]
+
+type G1 = <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]
+const g1: G1 = g
+
+type G2 = <T extends 1 | 2 | 3 | 4>(x: `${T}`) => NMap[T]
+const g2: G2 = g
+
+type G3 = <T extends 1 | 2>(x: `${T}`) => NMap[T]
+const g3: G3 = g
+"#,
+    )
+    .expect("write test");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let direct_args = CliArgs::try_parse_from([
+        "tsz",
+        dir.path().join("test.ts").to_string_lossy().as_ref(),
+        "--strict",
+        "--target",
+        "esnext",
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("direct args");
+    let direct_result = compile(&direct_args, dir.path()).expect("direct compile succeeds");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.file.ends_with("test.ts")
+                && diag.message_text.contains(
+                    "Type '<T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]' is not assignable to type 'G2'",
+                )
+        }),
+        "Expected project-mode compile to preserve template-literal generic constraint TS2322, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        direct_result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.file.ends_with("test.ts")
+                && diag.message_text.contains(
+                    "Type '<T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]' is not assignable to type 'G2'",
+                )
+        }),
+        "Expected direct compile to preserve template-literal generic constraint TS2322, got: {:?}",
+        direct_result.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_project_keeps_nolib_global_diagnostics_with_deprecation_errors() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

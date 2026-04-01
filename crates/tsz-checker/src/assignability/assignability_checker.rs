@@ -660,11 +660,18 @@ impl<'a> CheckerState<'a> {
             // while they are still present creates contextual false positives.
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
             || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
-            // Suppress TS2322 for complex generic targets only while the source is
-            // still generic/unresolved too. Once the source has reduced to a concrete
+            // Suppress TS2322 for non-callable types with type parameters that may
+            // cause false positives due to complex generic constraints
+            // (e.g., T extends { [P in T]: number }). Callable/generic signature
+            // targets have their own suppression rules below, and suppressing them
+            // here hides real TS2322s like templateLiteralTypes7.
+            // Also keep mainline behavior that only suppresses while the source is
+            // still generic/unresolved too; once the source has reduced to a concrete
             // type, tsc surfaces the mismatch even if the target still mentions an
             // outer type parameter (for example Assign<T, U> receiving a concrete U).
-            || (should_suppress_for_complex_type(target) && contains_type_parameters(source))
+            || (should_suppress_for_complex_type(target)
+                && contains_type_parameters(source)
+                && !is_callable_or_function(target))
             // Suppress TS2322 for callable types where the source contains generic type
             // parameters that may not have been fully inferred from context. When both
             // source and target contain type parameters that are COMPLETELY disjoint
