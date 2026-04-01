@@ -1130,6 +1130,24 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == SyntaxKind::Identifier as u16
         {
+            if self.ctx.in_destructuring_target
+                && self.resolve_identifier_symbol_for_write(idx).is_none()
+                && let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent)
+                && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                && parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                && self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(parent_node)
+                    .is_some_and(|prop| prop.name == idx)
+            {
+                // For destructuring assignment targets like `({ b = 1 } = {})`, the
+                // shorthand-property checker owns TS18004 when `b` has no value binding.
+                // Treat the target type as `any` here to avoid cascading TS2304 from
+                // assignment-target type queries on the same identifier.
+                return TypeId::ANY;
+            }
+
             // Check for local variable first (including "arguments" shadowing).
             // This handles: `const arguments = ...; arguments = foo;`
             if let Some(sym_id) = self.resolve_identifier_symbol_for_write(idx) {
