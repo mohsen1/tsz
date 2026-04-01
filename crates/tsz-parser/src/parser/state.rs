@@ -153,6 +153,10 @@ pub struct ParserState {
     /// stop consuming `&`-continued intersections so the tail falls back to
     /// statement-level recovery like TypeScript.
     pub(crate) abort_intersection_continuation: bool,
+    /// When statement-like recovery inside a type-member container should leave
+    /// actual `}` tokens for statement-level TS1128 recovery, skip this many
+    /// enclosing close-brace expectations.
+    pub(crate) deferred_type_member_close_braces: u32,
     /// After malformed import-attribute recovery inside an intersection type,
     /// parse the next `import()` options object with generic expression
     /// grammar so its diagnostics degrade like TypeScript's fallback path.
@@ -175,6 +179,9 @@ pub struct ParserState {
     /// A failed async-arrow speculation left a trailing `: Type =>` tail that
     /// should use the narrower variable-declaration recovery path.
     pub(crate) pending_failed_async_arrow_colon_recovery: bool,
+    /// Depth of nested type-member containers (interfaces, type literals,
+    /// mapped types with member tails) currently being parsed.
+    pub(crate) type_member_container_depth: u32,
 }
 
 impl ParserState {
@@ -216,6 +223,7 @@ impl ParserState {
             last_named_imports_had_structural_error: false,
             deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
+            deferred_type_member_close_braces: 0,
             fallback_import_type_options_once: false,
             in_import_type_options_context: false,
             import_attribute_tail_recovered: false,
@@ -223,6 +231,7 @@ impl ParserState {
             suppress_next_missing_close_paren_error_once: false,
             saw_arrow_parameter_recovery: false,
             pending_failed_async_arrow_colon_recovery: false,
+            type_member_container_depth: 0,
         }
     }
 
@@ -243,6 +252,7 @@ impl ParserState {
         self.last_named_imports_recovered_to_from = false;
         self.last_named_imports_had_structural_error = false;
         self.deferred_module_close_braces = 0;
+        self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;
         self.fallback_import_type_options_once = false;
         self.in_import_type_options_context = false;
@@ -251,6 +261,7 @@ impl ParserState {
         self.suppress_next_missing_close_paren_error_once = false;
         self.saw_arrow_parameter_recovery = false;
         self.pending_failed_async_arrow_colon_recovery = false;
+        self.type_member_container_depth = 0;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
