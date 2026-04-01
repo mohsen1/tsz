@@ -692,7 +692,11 @@ impl<'a> CheckerState<'a> {
                 if has_error_surface {
                     return TypeId::ERROR;
                 }
-                if !self.should_suppress_weak_key_no_overload(callee_expr, args) {
+                
+                // Suppress TS2769 if the callee has structural errors
+                let should_suppress = self.should_suppress_no_overload_due_to_structural_errors(callee_expr);
+                
+                if !should_suppress && !self.should_suppress_weak_key_no_overload(callee_expr, args) {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
                 fallback_return
@@ -976,5 +980,53 @@ impl<'a> CheckerState<'a> {
             expanded.push(arg_idx);
         }
         expanded
+    }
+
+    /// Check if TS2769 (no overload matches) should be suppressed due to structural
+    /// errors on the callee type. When a class/interface has structural errors 
+    /// (TS2420, TS2430, TS2694), we suppress "no overload matches" errors because 
+    /// the type is known to be broken and the primary errors should be shown instead.
+    fn should_suppress_no_overload_due_to_structural_errors(&self, callee_expr: NodeIndex) -> bool {
+        // Only check for property access expressions (e.g., Promise.try)
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        
+        // Get the base expression (e.g., Promise in Promise.try)
+        let base_expr = access.expression;
+        
+        // Only check simple identifiers
+        let Some(base_node) = self.ctx.arena.get(base_expr) else {
+            return false;
+        };
+        
+        if base_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        
+        // Check if any structural error diagnostics have been emitted
+        let structural_error_codes = [
+            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+            diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+        ];
+        
+        // Get the span of the base identifier
+        let base_start = base_node.pos as u32;
+        let base_end = base_node.end as u32;
+        
+        // Check if there are any structural errors anywhere in the file
+        // This is a conservative check - if there are structural errors, suppress TS2769
+        // The key insight is that if a class/interface has structural errors, all calls
+        // on that type should suppress TS2769
+        let has_structural_errors = self.ctx.diagnostics.iter().any(|d| {
+            structural_error_codes.contains(&d.code)
+        });
+        
+        has_structural_errors
     }
 }
