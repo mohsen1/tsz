@@ -23242,3 +23242,43 @@ take(identity);
         "Should NOT emit TS2345 when generic callback is compatible, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_jsdoc_rest_arguments_iife_emits_ts8029() {
+    let source = r#"
+self.importScripts = (function (importScripts) {
+    /**
+     * @param {...unknown} rest
+     */
+    return function () {
+        return importScripts.apply(this, arguments);
+    };
+})(importScripts);
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "index.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts8029 = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 8029)
+        .expect("expected TS8029");
+    assert!(
+        ts8029
+            .message_text
+            .contains("It would match 'arguments' if it had an array type."),
+        "Expected TS8029 to mention implicit arguments-array matching. Diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| diagnostic.code != 8024),
+        "Expected the implicit-arguments case to upgrade to TS8029 instead of TS8024. Diagnostics: {diagnostics:#?}"
+    );
+}

@@ -897,7 +897,26 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(param_type);
         }
 
+        if let Some(display) = self.single_rest_tuple_array_display(param_type) {
+            return display;
+        }
+
         self.format_type_for_assignability_message(param_type)
+    }
+
+    fn single_rest_tuple_array_display(&mut self, type_id: TypeId) -> Option<String> {
+        let mut resolved = self.evaluate_type_with_env(type_id);
+        resolved = self.resolve_type_for_property_access(resolved);
+        resolved = self.resolve_lazy_type(resolved);
+        resolved = self.evaluate_application_type(resolved);
+        resolved = query_common::unwrap_readonly(self.ctx.types, resolved);
+        let elements = query_common::tuple_elements(self.ctx.types, resolved)?;
+        if elements.len() != 1 || !elements[0].rest {
+            return None;
+        }
+
+        let normalized = self.normalize_assignability_display_type(elements[0].type_id);
+        Some(self.format_type_diagnostic(normalized))
     }
 
     fn expanded_rest_tuple_parameter_display_for_call(
@@ -940,6 +959,10 @@ impl<'a> CheckerState<'a> {
         let elements = query_common::tuple_elements(self.ctx.types, resolved)?;
         if !elements.iter().any(|element| element.rest) {
             return None;
+        }
+        if elements.len() == 1 && elements[0].rest {
+            let normalized = self.normalize_assignability_display_type(elements[0].type_id);
+            return Some(self.format_type_diagnostic(normalized));
         }
 
         let parts: Vec<String> = elements

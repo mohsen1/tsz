@@ -118,6 +118,8 @@ impl<'a> CheckerState<'a> {
 
         // Extract @param tag names from JSDoc (only top-level, non-dotted names)
         let jsdoc_params = Self::extract_jsdoc_param_names(jsdoc);
+        let has_implicit_arguments_candidate =
+            actual_params.is_empty() && self.function_uses_implicit_arguments_object(func_idx);
 
         // Get source text and comment position for error positioning
         let source_info = self
@@ -145,12 +147,27 @@ impl<'a> CheckerState<'a> {
             if matches_by_name || matches_binding_pattern {
                 continue;
             }
-            // No match — emit TS8024
+            let (message, code) = if has_implicit_arguments_candidate
+                && Self::jsdoc_param_is_rest(jsdoc, param_name)
             {
-                let message = format_message(
-                    diagnostic_messages::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
-                    &[param_name],
-                );
+                (
+                    format_message(
+                        diagnostic_messages::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME_IT_WOULD_MATCH,
+                        &[param_name],
+                    ),
+                    diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME_IT_WOULD_MATCH,
+                )
+            } else {
+                (
+                    format_message(
+                        diagnostic_messages::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                        &[param_name],
+                    ),
+                    diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                )
+            };
+            // No match — emit TS8024/TS8029
+            {
                 // Position at the parameter name within the JSDoc comment in source
                 if let Some((comment_pos, ref source_text)) = source_info {
                     // Search for the name after @param in the source text within the comment
@@ -181,24 +198,34 @@ impl<'a> CheckerState<'a> {
                             pos as u32,
                             name_len,
                             message,
-                            diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                            code,
                         );
                     } else {
-                        self.error_at_node(
-                            func_idx,
-                            &message,
-                            diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
-                        );
+                        self.error_at_node(func_idx, &message, code);
                     }
                 } else {
-                    self.error_at_node(
-                        func_idx,
-                        &message,
-                        diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
-                    );
+                    self.error_at_node(func_idx, &message, code);
                 }
             }
         }
+    }
+
+    fn function_uses_implicit_arguments_object(&self, func_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+
+        let body = if let Some(func) = self.ctx.arena.get_function(node) {
+            Some(func.body)
+        } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+            Some(method.body)
+        } else if let Some(ctor) = self.ctx.arena.get_constructor(node) {
+            Some(ctor.body)
+        } else {
+            None
+        };
+
+        body.is_some_and(|body_idx| self.body_has_arguments_reference(body_idx))
     }
 
     /// TS7014: Check Closure-style JSDoc function parameter types for missing
