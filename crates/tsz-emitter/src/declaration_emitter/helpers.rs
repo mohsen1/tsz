@@ -10660,6 +10660,49 @@ impl<'a> DeclarationEmitter<'a> {
         Some((format!("./node_modules/{package_name}"), type_name))
     }
 
+    pub(crate) fn printed_type_uses_private_import_type_root(&self, printed: &str) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(current_file_path) = self.current_file_path.as_deref() else {
+            return false;
+        };
+
+        let mut remaining = printed;
+        while let Some(start) = remaining.find("import(\"") {
+            let after_prefix = &remaining[start + "import(\"".len()..];
+            let Some((module_specifier, tail)) = after_prefix.split_once("\")") else {
+                break;
+            };
+            remaining = tail;
+
+            let Some(root_name) = tail.strip_prefix('.').and_then(|rest| {
+                rest.split(['.', '<', '[', ' ', '&', '|', '(', ')', ',', '?', '{', '}'])
+                    .find(|part| !part.is_empty())
+            }) else {
+                continue;
+            };
+
+            let exported = binder.module_exports.iter().find_map(|(module_path, exports)| {
+                let candidate =
+                    if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+                        Some(self.strip_ts_extensions(
+                            &self.calculate_relative_path(current_file_path, module_path),
+                        ))
+                    } else {
+                        self.package_specifier_for_node_modules_path(current_file_path, module_path)
+                    }?;
+                (candidate == module_specifier).then(|| exports.has(root_name))
+            });
+
+            if exported == Some(false) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn non_portable_namespace_member_reference(
         &self,
         arena: &NodeArena,
