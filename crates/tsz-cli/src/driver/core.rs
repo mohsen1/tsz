@@ -1555,6 +1555,10 @@ fn compile_inner(
                 }
                 is_deprecation(d.code)
             });
+        } else if resolved.checker.target.is_es5() {
+            // tsc treats deprecated ES3/ES5 targets as an early-fatal config error
+            // unless a grammar error suppresses the deprecation diagnostic entirely.
+            diagnostics.retain(|d| is_deprecation(d.code));
         } else if has_grammar_errors {
             // Grammar errors take precedence - suppress TS5107/TS5101
             diagnostics.retain(|d| !is_deprecation(d.code));
