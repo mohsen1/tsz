@@ -845,27 +845,6 @@ fn compile_inner(
                 == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
     });
 
-    // TS5107/TS5101 (deprecation warnings for deprecated options/values) are fatal in tsc 6.0.
-    // They stop compilation and only config-level diagnostics are reported.
-    // Match this behavior to avoid extra file-level diagnostics.
-    if has_deprecation_diagnostics {
-        return Ok(CompilationResult {
-            diagnostics: config_diagnostics,
-            emitted_files: Vec::new(),
-            files_read: Vec::new(),
-            file_infos: Vec::new(),
-            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
-            interned_types_count: 0,
-            interner_estimated_bytes: 0,
-            query_cache_stats: None,
-            def_store_stats: None,
-            phase_timings: PhaseTimings::default(),
-            residency_stats: None,
-            module_dep_stats: None,
-            invalidation_summaries: Vec::new(),
-        });
-    }
-
     let mut resolved = match resolve_compiler_options(
         config
             .as_ref()
