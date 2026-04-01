@@ -196,7 +196,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsx_children_declared_type_text_from_type(&mut self, props_type: TypeId) -> Option<String> {
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, props_type)
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, props_type)
         {
             let mut seen = FxHashSet::default();
             let texts: Vec<String> = members
@@ -216,7 +217,10 @@ impl<'a> CheckerState<'a> {
         self.jsx_children_declared_type_text_for_symbol(sym_id)
     }
 
-    fn jsx_children_declared_type_text_for_symbol(&mut self, sym_id: tsz_binder::SymbolId) -> Option<String> {
+    fn jsx_children_declared_type_text_for_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<String> {
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
         let mut decls = Vec::new();

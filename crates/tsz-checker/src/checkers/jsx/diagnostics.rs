@@ -244,7 +244,10 @@ impl<'a> CheckerState<'a> {
                 if param.type_annotation.is_none() {
                     return None;
                 }
-                self.get_object_prop_annotation_text_from_type_node(param.type_annotation, prop_name)
+                self.get_object_prop_annotation_text_from_type_node(
+                    param.type_annotation,
+                    prop_name,
+                )
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
@@ -272,7 +275,10 @@ impl<'a> CheckerState<'a> {
                 if first_param.constraint == NodeIndex(0) {
                     return None;
                 }
-                self.get_object_prop_annotation_text_from_type_node(first_param.constraint, prop_name)
+                self.get_object_prop_annotation_text_from_type_node(
+                    first_param.constraint,
+                    prop_name,
+                )
             }
             _ => None,
         }
@@ -299,8 +305,8 @@ impl<'a> CheckerState<'a> {
                 }
                 decls.extend(symbol.declarations.iter().copied());
                 for decl_idx in decls {
-                    if let Some(text) =
-                        self.get_jsx_component_prop_annotation_text_from_declaration(
+                    if let Some(text) = self
+                        .get_jsx_component_prop_annotation_text_from_declaration(
                             decl_idx, prop_name,
                         )
                     {
