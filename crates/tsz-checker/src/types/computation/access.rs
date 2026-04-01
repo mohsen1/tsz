@@ -727,8 +727,6 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
         let union_keys = self.get_literal_key_union_from_type(index_type);
-        // Track missing literal keys for TS2339 reporting (instead of TS7053).
-        let mut missing_literal_keys: Vec<String> = Vec::new();
         if result_type.is_none()
             && literal_index.is_none()
             && let Some((string_keys, number_keys)) = union_keys
@@ -764,9 +762,10 @@ impl<'a> CheckerState<'a> {
                             // expando suppression path (don't emit per-key TS2339).
                             report_no_index = true;
                         } else {
-                            // SOME keys found, some missing — emit TS2339 per
-                            // missing key below (e.g., 'z' in 'a' | 'b' | 'z').
-                            missing_literal_keys = keys_result.missing_keys;
+                            // SOME keys found, some missing — tsc keeps the
+                            // aggregate TS7053 on the full expression rather
+                            // than switching to per-key TS2339.
+                            report_no_index = true;
                         }
                     }
                 }
@@ -787,9 +786,9 @@ impl<'a> CheckerState<'a> {
 
                 // Suppress index signature checks when literal keys were
                 // resolved (fully or partially). When all keys resolve, there
-                // is no error. When some keys are missing, we emit TS2339 per
-                // missing key below — the generic TS7053 check must not run.
-                if (string_keys_ok && number_keys_ok) || !missing_literal_keys.is_empty() {
+                // is no error. Mixed found/missing string-key unions should
+                // still fall through to the aggregate TS7053 path.
+                if string_keys_ok && number_keys_ok {
                     use_index_signature_check = false;
                 }
 
@@ -1372,17 +1371,6 @@ impl<'a> CheckerState<'a> {
             report_no_index = true;
         }
 
-        // When we have specific missing literal keys from a union, emit TS2339
-        // per-key instead of TS7053 for the whole union. tsc identifies the
-        // specific non-existent key(s) from the union and reports TS2339.
-        // tsc spans the error over the entire element access expression node,
-        // not just the argument.
-        if !missing_literal_keys.is_empty() {
-            for key in &missing_literal_keys {
-                self.error_property_not_exist_at(key, object_type_for_access, idx);
-            }
-        }
-
         if report_no_index {
             // Suppress TS7053 for expando bracket assignments on function types.
             // When `func["prop"] = value` and the object is callable, tsc does not emit
@@ -1423,6 +1411,7 @@ impl<'a> CheckerState<'a> {
                     object_type_for_access,
                     idx,
                     access.name_or_argument,
+                    skip_flow_narrowing,
                 );
                 if skip_flow_narrowing {
                     return TypeId::ERROR;
