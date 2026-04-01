@@ -12,6 +12,134 @@ use tsz_solver::TypeId;
 use crate::query_boundaries::assignability::RelationRequest;
 
 impl<'a> CheckerState<'a> {
+    fn symbol_is_uninstantiated_namespace(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        use tsz_binder::symbol_flags;
+
+        let mut visited_aliases = Vec::new();
+        let sym_to_check = self
+            .resolve_alias_symbol(sym_id, &mut visited_aliases)
+            .unwrap_or(sym_id);
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(sym_to_check, &lib_binders)?;
+
+        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+        if !is_namespace || has_other_value {
+            return None;
+        }
+
+        let is_instantiated = symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
+        if is_instantiated {
+            None
+        } else {
+            Some(sym_to_check)
+        }
+    }
+
+    fn skip_ts2314_for_heritage_symbol(
+        &self,
+        heritage_sym: tsz_binder::SymbolId,
+        is_class_declaration: bool,
+        is_extends_clause: bool,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        self.is_js_file()
+            || (is_class_declaration
+                && is_extends_clause
+                && self.get_cross_file_symbol(heritage_sym).is_some_and(|s| {
+                    (s.flags & symbol_flags::VARIABLE) != 0
+                        || ((s.flags & symbol_flags::INTERFACE) != 0
+                            && (s.flags & symbol_flags::CLASS) == 0
+                            && (s.flags & symbol_flags::VARIABLE) == 0)
+                }))
+    }
+
+    fn report_unresolved_qualified_heritage_member(
+        &mut self,
+        expr_idx: NodeIndex,
+        is_class_declaration: bool,
+        is_extends_clause: bool,
+    ) -> bool {
+        use crate::query_boundaries::name_resolution::{NameLookupKind, NameResolutionRequest};
+
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let (left_idx, right_idx) = if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+                return false;
+            };
+            (access.expression, access.name_or_argument)
+        } else {
+            return false;
+        };
+
+        let Some(right_name) = self
+            .ctx
+            .arena
+            .get_identifier_at(right_idx)
+            .map(|ident| ident.escaped_text.clone())
+        else {
+            return false;
+        };
+
+        let Some(left_sym) = self.resolve_heritage_symbol(left_idx) else {
+            return false;
+        };
+        let Some(namespace_sym) = self.symbol_is_uninstantiated_namespace(left_sym) else {
+            return false;
+        };
+
+        if is_class_declaration && is_extends_clause {
+            let ns_name = self
+                .entity_name_text(left_idx)
+                .unwrap_or_else(|| right_name.clone());
+            self.report_wrong_meaning_diagnostic(&ns_name, left_idx, NameLookupKind::Namespace);
+            return true;
+        }
+
+        if is_extends_clause && !is_class_declaration {
+            let lib_binders = self.get_lib_binders();
+            let Some(left_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(namespace_sym, &lib_binders)
+            else {
+                return false;
+            };
+            let export_names: Vec<String> = left_symbol
+                .exports
+                .as_ref()
+                .map(|exports| exports.iter().map(|(name, _)| name.clone()).collect())
+                .unwrap_or_default();
+            let req = NameResolutionRequest::exported_member(
+                &right_name,
+                right_idx,
+                namespace_sym,
+                export_names,
+            );
+            if let Err(failure) = self.resolve_name_structured(&req) {
+                self.report_name_resolution_failure(&req, &failure);
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check heritage clauses (extends/implements) for unresolved names.
     /// Emits TS2304 when a referenced name cannot be resolved.
     /// Emits TS2689 when a class extends an interface.
@@ -228,6 +356,11 @@ impl<'a> CheckerState<'a> {
                             }
                         } else {
                             if type_args.nodes.len() < required_count
+                                && !self.skip_ts2314_for_heritage_symbol(
+                                    heritage_sym,
+                                    is_class_declaration,
+                                    is_extends_clause,
+                                )
                                 && let Some(name) = self.heritage_name_text(expr_idx)
                             {
                                 let type_params = self.get_type_params_for_symbol(heritage_sym);
@@ -257,27 +390,24 @@ impl<'a> CheckerState<'a> {
                         // 2. Extends clauses where the symbol has a variable
                         //    declaration (e.g. `declare var Set: SetConstructor`)
                         //    — the constructor infers type args
-                        use tsz_binder::symbol_flags;
-                        let skip_ts2314 = self.is_js_file()
-                            || (is_class_declaration
-                                && is_extends_clause
-                                && self
-                                    .get_cross_file_symbol(heritage_sym)
-                                    .is_some_and(|s| (s.flags & symbol_flags::VARIABLE) != 0));
-                        if skip_ts2314 {
-                            continue;
+                        let skip_ts2314 = self.skip_ts2314_for_heritage_symbol(
+                            heritage_sym,
+                            is_class_declaration,
+                            is_extends_clause,
+                        );
+                        if !skip_ts2314 {
+                            let type_params = self.get_type_params_for_symbol(heritage_sym);
+                            let display_name = Self::format_generic_display_name_with_interner(
+                                &name,
+                                &type_params,
+                                self.ctx.types,
+                            );
+                            self.error_generic_type_requires_type_arguments_at(
+                                &display_name,
+                                required_count,
+                                type_idx,
+                            );
                         }
-                        let type_params = self.get_type_params_for_symbol(heritage_sym);
-                        let display_name = Self::format_generic_display_name_with_interner(
-                            &name,
-                            &type_params,
-                            self.ctx.types,
-                        );
-                        self.error_generic_type_requires_type_arguments_at(
-                            &display_name,
-                            required_count,
-                            type_idx,
-                        );
                     }
 
                     // TS2449/TS2450: Check if class/enum is used before its declaration
@@ -681,6 +811,16 @@ impl<'a> CheckerState<'a> {
                                 call_type_args,
                             );
                         }
+                    }
+
+                    // Qualified/member heritage references need namespace-aware diagnostics
+                    // before falling back to generic unresolved-name handling.
+                    if self.report_unresolved_qualified_heritage_member(
+                        expr_idx,
+                        is_class_declaration,
+                        is_extends_clause,
+                    ) {
+                        continue;
                     }
 
                     // Could not resolve as a heritage symbol - check if it's an identifier

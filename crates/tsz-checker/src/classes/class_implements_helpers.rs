@@ -4,6 +4,7 @@
 //! - Inherited public member collection
 
 use crate::state::CheckerState;
+use tsz_common::Visibility;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -506,16 +507,16 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Collect names of inherited PRIVATE/PROTECTED members from the base class chain.
+    /// Collect inherited PRIVATE/PROTECTED members from the base class chain.
     ///
     /// These members cannot satisfy interface requirements, but when an interface
     /// extends the same base class as the implementing class, the private members
     /// appear in the interface type shape. We need to know which members are
     /// inherited private/protected so we can skip them in the "missing" check.
-    pub(crate) fn collect_inherited_private_member_names(
+    pub(crate) fn collect_inherited_non_public_members(
         &mut self,
         class_data: &tsz_parser::parser::node::ClassData,
-        result: &mut rustc_hash::FxHashSet<String>,
+        result: &mut rustc_hash::FxHashMap<String, Visibility>,
     ) {
         let mut visited = rustc_hash::FxHashSet::default();
         let mut current_heritage = class_data.heritage_clauses.clone();
@@ -591,10 +592,39 @@ impl<'a> CheckerState<'a> {
                             .and_then(|sid| self.ctx.binder.get_symbol(sid))
                             .map(|s| s.flags)
                             .unwrap_or(0);
-                        if (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0
-                            || (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0
-                        {
-                            result.insert(name);
+                        let visibility = if (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0 {
+                            Some(Visibility::Private)
+                        } else if (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0 {
+                            Some(Visibility::Protected)
+                        } else {
+                            None
+                        };
+                        if let Some(visibility) = visibility {
+                            result.entry(name).or_insert(visibility);
+                        }
+                    }
+
+                    if let Some(node) = self.ctx.arena.get(member_idx)
+                        && node.kind == syntax_kind_ext::CONSTRUCTOR
+                        && let Some(ctor) = self.ctx.arena.get_constructor(node)
+                    {
+                        for &param_idx in &ctor.parameters.nodes {
+                            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                                && self.has_parameter_property_modifier(&param.modifiers)
+                                && let Some(name) = self.get_property_name(param.name)
+                            {
+                                let visibility = if self.has_private_modifier(&param.modifiers) {
+                                    Some(Visibility::Private)
+                                } else if self.has_protected_modifier(&param.modifiers) {
+                                    Some(Visibility::Protected)
+                                } else {
+                                    None
+                                };
+                                if let Some(visibility) = visibility {
+                                    result.entry(name).or_insert(visibility);
+                                }
+                            }
                         }
                     }
                 }

@@ -2317,7 +2317,23 @@ impl ParserState {
             }
             SyntaxKind::LessThanToken => {
                 if self.is_jsx_file() {
-                    if self.look_ahead_next_is_identifier_or_keyword_or_greater_than() {
+                    let allow_malformed_jsx_after_tilde = self
+                        .get_source_text()
+                        .get(..self.token_pos() as usize)
+                        .and_then(|prefix| prefix.chars().rev().find(|ch| !ch.is_whitespace()))
+                        == Some('~')
+                        && {
+                            let snapshot = self.scanner.save_state();
+                            let current = self.current_token;
+                            self.next_token();
+                            let result = self.is_token(SyntaxKind::LessThanToken);
+                            self.scanner.restore_state(snapshot);
+                            self.current_token = current;
+                            result
+                        };
+                    if self.look_ahead_next_is_identifier_or_keyword_or_greater_than()
+                        || allow_malformed_jsx_after_tilde
+                    {
                         self.parse_jsx_element_or_self_closing_or_fragment(true)
                     } else {
                         self.error_expression_expected();

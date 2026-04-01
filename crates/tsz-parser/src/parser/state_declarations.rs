@@ -184,10 +184,11 @@ impl ParserState {
 
         // Parse interface body
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        let saved_type_member_depth = self.type_member_container_depth;
+        self.type_member_container_depth += 1;
         let members = self.parse_type_members();
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
-        let end_pos = self.token_end();
+        let end_pos = self.finish_type_member_container_close_brace();
+        self.type_member_container_depth = saved_type_member_depth;
         self.arena.add_interface(
             syntax_kind_ext::INTERFACE_DECLARATION,
             start_pos,
