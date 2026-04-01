@@ -700,3 +700,54 @@ fn2<MyObjA>({
         "Expected no TS2344 when TS2559 (weak type) applies, got {ts2344_count}"
     );
 }
+
+#[test]
+fn test_type_parameter_default_with_enclosing_type_arguments_is_not_circular() {
+    let source = r#"
+interface SelfRef<T = SelfRef> {}
+
+interface ExtendableConfig<
+  Options = any,
+  Config extends ExtensionConfig<Options> | ExtendableConfig<Options> = ExtendableConfig<Options, any>
+> {}
+
+interface ExtensionConfig<Options = any>
+  extends ExtendableConfig<Options, ExtensionConfig<Options>>
+{}
+
+interface ExplicitArgDefault<T = SelfRef<number>> {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2716_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2716)
+        .count();
+    let all_errors = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2716_count, 1,
+        "Expected only the raw circular-default case to trigger TS2716, got {ts2716_count}. All diagnostics: {all_errors:?}"
+    );
+}
