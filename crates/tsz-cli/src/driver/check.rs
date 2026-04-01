@@ -93,6 +93,7 @@ fn post_process_checker_diagnostics(
     file: &BoundFile,
     options: &ResolvedCompilerOptions,
     program_has_real_syntax_errors: bool,
+    has_deprecation_diagnostics: bool,
 ) {
     let is_js = is_js_file(Path::new(&file.file_name));
     let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
@@ -136,6 +137,16 @@ fn post_process_checker_diagnostics(
     if program_has_real_syntax_errors {
         checker_diagnostics
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
+    }
+
+    // When TS5107/TS5101 deprecation diagnostics are present, tsc 6.0 stops
+    // type checking but continues parsing. We filter out type-level diagnostics
+    // (2000-8999) while keeping parser/syntax diagnostics (<2000) and JS
+    // grammar diagnostics (8000-9000).
+    if has_deprecation_diagnostics {
+        checker_diagnostics.retain(|diag| {
+            diag.code < 2000 || (8000..9000).contains(&diag.code)
+        });
     }
 
     // Suppress semantic errors that cascade from structural parse failures.
@@ -1347,6 +1358,7 @@ pub(super) fn collect_diagnostics(
                     file,
                     options,
                     program_has_real_syntax_errors,
+                    has_deprecation_diagnostics,
                 );
 
                 file_diagnostics.extend(checker_diagnostics);
@@ -1904,6 +1916,7 @@ pub(super) fn check_file_for_parallel<'a>(
             file,
             &effective_options,
             program_has_real_syntax_errors,
+            project_env.has_deprecation_diagnostics,
         );
 
         file_diagnostics.extend(checker_diagnostics);
