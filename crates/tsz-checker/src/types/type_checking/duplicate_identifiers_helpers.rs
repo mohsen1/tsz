@@ -182,10 +182,11 @@ impl<'a> CheckerState<'a> {
                 let Some(source_file_idx) = self.ctx.get_file_idx_for_arena(arena) else {
                     continue;
                 };
-                if self
-                    .ctx
-                    .resolve_import_target_from_file(source_file_idx, module_spec)
-                    != Some(self.ctx.current_file_idx)
+                if !self.module_augmentation_targets_current_file_export(
+                    source_file_idx,
+                    module_spec,
+                    name,
+                )
                 {
                     continue;
                 }
@@ -205,6 +206,28 @@ impl<'a> CheckerState<'a> {
         }
 
         declarations
+    }
+
+    fn module_augmentation_targets_current_file_export(
+        &self,
+        augmenting_file_idx: usize,
+        module_spec: &str,
+        export_name: &str,
+    ) -> bool {
+        let Some(target_idx) = self
+            .ctx
+            .resolve_import_target_from_file(augmenting_file_idx, module_spec)
+        else {
+            return false;
+        };
+
+        if target_idx == self.ctx.current_file_idx {
+            return true;
+        }
+
+        let mut visited = FxHashSet::default();
+        self.resolve_export_in_file(target_idx, export_name, &mut visited)
+            .is_some_and(|(_, owner_idx)| owner_idx == self.ctx.current_file_idx)
     }
 
     pub(super) fn same_name_top_level_script_declarations_for_current_file(

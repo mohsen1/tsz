@@ -2091,6 +2091,108 @@ enum E {
 }
 
 #[test]
+fn test_check_files_parallel_module_augmentation_reexported_enum_class_merge_emits_ts2567() {
+    let files = vec![
+        (
+            "file.ts".to_string(),
+            r#"
+export class Foo {
+    member: string;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "reexport.ts".to_string(),
+            r#"
+export * from "./file";
+"#
+            .to_string(),
+        ),
+        (
+            "augment.ts".to_string(),
+            r#"
+import * as ns from "./reexport";
+
+declare module "./reexport" {
+    export enum Foo {
+        A, B, C
+    }
+}
+
+declare const f: ns.Foo;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|entry| entry.file_name == "file.ts")
+        .expect("expected file.ts result");
+    let augment = result
+        .file_results
+        .iter()
+        .find(|entry| entry.file_name == "augment.ts")
+        .expect("expected augment.ts result");
+    let reexport = result
+        .file_results
+        .iter()
+        .find(|entry| entry.file_name == "reexport.ts")
+        .expect("expected reexport.ts result");
+
+    let file_codes: Vec<u32> = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2567)
+        .map(|diag| diag.code)
+        .collect();
+    let augment_codes: Vec<u32> = augment
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2567)
+        .map(|diag| diag.code)
+        .collect();
+    let reexport_codes: Vec<u32> = reexport
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2567)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert_eq!(
+        file_codes,
+        vec![2567],
+        "Expected file.ts to report TS2567 for a re-exported class/enum merge conflict. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert_eq!(
+        augment_codes,
+        vec![2567],
+        "Expected augment.ts to report TS2567 for a module augmentation enum/class merge conflict. Diagnostics: {:#?}",
+        augment.diagnostics
+    );
+    assert!(
+        reexport_codes.is_empty(),
+        "Did not expect TS2567 in reexport.ts. Diagnostics: {:#?}",
+        reexport.diagnostics
+    );
+}
+
+#[test]
 fn test_check_files_parallel_var_and_duplicate_functions_keep_ts2300() {
     let files = vec![(
         "test.ts".to_string(),
