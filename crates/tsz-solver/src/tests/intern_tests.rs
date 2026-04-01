@@ -55,7 +55,10 @@ fn test_interner_lazy_and_type_param_constructors() {
         is_const: false,
     };
     let type_param = interner.type_param(t.clone());
-    assert_eq!(interner.lookup(type_param), Some(TypeData::TypeParameter(t)));
+    assert_eq!(
+        interner.lookup(type_param),
+        Some(TypeData::TypeParameter(t))
+    );
 }
 
 #[test]
@@ -523,13 +526,13 @@ fn test_freshness_intersection_for_objects() {
 
     let mixed = interner.intersection2(fresh, non_fresh);
     assert!(!is_fresh_object_type(&interner, mixed));
-    if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = interner.lookup(mixed) {
-        assert!(
-            !interner
-                .object_shape(shape_id)
-                .flags
-                .contains(ObjectFlags::FRESH_LITERAL)
-        );
+    if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+        interner.lookup(mixed)
+    {
+        assert!(!interner
+            .object_shape(shape_id)
+            .flags
+            .contains(ObjectFlags::FRESH_LITERAL));
     } else {
         panic!("Expected object type");
     }
@@ -570,9 +573,18 @@ fn test_intersection_disjoint_property_types() {
 fn test_intersection_object_freshness_must_be_all_members() {
     let interner = TypeInterner::new();
 
-    let fresh_a = interner.object_fresh(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let fresh_b = interner.object_fresh(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
-    let nonfresh_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let fresh_a = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let fresh_b = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+    let nonfresh_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let both_fresh = interner.intersection2(fresh_a, fresh_b);
     assert!(is_fresh_object_type(&interner, both_fresh));
@@ -877,6 +889,49 @@ fn test_partial_callable_merging_in_intersection() {
     // NOTE: Callable order IS significant in TypeScript, so different input
     // orders produce different results (different overload orders).
     // We do NOT test order independence for callables.
+
+    let ctor_a = interner.callable(CallableShape {
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature::new(vec![], TypeId::STRING)],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let ctor_b = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(TypeId::ANY)],
+            TypeId::ANY,
+        )],
+        construct_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(TypeId::NUMBER)],
+            TypeId::NUMBER,
+        )],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let inter = interner.intersection(vec![ctor_a, ctor_b]);
+
+    let Some(TypeData::Callable(shape_id)) = interner.lookup(inter) else {
+        panic!("Expected merged callable intersection");
+    };
+    let callable = interner.callable_shape(shape_id);
+    assert_eq!(
+        callable.construct_signatures.len(),
+        2,
+        "Merged callable should preserve both construct signatures"
+    );
+    assert_eq!(
+        callable.call_signatures.len(),
+        1,
+        "Merged callable should also preserve call signatures from callable members"
+    );
 }
 
 // Task #43: Test partial merging with both objects and callables
