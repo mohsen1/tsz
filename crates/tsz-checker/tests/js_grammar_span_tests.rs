@@ -67,3 +67,33 @@ fn js_optional_class_elements_report_ts8009_at_question_token() {
         "Expected property optional marker to anchor at '?'. Actual diagnostics: {ts8009:#?}"
     );
 }
+
+#[test]
+fn js_optional_parameters_report_ts8009_at_question_token() {
+    let source = "function F(p?) { }";
+
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts8009: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8009)
+        .collect();
+
+    assert_eq!(ts8009.len(), 1, "unexpected diagnostics: {ts8009:#?}");
+
+    let question = source.find('?').expect("optional marker") as u32;
+    assert_eq!(
+        ts8009[0].start, question,
+        "Expected parameter optional marker to anchor at '?'. Actual diagnostics: {ts8009:#?}"
+    );
+    assert_eq!(ts8009[0].length, 1, "unexpected diagnostic length: {ts8009:#?}");
+}
