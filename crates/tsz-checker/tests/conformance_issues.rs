@@ -17752,31 +17752,40 @@ expected = iter[Symbol.asyncIterator];
 }
 
 #[test]
-#[ignore = "isolated declarations computed property checking not yet wired up"]
 fn test_isolated_declarations_reports_computed_object_literal_exports() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
         r#"
-const y: 0 = 0;
-let u = Symbol();
+const x: 0 | 1 = Math.random() ? 0 : 1;
+declare function assert(n: number): asserts n is 1;
+assert(x);
 
-export let o = { [y]: 1 };
-export let o2 = { [u]: 1 };
+let u = Symbol();
+const y: 0 = 0;
+
+export let o = { [x]: 1 };
+export let o2 = { [y]: 1 };
 export let o3 = { [1]: 1 };
 export let o31 = { [-1]: 1 };
 export let o32 = { [1 - 1]: 1 };
+export let o4 = { [u]: 1 };
 "#,
         CheckerOptions {
             target: tsz_common::common::ScriptTarget::ES2015,
             isolated_declarations: true,
+            emit_declarations: true,
             ..Default::default()
         },
     );
 
     let ts9038_count = diagnostics.iter().filter(|(code, _)| *code == 9038).count();
     assert_eq!(
-        ts9038_count, 3,
-        "Expected TS9038 only for non-literal computed object-literal property names.\nActual diagnostics: {diagnostics:#?}"
+        ts9038_count, 4,
+        "Expected TS9038 for identifier- and expression-based computed object-literal property names under isolated declarations.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 9010),
+        "Expected TS9010 for the inferred helper variable used in a computed export name.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
