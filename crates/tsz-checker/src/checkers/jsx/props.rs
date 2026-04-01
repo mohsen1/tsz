@@ -1739,7 +1739,10 @@ impl<'a> CheckerState<'a> {
                 );
             }
             // TS2747: text children not accepted by component.
-            if has_text_child && !skip_prop_checks {
+            if has_text_child
+                && !skip_prop_checks
+                && !self.jsx_children_shape_diagnostic_takes_precedence(props_type, child_count)
+            {
                 self.check_jsx_text_children_accepted(
                     props_type,
                     tag_name_idx,

@@ -83,6 +83,109 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(super) fn select_jsx_single_children_target_type(&mut self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_type_for_property_access(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        else {
+            return resolved;
+        };
+
+        let single_members: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&member| !self.type_requires_multiple_children(member))
+            .collect();
+        match single_members.as_slice() {
+            [] => resolved,
+            [single_member] => *single_member,
+            _ => self.ctx.types.factory().union(single_members),
+        }
+    }
+
+    pub(super) fn select_jsx_multiple_children_target_type(&mut self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_type_for_property_access(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        else {
+            return resolved;
+        };
+
+        let multiple_members: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&member| self.type_allows_multiple_children(member))
+            .collect();
+        match multiple_members.as_slice() {
+            [] => resolved,
+            [multiple_member] => *multiple_member,
+            _ => self.ctx.types.factory().union(multiple_members),
+        }
+    }
+
+    pub(super) fn jsx_multiple_children_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let resolved = self.select_jsx_multiple_children_target_type(type_id);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolved = self.evaluate_type_with_env(resolved);
+
+        if let Some(element_type) =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, resolved)
+        {
+            return Some(self.refine_jsx_callable_contextual_type(element_type));
+        }
+
+        if let Some(elements) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, resolved)
+        {
+            let element_types: Vec<TypeId> = elements
+                .iter()
+                .map(|elem| self.refine_jsx_callable_contextual_type(elem.type_id))
+                .collect();
+            return match element_types.as_slice() {
+                [] => None,
+                [element_type] => Some(*element_type),
+                _ => Some(self.ctx.types.factory().union(element_types)),
+            };
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        {
+            let mut element_types = Vec::new();
+            for member in members {
+                if let Some(element_type) = self.jsx_multiple_children_element_type(member) {
+                    element_types.push(element_type);
+                }
+            }
+            return match element_types.as_slice() {
+                [] => None,
+                [element_type] => Some(*element_type),
+                _ => Some(self.ctx.types.factory().union(element_types)),
+            };
+        }
+
+        tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved)
+            .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
+            .map(|value_type| self.refine_jsx_callable_contextual_type(value_type))
+    }
+
+    fn jsx_children_contextual_type_for_body_shape(
+        &mut self,
+        children_type: TypeId,
+        child_count: usize,
+    ) -> TypeId {
+        if child_count > 1 {
+            return self
+                .jsx_multiple_children_element_type(children_type)
+                .unwrap_or(children_type);
+        }
+
+        let single_children_type = self.select_jsx_single_children_target_type(children_type);
+        self.refine_jsx_callable_contextual_type(single_children_type)
+    }
+
     fn file_has_same_line_adjacent_jsx_recovery_pattern(&self) -> bool {
         // Previously this used text-based heuristics to detect adjacent JSX
         // recovery patterns (e.g., `/><` or `></`), but those patterns also
@@ -2011,8 +2114,14 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        let child_count = self
+            .get_jsx_body_child_nodes(jsx_opening.attributes)
+            .map_or(0, |children| children.len());
+
         self.get_jsx_children_prop_type(props_type)
-            .map(|children_type| self.refine_jsx_callable_contextual_type(children_type))
+            .map(|children_type| {
+                self.jsx_children_contextual_type_for_body_shape(children_type, child_count)
+            })
     }
     // JSX Attribute Name Extraction
 
