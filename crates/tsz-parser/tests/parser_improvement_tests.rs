@@ -3012,3 +3012,20 @@ fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_
         "Decorator type assertion recovery should not emit TS1146, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_ts1125_multiple_errors_in_tagged_template() {
+    // Test that all invalid escapes in a tagged template are reported
+    // Source has 3 invalid escapes: \u{hello}, \xtraordinary, \uworld
+    let source = r#"const x = tag`\u{hello} ${ 100 } \xtraordinary ${ 200 } wonderful ${ 300 } \uworld`;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+    
+    let ts1125_diagnostics: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
+    
+    // We should get 3 TS1125 errors
+    assert_eq!(ts1125_diagnostics.len(), 3, 
+        "Expected 3 TS1125 errors (for \\u{{hello}}, \\xtraordinary, \\uworld), got {}: {:?}",
+        ts1125_diagnostics.len(), ts1125_diagnostics);
+}

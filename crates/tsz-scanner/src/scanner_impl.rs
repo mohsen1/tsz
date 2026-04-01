@@ -1958,6 +1958,7 @@ impl ScannerState {
             // Escape sequence
             if ch == CharacterCodes::BACKSLASH {
                 contents.push_str(&self.substring(start, self.pos));
+                self.pos += 1; // Advance past the backslash
                 let escaped = self.scan_template_escape_sequence();
                 contents.push_str(&escaped);
                 // Reset start to current position after the escape
