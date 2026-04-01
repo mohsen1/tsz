@@ -26373,3 +26373,104 @@ fn test_explain_failure_resolves_typequery_to_structural_form() {
         }
     }
 }
+
+#[test]
+fn test_callback_with_readonly_tuple_union_rest_param() {
+    // Reproduces: contextualTupleTypeParameterReadonly.ts
+    // Source: (a: 1 | 2, b: "1" | "2") => void
+    // Target: (...args: readonly [1, "1"] | readonly [2, "2"]) => any
+    // Expected: source is NOT assignable to target (TS2345)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let lit_1 = interner.literal_number(1.0);
+    let lit_2 = interner.literal_number(2.0);
+    let lit_s1 = interner.literal_string("1");
+    let lit_s2 = interner.literal_string("2");
+
+    let num_union = interner.union2(lit_1, lit_2);
+    let str_union = interner.union2(lit_s1, lit_s2);
+
+    let source = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("a")),
+                type_id: num_union,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("b")),
+                type_id: str_union,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let tuple1 = interner.tuple(vec![
+        TupleElement {
+            type_id: lit_1,
+            optional: false,
+            rest: false,
+            name: None,
+        },
+        TupleElement {
+            type_id: lit_s1,
+            optional: false,
+            rest: false,
+            name: None,
+        },
+    ]);
+    let readonly_tuple1 = interner.readonly_type(tuple1);
+
+    let tuple2 = interner.tuple(vec![
+        TupleElement {
+            type_id: lit_2,
+            optional: false,
+            rest: false,
+            name: None,
+        },
+        TupleElement {
+            type_id: lit_s2,
+            optional: false,
+            rest: false,
+            name: None,
+        },
+    ]);
+    let readonly_tuple2 = interner.readonly_type(tuple2);
+
+    let union_of_tuples = interner.union2(readonly_tuple1, readonly_tuple2);
+
+    let target = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: union_of_tuples,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "callback (a: 1|2, b: '1'|'2') => void should NOT be assignable to (...args: readonly [1, '1'] | readonly [2, '2']) => any"
+    );
+
+    checker.strict_function_types = false;
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "Even with bivariant callbacks, should NOT be assignable due to readonly tuple constraint"
+    );
+}
