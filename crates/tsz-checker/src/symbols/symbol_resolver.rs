@@ -998,8 +998,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if self.ctx.binder.file_locals.get(name) == Some(local_sym_id)
-                && let Some(ns_sym_id) =
-                    self.resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)
+                && let Some(ns_sym_id) = self
+                    .resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)
                 && ns_sym_id != local_sym_id
             {
                 return TypeSymbolResolution::Type(ns_sym_id);

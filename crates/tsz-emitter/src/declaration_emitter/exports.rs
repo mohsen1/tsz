@@ -423,11 +423,11 @@ impl<'a> DeclarationEmitter<'a> {
                             {
                                 break;
                             }
-                            let arg_type_text = self.preferred_expression_type_text(arg_idx).or_else(
-                                || self
-                                    .get_node_type_or_names(&[arg_idx])
-                                    .map(|type_id| self.print_type_id(type_id)),
-                            );
+                            let arg_type_text =
+                                self.preferred_expression_type_text(arg_idx).or_else(|| {
+                                    self.get_node_type_or_names(&[arg_idx])
+                                        .map(|type_id| self.print_type_id(type_id))
+                                });
                             if let Some(arg_type_text) = arg_type_text
                                 && arg_type_text.starts_with("import(\"")
                                 && self.emit_non_portable_import_type_text_diagnostics(
@@ -773,10 +773,11 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         break;
                     }
-                    let arg_type_text = self.preferred_expression_type_text(arg_idx).or_else(|| {
-                        self.get_node_type_or_names(&[arg_idx])
-                            .map(|type_id| self.print_type_id(type_id))
-                    });
+                    let arg_type_text =
+                        self.preferred_expression_type_text(arg_idx).or_else(|| {
+                            self.get_node_type_or_names(&[arg_idx])
+                                .map(|type_id| self.print_type_id(type_id))
+                        });
                     if let Some(arg_type_text) = arg_type_text
                         && arg_type_text.starts_with("import(\"")
                         && self.emit_non_portable_import_type_text_diagnostics(

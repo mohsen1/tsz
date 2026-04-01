@@ -494,10 +494,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .resolver
                     .get_boxed_type(source_kind)
                     .or_else(|| self.interner.get_boxed_type(source_kind));
-                if let Some(boxed_type) = boxed_type
-                    && self.check_subtype(boxed_type, target).is_true()
-                {
-                    return true;
+                if let Some(boxed_type) = boxed_type {
+                    let saved = self.in_intersection_member_check;
+                    self.in_intersection_member_check = false;
+                    let ok = self.check_subtype(boxed_type, target).is_true();
+                    self.in_intersection_member_check = saved;
+                    if ok {
+                        return true;
+                    }
                 }
                 // Boxed type doesn't satisfy all target properties. Check if
                 // the target only has iterable-related properties (no extras).
@@ -520,8 +524,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if target == boxed_type {
                 return true;
             }
-            // Or if target is a supertype of the boxed interface (e.g., Object)
-            return self.check_subtype(boxed_type, target).is_true();
+            // Reset `in_intersection_member_check` for the boxed structural check.
+            // The boxed type comparison is a fresh structural query — the boxed
+            // wrapper should NOT bypass weak type detection.
+            let saved = self.in_intersection_member_check;
+            self.in_intersection_member_check = false;
+            let result = self.check_subtype(boxed_type, target).is_true();
+            self.in_intersection_member_check = saved;
+            return result;
         }
 
         false

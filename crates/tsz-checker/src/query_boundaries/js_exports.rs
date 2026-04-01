@@ -395,7 +395,8 @@ impl<'a> CheckerState<'a> {
         for (index, rhs_expr) in rhs_exprs.into_iter().enumerate() {
             let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None);
             let force_optional = index != last_direct_index;
-            for prop in self.direct_module_export_object_literal_seed_props(rhs_type, force_optional)
+            for prop in
+                self.direct_module_export_object_literal_seed_props(rhs_type, force_optional)
             {
                 if !pending.contains_key(&prop.name) {
                     ordered_names.push(prop.name);

@@ -309,11 +309,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // signatures on the constraint do NOT guarantee that `keyof T`
             // includes an arbitrary concrete name for every instantiation of T.
             TypeData::KeyOf(operand) => match self.interner().lookup(operand) {
-                Some(TypeData::TypeParameter(info)) => info
-                    .constraint
-                    .is_some_and(|constraint| {
-                        self.constraint_guarantees_named_property(constraint, prop_name)
-                    }),
+                Some(TypeData::TypeParameter(info)) => info.constraint.is_some_and(|constraint| {
+                    self.constraint_guarantees_named_property(constraint, prop_name)
+                }),
                 _ => true,
             },
 

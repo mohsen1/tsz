@@ -10044,8 +10044,7 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(symbol.escaped_name.as_str());
         let current_path = self.current_file_path.as_deref()?;
 
-        for module_path in
-            self.matching_module_export_paths(binder, current_path, module_specifier)
+        for module_path in self.matching_module_export_paths(binder, current_path, module_specifier)
         {
             let Some(exports) = binder.module_exports.get(module_path) else {
                 continue;
@@ -10084,16 +10083,17 @@ impl<'a> DeclarationEmitter<'a> {
             .module_exports
             .keys()
             .filter_map(|module_path| {
-                let matches =
-                    if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
-                        Some(self.strip_ts_extensions(
-                            &self.calculate_relative_path(current_path, module_path),
-                        ))
-                        .as_deref()
-                            == Some(module_specifier)
-                    } else {
-                        self.node_modules_path_matches_import_specifier(module_path, module_specifier)
-                    };
+                let matches = if module_specifier.starts_with('.')
+                    || module_specifier.starts_with('/')
+                {
+                    Some(self.strip_ts_extensions(
+                        &self.calculate_relative_path(current_path, module_path),
+                    ))
+                    .as_deref()
+                        == Some(module_specifier)
+                } else {
+                    self.node_modules_path_matches_import_specifier(module_path, module_specifier)
+                };
                 matches.then_some(module_path.as_str())
             })
             .collect();
@@ -10189,7 +10189,11 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let pkg_start = nm_idx + 1;
-        let pkg_len = if module_specifier.starts_with('@') { 2 } else { 1 };
+        let pkg_len = if module_specifier.starts_with('@') {
+            2
+        } else {
+            1
+        };
         let depth_after_package = components.len().saturating_sub(pkg_start + pkg_len);
         (depth_after_package, module_path.len())
     }
@@ -10408,7 +10412,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(indexed) = arena.get_indexed_access_type(node) {
             let mut collected_object_refs = false;
-            if let Some(sym_id) = self.first_bound_symbol_in_type_subtree(arena, indexed.object_type)
+            if let Some(sym_id) =
+                self.first_bound_symbol_in_type_subtree(arena, indexed.object_type)
             {
                 if let Some(binder) = self.binder
                     && let Some(symbol) = binder.symbols.get(sym_id)
@@ -10426,7 +10431,8 @@ impl<'a> DeclarationEmitter<'a> {
                         let Some(exports) = binder.module_exports.get(module_path) else {
                             continue;
                         };
-                        let Some(exported_sym_id) = exports.get(symbol.escaped_name.as_str()) else {
+                        let Some(exported_sym_id) = exports.get(symbol.escaped_name.as_str())
+                        else {
                             continue;
                         };
                         if !self.collect_symbol_member_type_references(
@@ -10675,7 +10681,8 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         if let Some(indexed) = arena.get_indexed_access_type(node) {
-            if let Some(sym_id) = self.first_bound_symbol_in_type_subtree(arena, indexed.object_type)
+            if let Some(sym_id) =
+                self.first_bound_symbol_in_type_subtree(arena, indexed.object_type)
                 && let Some(binder) = self.binder
                 && let Some(symbol) = binder.symbols.get(sym_id)
             {
@@ -10691,7 +10698,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn is_indexed_access_object_subtree_node(&self, arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    fn is_indexed_access_object_subtree_node(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
         let mut current_idx = node_idx;
         while let Some(ext) = arena.get_extended(current_idx) {
             let parent_idx = ext.parent;
@@ -10863,9 +10874,12 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             let accessible_source_path = self.get_symbol_source_path(accessible_symbol, binder);
-            if accessible_source_path.as_deref().is_some_and(|source_path| {
-                self.paths_refer_to_same_source_file(current_path, source_path)
-            }) {
+            if accessible_source_path
+                .as_deref()
+                .is_some_and(|source_path| {
+                    self.paths_refer_to_same_source_file(current_path, source_path)
+                })
+            {
                 search = rest;
                 continue;
             }
@@ -10914,17 +10928,20 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            let exports = binder.module_exports.iter().find_map(|(module_path, exports)| {
-                let candidate =
-                    if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
-                        Some(self.strip_ts_extensions(
-                            &self.calculate_relative_path(current_path, module_path),
-                        ))
-                    } else {
-                        self.package_specifier_for_node_modules_path(current_path, module_path)
-                    }?;
-                (candidate == module_specifier).then_some(exports)
-            });
+            let exports = binder
+                .module_exports
+                .iter()
+                .find_map(|(module_path, exports)| {
+                    let candidate =
+                        if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+                            Some(self.strip_ts_extensions(
+                                &self.calculate_relative_path(current_path, module_path),
+                            ))
+                        } else {
+                            self.package_specifier_for_node_modules_path(current_path, module_path)
+                        }?;
+                    (candidate == module_specifier).then_some(exports)
+                });
 
             if let Some(exports) = exports
                 && !exports.has(first_name)
@@ -11083,17 +11100,21 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            let exported = binder.module_exports.iter().find_map(|(module_path, exports)| {
-                let candidate =
-                    if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+            let exported = binder
+                .module_exports
+                .iter()
+                .find_map(|(module_path, exports)| {
+                    let candidate = if module_specifier.starts_with('.')
+                        || module_specifier.starts_with('/')
+                    {
                         Some(self.strip_ts_extensions(
                             &self.calculate_relative_path(current_file_path, module_path),
                         ))
                     } else {
                         self.package_specifier_for_node_modules_path(current_file_path, module_path)
                     }?;
-                (candidate == module_specifier).then(|| exports.has(root_name))
-            });
+                    (candidate == module_specifier).then(|| exports.has(root_name))
+                });
 
             if exported == Some(false) {
                 return true;
@@ -11233,7 +11254,8 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            for module_path in self.matching_module_export_paths(binder, current_file_path, &types_ref)
+            for module_path in
+                self.matching_module_export_paths(binder, current_file_path, &types_ref)
             {
                 let mut from_path = self.strip_ts_extensions(
                     &self.calculate_relative_path(current_file_path, module_path),
@@ -11697,12 +11719,15 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(import_module) = original_symbol.import_module.as_deref()
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
-            && Path::new(&original_source_path)
-                .components()
-                .any(|component| matches!(component, Component::Normal(part) if part == "node_modules"))
+            && Path::new(&original_source_path).components().any(
+                |component| matches!(component, Component::Normal(part) if part == "node_modules"),
+            )
         {
-            let from_path = self
-                .transitive_import_module_reference_path(import_module, binder, current_file_path);
+            let from_path = self.transitive_import_module_reference_path(
+                import_module,
+                binder,
+                current_file_path,
+            );
             if let Some(from_path) = from_path {
                 return Some((from_path, original_type_name));
             }
@@ -11926,9 +11951,8 @@ impl<'a> DeclarationEmitter<'a> {
             .into_iter()
             .next()
         {
-            let mut from_path = self.strip_ts_extensions(
-                &self.calculate_relative_path(current_file_path, module_path),
-            );
+            let mut from_path = self
+                .strip_ts_extensions(&self.calculate_relative_path(current_file_path, module_path));
             if from_path.ends_with("/index") {
                 from_path.truncate(from_path.len() - "/index".len());
             }
@@ -11939,21 +11963,27 @@ impl<'a> DeclarationEmitter<'a> {
         let mut package_roots: Vec<_> = binder
             .module_exports
             .keys()
-            .filter_map(|module_path| self.node_modules_package_root_path(module_path, import_module))
+            .filter_map(|module_path| {
+                self.node_modules_package_root_path(module_path, import_module)
+            })
             .collect();
         package_roots.sort();
         package_roots.dedup();
 
         let package_root = package_roots.into_iter().min_by_key(|root| root.len())?;
-        let mut from_path =
-            self.strip_ts_extensions(&self.calculate_relative_path(current_file_path, &package_root));
+        let mut from_path = self
+            .strip_ts_extensions(&self.calculate_relative_path(current_file_path, &package_root));
         if from_path.ends_with("/index") {
             from_path.truncate(from_path.len() - "/index".len());
         }
         Some(Self::ts2883_relative_node_modules_path(from_path))
     }
 
-    fn node_modules_package_root_path(&self, module_path: &str, import_module: &str) -> Option<String> {
+    fn node_modules_package_root_path(
+        &self,
+        module_path: &str,
+        import_module: &str,
+    ) -> Option<String> {
         use std::path::{Component, Path, PathBuf};
 
         let components: Vec<_> = Path::new(module_path).components().collect();
@@ -12223,15 +12253,16 @@ impl<'a> DeclarationEmitter<'a> {
             .module_exports
             .iter()
             .filter_map(|(module_path, exports)| {
-                let candidate_specifier = self
-                    .package_specifier_for_node_modules_path(current_file_path, module_path)?;
+                let candidate_specifier =
+                    self.package_specifier_for_node_modules_path(current_file_path, module_path)?;
                 if Self::bare_package_specifier(&candidate_specifier) != package_root_specifier {
                     return None;
                 }
                 let export = exports.get(symbol.escaped_name.as_str())?;
                 let candidate = self.resolve_portability_symbol(export, binder);
-                (candidate != resolved && self.symbol_has_portability_declaration(candidate, binder))
-                    .then_some(candidate)
+                (candidate != resolved
+                    && self.symbol_has_portability_declaration(candidate, binder))
+                .then_some(candidate)
             })
             .collect();
 
@@ -12260,7 +12291,9 @@ impl<'a> DeclarationEmitter<'a> {
             return specifier;
         }
 
-        specifier.split_once('/').map_or(specifier, |(root, _)| root)
+        specifier
+            .split_once('/')
+            .map_or(specifier, |(root, _)| root)
     }
 
     fn resolve_import_symbol_from_module_exports(
@@ -12276,8 +12309,7 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(symbol.escaped_name.as_str());
         let current_path = self.current_file_path.as_deref()?;
 
-        for module_path in
-            self.matching_module_export_paths(binder, current_path, module_specifier)
+        for module_path in self.matching_module_export_paths(binder, current_path, module_specifier)
         {
             let Some(exports) = binder.module_exports.get(module_path) else {
                 continue;

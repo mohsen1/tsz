@@ -202,7 +202,8 @@ fn declaration_emit_default_object_assign_reports_non_portable_nested_reference(
     let base = temp.path.as_path();
 
     write_file(
-        &base.join("node_modules/styled-components/node_modules/hoist-non-react-statics/index.d.ts"),
+        &base
+            .join("node_modules/styled-components/node_modules/hoist-non-react-statics/index.d.ts"),
         r#"interface Statics {
     "$$whatever": string;
 }
@@ -334,10 +335,17 @@ export const timestamp = now();
         .map(|d| d.message_text.clone())
         .collect();
 
-    assert_eq!(ts4118_messages.len(), 2, "expected two TS4118 diagnostics, got: {ts4118_messages:#?}");
-    assert!(ts4118_messages.iter().all(|message| {
-        message.contains("[timestampSymbol]")
-    }), "expected TS4118 to mention [timestampSymbol], got: {ts4118_messages:#?}");
+    assert_eq!(
+        ts4118_messages.len(),
+        2,
+        "expected two TS4118 diagnostics, got: {ts4118_messages:#?}"
+    );
+    assert!(
+        ts4118_messages
+            .iter()
+            .all(|message| { message.contains("[timestampSymbol]") }),
+        "expected TS4118 to mention [timestampSymbol], got: {ts4118_messages:#?}"
+    );
 }
 
 #[test]
@@ -400,7 +408,11 @@ export class Api<SecurityDataType = unknown> {
     args.project = Some(base.join("tsconfig.json"));
 
     let result = compile(&args, base).expect("compile should succeed");
-    let ts7056: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 7056).collect();
+    let ts7056: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7056)
+        .collect();
 
     assert_eq!(
         ts7056.len(),
@@ -501,7 +513,8 @@ export default Form
     assert!(
         ts2883_messages
             .iter()
-            .filter(|message| message.contains("DetailedHTMLProps") || message.contains("HTMLAttributes"))
+            .filter(|message| message.contains("DetailedHTMLProps")
+                || message.contains("HTMLAttributes"))
             .count()
             >= 2,
         "expected TS2883 diagnostics for react transitive types, got: {ts2883_messages:#?}"
@@ -1390,9 +1403,9 @@ fn compile_excessive_stack_depth_flat_array_fixture_reports_normalized_jsx_key_t
 
 #[test]
 fn compile_allow_import_clauses_to_merge_with_types_fixture_has_no_default_export_conflict() {
-    let Some(source) =
-        load_typescript_fixture("TypeScript/tests/cases/compiler/allowImportClausesToMergeWithTypes.ts")
-    else {
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/allowImportClausesToMergeWithTypes.ts",
+    ) else {
         return;
     };
 

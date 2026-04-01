@@ -4,8 +4,8 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -314,7 +314,10 @@ impl<'a> CheckerState<'a> {
                                 .iter()
                                 .enumerate()
                                 .filter_map(|(file_idx, binder)| {
-                                    binder.file_locals.get(enum_name).map(|sym_id| (file_idx, sym_id))
+                                    binder
+                                        .file_locals
+                                        .get(enum_name)
+                                        .map(|sym_id| (file_idx, sym_id))
                                 })
                                 .collect()
                         })
@@ -344,9 +347,10 @@ impl<'a> CheckerState<'a> {
                             }
                             arena.get_enum(decl_node).is_some_and(|enum_decl| {
                                 enum_decl.members.nodes.iter().copied().any(|member_idx| {
-                                    arena.get(member_idx).and_then(|member_node| {
-                                        arena.get_enum_member(member_node)
-                                    }).and_then(|member| arena.get_identifier_text(member.name))
+                                    arena
+                                        .get(member_idx)
+                                        .and_then(|member_node| arena.get_enum_member(member_node))
+                                        .and_then(|member| arena.get_identifier_text(member.name))
                                         == Some(name)
                                 })
                             })
@@ -369,10 +373,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn should_suppress_unresolved_name_in_ambient_enum_initializer(
-        &self,
-        idx: NodeIndex,
-    ) -> bool {
+    fn should_suppress_unresolved_name_in_ambient_enum_initializer(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let mut current = idx;

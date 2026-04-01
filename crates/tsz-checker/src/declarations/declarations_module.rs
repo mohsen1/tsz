@@ -141,12 +141,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .is_some_and(|source_file| {
                         let statements = &source_file.statements;
                         statements.nodes.iter().copied().find(|&stmt_idx| {
-                            self.ctx
-                                .arena
-                                .get(stmt_idx)
-                                .is_some_and(|stmt_node| {
-                                    stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                                })
+                            self.ctx.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                                stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                            })
                         }) == Some(module_idx)
                     });
                 if is_first_top_level_namespace {
@@ -773,22 +770,22 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                 self.ctx.get_binder_for_file(owner_idx)
                                             && let Some(symbol) =
                                                 owner_binder.get_symbol(existing_sym_id)
-                                            {
-                                                let allowed = (symbol.flags
-                                                    & (symbol_flags::REGULAR_ENUM
-                                                        | symbol_flags::CONST_ENUM
-                                                        | symbol_flags::MODULE))
-                                                    != 0;
-                                                if !allowed {
-                                                    self.ctx.error(
+                                        {
+                                            let allowed = (symbol.flags
+                                                & (symbol_flags::REGULAR_ENUM
+                                                    | symbol_flags::CONST_ENUM
+                                                    | symbol_flags::MODULE))
+                                                != 0;
+                                            if !allowed {
+                                                self.ctx.error(
                                                                         name_node.pos,
                                                                         name_node.end
                                                                             - name_node.pos,
                                                                         diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
                                                                         diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
                                                                     );
-                                                }
                                             }
+                                        }
                                         if register_value_name(&ident.escaped_text, enm.name)
                                             && let Some(node) = self.ctx.arena.get(enm.name)
                                         {

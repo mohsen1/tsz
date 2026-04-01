@@ -763,14 +763,38 @@ pub(crate) fn compile_with_cache_and_changes(
 /// compilation early). However, tsc suppresses TS5107 when real file-level grammar
 /// errors exist. This function identifies which diagnostic codes count as "grammar
 fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
-    matches!(code,
-        8002 | 8003 | 8004 | 8006 | 8008 | 8009 | 8010 | 8011 | 8013 | 8015 | 8016 | 8017
-            | 8018
+    matches!(
+        code,
+        8002 | 8003 | 8004 | 8006 | 8008 | 8009 | 8010 | 8011 | 8013 | 8015 | 8016 | 8017 | 8018
     ) || matches!(code, 17002 | 17006 | 17007 | 17008 | 17012)
-        || matches!(code,
-            1002 | 1003 | 1005 | 1011 | 1034 | 1109 | 1110 | 1121 | 1124 | 1125 | 1126 | 1127
-                | 1128 | 1131 | 1134 | 1137 | 1144 | 1145 | 1198 | 1199 | 1389 | 1433 | 1434
-                | 1436 | 1440 | 1442 | 1489
+        || matches!(
+            code,
+            1002 | 1003
+                | 1005
+                | 1011
+                | 1034
+                | 1109
+                | 1110
+                | 1121
+                | 1124
+                | 1125
+                | 1126
+                | 1127
+                | 1128
+                | 1131
+                | 1134
+                | 1137
+                | 1144
+                | 1145
+                | 1198
+                | 1199
+                | 1389
+                | 1433
+                | 1434
+                | 1436
+                | 1440
+                | 1442
+                | 1489
         )
         || matches!(code, 2458 | 2754)
 }

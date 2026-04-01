@@ -194,12 +194,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             param_name.len() as u32
                         };
-                        self.ctx.error(
-                            pos as u32,
-                            name_len,
-                            message,
-                            code,
-                        );
+                        self.ctx.error(pos as u32, name_len, message, code);
                     } else {
                         self.error_at_node(func_idx, &message, code);
                     }
@@ -1011,7 +1006,8 @@ impl<'a> CheckerState<'a> {
                 Ok(resolved) => resolved,
                 Err((member_offset, member_name)) => {
                     if let Some(comment_start) = jsdoc_comment_start {
-                        let display_name = self.imported_namespace_display_module_name(&module_specifier);
+                        let display_name =
+                            self.imported_namespace_display_module_name(&module_specifier);
                         let anchored_member_offset = effective_type_expr
                             .rfind(&format!(".{member_name}"))
                             .map(|offset| offset + 1)
@@ -1026,22 +1022,18 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .and_then(|source_file| {
                                 let source_text = source_file.text.as_ref();
-                                let exact = format!("@param {{{effective_type_expr}}} {param_name}");
-                                let optional = format!("@param {{{effective_type_expr}}} [{param_name}]");
+                                let exact =
+                                    format!("@param {{{effective_type_expr}}} {param_name}");
+                                let optional =
+                                    format!("@param {{{effective_type_expr}}} [{param_name}]");
                                 source_text
                                     .find(&exact)
                                     .or_else(|| source_text.find(&optional))
                             })
-                            .map(|offset| {
-                                offset + "@param {".len() + anchored_member_offset
-                            });
-                        let start = source_start
-                            .map(|offset| offset as u32)
-                            .unwrap_or(
-                                comment_start
-                                    + type_expr_offset as u32
-                                    + anchored_member_offset as u32,
-                            );
+                            .map(|offset| offset + "@param {".len() + anchored_member_offset);
+                        let start = source_start.map(|offset| offset as u32).unwrap_or(
+                            comment_start + type_expr_offset as u32 + anchored_member_offset as u32,
+                        );
                         let length = member_name.len() as u32;
                         let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
                             diagnostic.code == 2694

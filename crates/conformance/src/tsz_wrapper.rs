@@ -941,11 +941,14 @@ fn normalize_temp_directory_paths(path: &str) -> String {
 }
 
 fn normalize_ts2883_node_modules_message(path: &str) -> String {
-    path.replace(" from './node_modules/", " from '../../../../../..node_modules/")
-        .replace(
-            " from '../../../../../../node_modules/",
-            " from '../../../../../..node_modules/",
-        )
+    path.replace(
+        " from './node_modules/",
+        " from '../../../../../..node_modules/",
+    )
+    .replace(
+        " from '../../../../../../node_modules/",
+        " from '../../../../../..node_modules/",
+    )
 }
 
 /// Test harness-specific directives that should NOT be passed to tsconfig.json

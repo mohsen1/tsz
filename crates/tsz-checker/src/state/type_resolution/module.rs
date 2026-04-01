@@ -67,38 +67,38 @@ impl<'a> CheckerState<'a> {
         file_idx: usize,
         export_name: &str,
     ) -> Option<(tsz_binder::SymbolId, usize)> {
-        let resolve_augmentation_symbol =
-            |binder: &tsz_binder::BinderState,
-             aug: &tsz_binder::ModuleAugmentation|
-             -> Option<tsz_binder::SymbolId> {
-                let preferred_flags = symbol_flags::TYPE
-                    | symbol_flags::VALUE_MODULE
-                    | symbol_flags::NAMESPACE_MODULE;
+        let resolve_augmentation_symbol = |binder: &tsz_binder::BinderState,
+                                           aug: &tsz_binder::ModuleAugmentation|
+         -> Option<tsz_binder::SymbolId> {
+            let preferred_flags =
+                symbol_flags::TYPE | symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
 
-                let matches_augmentation_decl = |sym_id: tsz_binder::SymbolId| {
-                    let sym = binder.get_symbol(sym_id)?;
-                    (sym.declarations.contains(&aug.node) && (sym.flags & preferred_flags) != 0)
-                        .then_some(sym_id)
-                };
+            let matches_augmentation_decl = |sym_id: tsz_binder::SymbolId| {
+                let sym = binder.get_symbol(sym_id)?;
+                (sym.declarations.contains(&aug.node) && (sym.flags & preferred_flags) != 0)
+                    .then_some(sym_id)
+            };
 
-                if let Some(sym_id) = binder.get_node_symbol(aug.node)
-                    && let Some(preferred) = matches_augmentation_decl(sym_id)
-                {
+            if let Some(sym_id) = binder.get_node_symbol(aug.node)
+                && let Some(preferred) = matches_augmentation_decl(sym_id)
+            {
+                return Some(preferred);
+            }
+
+            for candidate_id in binder.get_symbols().find_all_by_name(&aug.name) {
+                if let Some(preferred) = matches_augmentation_decl(*candidate_id) {
                     return Some(preferred);
                 }
+            }
 
-                for candidate_id in binder.get_symbols().find_all_by_name(&aug.name) {
-                    if let Some(preferred) = matches_augmentation_decl(*candidate_id) {
-                        return Some(preferred);
-                    }
-                }
-
-                binder.get_node_symbol(aug.node)
-            };
+            binder.get_node_symbol(aug.node)
+        };
 
         let mut resolved = None;
         let mut consider_augmentation =
-            |module_spec: &str, augmenting_file_idx: usize, aug: &tsz_binder::ModuleAugmentation| {
+            |module_spec: &str,
+             augmenting_file_idx: usize,
+             aug: &tsz_binder::ModuleAugmentation| {
                 if aug.name != export_name {
                     return;
                 }

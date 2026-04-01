@@ -566,7 +566,8 @@ impl<'a> CheckerState<'a> {
 
     fn current_file_commonjs_define_property_export_name(&self, idx: NodeIndex) -> Option<String> {
         let (target, name) = self.commonjs_define_property_target_and_name(idx)?;
-        self.is_current_file_commonjs_export_base(target).then_some(name)
+        self.is_current_file_commonjs_export_base(target)
+            .then_some(name)
     }
 
     pub(crate) fn current_file_commonjs_static_member_name(
@@ -1020,15 +1021,17 @@ impl<'a> CheckerState<'a> {
             })
             .and_then(|left_node| arena.get_access_expr(left_node))
             .and_then(|left_access| {
-                arena.get_identifier_at(left_access.expression).and_then(|ident| {
-                    (ident.escaped_text == "exports").then(|| {
-                        Self::commonjs_static_member_name_in_arena(
-                            arena,
-                            left_access.name_or_argument,
-                        )
-                        .map(|name| (name, None))
+                arena
+                    .get_identifier_at(left_access.expression)
+                    .and_then(|ident| {
+                        (ident.escaped_text == "exports").then(|| {
+                            Self::commonjs_static_member_name_in_arena(
+                                arena,
+                                left_access.name_or_argument,
+                            )
+                            .map(|name| (name, None))
+                        })
                     })
-                })
             })
             .flatten();
 
@@ -1040,32 +1043,33 @@ impl<'a> CheckerState<'a> {
             })
             .and_then(|left_node| arena.get_access_expr(left_node))
             .and_then(|left_access| {
-                arena.get(left_access.expression).and_then(|container_node| {
-                    (container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
-                        .then(|| arena.get_access_expr(container_node))
-                        .flatten()
-                        .and_then(|container_access| {
-                            let base_is_module = arena
-                                .get_identifier_at(container_access.expression)
-                                .is_some_and(|ident| ident.escaped_text == "module");
-                            let member_is_exports =
-                                Self::commonjs_static_member_name_in_arena(
+                arena
+                    .get(left_access.expression)
+                    .and_then(|container_node| {
+                        (container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+                            .then(|| arena.get_access_expr(container_node))
+                            .flatten()
+                            .and_then(|container_access| {
+                                let base_is_module = arena
+                                    .get_identifier_at(container_access.expression)
+                                    .is_some_and(|ident| ident.escaped_text == "module");
+                                let member_is_exports = Self::commonjs_static_member_name_in_arena(
                                     arena,
                                     container_access.name_or_argument,
                                 )
                                 .is_some_and(|name| name == "exports");
-                            (base_is_module && member_is_exports).then(|| {
-                                let expando_root = arena
-                                    .get_identifier_at(left_access.expression)
-                                    .map(|ident| ident.escaped_text.clone());
-                                Self::commonjs_static_member_name_in_arena(
-                                    arena,
-                                    left_access.name_or_argument,
-                                )
-                                .map(|name| (name, expando_root))
+                                (base_is_module && member_is_exports).then(|| {
+                                    let expando_root = arena
+                                        .get_identifier_at(left_access.expression)
+                                        .map(|ident| ident.escaped_text.clone());
+                                    Self::commonjs_static_member_name_in_arena(
+                                        arena,
+                                        left_access.name_or_argument,
+                                    )
+                                    .map(|name| (name, expando_root))
+                                })
                             })
-                        })
-                })
+                    })
             })
             .flatten();
 
@@ -1078,23 +1082,26 @@ impl<'a> CheckerState<'a> {
                 })
                 .and_then(|left_node| arena.get_access_expr(left_node))
                 .and_then(|left_access| {
-                    arena.get_identifier_at(left_access.expression).and_then(|ident| {
-                        export_aliases.contains(ident.escaped_text.as_str()).then(|| {
-                            Self::commonjs_static_member_name_in_arena(
-                                arena,
-                                left_access.name_or_argument,
-                            )
-                            .map(|name| (name, None))
+                    arena
+                        .get_identifier_at(left_access.expression)
+                        .and_then(|ident| {
+                            export_aliases
+                                .contains(ident.escaped_text.as_str())
+                                .then(|| {
+                                    Self::commonjs_static_member_name_in_arena(
+                                        arena,
+                                        left_access.name_or_argument,
+                                    )
+                                    .map(|name| (name, None))
+                                })
                         })
-                    })
                 })
                 .flatten()
         } else {
             None
         };
 
-        if let Some((name_text, expando_root)) =
-            direct_exports.or(module_exports).or(alias_exports)
+        if let Some((name_text, expando_root)) = direct_exports.or(module_exports).or(alias_exports)
             && name_text == property_name
             && node.pos > read_pos
             && best_match

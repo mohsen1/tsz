@@ -18,8 +18,8 @@ use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
-use tsz_common::checker_options::JsxMode;
 use tsz_common::ModuleKind;
+use tsz_common::checker_options::JsxMode;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -15914,8 +15914,7 @@ export class D extends C {
 
     assert!(
         diagnostics.iter().any(|d| {
-            d.0 == 2415
-                && d.1.contains("Class 'D' incorrectly extends base class 'C'")
+            d.0 == 2415 && d.1.contains("Class 'D' incorrectly extends base class 'C'")
         }),
         "Expected TS2415 for private imported unique-symbol override, got: {diagnostics:#?}"
     );
@@ -23356,5 +23355,26 @@ self.importScripts = (function (importScripts) {
     assert!(
         diagnostics.iter().all(|diagnostic| diagnostic.code != 8024),
         "Expected the implicit-arguments case to upgrade to TS8029 instead of TS8024. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_intersection_with_primitive_preserves_property_conflict() {
+    // Regression test for commonTypeIntersection conformance failure.
+    // { __typename?: 'TypeTwo' } & string should NOT be assignable to
+    // { __typename?: 'TypeOne' } & string because the __typename properties conflict.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare let x1: { __typename?: 'TypeTwo' } & { a: boolean };
+let y1: { __typename?: 'TypeOne' } & { a: boolean } = x1;
+
+declare let x2: { __typename?: 'TypeTwo' } & string;
+let y2: { __typename?: 'TypeOne' } & string = x2;
+"#,
+    );
+    let ts2322_count = diagnostics.iter().filter(|(c, _)| *c == 2322).count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected 2 TS2322 errors (one for each incompatible intersection assignment), got {ts2322_count}.\nDiagnostics: {diagnostics:#?}"
     );
 }

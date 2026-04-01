@@ -1633,7 +1633,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            let sym_id = self.resolve_value_symbol_with_libs(expr_idx).map(SymbolId)?;
+            let sym_id = self
+                .resolve_value_symbol_with_libs(expr_idx)
+                .map(SymbolId)?;
             let mut current = sym_id;
             let mut hops = 0usize;
             while hops < 32 {

@@ -1691,10 +1691,7 @@ impl<'a> CheckerState<'a> {
             .any(|name| self.ctx.types.resolve_atom(*name) == prop_name)
     }
 
-    fn mapped_explicit_property_names(
-        &self,
-        mapped_id: tsz_solver::MappedTypeId,
-    ) -> Vec<String> {
+    fn mapped_explicit_property_names(&self, mapped_id: tsz_solver::MappedTypeId) -> Vec<String> {
         let mapped = self.ctx.types.mapped_type(mapped_id);
         let mut names: Vec<String> =
             crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
@@ -1724,15 +1721,19 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
     ) -> Option<bool> {
-        use crate::query_boundaries::common::{TypeSubstitution, application_info, instantiate_type};
+        use crate::query_boundaries::common::{
+            TypeSubstitution, application_info, instantiate_type,
+        };
 
         let (base, args) = application_info(self.ctx.types, object_type)?;
         let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
         let mapped_id = crate::query_boundaries::common::mapped_type_id(self.ctx.types, body_type)?;
         let mapped = self.ctx.types.mapped_type(mapped_id);
-        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, mapped.constraint)
-        {
+        if !crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            mapped.constraint,
+        ) {
             return None;
         }
 
@@ -1753,7 +1754,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
     ) -> Vec<String> {
-        use crate::query_boundaries::common::{TypeSubstitution, application_info, instantiate_type};
+        use crate::query_boundaries::common::{
+            TypeSubstitution, application_info, instantiate_type,
+        };
 
         if let Some((base, args)) = application_info(self.ctx.types, object_type)
             && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
@@ -1767,10 +1770,14 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     mapped.constraint,
                 ) {
-                    let substitution = TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+                    let substitution =
+                        TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
                     let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
                     if let Some(instantiated_mapped_id) =
-                        crate::query_boundaries::common::mapped_type_id(self.ctx.types, instantiated)
+                        crate::query_boundaries::common::mapped_type_id(
+                            self.ctx.types,
+                            instantiated,
+                        )
                     {
                         return self.mapped_explicit_property_names(instantiated_mapped_id);
                     }
@@ -1778,10 +1785,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(mapped_id) = crate::query_boundaries::common::mapped_type_id(
-            self.ctx.types,
-            object_type,
-        ) {
+        if let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, object_type)
+        {
             return self.mapped_explicit_property_names(mapped_id);
         }
 

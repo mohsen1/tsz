@@ -2000,9 +2000,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(base_prop) = properties.iter().find(|prop| {
-                self.ctx.types.resolve_atom_ref(prop.name).as_ref() == info.name
-            }) else {
+            let Some(base_prop) = properties
+                .iter()
+                .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == info.name)
+            else {
                 continue;
             };
             let base_visibility = match base_prop.visibility {
@@ -2021,7 +2022,12 @@ impl<'a> CheckerState<'a> {
                 let base_type = base_prop.type_id;
                 if info.type_id != TypeId::ANY
                     && base_type != TypeId::ANY
-                    && should_report_member_type_mismatch(self, info.type_id, base_type, info.name_idx)
+                    && should_report_member_type_mismatch(
+                        self,
+                        info.type_id,
+                        base_type,
+                        info.name_idx,
+                    )
                 {
                     self.error_at_node(
                         info.name_idx,

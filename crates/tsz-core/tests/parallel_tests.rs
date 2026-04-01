@@ -1770,7 +1770,8 @@ declare module "./a" {
 }
 
 #[test]
-fn test_check_files_parallel_module_augmentation_reexport_type_duplicate_stays_off_importing_consumer() {
+fn test_check_files_parallel_module_augmentation_reexport_type_duplicate_stays_off_importing_consumer()
+ {
     let files = vec![
         (
             "main.ts".to_string(),
@@ -1833,7 +1834,11 @@ export interface Row2 { b: string }
     let remote_decl_count = row2_symbol
         .declarations
         .iter()
-        .filter_map(|&decl_idx| rebuilt_main_binder.declaration_arenas.get(&(row2_sym_id, decl_idx)))
+        .filter_map(|&decl_idx| {
+            rebuilt_main_binder
+                .declaration_arenas
+                .get(&(row2_sym_id, decl_idx))
+        })
         .flat_map(|arenas| arenas.iter())
         .filter(|arena| !std::sync::Arc::ptr_eq(arena, &program.files[0].arena))
         .count();

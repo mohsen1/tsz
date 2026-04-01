@@ -3294,7 +3294,11 @@ fn collect_functions_from_node(
 pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     ensure_rayon_global_pool();
 
-    let file_names: Vec<String> = program.files.iter().map(|file| file.file_name.clone()).collect();
+    let file_names: Vec<String> = program
+        .files
+        .iter()
+        .map(|file| file.file_name.clone())
+        .collect();
     let (resolved_module_paths, resolved_modules) =
         crate::checker::module_resolution::build_module_resolution_maps(&file_names);
     let resolved_module_paths = Arc::new(resolved_module_paths);
@@ -3440,7 +3444,11 @@ pub fn check_files_parallel(
     // Ensure Rayon global pool has adequate stack size for deep type-checking recursion.
     ensure_rayon_global_pool();
 
-    let file_names: Vec<String> = program.files.iter().map(|file| file.file_name.clone()).collect();
+    let file_names: Vec<String> = program
+        .files
+        .iter()
+        .map(|file| file.file_name.clone())
+        .collect();
     let (resolved_module_paths, resolved_modules) =
         crate::checker::module_resolution::build_module_resolution_maps(&file_names);
     let resolved_module_paths = Arc::new(resolved_module_paths);

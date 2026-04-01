@@ -4,7 +4,11 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> Vec<tsz_common::diagnostics::Diagnostic> {
+fn check_source(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<tsz_common::diagnostics::Diagnostic> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
@@ -95,7 +99,10 @@ fn js_optional_parameters_report_ts8009_at_question_token() {
         ts8009[0].start, question,
         "Expected parameter optional marker to anchor at '?'. Actual diagnostics: {ts8009:#?}"
     );
-    assert_eq!(ts8009[0].length, 1, "unexpected diagnostic length: {ts8009:#?}");
+    assert_eq!(
+        ts8009[0].length, 1,
+        "unexpected diagnostic length: {ts8009:#?}"
+    );
 }
 
 #[test]
@@ -105,7 +112,10 @@ fn parameter_property_rest_error_anchors_at_modifier() {
 }"#;
 
     let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
-    let ts1317: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 1317).collect();
+    let ts1317: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 1317)
+        .collect();
 
     assert_eq!(ts1317.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
 
@@ -131,7 +141,10 @@ fn js_function_overload_reports_ts8017_at_semicolon() {
         },
     );
 
-    let ts8017: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 8017).collect();
+    let ts8017: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8017)
+        .collect();
 
     assert_eq!(ts8017.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
 
@@ -140,5 +153,8 @@ fn js_function_overload_reports_ts8017_at_semicolon() {
         ts8017[0].start, name_start,
         "Expected TS8017 to anchor at the function name. Actual diagnostics: {ts8017:#?}"
     );
-    assert_eq!(ts8017[0].length, 1, "unexpected diagnostic length: {ts8017:#?}");
+    assert_eq!(
+        ts8017[0].length, 1,
+        "unexpected diagnostic length: {ts8017:#?}"
+    );
 }

@@ -1264,10 +1264,8 @@ impl<'a> CheckerState<'a> {
             if can_add_named_props {
                 if let Some(export_name) = static_member_name.as_deref()
                     && let Some(node) = self.ctx.arena.get(idx)
-                    && let Some(export_type) = self.current_file_commonjs_late_bound_named_export_type(
-                        export_name,
-                        node.pos,
-                    )
+                    && let Some(export_type) = self
+                        .current_file_commonjs_late_bound_named_export_type(export_name, node.pos)
                 {
                     return export_type;
                 }

@@ -18,16 +18,40 @@ use tsz_common::common::ModuleKind;
 use tsz_common::diagnostics::Diagnostic;
 
 const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
-    matches!(code,
-        8002 | 8003 | 8004 | 8006 | 8008 | 8009 | 8010 | 8011 | 8013 | 8015 | 8016 | 8017
-            | 8018
-    ) || matches!(code,
-        17002 | 17006 | 17007 | 17008 | 17012
-    ) || matches!(code,
-        1002 | 1003 | 1005 | 1011 | 1034 | 1109 | 1110 | 1121 | 1124 | 1125 | 1126 | 1127
-            | 1128 | 1131 | 1134 | 1137 | 1144 | 1145 | 1198 | 1199 | 1389 | 1433 | 1434
-            | 1436 | 1440 | 1442 | 1489
-    ) || matches!(code, 2458 | 2754)
+    matches!(
+        code,
+        8002 | 8003 | 8004 | 8006 | 8008 | 8009 | 8010 | 8011 | 8013 | 8015 | 8016 | 8017 | 8018
+    ) || matches!(code, 17002 | 17006 | 17007 | 17008 | 17012)
+        || matches!(
+            code,
+            1002 | 1003
+                | 1005
+                | 1011
+                | 1034
+                | 1109
+                | 1110
+                | 1121
+                | 1124
+                | 1125
+                | 1126
+                | 1127
+                | 1128
+                | 1131
+                | 1134
+                | 1137
+                | 1144
+                | 1145
+                | 1198
+                | 1199
+                | 1389
+                | 1433
+                | 1434
+                | 1436
+                | 1440
+                | 1442
+                | 1489
+        )
+        || matches!(code, 2458 | 2754)
 }
 
 #[test]
@@ -410,7 +434,11 @@ export const elem: HTMLElement = { field: "a" };
     assert!(codes.contains(&5107), "expected TS5107, got: {codes:?}");
     assert!(codes.contains(&5101), "expected TS5101, got: {codes:?}");
 
-    let ts2318: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 2318).collect();
+    let ts2318: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2318)
+        .collect();
     assert!(
         ts2318
             .iter()
@@ -562,10 +590,12 @@ fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
     let base = dir.path();
 
     fs::create_dir_all(base.join("typings")).expect("create typings dir");
-    fs::create_dir_all(base.join("node_modules/phaser/types"))
-        .expect("create phaser types dir");
-    fs::write(base.join("typings/dummy.d.ts"), "declare const dummy: number;\n")
-        .expect("write dummy type root");
+    fs::create_dir_all(base.join("node_modules/phaser/types")).expect("create phaser types dir");
+    fs::write(
+        base.join("typings/dummy.d.ts"),
+        "declare const dummy: number;\n",
+    )
+    .expect("write dummy type root");
     fs::write(
         base.join("node_modules/phaser/types/phaser.d.ts"),
         "declare const phaserValue: number;\n",
@@ -589,8 +619,7 @@ fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
     .expect("write tsconfig");
     fs::write(base.join("index.ts"), "phaserValue;\n").expect("write index.ts");
 
-    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"])
-        .expect("parse args");
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
     let result = compile(&args, base).expect("compile should succeed");
 
     let ts2688_diags: Vec<_> = result

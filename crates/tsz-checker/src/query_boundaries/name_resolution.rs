@@ -485,7 +485,10 @@ impl<'a> CheckerState<'a> {
             let file_name = arena.source_files.first()?.file_name.clone();
             (binder.is_external_module(), file_name)
         } else {
-            (self.ctx.binder.is_external_module(), self.ctx.file_name.clone())
+            (
+                self.ctx.binder.is_external_module(),
+                self.ctx.file_name.clone(),
+            )
         };
 
         if !is_external_module {

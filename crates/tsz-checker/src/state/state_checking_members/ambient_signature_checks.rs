@@ -1117,9 +1117,9 @@ impl<'a> CheckerState<'a> {
             }
             // TS1317: rest parameter with property modifier
             if param.dot_dot_dot_token {
-                let error_node =
-                    self.find_first_parameter_property_modifier(&param.modifiers)
-                        .unwrap_or(param_idx);
+                let error_node = self
+                    .find_first_parameter_property_modifier(&param.modifiers)
+                    .unwrap_or(param_idx);
                 self.error_at_node(
                     error_node,
                     diagnostic_messages::A_PARAMETER_PROPERTY_CANNOT_BE_DECLARED_USING_A_REST_PARAMETER,

@@ -635,8 +635,9 @@ impl<'a> CheckerState<'a> {
                     || self.is_type_only_export_symbol(export_sym_id)
                     || self.is_export_from_type_only_wildcard(module_name, name)
                     || self.export_symbol_has_no_value(export_sym_id)
-                    || exports_table_target
-                        .is_some_and(|target_idx| self.file_has_jsdoc_typedef_named(target_idx, name))
+                    || exports_table_target.is_some_and(|target_idx| {
+                        self.file_has_jsdoc_typedef_named(target_idx, name)
+                    })
                     || self
                         .resolve_import_type_jsdoc_typedef(
                             module_name,
@@ -713,13 +714,17 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id, ..
                 } => self.resolve_type_query_type(type_id),
-                crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
+                crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound {
+                    ..
+                }
                 | crate::query_boundaries::common::PropertyAccessResult::IsUnknown => {
                     let namespace_name = self
                         .ctx
                         .namespace_module_names
                         .get(&current)
-                        .map(|name| format!("\"{}\".export=", name.strip_prefix("./").unwrap_or(name)))
+                        .map(|name| {
+                            format!("\"{}\".export=", name.strip_prefix("./").unwrap_or(name))
+                        })
                         .or_else(|| {
                             self.is_namespace_value_type(current).then(|| {
                                 format!(

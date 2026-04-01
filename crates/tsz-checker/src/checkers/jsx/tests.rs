@@ -96,8 +96,7 @@ fn jsx_key_error_in_parenthesized_callback_body_is_not_dropped() {
     );
     assert!(
         diagnostics.iter().any(|diag| {
-            diag.code == 2322
-                && diag.message_text.contains("'key' does not exist")
+            diag.code == 2322 && diag.message_text.contains("'key' does not exist")
         }),
         "Expected JSX key TS2322 from the parenthesized map callback body, got: {diagnostics:?}"
     );

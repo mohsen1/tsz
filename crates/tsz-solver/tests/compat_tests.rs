@@ -5733,3 +5733,53 @@ fn test_callback_readonly_tuple_union_rest_not_assignable() {
         "callback should NOT be assignable even with bivariant mode"
     );
 }
+
+#[test]
+fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
+    // { __typename?: 'TypeTwo' } & string should NOT be assignable to
+    // { __typename?: 'TypeOne' } & string — the __typename literal types conflict.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let typename = interner.intern_string("__typename");
+    let type_one_lit = interner.literal_string("TypeOne");
+    let type_two_lit = interner.literal_string("TypeTwo");
+
+    let obj_one = interner.object(vec![PropertyInfo {
+        name: typename,
+        type_id: interner.union2(type_one_lit, TypeId::UNDEFINED),
+        write_type: interner.union2(type_one_lit, TypeId::UNDEFINED),
+        optional: true,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+
+    let obj_two = interner.object(vec![PropertyInfo {
+        name: typename,
+        type_id: interner.union2(type_two_lit, TypeId::UNDEFINED),
+        write_type: interner.union2(type_two_lit, TypeId::UNDEFINED),
+        optional: true,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+
+    let source = interner.intersection(vec![obj_two, TypeId::STRING]);
+    let target = interner.intersection(vec![obj_one, TypeId::STRING]);
+
+    let result = checker.is_assignable(source, target);
+
+    assert!(
+        !result,
+        "intersection with conflicting optional literal properties should not be assignable"
+    );
+}
