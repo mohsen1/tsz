@@ -1233,6 +1233,55 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 }
 
 #[test]
+fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322() {
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/jsxCallElaborationCheckNoCrash1.tsx",
+    ) else {
+        return;
+    };
+    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    source = source.replace("\"/.lib/react16.d.ts\"", "\"./.lib/react16.d.ts\"");
+
+    write_file(&base.join("test.tsx"), &source);
+    write_file(&base.join(".lib/react16.d.ts"), &react16);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.jsx = Some(crate::args::JsxEmit::React);
+    args.es_module_interop = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.tsx")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let jsx_ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text.contains(
+                    "LibraryManagedAttributes<Tag, DetailedHTMLProps<HTMLAttributes<HTMLDivElement>, HTMLDivElement>>",
+                )
+        })
+        .collect();
+
+    assert!(
+        !jsx_ts2322.is_empty(),
+        "Expected real react16 generic intrinsic JSX fixture to report TS2322, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_outer_ts2345() {
     let Some(source) = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts",

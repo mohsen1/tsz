@@ -1062,6 +1062,7 @@ impl<'a> CheckerState<'a> {
         // Matches tsc: only the first empty expression per element is reported.
         self.check_grammar_jsx_element(attributes_idx);
 
+        let original_props_type = props_type;
         // Normalize managed/evaluated JSX props before any checks so conditional,
         // mapped, and application-based surfaces (for example
         // JSX.LibraryManagedAttributes<...>) are read through the same structural
@@ -1866,10 +1867,38 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let reported_dynamic_intrinsic_assignability = if !reported_custom_children_assignability
+            && !reported_special_attr_assignability
+            && !reported_class_missing_props_assignability
+            && !reported_type_param_assignability
+            && !has_excess_property_error
+            && !spread_covers_all
+            && !skip_prop_checks
+            && !has_prop_type_error
+            && component_type.is_none()
+            && provided_attrs.is_empty()
+            && raw_props_has_type_params
+        {
+            let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+            if !self.is_assignable_to(attrs_type, original_props_type) {
+                self.report_jsx_synthesized_props_assignability_error(
+                    attrs_type,
+                    &display_target,
+                    tag_name_idx,
+                );
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         // TS2741: missing required properties.
         if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_type_param_assignability
+            && !reported_dynamic_intrinsic_assignability
             && (!reported_class_missing_props_assignability
                 || (provided_attrs.is_empty() && raw_props_has_type_params))
             && !has_excess_property_error

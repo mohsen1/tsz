@@ -297,6 +297,14 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn get_jsx_single_string_literal_tag_name(&self, type_id: TypeId) -> Option<String> {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, type_id)
+            && let Some(constraint) =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+            && constraint != type_id
+        {
+            return self.get_jsx_single_string_literal_tag_name(constraint);
+        }
+
         if let Some(name) =
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, type_id)
         {
@@ -315,6 +323,122 @@ impl<'a> CheckerState<'a> {
         }
 
         literal_name.map(|name| self.ctx.types.resolve_atom(name).as_str().to_string())
+    }
+
+    fn get_jsx_library_managed_attributes_application(
+        &mut self,
+        component_type: TypeId,
+        props_type: TypeId,
+    ) -> Option<TypeId> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let exports = symbol.exports.as_ref()?;
+        let lma_sym_id = exports.get("LibraryManagedAttributes")?;
+        let lma_ref = self.resolve_symbol_as_lazy_type(lma_sym_id);
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .application(lma_ref, vec![component_type, props_type]),
+        )
+    }
+
+    fn get_jsx_dynamic_intrinsic_display_props_type(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        component_type: TypeId,
+        fallback_type: TypeId,
+    ) -> TypeId {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type)
+            && let Some(constraint) =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, component_type)
+            && let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, constraint)
+        {
+            for member in members.into_iter().rev() {
+                if let Some(tag_name) = self.get_jsx_single_string_literal_tag_name(member)
+                    && let Some(props_type) =
+                        self.get_jsx_intrinsic_props_for_tag(tag_name_idx, &tag_name, false)
+                {
+                    return props_type;
+                }
+            }
+        }
+
+        fallback_type
+    }
+
+    fn get_jsx_dynamic_intrinsic_props_for_component_type(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        component_type: TypeId,
+    ) -> Option<(TypeId, bool, String)> {
+        let intrinsic_elements_type = self.get_intrinsic_elements_type()?;
+        let raw_props_type = self
+            .ctx
+            .types
+            .factory()
+            .index_access(intrinsic_elements_type, component_type);
+        let normalized_props = self.normalize_jsx_required_props_target(raw_props_type);
+        if matches!(
+            normalized_props,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+        ) {
+            return None;
+        }
+
+        let semantic_props_type = self
+            .get_jsx_library_managed_attributes_application(component_type, normalized_props)
+            .unwrap_or(raw_props_type);
+        let display_props_type = self.get_jsx_dynamic_intrinsic_display_props_type(
+            tag_name_idx,
+            component_type,
+            normalized_props,
+        );
+        let display_props_type = self
+            .get_jsx_library_managed_attributes_application(component_type, display_props_type)
+            .unwrap_or(display_props_type);
+
+        let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, raw_props_type)
+            || tsz_solver::contains_type_parameters(self.ctx.types, semantic_props_type)
+            || tsz_solver::contains_type_parameters(self.ctx.types, component_type);
+        let display_target = self.format_type(display_props_type);
+        Some((semantic_props_type, raw_has_type_params, display_target))
+    }
+
+    fn get_jsx_identifier_declared_type(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        fallback_type: TypeId,
+    ) -> TypeId {
+        let Some(sym_id) = self.resolve_identifier_symbol(tag_name_idx) else {
+            return fallback_type;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return fallback_type;
+        };
+        let Some(&decl_idx) = symbol.declarations.first() else {
+            return fallback_type;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return fallback_type;
+        };
+
+        if let Some(param) = self.ctx.arena.get_parameter(decl_node)
+            && param.type_annotation.is_some()
+        {
+            return self.get_type_from_type_node(param.type_annotation);
+        }
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && var_decl.type_annotation.is_some()
+        {
+            return self.get_type_from_type_node(var_decl.type_annotation);
+        }
+
+        fallback_type
     }
 
     fn get_jsx_intrinsic_props_from_template_literal_index_signatures(
@@ -1606,6 +1730,17 @@ impl<'a> CheckerState<'a> {
             } else {
                 component_type
             };
+            let declared_component_type =
+                self.get_jsx_identifier_declared_type(tag_name_idx, component_type);
+            let component_type = if !tsz_solver::contains_type_parameters(
+                self.ctx.types,
+                component_type,
+            ) && tsz_solver::contains_type_parameters(self.ctx.types, declared_component_type)
+            {
+                declared_component_type
+            } else {
+                component_type
+            };
 
             let component_metadata_type =
                 self.get_jsx_component_metadata_type(tag_name_idx, component_type);
@@ -1657,7 +1792,39 @@ impl<'a> CheckerState<'a> {
                 || tsz_solver::type_queries::is_keyof_type(self.ctx.types, resolved_component_type))
                 && !tried_specific_intrinsic_lookup
             {
-                self.check_grammar_jsx_element(jsx_opening.attributes);
+                let needs_dynamic_intrinsic_props_check =
+                    tsz_solver::contains_type_parameters(self.ctx.types, component_type)
+                        || tsz_solver::contains_type_parameters(
+                            self.ctx.types,
+                            resolved_component_type,
+                        )
+                        || tsz_solver::type_queries::is_keyof_type(self.ctx.types, component_type)
+                        || tsz_solver::type_queries::is_keyof_type(
+                            self.ctx.types,
+                            resolved_component_type,
+                        );
+                if needs_dynamic_intrinsic_props_check
+                    && let Some((props_type, raw_has_type_params, display_target)) = self
+                        .get_jsx_dynamic_intrinsic_props_for_component_type(
+                            tag_name_idx,
+                            component_type,
+                        )
+                {
+                    self.check_jsx_attributes_against_props(
+                        jsx_opening.attributes,
+                        props_type,
+                        jsx_opening.tag_name,
+                        None,
+                        None,
+                        raw_has_type_params,
+                        display_target,
+                        None,
+                        request,
+                        children_ctx,
+                    );
+                } else {
+                    self.check_grammar_jsx_element(jsx_opening.attributes);
+                }
                 if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
                     let lib_binders = self.get_lib_binders();
                     if let Some(symbol) = self
