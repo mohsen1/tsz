@@ -264,7 +264,14 @@ impl BinderState {
                         || arena.has_modifier_ref(
                             module.modifiers.as_ref(),
                             SyntaxKind::DeclareKeyword,
-                        ));
+                        )
+                        // Declaration files treat namespace bodies as ambient, so
+                        // nested members are exported without requiring explicit
+                        // `export` modifiers on every declaration.
+                        || arena
+                            .source_files
+                            .first()
+                            .is_some_and(|sf| sf.is_declaration_file));
 
                 // Nested namespaces inside ambient contexts should treat declarations
                 // as ambient-exported for symbol visibility. This covers:
