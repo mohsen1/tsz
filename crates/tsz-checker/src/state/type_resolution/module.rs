@@ -42,7 +42,7 @@ impl<'a> CheckerState<'a> {
         candidates
     }
 
-    fn module_exports_for_file<'b>(
+    pub(crate) fn module_exports_for_file<'b>(
         &self,
         binder: &'b tsz_binder::BinderState,
         file_name: &str,
@@ -60,6 +60,100 @@ impl<'a> CheckerState<'a> {
         self.module_export_file_key_candidates(file_name)
             .into_iter()
             .find_map(|candidate| map.get(&candidate))
+    }
+
+    fn resolve_module_augmentation_export_for_file(
+        &self,
+        file_idx: usize,
+        export_name: &str,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let resolve_augmentation_symbol =
+            |binder: &tsz_binder::BinderState,
+             aug: &tsz_binder::ModuleAugmentation|
+             -> Option<tsz_binder::SymbolId> {
+                let preferred_flags = symbol_flags::TYPE
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE;
+
+                let matches_augmentation_decl = |sym_id: tsz_binder::SymbolId| {
+                    let sym = binder.get_symbol(sym_id)?;
+                    (sym.declarations.contains(&aug.node) && (sym.flags & preferred_flags) != 0)
+                        .then_some(sym_id)
+                };
+
+                if let Some(sym_id) = binder.get_node_symbol(aug.node)
+                    && let Some(preferred) = matches_augmentation_decl(sym_id)
+                {
+                    return Some(preferred);
+                }
+
+                for candidate_id in binder.get_symbols().find_all_by_name(&aug.name) {
+                    if let Some(preferred) = matches_augmentation_decl(*candidate_id) {
+                        return Some(preferred);
+                    }
+                }
+
+                binder.get_node_symbol(aug.node)
+            };
+
+        let mut resolved = None;
+        let mut consider_augmentation =
+            |module_spec: &str, augmenting_file_idx: usize, aug: &tsz_binder::ModuleAugmentation| {
+                if aug.name != export_name {
+                    return;
+                }
+                if self
+                    .ctx
+                    .resolve_import_target_from_file(augmenting_file_idx, module_spec)
+                    != Some(file_idx)
+                {
+                    return;
+                }
+                let Some(binder) = self.ctx.get_binder_for_file(augmenting_file_idx) else {
+                    return;
+                };
+                let Some(sym_id) = resolve_augmentation_symbol(binder, aug) else {
+                    return;
+                };
+                if binder.get_symbol(sym_id).is_some() {
+                    resolved = Some((sym_id, augmenting_file_idx));
+                }
+            };
+
+        let augmentation_owner_file_idx = |aug: &tsz_binder::ModuleAugmentation| {
+            aug.arena
+                .as_deref()
+                .and_then(|arena| self.ctx.get_file_idx_for_arena(arena))
+                .unwrap_or(self.ctx.current_file_idx)
+        };
+
+        if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+            for (module_spec, entries) in aug_index.iter() {
+                for (augmenting_file_idx, aug) in entries {
+                    consider_augmentation(module_spec, *augmenting_file_idx, aug);
+                }
+            }
+            return resolved;
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for (augmenting_file_idx, binder) in all_binders.iter().enumerate() {
+                for (module_spec, augmentations) in &binder.module_augmentations {
+                    for aug in augmentations {
+                        consider_augmentation(module_spec, augmenting_file_idx, aug);
+                    }
+                }
+            }
+            return resolved;
+        }
+
+        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
+            for aug in augmentations {
+                consider_augmentation(module_spec, augmentation_owner_file_idx(aug), aug);
+            }
+        }
+
+        resolved
     }
 
     /// Resolve a named type reference to its `TypeId`.
@@ -272,24 +366,11 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        let from_file = source_file_idx.unwrap_or(self.ctx.current_file_idx);
-        if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
-            && let Some((sym_id, _)) =
-                source_binder.resolve_import_with_reexports_type_only(module_specifier, export_name)
-        {
-            if let Some(target_idx) = self
-                .ctx
-                .resolve_import_target_from_file(from_file, module_specifier)
-            {
-                self.ctx.register_symbol_file_target(sym_id, target_idx);
-            }
-            return Some(sym_id);
-        }
-
         // First, try to resolve the module specifier to a target file index.
         // When source_file_idx is provided, resolve from that file's perspective
         // (for following re-export chains where specifiers are relative to the
         // declaring file, not the current file).
+        let from_file = source_file_idx.unwrap_or(self.ctx.current_file_idx);
         let target_file_idx = if let Some(from_file) = source_file_idx {
             self.ctx
                 .resolve_import_target_from_file(from_file, module_specifier)
@@ -311,6 +392,21 @@ impl<'a> CheckerState<'a> {
                 .register_symbol_file_target(sym_id, target_file_idx);
             Some(sym_id)
         };
+
+        if let Some((sym_id, augmenting_file_idx)) =
+            self.resolve_module_augmentation_export_for_file(target_file_idx, export_name)
+        {
+            self.ctx
+                .register_symbol_file_target(sym_id, augmenting_file_idx);
+            return Some(sym_id);
+        }
+
+        if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
+            && let Some((sym_id, _)) =
+                source_binder.resolve_import_with_reexports_type_only(module_specifier, export_name)
+        {
+            return record_and_return(sym_id);
+        }
 
         // Prefer the binder's type-aware export resolver so interface/type-only
         // exports reached through `import("./x").T` behave the same way as
@@ -358,7 +454,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn resolve_export_from_table(
+    pub(crate) fn resolve_export_from_table(
         &self,
         binder: &tsz_binder::BinderState,
         exports_table: &tsz_binder::SymbolTable,
@@ -479,6 +575,14 @@ impl<'a> CheckerState<'a> {
                 self.resolve_export_from_table(target_binder, exports, export_name)
         {
             return Some((sym_id, file_idx));
+        }
+
+        // Module augmentations can introduce a module-local export that should win
+        // over inherited named/wildcard re-exports from the base file.
+        if let Some((sym_id, augmenting_file_idx)) =
+            self.resolve_module_augmentation_export_for_file(file_idx, export_name)
+        {
+            return Some((sym_id, augmenting_file_idx));
         }
 
         // Check named re-exports before file_locals so that
@@ -1803,5 +1907,108 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CheckerState;
+    use crate::context::{CheckerOptions, ScriptTarget};
+    use crate::module_resolution::build_module_resolution_maps;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn module_augmentation_export_resolution_prefers_local_alias_over_named_reexport() {
+        let files = [
+            (
+                "/main.ts",
+                r#"
+import { Row2 } from "./index";
+type Use = Row2;
+"#,
+            ),
+            (
+                "/a.d.ts",
+                r#"
+import "./index";
+declare module "./index" {
+    type Row2 = { a: string };
+}
+"#,
+            ),
+            (
+                "/index.d.ts",
+                r#"
+export type { Row2 } from "./common";
+"#,
+            ),
+            (
+                "/common.d.ts",
+                r#"
+export interface Row2 { b: string }
+"#,
+            ),
+        ];
+
+        let mut arenas = Vec::with_capacity(files.len());
+        let mut binders = Vec::with_capacity(files.len());
+        let mut roots = Vec::with_capacity(files.len());
+        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+        for (name, source) in &files {
+            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+            arenas.push(Arc::new(parser.get_arena().clone()));
+            binders.push(Arc::new(binder));
+            roots.push(root);
+        }
+
+        let entry_idx = file_names
+            .iter()
+            .position(|name| name == "/main.ts")
+            .expect("entry file should exist");
+        let augmentation_idx = file_names
+            .iter()
+            .position(|name| name == "/a.d.ts")
+            .expect("augmentation file should exist");
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+        let all_arenas = Arc::new(arenas);
+        let all_binders = Arc::new(binders);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[entry_idx].as_ref(),
+            all_binders[entry_idx].as_ref(),
+            &types,
+            file_names[entry_idx].clone(),
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(entry_idx);
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+        checker.check_source_file(roots[entry_idx]);
+
+        let sym_id = checker
+            .resolve_cross_file_export("./index", "Row2")
+            .expect("Row2 should resolve through the module augmentation export");
+
+        assert_eq!(
+            checker.ctx.resolve_symbol_file_index(sym_id),
+            Some(augmentation_idx),
+            "Expected Row2 to resolve to the augmentation file, not the reexport source"
+        );
     }
 }

@@ -3294,6 +3294,11 @@ fn collect_functions_from_node(
 pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     ensure_rayon_global_pool();
 
+    let file_names: Vec<String> = program.files.iter().map(|file| file.file_name.clone()).collect();
+    let (resolved_module_paths, resolved_modules) =
+        crate::checker::module_resolution::build_module_resolution_maps(&file_names);
+    let resolved_module_paths = Arc::new(resolved_module_paths);
+
     let shared_binders: Vec<Arc<BinderState>> = program
         .files
         .iter()
@@ -3376,6 +3381,10 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             checker.ctx.set_current_file_idx(file_idx);
             checker
                 .ctx
+                .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+            checker.ctx.set_resolved_modules(resolved_modules.clone());
+            checker
+                .ctx
                 .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
 
             let mut function_results = Vec::new();
@@ -3430,6 +3439,11 @@ pub fn check_files_parallel(
 ) -> CheckResult {
     // Ensure Rayon global pool has adequate stack size for deep type-checking recursion.
     ensure_rayon_global_pool();
+
+    let file_names: Vec<String> = program.files.iter().map(|file| file.file_name.clone()).collect();
+    let (resolved_module_paths, resolved_modules) =
+        crate::checker::module_resolution::build_module_resolution_maps(&file_names);
+    let resolved_module_paths = Arc::new(resolved_module_paths);
 
     // Create lib_contexts from lib_files (contains both arena and binder).
     // Wrapped in Arc so that per-file checkers and child delegations share
@@ -3554,6 +3568,10 @@ pub fn check_files_parallel(
 
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         checker.ctx.set_current_file_idx(file_idx);
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules.clone());
         checker
             .ctx
             .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
@@ -3716,54 +3734,6 @@ pub fn create_binder_from_bound_file(
         }
     }
 
-    // Merge augmentations from all files (O(N_files^2) when called per-file).
-    // When SharedBinderData is not available, compute inline.
-    let mut merged_module_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<crate::binder::ModuleAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-    let mut merged_augmentation_target_modules: rustc_hash::FxHashMap<
-        crate::binder::SymbolId,
-        String,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (spec, augs) in &other_file.module_augmentations {
-            merged_module_augmentations
-                .entry(spec.clone())
-                .or_default()
-                .extend(augs.iter().map(|aug| {
-                    crate::binder::ModuleAugmentation::with_arena(
-                        aug.name.clone(),
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-        for (&sym_id, module_spec) in &other_file.augmentation_target_modules {
-            merged_augmentation_target_modules.insert(sym_id, module_spec.clone());
-        }
-    }
-
-    let mut merged_global_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<crate::binder::GlobalAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (name, decls) in &other_file.global_augmentations {
-            merged_global_augmentations
-                .entry(name.clone())
-                .or_default()
-                .extend(decls.iter().map(|aug| {
-                    crate::binder::GlobalAugmentation::with_arena(
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -3772,9 +3742,9 @@ pub fn create_binder_from_bound_file(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: merged_global_augmentations,
-            module_augmentations: merged_module_augmentations,
-            augmentation_target_modules: merged_augmentation_target_modules,
+            global_augmentations: file.global_augmentations.clone(),
+            module_augmentations: file.module_augmentations.clone(),
+            augmentation_target_modules: file.augmentation_target_modules.clone(),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
@@ -3838,7 +3808,7 @@ pub fn create_binder_from_bound_file_with_shared(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
-    shared: &SharedBinderData,
+    _shared: &SharedBinderData,
 ) -> BinderState {
     let declaration_arenas: DeclarationArenaMap = program
         .declaration_arenas
@@ -3884,9 +3854,9 @@ pub fn create_binder_from_bound_file_with_shared(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: shared.merged_global_augmentations.clone(),
-            module_augmentations: shared.merged_module_augmentations.clone(),
-            augmentation_target_modules: shared.merged_augmentation_target_modules.clone(),
+            global_augmentations: file.global_augmentations.clone(),
+            module_augmentations: file.module_augmentations.clone(),
+            augmentation_target_modules: file.augmentation_target_modules.clone(),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),

@@ -97,7 +97,8 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             | syntax_kind_ext::IMPORT_CLAUSE
             | syntax_kind_ext::NAMESPACE_IMPORT
-            | syntax_kind_ext::IMPORT_SPECIFIER => Some(symbol_flags::ALIAS),
+            | syntax_kind_ext::IMPORT_SPECIFIER
+            | syntax_kind_ext::EXPORT_SPECIFIER => Some(symbol_flags::ALIAS),
             syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 // 'export as namespace X' creates a UMD global alias to the module.
                 // In tsc, AliasExcludes = Alias — aliases only conflict with other
