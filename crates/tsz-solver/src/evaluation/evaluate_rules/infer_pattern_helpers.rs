@@ -22,6 +22,44 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn erase_type_params_to_constraints(
+        &self,
+        type_params: &[TypeParamInfo],
+    ) -> Option<TypeSubstitution> {
+        if type_params.is_empty() {
+            return None;
+        }
+
+        let mut subst = TypeSubstitution::new();
+        for tp in type_params {
+            subst.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+        }
+        Some(subst)
+    }
+
+    fn instantiate_signature_for_infer(
+        &self,
+        params: &[ParamInfo],
+        return_type: TypeId,
+        type_params: &[TypeParamInfo],
+    ) -> (Vec<ParamInfo>, TypeId) {
+        let Some(subst) = self.erase_type_params_to_constraints(type_params) else {
+            return (params.to_vec(), return_type);
+        };
+
+        let params = params
+            .iter()
+            .map(|param| ParamInfo {
+                name: param.name,
+                type_id: instantiate_type(self.interner(), param.type_id, &subst),
+                optional: param.optional,
+                rest: param.rest,
+            })
+            .collect();
+        let return_type = instantiate_type(self.interner(), return_type, &subst);
+        (params, return_type)
+    }
+
     fn match_rest_infer_tuple(
         &self,
         source_params: &[ParamInfo],
@@ -202,12 +240,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
-                    match_params_and_return(
-                        source,
+                    let (params, return_type) = self.instantiate_signature_for_infer(
                         &source_fn.params,
                         source_fn.return_type,
-                        bindings,
-                    )
+                        &source_fn.type_params,
+                    );
+                    match_params_and_return(source, &params, return_type, bindings)
                 }
                 Some(TypeData::Callable(source_shape_id)) => {
                     // Match against the last call signature (TypeScript behavior)
@@ -221,12 +259,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(sig) => sig,
                         None => return false,
                     };
-                    match_params_and_return(
-                        source,
+                    let (params, return_type) = self.instantiate_signature_for_infer(
                         &source_sig.params,
                         source_sig.return_type,
-                        bindings,
-                    )
+                        &source_sig.type_params,
+                    );
+                    match_params_and_return(source, &params, return_type, bindings)
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
@@ -236,10 +274,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
-                                if !match_params_and_return(
-                                    member,
+                                let (params, return_type) = self.instantiate_signature_for_infer(
                                     &source_fn.params,
                                     source_fn.return_type,
+                                    &source_fn.type_params,
+                                );
+                                if !match_params_and_return(
+                                    member,
+                                    &params,
+                                    return_type,
                                     &mut member_bindings,
                                 ) {
                                     return false;
@@ -255,10 +298,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     Some(sig) => sig,
                                     None => return false,
                                 };
-                                if !match_params_and_return(
-                                    member,
+                                let (params, return_type) = self.instantiate_signature_for_infer(
                                     &source_sig.params,
                                     source_sig.return_type,
+                                    &source_sig.type_params,
+                                );
+                                if !match_params_and_return(
+                                    member,
+                                    &params,
+                                    return_type,
                                     &mut member_bindings,
                                 ) {
                                     return false;
@@ -316,23 +364,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             if has_single_rest_infer {
                 let infer_ty = pattern_fn.params[0].type_id;
-                let erase_type_params =
-                    |source_type_params: &[TypeParamInfo]| -> Option<TypeSubstitution> {
-                        if source_type_params.is_empty() {
-                            return None;
-                        }
-                        let mut subst = TypeSubstitution::new();
-                        for tp in source_type_params {
-                            subst.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-                        }
-                        Some(subst)
-                    };
                 let mut match_params_tuple = |source_params: &[ParamInfo],
                                               source_type_params: &[TypeParamInfo],
                                               bindings: &mut FxHashMap<Atom, TypeId>|
                  -> bool {
                     let mut local_visited = FxHashSet::default();
-                    let erased_subst = erase_type_params(source_type_params);
+                    let erased_subst = self.erase_type_params_to_constraints(source_type_params);
 
                     if source_params.len() == 1 && source_params[0].rest {
                         let source_param = &source_params[0];
@@ -972,12 +1009,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let Some(source_sig) = source_sigs.last() else {
                         return false;
                     };
-                    match_params_and_return(
-                        source,
+                    let (params, return_type) = self.instantiate_signature_for_infer(
                         &source_sig.params,
                         source_sig.return_type,
-                        bindings,
-                    )
+                        &source_sig.type_params,
+                    );
+                    match_params_and_return(source, &params, return_type, bindings)
                 }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
@@ -985,12 +1022,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if is_construct_pattern && !source_fn.is_constructor {
                         return false;
                     }
-                    match_params_and_return(
-                        source,
+                    let (params, return_type) = self.instantiate_signature_for_infer(
                         &source_fn.params,
                         source_fn.return_type,
-                        bindings,
-                    )
+                        &source_fn.type_params,
+                    );
+                    match_params_and_return(source, &params, return_type, bindings)
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
@@ -1016,10 +1053,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 let Some(source_sig) = source_sigs.last() else {
                                     return false;
                                 };
-                                if !match_params_and_return(
-                                    member,
+                                let (params, return_type) = self.instantiate_signature_for_infer(
                                     &source_sig.params,
                                     source_sig.return_type,
+                                    &source_sig.type_params,
+                                );
+                                if !match_params_and_return(
+                                    member,
+                                    &params,
+                                    return_type,
                                     &mut member_bindings,
                                 ) {
                                     return false;
@@ -1030,10 +1072,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 if is_construct_pattern && !source_fn.is_constructor {
                                     return false;
                                 }
-                                if !match_params_and_return(
-                                    member,
+                                let (params, return_type) = self.instantiate_signature_for_infer(
                                     &source_fn.params,
                                     source_fn.return_type,
+                                    &source_fn.type_params,
+                                );
+                                if !match_params_and_return(
+                                    member,
+                                    &params,
+                                    return_type,
                                     &mut member_bindings,
                                 ) {
                                     return false;
