@@ -106,6 +106,25 @@ namespace N {
 }
 
 #[test]
+fn test_property_access_missing_name_at_eof_reports_ts1003_after_dot() {
+    let source = "var p2 = window. ";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let expected_start = source.find('.').expect("dot position") as u32 + 1;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::IDENTIFIER_EXPECTED
+                && diag.message == "Identifier expected."
+                && diag.start == expected_start
+        }),
+        "Expected TS1003 immediately after '.' at EOF, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_missing_arrow_expression_body_consumes_synthetic_close_brace() {
     let source = r"
 namespace N {
