@@ -147,7 +147,10 @@ impl<'a> CheckerState<'a> {
                         .get(shorthand.name)
                         .and_then(|node| self.ctx.arena.get_identifier(node))
                         .map(|ident| ident.escaped_text.clone());
-                    (name, Some(shorthand.name))
+                    let target_idx = self
+                        .resolve_identifier_symbol(shorthand.name)
+                        .map(|_| shorthand.name);
+                    (name, target_idx)
                 } else {
                     (None, None)
                 };
@@ -533,6 +536,8 @@ impl<'a> CheckerState<'a> {
                             shorthand.name,
                             source_type,
                         );
+                        let has_value_binding =
+                            self.resolve_identifier_symbol(shorthand.name).is_some();
                         // TS2322: Check that the source property type is assignable
                         // to the target variable's declared type. This catches cases
                         // like `({ q } = numMapPoint)` where `q` comes from an index
@@ -540,14 +545,14 @@ impl<'a> CheckerState<'a> {
                         // When a default value is present (`{ x = 1 }`), narrow the
                         // source property type by stripping `undefined` before checking
                         // assignability, since the default handles the absent/undefined case.
-                        if shorthand.equals_token {
+                        if shorthand.equals_token && has_value_binding {
                             self.check_destructuring_leaf_assignability_with_default(
                                 &ident.escaped_text,
                                 source_type,
                                 shorthand.name,
                                 shorthand.object_assignment_initializer,
                             );
-                        } else {
+                        } else if has_value_binding {
                             self.check_destructuring_leaf_assignability(
                                 &ident.escaped_text,
                                 source_type,

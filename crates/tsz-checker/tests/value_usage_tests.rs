@@ -919,6 +919,58 @@ const make = () => {
 }
 
 #[test]
+fn test_js_shorthand_assignment_argument_emits_ts18004_without_duplicate_ts2304() {
+    let source = r"
+function Test({ b = '' } = {}) {}
+
+Test(({ b = '5' } = {}));
+";
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        crate::context::CheckerOptions {
+            check_js: true,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+
+    checker.check_source_file(root);
+
+    let ts18004_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18004)
+        .count();
+    let ts2304_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2304)
+        .count();
+
+    assert_eq!(
+        ts18004_count, 1,
+        "Expected exactly one TS18004 for missing shorthand property value, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no duplicate TS2304 alongside TS18004 for shorthand assignment in JS, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
 fn test_unknown_property_access_emits_ts18046() {
     let source = r"
 function f(x: unknown) {
