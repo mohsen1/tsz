@@ -511,7 +511,22 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
     ) -> bool {
         let (has_construct, has_call) = self.jsx_component_member_signature_kinds(component_type);
-        has_construct && !has_call
+        if !has_construct || has_call {
+            return false;
+        }
+
+        let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
+        let component_type = self.evaluate_type_with_env(component_type);
+        let members =
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
+                .unwrap_or_else(|| vec![component_type]);
+
+        !members.into_iter().any(|member| {
+            let member = self.resolve_type_for_property_access(member);
+            let member = self.evaluate_type_with_env(member);
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
+                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()))
+        })
     }
 
     fn get_normalized_jsx_required_props_shape(
@@ -1524,8 +1539,9 @@ impl<'a> CheckerState<'a> {
                     // JSX like:
                     //   <ReactSelectClass<ExtractValueType<WrappedProps>> value={props.value} />
                     // where the conditional type in `props.value` can't yet be resolved.
-                    let attr_has_unresolved_type_params = props_has_type_params
-                        || tsz_solver::contains_type_parameters(self.ctx.types, actual_type);
+                    let attr_has_unresolved_type_params =
+                        tsz_solver::contains_type_parameters(self.ctx.types, expected_type)
+                            || tsz_solver::contains_type_parameters(self.ctx.types, actual_type);
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR
                         && !attr_has_unresolved_type_params
@@ -1671,6 +1687,7 @@ impl<'a> CheckerState<'a> {
         if let Some(crate::checkers_domain::JsxChildrenContext {
             child_count,
             has_text_child,
+            contextual_type,
             synthesized_type,
             text_child_indices,
         }) = children_ctx
@@ -1734,6 +1751,7 @@ impl<'a> CheckerState<'a> {
                     attributes_idx,
                     child_count,
                     has_text_child,
+                    contextual_type,
                     synthesized_type,
                     tag_name_idx,
                 );
