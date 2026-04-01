@@ -2419,7 +2419,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::this_type_mismatch(
-                            expected_this, actual_this,
+                            expected_this,
+                            actual_this,
                         ),
                     );
                 }
