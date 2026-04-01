@@ -646,6 +646,11 @@ impl<'a> CheckerState<'a> {
         // that would lead to false positive diagnostics. These include:
         // - Types with type parameters that might cause recursive constraint issues
         let should_suppress_for_complex_type = |type_id: TypeId| -> bool {
+            if tsz_solver::visitor::is_type_parameter(self.ctx.types, type_id)
+                || is_callable_or_function(type_id)
+            {
+                return false;
+            }
             // Keep the generic false-positive suppression for genuinely complex
             // generic shapes, but do not suppress plain `T`/`U` relations.
             // tsc reports TS2322 for distinct type parameters even when they

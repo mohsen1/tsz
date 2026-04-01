@@ -8204,6 +8204,30 @@ interface Derived extends Base {
     );
 }
 
+#[test]
+fn test_unconstrained_type_parameters_are_not_assignable_to_each_other() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function foo<T, U>(t: T, u: U) {
+  t = u;
+  u = t;
+}
+        "#,
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected two TS2322 diagnostics for unconstrained T/U assignment, got: {ts2322:?}"
+    );
+}
+
 /// Seam test: TS2367 should be reported when compared types have no overlap.
 ///
 /// Guards overlap-check relation/query refactors used by equality comparisons.
