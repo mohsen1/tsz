@@ -89,6 +89,46 @@ fn load_typescript_fixture(rel_path: &str) -> Option<String> {
 }
 
 #[test]
+fn compile_duplicate_amd_module_name_directives_reports_ts2458() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("test.ts"),
+        r#"///<amd-module name='FirstModuleName'/>
+///<amd-module name='SecondModuleName'/>
+class Foo {
+  x: number;
+  constructor() {
+    this.x = 5;
+  }
+}
+export = Foo;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "amd"
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2458),
+        "Expected TS2458 for duplicate AMD module name directives, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn declaration_emit_ts2883_prefers_canonical_named_reference_message() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
