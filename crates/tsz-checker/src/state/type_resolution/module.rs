@@ -1405,6 +1405,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // In `module: system`, source `.ts` files can still be default-imported
+        // through the module namespace object even when
+        // `allowSyntheticDefaultImports` is explicitly false.
+        if is_source_file_import
+            && self.ctx.compiler_options.module == tsz_common::common::ModuleKind::System
+            && !self.module_has_export_equals(module_specifier)
+            && !self.module_has_export_assignment_declaration(module_specifier)
+        {
+            return;
+        }
+
         // allowSyntheticDefaultImports suppresses TS1192 for non-source-file modules
         // (.d.ts, .js) that can use synthetic default imports. For .ts source files,
         // tsc always emits TS1192 when there is no default export — the developer

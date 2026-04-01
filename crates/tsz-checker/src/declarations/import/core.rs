@@ -919,12 +919,11 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an import resolves to a `.ts`/`.tsx` source file (not a `.d.ts` declaration).
-    /// For source files, TS1192 always fires regardless of `allowSyntheticDefaultImports`,
-    /// because the developer controls the module and should add `export default`.
     ///
-    /// Exception: Node module kinds (Node16/Node18/Node20/NodeNext) where CJS-format
-    /// `.ts` files always have a synthetic default. Since detecting CJS format requires
-    /// checking package.json, we conservatively return `false` for all Node module modes.
+    /// Most source-file imports still require an explicit `export default`, but some
+    /// module transforms synthesize the default binding from the namespace object.
+    /// Those cases are handled by
+    /// `source_file_import_uses_system_default_namespace_fallback`.
     fn is_source_file_import(&self, module_name: &str) -> bool {
         // In Node module resolution, CJS-format .ts files always have a default export.
         // Since format depends on package.json "type" field, we can't easily determine
@@ -944,6 +943,15 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// In `module: system`, TypeScript permits default imports from source `.ts`
+    /// modules by treating the default binding as the module namespace object.
+    pub(crate) fn source_file_import_uses_system_default_namespace_fallback(
+        &self,
+        module_name: &str,
+    ) -> bool {
+        self.ctx.compiler_options.module == ModuleKind::System && self.is_source_file_import(module_name)
     }
 
     // =========================================================================
@@ -1176,12 +1184,12 @@ impl<'a> CheckerState<'a> {
         // Check default import: import X from "module"
         // If the module has no "default" export, emit the canonical diagnostic
         // (TS1192 for no-default modules, TS1259 for export= modules).
-        // For .ts source files, TS1192 always fires regardless of allowSyntheticDefaultImports.
-        // For .d.ts/.js/.json files, allowSyntheticDefaultImports suppresses TS1192.
         if has_default_import && !has_named_default_binding {
             let is_source_file = self.is_source_file_import(module_name);
+            let uses_system_namespace_default =
+                self.source_file_import_uses_system_default_namespace_fallback(module_name);
             if let Some(ref table) = exports_table {
-                if !table.has("default") && !table.has("export=") {
+                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }
             } else if self
@@ -1190,6 +1198,7 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .is_some_and(|resolved| resolved.contains(module_name))
                 && resolved_target.is_some()
+                && !uses_system_namespace_default
             {
                 // Module resolved but no exports table found - still emit TS1192
                 self.emit_no_default_export_error(module_name, clause.name, is_source_file);
@@ -1198,8 +1207,10 @@ impl<'a> CheckerState<'a> {
 
         if !has_default_import && has_named_default_binding {
             let is_source_file = self.is_source_file_import(module_name);
+            let uses_system_namespace_default =
+                self.source_file_import_uses_system_default_namespace_fallback(module_name);
             if let Some(ref table) = exports_table {
-                if !table.has("default") && !table.has("export=") {
+                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default {
                     for &specifier_node in &named_default_binding_nodes {
                         self.emit_no_default_export_error(
                             module_name,
@@ -1214,6 +1225,7 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .is_some_and(|resolved| resolved.contains(module_name))
                 && resolved_target.is_some()
+                && !uses_system_namespace_default
             {
                 for &specifier_node in &named_default_binding_nodes {
                     self.emit_no_default_export_error(module_name, specifier_node, is_source_file);
