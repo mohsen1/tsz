@@ -34,7 +34,8 @@ impl ModuleResolver {
             {
                 let conditions = self.get_export_conditions(importing_module_kind);
 
-                if let Some(target) = self.resolve_imports_subpath(imports, specifier, &conditions)
+                if let Some((target, resolved_using_ts_extension)) =
+                    self.resolve_imports_subpath(imports, specifier, &conditions)
                 {
                     // Resolve the target path
                     let resolved_path = current.join(target.trim_start_matches("./"));
@@ -42,6 +43,7 @@ impl ModuleResolver {
                     if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
                         return Ok(ResolvedModule {
                             resolved_path: resolved.clone(),
+                            resolved_using_ts_extension,
                             is_external: false,
                             package_name: package_json.name.clone(),
                             original_specifier: specifier.to_string(),
@@ -71,10 +73,12 @@ impl ModuleResolver {
         imports: &rustc_hash::FxHashMap<String, PackageExports>,
         specifier: &str,
         conditions: &[String],
-    ) -> Option<String> {
+    ) -> Option<(String, bool)> {
         // Try exact match first
         if let Some(value) = imports.get(specifier) {
-            return self.resolve_export_target_to_string(value, conditions);
+            return self
+                .resolve_export_target_to_string(value, conditions)
+                .map(|target| (target, false));
         }
 
         // Try pattern matching (e.g., "#utils/*")
@@ -96,7 +100,14 @@ impl ModuleResolver {
         if let Some((_, wildcard, value)) = best_match
             && let Some(target) = self.resolve_export_target_to_string(value, conditions)
         {
-            return Some(apply_wildcard_substitution(&target, &wildcard));
+            let resolved_using_ts_extension = wildcard.ends_with(".ts")
+                || wildcard.ends_with(".tsx")
+                || wildcard.ends_with(".mts")
+                || wildcard.ends_with(".cts");
+            return Some((
+                apply_wildcard_substitution(&target, &wildcard),
+                resolved_using_ts_extension,
+            ));
         }
 
         None

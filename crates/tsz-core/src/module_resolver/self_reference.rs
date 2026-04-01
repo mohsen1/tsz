@@ -3,7 +3,7 @@
 //! In Node16/NodeNext/Bundler, a package can import itself using its own
 //! name if the package.json `exports` field matches.
 
-use super::{ModuleExtension, ModuleResolver, ResolutionFailure, ResolvedModule};
+use super::{ModuleExtension, ModuleResolver, ResolvedModule};
 use crate::config::ModuleResolutionKind;
 use crate::span::Span;
 use std::path::Path;
@@ -72,6 +72,7 @@ impl ModuleResolver {
                         ) {
                             return SelfReferenceResultV2::Resolved(ResolvedModule {
                                 resolved_path: resolved.clone(),
+                                resolved_using_ts_extension: false,
                                 is_external: false,
                                 package_name: Some(package_name.to_string()),
                                 original_specifier: original_specifier.to_string(),
@@ -145,6 +146,7 @@ impl ModuleResolver {
                         ) {
                             return Some(ResolvedModule {
                                 resolved_path: resolved.clone(),
+                                resolved_using_ts_extension: false,
                                 is_external: false,
                                 package_name: Some(package_name.to_string()),
                                 original_specifier: original_specifier.to_string(),

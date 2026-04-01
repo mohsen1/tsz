@@ -872,6 +872,7 @@ impl PendingDiagnosticBuilder {
             vec![actual_this.into(), expected_this.into()],
         )
     }
+
 }
 
 #[cfg(test)]
@@ -909,13 +910,6 @@ impl PendingDiagnosticBuilder {
     /// Create a "Type is not callable" pending diagnostic.
     pub fn not_callable(type_id: TypeId) -> PendingDiagnostic {
         PendingDiagnostic::error(codes::NOT_CALLABLE, vec![type_id.into()])
-    }
-
-    pub fn this_type_mismatch(expected_this: TypeId, actual_this: TypeId) -> PendingDiagnostic {
-        PendingDiagnostic::error(
-            codes::THIS_TYPE_MISMATCH,
-            vec![actual_this.into(), expected_this.into()],
-        )
     }
 
     /// Create a "Cannot assign to readonly property" pending diagnostic.

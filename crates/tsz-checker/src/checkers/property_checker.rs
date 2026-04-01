@@ -240,7 +240,19 @@ impl<'a> CheckerState<'a> {
                 current_class_idx == Some(access_info.declaring_class_idx)
             }
             MemberAccessLevel::Protected => {
-                if !protected_candidates.is_empty() {
+                if self.is_super_expression(object_expr)
+                    && self.get_class_decl_from_type(object_type).is_some_and(
+                        |receiver_class_idx| {
+                            receiver_class_idx == access_info.declaring_class_idx
+                                || self.is_class_derived_from(
+                                    receiver_class_idx,
+                                    access_info.declaring_class_idx,
+                                )
+                        },
+                    )
+                {
+                    true
+                } else if !protected_candidates.is_empty() {
                     self.check_protected_access_allowed(
                         &protected_candidates,
                         &access_info,
@@ -486,7 +498,7 @@ impl<'a> CheckerState<'a> {
     /// property's access restriction.
     fn check_property_accessibility_via_brands(
         &mut self,
-        _object_expr: NodeIndex,
+        object_expr: NodeIndex,
         property_name: &str,
         error_node: NodeIndex,
         object_type: tsz_solver::TypeId,
@@ -515,13 +527,28 @@ impl<'a> CheckerState<'a> {
                 MemberAccessLevel::Private => {
                     current_class_idx == Some(access_info.declaring_class_idx)
                 }
-                MemberAccessLevel::Protected => match current_class_idx {
-                    None => false,
-                    Some(cur) => {
-                        cur == access_info.declaring_class_idx
-                            || self.is_class_derived_from(cur, access_info.declaring_class_idx)
+                MemberAccessLevel::Protected => {
+                    if self.is_super_expression(object_expr)
+                        && candidates.iter().copied().any(|receiver_class_idx| {
+                            receiver_class_idx == access_info.declaring_class_idx
+                                || self.is_class_derived_from(
+                                    receiver_class_idx,
+                                    access_info.declaring_class_idx,
+                                )
+                        })
+                    {
+                        true
+                    } else {
+                        match current_class_idx {
+                            None => false,
+                            Some(cur) => {
+                                cur == access_info.declaring_class_idx
+                                    || self
+                                        .is_class_derived_from(cur, access_info.declaring_class_idx)
+                            }
+                        }
                     }
-                },
+                }
             };
 
             if !allowed {
@@ -1324,6 +1351,50 @@ mod tests {
         assert!(
             has_code(&diagnostics, 2446),
             "Expected TS2446 for access through sibling instance, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn super_protected_access_via_generic_mixin_constraint_is_allowed() {
+        let diagnostics = check_diagnostics(
+            r#"
+            type Constructor<T> = new (...args: any[]) => T;
+
+            class Person {
+                protected myProtectedFunction() {}
+            }
+
+            function PersonMixin<T extends Constructor<Person>>(Base: T) {
+                return class extends Base {
+                    myProtectedFunction() {
+                        super.myProtectedFunction();
+                    }
+                };
+            }
+        "#,
+        );
+
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "Should not emit TS2445 for protected super access through a generic mixin constraint, got: {diagnostics:?}"
+        );
+        assert!(
+            !has_code(&diagnostics, 2446),
+            "Should not emit TS2446 for protected super access through a generic mixin constraint, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn conformance_mixin_private_and_protected_does_not_emit_extra_super_ts2445() {
+        let diagnostics = check_diagnostics(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../TypeScript/tests/cases/compiler/mixinPrivateAndProtected.ts"
+        )));
+
+        assert_eq!(
+            diagnostics.iter().filter(|&&code| code == 2445).count(),
+            1,
+            "Expected only the top-level protected access TS2445 from the conformance file, got: {diagnostics:?}"
         );
     }
 

@@ -602,6 +602,15 @@ impl<'a> CheckerState<'a> {
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
         let contextual_method_type =
             self.contextual_class_member_type_from_request(request, method.name);
+        let prototype_owner_this_type = if self.is_js_file() {
+            self.js_prototype_owner_expression_for_node(member_idx)
+                .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
+                .and_then(|owner_target| {
+                    self.js_constructor_body_instance_type_for_function(owner_target)
+                })
+        } else {
+            None
+        };
         if let Some(ctx_type) = contextual_method_type {
             let ctx_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -638,6 +647,21 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         };
+        let contextual_this_type = contextual_method_type.and_then(|ctx_type| {
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                ctx_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            ctx_helper.get_this_type()
+        });
+        let implicit_this_type = prototype_owner_this_type.or(contextual_this_type);
+        let mut pushed_this_type = false;
+        if let Some(this_type) = implicit_this_type {
+            self.ctx.this_type_stack.push(this_type);
+            self.ctx.function_owned_this_stack.push(member_idx);
+            pushed_this_type = true;
+        }
 
         // Cache parameter types for use in method body
         // If we have contextual types, use them; otherwise fall back to type annotations or UNKNOWN
@@ -956,6 +980,11 @@ impl<'a> CheckerState<'a> {
 
         if self.has_static_modifier(&method.modifiers) {
             self.check_static_member_for_class_type_param_refs(member_idx);
+        }
+
+        if pushed_this_type {
+            self.ctx.this_type_stack.pop();
+            self.ctx.function_owned_this_stack.pop();
         }
 
         self.pop_type_parameters(type_param_updates);

@@ -1,5 +1,6 @@
 //! Import type resolution helpers (`import("./module").Foo`).
 
+use crate::import::core::ModuleNotFoundSite;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::NodeAccess;
@@ -669,7 +670,10 @@ impl<'a> CheckerState<'a> {
             // (tsc emits "Cannot find name 'X'. Install @types/node" for these)
             if report_unresolved_imports {
                 let (error_message, error_code) = {
-                    let (msg, code) = self.module_not_found_diagnostic(&module_name);
+                    let (msg, code) = self.module_not_found_diagnostic_for_site(
+                        &module_name,
+                        ModuleNotFoundSite::ImportType,
+                    );
                     if code != error.code {
                         (msg, code) // module_not_found_diagnostic upgraded to TS2591
                     } else {
@@ -687,7 +691,10 @@ impl<'a> CheckerState<'a> {
         let is_relative = module_name.starts_with("./") || module_name.starts_with("../");
         if !is_relative {
             if report_unresolved_imports {
-                let (message, code) = self.module_not_found_diagnostic(&module_name);
+                let (message, code) = self.module_not_found_diagnostic_for_site(
+                    &module_name,
+                    ModuleNotFoundSite::ImportType,
+                );
                 self.error_at_node(specifier_node, &message, code);
             }
             return TypeId::ERROR;

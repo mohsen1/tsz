@@ -2558,6 +2558,88 @@ fn test_lookup_module_preserve_uses_syntax_directed_conditions() {
 }
 
 #[test]
+fn test_lookup_module_preserve_honors_forced_cts_and_mts_conditions() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_lookup_module_preserve_forced_conditions");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{".":{"import":"./esm.d.ts","require":"./cjs.d.ts"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/esm.d.ts"),
+        r#"export const esm: "esm";"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/cjs.d.ts"),
+        r#"export const cjs: "cjs";"#,
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.mts"), "import { esm } from 'pkg';").unwrap();
+    fs::write(dir.join("src/index.cts"), "import { cjs } from 'pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Preserve,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let mts_request = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.mts"),
+        specifier_span: Span::new(19, 24),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let mts_result = resolver.lookup(&mts_request, |_, _| None, |_| false);
+    let mts_path = mts_result
+        .resolved_path
+        .expect(".mts import should stay on the import condition");
+    assert!(
+        mts_path.ends_with("esm.d.ts"),
+        "expected import condition path for .mts, got {}",
+        mts_path.display()
+    );
+
+    resolver.clear_cache();
+
+    let cts_request = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.cts"),
+        specifier_span: Span::new(19, 24),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let cts_result = resolver.lookup(&cts_request, |_, _| None, |_| false);
+    let cts_path = cts_result
+        .resolved_path
+        .expect(".cts import should stay on the require condition");
+    assert!(
+        cts_path.ends_with("cjs.d.ts"),
+        "expected require condition path for .cts, got {}",
+        cts_path.display()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_lookup_versioned_types_condition_prefers_matching_export_branch() {
     use std::fs;
 
@@ -2643,8 +2725,105 @@ fn test_classify_resolved_path() {
     let outcome = result.classify();
 
     assert_eq!(outcome.resolved_path, Some(PathBuf::from("/tmp/foo.ts")));
+    assert!(!outcome.resolved_using_ts_extension);
     assert!(outcome.is_resolved);
     assert!(outcome.error.is_none());
+}
+
+#[test]
+fn test_package_imports_exact_mapping_does_not_mark_ts_extension_usage() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_test_package_imports_exact_ts_usage");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "pkg",
+            "type": "module",
+            "imports": {
+                "#foo.ts": "./src/foo.ts"
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(dir.join("src/foo.ts"), "export {};").unwrap();
+    fs::write(dir.join("index.ts"), "import {} from \"#foo.ts\";").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_imports: true,
+        rewrite_relative_import_extensions: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let request = ModuleLookupRequest {
+        specifier: "#foo.ts",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(0, 9),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let outcome = resolver.lookup(&request, |_, _| None, |_| false).classify();
+    assert!(outcome.resolved_path.is_some());
+    assert!(
+        !outcome.resolved_using_ts_extension,
+        "exact package imports entry should suppress ts-extension rewrite diagnostics"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_pattern_marks_ts_extension_usage() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_test_package_imports_pattern_ts_usage");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("internal")).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "pkg",
+            "type": "module",
+            "imports": {
+                "#internal/*": "./internal/*"
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(dir.join("internal/foo.ts"), "export {};").unwrap();
+    fs::write(dir.join("index.ts"), "import {} from \"#internal/foo.ts\";").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_imports: true,
+        rewrite_relative_import_extensions: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let request = ModuleLookupRequest {
+        specifier: "#internal/foo.ts",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(0, 18),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let outcome = resolver.lookup(&request, |_, _| None, |_| false).classify();
+    assert!(outcome.resolved_path.is_some());
+    assert!(
+        outcome.resolved_using_ts_extension,
+        "pattern package imports entry should preserve ts-extension usage for TS2877"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

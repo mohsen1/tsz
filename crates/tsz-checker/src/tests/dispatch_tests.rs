@@ -1002,6 +1002,46 @@ let answer = new Zet(1).add(3, { nested: 4 });
 }
 
 #[test]
+fn jsdoc_generic_constructor_prototype_object_literal_methods_use_instance_this() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @class
+ * @template T
+ * @param {T} t
+ */
+function Cp(t) {
+    this.x = 1;
+    this.y = t;
+}
+Cp.prototype = {
+    m1() { return this.x; },
+    m2() { this.z = this.x + 1; return this.y; }
+};
+var cp = new Cp(1);
+
+/** @type {number} */
+var n = cp.x;
+/** @type {number} */
+var n = cp.y;
+/** @type {number} */
+var n = cp.m1();
+/** @type {number} */
+var n = cp.m2();
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 7023))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected generic JS constructor prototype object literal methods to use instance `this`, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn jsdoc_typedef_property_unknown_template_name_emits_ts2304() {
     let diags = check_js_source_diagnostics(
         r#"

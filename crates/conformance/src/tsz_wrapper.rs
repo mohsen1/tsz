@@ -298,45 +298,45 @@ pub fn prepare_test_dir(
     let include = serde_json::json!([
         "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
     ]);
-    // For multi-file tests with @filename directives that include .mts/.cts/.mjs/.cjs
-    // files, build an explicit "files" array so tsz's file discovery finds them.
-    // tsc's harness passes files directly to the compiler, but our wrapper relies on
-    // tsconfig include patterns. Without explicit "files", the narrow include patterns
-    // won't discover .mts/.cts/.mjs/.cjs files.
+    // For multi-file tests with authored virtual files, prefer an explicit
+    // "files" list over discovery-only include globs when the fixture shape
+    // can't be represented by the harness defaults:
+    // - .mts/.cts/.mjs/.cjs files are not matched by the narrow include globs
+    // - files under node_modules are intentionally authored fixture inputs
     //
-    // EXCEPTION: when tsc expects TS18003 ("no inputs found"), DON'T add explicit files.
-    // This preserves the "no inputs" condition for tests where tsc's include patterns
-    // also fail to discover the files (e.g., moduleExportNonStructured.ts with only
-    // .mts/.d.cts files and a module/moduleResolution mismatch).
+    // tsc's harness passes the authored files directly to the compiler; using an
+    // explicit root-file list keeps our synthetic tsconfig aligned with that shape.
+    //
+    // EXCEPTION: when tsc expects TS18003 ("no inputs found"), DON'T add explicit
+    // files. This preserves the "no inputs" condition for tests whose fixture files
+    // should remain undiscoverable under the harness defaults.
     let tsc_expects_no_inputs = expected_error_codes.is_some_and(|codes| codes.contains(&18003));
-    let explicit_module_ext_files: Option<Vec<String>> =
-        if !filenames.is_empty() && !tsc_expects_no_inputs {
-            let module_files: Vec<String> = filenames
+    let needs_explicit_root_files = !filenames.is_empty()
+        && filenames.iter().any(|(name, _)| {
+            let lower = name.to_lowercase().replace('\\', "/");
+            lower.ends_with(".mts")
+                || lower.ends_with(".cts")
+                || lower.ends_with(".mjs")
+                || lower.ends_with(".cjs")
+                || lower.contains("/node_modules/")
+                || lower.starts_with("node_modules/")
+        });
+    let explicit_root_files: Option<Vec<String>> =
+        if needs_explicit_root_files && !tsc_expects_no_inputs {
+            let root_files: Vec<String> = filenames
                 .iter()
                 .filter_map(|(name, _)| {
                     let lower = name.to_lowercase().replace('\\', "/");
-                    if lower.ends_with("tsconfig.json")
-                        || lower.ends_with("package.json")
-                        || lower.contains("/node_modules/")
-                        || lower.starts_with("node_modules/")
-                    {
+                    if lower.ends_with("tsconfig.json") || lower.ends_with("package.json") {
                         return None;
                     }
-                    if lower.ends_with(".mts")
-                        || lower.ends_with(".cts")
-                        || lower.ends_with(".mjs")
-                        || lower.ends_with(".cjs")
-                    {
-                        Some(name.replace("..", "_").trim_start_matches('/').to_string())
-                    } else {
-                        None
-                    }
+                    Some(name.replace("..", "_").trim_start_matches('/').to_string())
                 })
                 .collect();
-            if module_files.is_empty() {
+            if root_files.is_empty() {
                 None
             } else {
-                Some(module_files)
+                Some(root_files)
             }
         } else {
             None
@@ -431,15 +431,15 @@ pub fn prepare_test_dir(
                 "files": root_files,
                 "exclude": ["node_modules"]
             })
-        } else if let Some(module_files) = &explicit_module_ext_files {
-            // Multi-file test with .mts/.cts/.mjs/.cjs files: use both "include"
-            // (for standard extension discovery + TS18003 reporting) and "files"
-            // (for module-extension files that include patterns don't match).
+        } else if let Some(root_files) = &explicit_root_files {
+            // Keep authored fixture files explicit so mixed-extension and
+            // node_modules-backed tests match the TypeScript harness project
+            // shape. Include globs stay in place for default-library discovery
+            // and TS18003 parity on non-explicit files.
             serde_json::json!({
                 "compilerOptions": compiler_options,
                 "include": include,
-                "files": module_files,
-                "exclude": ["node_modules"]
+                "files": root_files
             })
         } else {
             serde_json::json!({
