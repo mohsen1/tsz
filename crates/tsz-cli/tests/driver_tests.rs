@@ -300,6 +300,78 @@ export const timestamp = now();
 }
 
 #[test]
+fn declaration_emit_reports_ts7056_for_private_import_type_alias() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("http-client.ts"),
+        r#"type TPromise<ResolveType, RejectType = any> = Omit<Promise<ResolveType>, "then" | "catch"> & {
+    then<TResult1 = ResolveType, TResult2 = never>(
+        onfulfilled?: ((value: ResolveType) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+        onrejected?: ((reason: RejectType) => TResult2 | PromiseLike<TResult2>) | undefined | null,
+    ): TPromise<TResult1 | TResult2, RejectType>;
+    catch<TResult = never>(
+        onrejected?: ((reason: RejectType) => TResult | PromiseLike<TResult>) | undefined | null,
+    ): TPromise<ResolveType | TResult, RejectType>;
+};
+
+export interface HttpResponse<D extends unknown, E extends unknown = unknown> extends Response {
+    data: D;
+    error: E;
+}
+
+export class HttpClient<SecurityDataType = unknown> {
+    public request = <T = any, E = any>(): TPromise<HttpResponse<T, E>> => {
+        return '' as any;
+    };
+}
+"#,
+    );
+    write_file(
+        &base.join("Api.ts"),
+        r#"import { HttpClient } from "./http-client";
+
+export class Api<SecurityDataType = unknown> {
+    constructor(private http: HttpClient<SecurityDataType>) { }
+
+    abc1 = () => this.http.request();
+    abc2 = () => this.http.request();
+    abc3 = () => this.http.request();
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true,
+    "skipLibCheck": true
+  },
+  "files": ["http-client.ts", "Api.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts7056_count = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 7056)
+        .count();
+
+    assert_eq!(
+        ts7056_count, 3,
+        "expected three TS7056 diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_project_namespace_import_qualified_type_sees_module_augmentation_exports() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
