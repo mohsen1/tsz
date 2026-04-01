@@ -596,6 +596,87 @@ declare module "m" {
     );
 }
 
+#[test]
+fn boundary_external_module_parent_qualifies_namespace_ts2694() {
+    let diags = check(
+        r#"
+export namespace Promise {}
+let x: Promise.Resolver<string>;
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace '\"test\".Promise' has no exported member 'Resolver'."),
+        "Expected TS2694 to qualify exported external-module namespace, got: {ts2694:?}"
+    );
+}
+
+#[test]
+fn boundary_external_module_nested_export_qualifies_root_namespace_ts2694() {
+    let diags = check(
+        r#"
+export namespace Outer {
+    export namespace Inner {
+        export type Exists = number;
+    }
+}
+let x: Outer.Inner.DoesNotExist;
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing nested namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace '\"test\".Outer.Inner' has no exported member 'DoesNotExist'."),
+        "Expected TS2694 to qualify nested exported namespaces through the file module name, got: {ts2694:?}"
+    );
+}
+
+#[test]
+fn boundary_external_module_local_namespace_does_not_gain_file_prefix_ts2694() {
+    let diags = check(
+        r#"
+namespace foo {
+    export namespace bar {
+        export namespace baz {
+            export class boo {}
+        }
+    }
+}
+import booz = foo.bar.baz;
+let x: booz.bar;
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace 'foo.bar.baz' has no exported member 'bar'."),
+        "Expected local module namespace chains to stay unqualified, got: {ts2694:?}"
+    );
+    assert!(
+        !ts2694.message_text.contains("\"test\"."),
+        "Local namespaces should not be prefixed with the file module name: {ts2694:?}"
+    );
+}
+
 // =========================================================================
 // Phase 2.5: Wrong-meaning migration through boundary
 // =========================================================================
