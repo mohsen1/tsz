@@ -115,6 +115,31 @@ impl<'a> CheckerState<'a> {
             let Some(expr_node) = self.ctx.arena.get(stmt.expression) else {
                 continue;
             };
+            if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some((target, member_name)) =
+                    self.commonjs_define_property_target_and_name(stmt.expression)
+            {
+                if self.is_current_file_commonjs_export_base(target) {
+                    explicit_exports
+                        .entry(member_name)
+                        .or_default()
+                        .push(stmt.expression);
+                    continue;
+                }
+
+                if self
+                    .ctx
+                    .arena
+                    .get_identifier_at(target)
+                    .is_some_and(|ident| ident.escaped_text == direct_export_root)
+                {
+                    root_exports
+                        .entry(member_name)
+                        .or_default()
+                        .push(stmt.expression);
+                }
+                continue;
+            }
             if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
                 continue;
             }
@@ -163,13 +188,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        for (name, export_nodes) in explicit_exports {
-            let Some(root_nodes) = root_exports.get(&name) else {
+        let all_names: FxHashSet<String> = explicit_exports
+            .keys()
+            .chain(root_exports.keys())
+            .cloned()
+            .collect();
+        for name in all_names {
+            let export_nodes = explicit_exports.get(&name);
+            let root_nodes = root_exports.get(&name);
+            let export_len = export_nodes.map_or(0, Vec::len);
+            let root_len = root_nodes.map_or(0, Vec::len);
+            if export_len + root_len < 2 {
                 continue;
-            };
+            }
             let message = format!("Cannot redeclare exported variable '{name}'.");
             let mut seen = FxHashSet::default();
-            for &node in export_nodes.iter().chain(root_nodes.iter()) {
+            for &node in export_nodes
+                .into_iter()
+                .flatten()
+                .chain(root_nodes.into_iter().flatten())
+            {
                 if seen.insert(node) {
                     self.error_at_node(
                         node,
@@ -490,7 +528,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn current_file_commonjs_define_property_export_name(&self, idx: NodeIndex) -> Option<String> {
+    fn commonjs_define_property_target_and_name(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(NodeIndex, String)> {
         let node = self.ctx.arena.get(idx)?;
         let call = self.ctx.arena.get_call_expr(node)?;
         let callee_node = self.ctx.arena.get(call.expression)?;
@@ -513,11 +554,19 @@ impl<'a> CheckerState<'a> {
         }
 
         let args = call.arguments.as_ref()?;
-        if args.nodes.len() < 2 || !self.is_current_file_commonjs_export_base(args.nodes[0]) {
+        if args.nodes.len() < 2 {
             return None;
         }
 
-        self.current_file_commonjs_static_member_name(args.nodes[1])
+        Some((
+            args.nodes[0],
+            self.current_file_commonjs_static_member_name(args.nodes[1])?,
+        ))
+    }
+
+    fn current_file_commonjs_define_property_export_name(&self, idx: NodeIndex) -> Option<String> {
+        let (target, name) = self.commonjs_define_property_target_and_name(idx)?;
+        self.is_current_file_commonjs_export_base(target).then_some(name)
     }
 
     pub(crate) fn current_file_commonjs_static_member_name(
