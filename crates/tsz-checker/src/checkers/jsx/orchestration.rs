@@ -1190,16 +1190,16 @@ impl<'a> CheckerState<'a> {
             self.get_jsx_props_type_for_component(component_type, element_idx)
         {
             if raw_has_type_params
-                && tsz_solver::type_queries::get_construct_signatures(
-                    self.ctx.types,
-                    normalized_component_type,
-                )
-                .is_none_or(|sigs| sigs.is_empty())
                 && let Some(inferred_props) = self
                     .infer_jsx_generic_component_props_type(
                         attributes_idx,
                         normalized_component_type,
                     )
+                    .or_else(|| {
+                        self.get_default_instantiated_generic_class_props_type(
+                            normalized_component_type,
+                        )
+                    })
                     .or_else(|| {
                         self.get_default_instantiated_generic_sfc_props_type(
                             normalized_component_type,
@@ -1234,15 +1234,98 @@ impl<'a> CheckerState<'a> {
             .is_some();
 
         let fallback_props = if is_class_like_component && !has_function_valued_jsx_attrs {
-            self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+            self.get_default_instantiated_generic_class_props_type(normalized_component_type)
+                .or_else(|| {
+                    self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+                })
         } else {
             self.infer_jsx_generic_component_props_type(attributes_idx, normalized_component_type)
+                .or_else(|| {
+                    self.get_default_instantiated_generic_class_props_type(
+                        normalized_component_type,
+                    )
+                })
                 .or_else(|| {
                     self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
                 })
         };
 
         fallback_props.map(|props_type| (props_type, false))
+    }
+
+    fn get_default_instantiated_generic_class_props_type(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let sigs =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
+        let generic: Vec<_> = sigs
+            .iter()
+            .filter(|sig| !sig.type_params.is_empty())
+            .collect();
+        if generic.len() != 1 {
+            return None;
+        }
+
+        let sig = generic[0];
+        let props = sig.params.first().map(|param| param.type_id).or_else(|| {
+            let evaluated_return_type = self.evaluate_type_with_env(sig.return_type);
+            match self.get_element_attributes_property_name_with_check(None) {
+                None => match self.resolve_property_access_with_env(sig.return_type, "props") {
+                    PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                    _ => match self.resolve_property_access_with_env(evaluated_return_type, "props") {
+                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                        _ => None,
+                    },
+                },
+                Some(name) if name.is_empty() => Some(sig.return_type),
+                Some(name) => match self.resolve_property_access_with_env(sig.return_type, &name) {
+                    PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                    _ => match self.resolve_property_access_with_env(evaluated_return_type, &name) {
+                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                        _ => None,
+                    },
+                },
+            }
+        })?;
+
+        let type_args: Vec<_> = sig
+            .type_params
+            .iter()
+            .map(|param| param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN))
+            .collect();
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &sig.type_params,
+            &type_args,
+        );
+        let instantiated = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            props,
+            &substitution,
+        );
+        let evaluated = if tsz_solver::is_union_type(self.ctx.types, instantiated)
+            || crate::computation::call_inference::should_preserve_contextual_application_shape(
+                self.ctx.types,
+                instantiated,
+            )
+        {
+            instantiated
+        } else {
+            self.evaluate_type_with_env(instantiated)
+        };
+        let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
+        if managed == TypeId::ANY
+            || managed == TypeId::UNKNOWN
+            || managed == TypeId::ERROR
+            || tsz_solver::contains_type_parameters(self.ctx.types, managed)
+        {
+            None
+        } else {
+            Some(managed)
+        }
     }
 
     pub(super) fn infer_jsx_generic_class_component_signature(
