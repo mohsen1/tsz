@@ -901,23 +901,6 @@ fn compile_inner(
         resolved.checker.rewrite_relative_import_extensions = true;
         resolved.printer.rewrite_relative_import_extensions = true;
     }
-    if has_deprecation_diagnostics && !resolved.checker.no_lib {
-        return Ok(CompilationResult {
-            diagnostics: config_diagnostics,
-            emitted_files: Vec::new(),
-            files_read: Vec::new(),
-            file_infos: Vec::new(),
-            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
-            interned_types_count: 0,
-            interner_estimated_bytes: 0,
-            query_cache_stats: None,
-            def_store_stats: None,
-            phase_timings: PhaseTimings::default(),
-            residency_stats: None,
-            module_dep_stats: None,
-            invalidation_summaries: Vec::new(),
-        });
-    }
     if config.is_none()
         && args.module.is_none()
         && matches!(resolved.printer.module, ModuleKind::None)
