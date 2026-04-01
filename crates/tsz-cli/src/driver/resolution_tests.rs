@@ -1,6 +1,6 @@
 use super::*;
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz::config::{resolve_compiler_options, CompilerOptions};
+use tsz::config::{CompilerOptions, resolve_compiler_options};
 use tsz::emitter::ModuleKind;
 
 #[test]

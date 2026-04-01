@@ -564,10 +564,8 @@ impl<'a> CheckerState<'a> {
             .and_then(|v| v.first())
         {
             if std::ptr::eq(da.as_ref(), self.ctx.arena) {
-                return self.type_of_value_declaration_with_mode(
-                    decl_idx,
-                    apply_module_augmentations,
-                );
+                return self
+                    .type_of_value_declaration_with_mode(decl_idx, apply_module_augmentations);
             }
             Some(std::sync::Arc::clone(da))
         } else if self.ctx.arena.get(decl_idx).is_some() {
@@ -575,10 +573,8 @@ impl<'a> CheckerState<'a> {
             // For non-lib symbols: this is the correct arena — use fast path.
             // For lib symbols: this may be a cross-arena collision — use symbol_arenas.
             if !self.ctx.binder.symbol_arenas.contains_key(&sym_id) {
-                return self.type_of_value_declaration_with_mode(
-                    decl_idx,
-                    apply_module_augmentations,
-                );
+                return self
+                    .type_of_value_declaration_with_mode(decl_idx, apply_module_augmentations);
             }
             self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
         } else {
@@ -648,13 +644,16 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        let result = checker.type_of_value_declaration_with_mode(decl_idx, apply_module_augmentations);
+        let result =
+            checker.type_of_value_declaration_with_mode(decl_idx, apply_module_augmentations);
 
         if let Some(node) = decl_arena.get(decl_idx)
             && decl_arena.get_class(node).is_some()
         {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
-            self.ctx.definition_store.register_type_to_def(result, def_id);
+            self.ctx
+                .definition_store
+                .register_type_to_def(result, def_id);
             if let Some(construct_signatures) =
                 crate::query_boundaries::common::construct_signatures_for_type(
                     self.ctx.types,

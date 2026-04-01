@@ -1806,13 +1806,14 @@ impl<'a> DeclarationEmitter<'a> {
                         if let (Some(file_path), Some((pos, length))) =
                             (self.current_file_path.as_deref(), prop_name_span)
                         {
-                            self.diagnostics.push(tsz_common::diagnostics::Diagnostic::from_code(
-                                7056,
-                                file_path,
-                                pos,
-                                length,
-                                &[],
-                            ));
+                            self.diagnostics
+                                .push(tsz_common::diagnostics::Diagnostic::from_code(
+                                    7056,
+                                    file_path,
+                                    pos,
+                                    length,
+                                    &[],
+                                ));
                         }
                         self.write(": any");
                     } else {
@@ -1847,13 +1848,14 @@ impl<'a> DeclarationEmitter<'a> {
                     if let (Some(file_path), Some((pos, length))) =
                         (self.current_file_path.as_deref(), prop_name_span)
                     {
-                        self.diagnostics.push(tsz_common::diagnostics::Diagnostic::from_code(
-                            7056,
-                            file_path,
-                            pos,
-                            length,
-                            &[],
-                        ));
+                        self.diagnostics
+                            .push(tsz_common::diagnostics::Diagnostic::from_code(
+                                7056,
+                                file_path,
+                                pos,
+                                length,
+                                &[],
+                            ));
                     }
                     self.write(": any");
                 } else {

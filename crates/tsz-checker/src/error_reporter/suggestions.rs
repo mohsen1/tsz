@@ -162,13 +162,13 @@ impl<'a> CheckerState<'a> {
 
         let mut property_names =
             crate::query_boundaries::diagnostics::collect_accessible_property_names_for_suggestion(
-            self.ctx.types,
-            resolved_type,
-            5,
-        )
-        .into_iter()
-        .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
-        .collect::<Vec<_>>();
+                self.ctx.types,
+                resolved_type,
+                5,
+            )
+            .into_iter()
+            .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
+            .collect::<Vec<_>>();
 
         for name in self.generic_mapped_receiver_explicit_property_names(original_type_id) {
             if !property_names.iter().any(|existing| existing == &name) {

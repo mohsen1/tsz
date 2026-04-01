@@ -1793,9 +1793,7 @@ impl<'a> CheckerState<'a> {
             // When another file has `declare module './thisFile' { interface ClassName { ... } }`,
             // those augmented members must be merged into the class instance type so that
             // `ClassName.prototype` and value-position usage see the full merged type.
-            if apply_module_augmentations
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
+            if apply_module_augmentations && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 let class_name = symbol.escaped_name.clone();
                 if let Some(sf) = self.ctx.arena.source_files.first() {
                     let file_name = sf.file_name.clone();

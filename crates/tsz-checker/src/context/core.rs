@@ -519,9 +519,9 @@ impl<'a> CheckerContext<'a> {
                             .arena
                             .as_ref()
                             .and_then(|arena| {
-                                arena_to_file_idx
-                                    .as_ref()
-                                    .and_then(|map| map.get(&(Arc::as_ptr(arena) as usize)).copied())
+                                arena_to_file_idx.as_ref().and_then(|map| {
+                                    map.get(&(Arc::as_ptr(arena) as usize)).copied()
+                                })
                             })
                             .unwrap_or(file_idx);
                         (owner_idx, aug.clone())

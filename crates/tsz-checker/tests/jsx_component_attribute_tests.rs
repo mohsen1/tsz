@@ -5,10 +5,10 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::CheckerState;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -897,17 +897,20 @@ fn load_cross_file_jsx_lib_files() -> Vec<Arc<LibFile>> {
         }
         roots
     };
-    let candidates = [("lib.es5.d.ts", [
-        "scripts/node_modules/typescript/lib/lib.es5.d.ts",
-        "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
-        "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
-        "crates/tsz-core/src/lib-assets-stripped/es5.d.ts",
-        "crates/tsz-core/src/lib-assets/es5.d.ts",
-        "../tsz-core/src/lib-assets-stripped/es5.d.ts",
-        "../tsz-core/src/lib-assets/es5.d.ts",
-        "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
-        "TypeScript/src/lib/es5.d.ts",
-    ])];
+    let candidates = [(
+        "lib.es5.d.ts",
+        [
+            "scripts/node_modules/typescript/lib/lib.es5.d.ts",
+            "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
+            "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
+            "crates/tsz-core/src/lib-assets-stripped/es5.d.ts",
+            "crates/tsz-core/src/lib-assets/es5.d.ts",
+            "../tsz-core/src/lib-assets-stripped/es5.d.ts",
+            "../tsz-core/src/lib-assets/es5.d.ts",
+            "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
+            "TypeScript/src/lib/es5.d.ts",
+        ],
+    )];
 
     let mut lib_files = Vec::new();
     for (file_name, suffixes) in candidates {
@@ -1020,9 +1023,9 @@ fn cross_file_jsx_diagnostics_with_mode_and_default_libs(
         })
         .collect();
     checker_lib_contexts.push(tsz_checker::context::LibContext {
-            arena: Arc::clone(&arena_lib),
-            binder: Arc::clone(&binder_lib),
-        });
+        arena: Arc::clone(&arena_lib),
+        binder: Arc::clone(&binder_lib),
+    });
     checker.ctx.set_lib_contexts(checker_lib_contexts);
     checker
         .ctx

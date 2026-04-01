@@ -872,7 +872,6 @@ impl PendingDiagnosticBuilder {
             vec![actual_this.into(), expected_this.into()],
         )
     }
-
 }
 
 #[cfg(test)]

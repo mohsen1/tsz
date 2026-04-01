@@ -168,10 +168,7 @@ impl<'a> CheckerState<'a> {
         let mut seen = FxHashSet::default();
 
         let mut push_remote_decl =
-            |file_idx: usize,
-             decl_idx: NodeIndex,
-             flags: u32,
-             is_exported: bool| {
+            |file_idx: usize, decl_idx: NodeIndex, flags: u32, is_exported: bool| {
                 if seen.insert((file_idx, decl_idx.0)) {
                     declarations.push((
                         decl_idx,
@@ -184,7 +181,9 @@ impl<'a> CheckerState<'a> {
             };
 
         let mut consider_augmentation =
-            |module_spec: &str, augmenting_file_idx: usize, augmentation: &tsz_binder::ModuleAugmentation| {
+            |module_spec: &str,
+             augmenting_file_idx: usize,
+             augmentation: &tsz_binder::ModuleAugmentation| {
                 if augmentation.name != name {
                     return;
                 }
@@ -200,16 +199,12 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .as_deref()
                         .unwrap_or_else(|| self.ctx.get_arena_for_file(augmenting_file_idx as u32));
-                    let Some(flags) = self.declaration_symbol_flags(arena, augmentation.node) else {
+                    let Some(flags) = self.declaration_symbol_flags(arena, augmentation.node)
+                    else {
                         return;
                     };
                     let is_exported = self.is_declaration_exported(arena, augmentation.node);
-                    push_remote_decl(
-                        augmenting_file_idx,
-                        augmentation.node,
-                        flags,
-                        is_exported,
-                    );
+                    push_remote_decl(augmenting_file_idx, augmentation.node, flags, is_exported);
                     return;
                 }
 
@@ -309,9 +304,7 @@ impl<'a> CheckerState<'a> {
                                 .get(spec.property_name)
                                 .and_then(|n| arena.get_identifier(n))
                                 .or_else(|| {
-                                    arena
-                                        .get(spec.name)
-                                        .and_then(|n| arena.get_identifier(n))
+                                    arena.get(spec.name).and_then(|n| arena.get_identifier(n))
                                 })?;
                             (export_name.escaped_text == name)
                                 .then(|| binder.get_node_symbol(*spec_idx))
@@ -334,29 +327,36 @@ impl<'a> CheckerState<'a> {
                     .find_all_by_name(name)
                     .iter()
                     .find_map(|candidate_id| {
-                    let symbol = binder.get_symbol(*candidate_id)?;
-                    if !symbol.is_exported {
-                        return None;
-                    }
-                    symbol.declarations.iter().any(|decl_idx| {
-                        if let Some(arenas) = binder.declaration_arenas.get(&(*candidate_id, *decl_idx))
-                        {
-                            arenas
-                                .iter()
-                                .any(|decl_arena| std::ptr::eq(decl_arena.as_ref(), arena))
-                        } else {
-                            true
+                        let symbol = binder.get_symbol(*candidate_id)?;
+                        if !symbol.is_exported {
+                            return None;
                         }
+                        symbol
+                            .declarations
+                            .iter()
+                            .any(|decl_idx| {
+                                if let Some(arenas) =
+                                    binder.declaration_arenas.get(&(*candidate_id, *decl_idx))
+                                {
+                                    arenas
+                                        .iter()
+                                        .any(|decl_arena| std::ptr::eq(decl_arena.as_ref(), arena))
+                                } else {
+                                    true
+                                }
+                            })
+                            .then_some(*candidate_id)
                     })
-                    .then_some(*candidate_id)
-                })
             });
         let Some(sym_id) = sym_id else {
             let Some(owner_binder) = self.ctx.get_binder_for_file(file_idx) else {
                 return Vec::new();
             };
             let owner_arena = self.ctx.get_arena_for_file(file_idx as u32);
-            let Some(owner_file_name) = owner_arena.source_files.first().map(|sf| sf.file_name.clone())
+            let Some(owner_file_name) = owner_arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())
             else {
                 return Vec::new();
             };
@@ -416,9 +416,11 @@ impl<'a> CheckerState<'a> {
                     if !std::ptr::eq(decl_arena.as_ref(), arena) || !seen.insert(decl_idx.0) {
                         continue;
                     }
-                    if let Some(flags) = self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
+                    if let Some(flags) =
+                        self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
                     {
-                        let is_exported = self.is_declaration_exported(decl_arena.as_ref(), decl_idx);
+                        let is_exported =
+                            self.is_declaration_exported(decl_arena.as_ref(), decl_idx);
                         declarations.push((decl_idx, flags, is_exported));
                     }
                 }
@@ -1058,11 +1060,9 @@ export interface Row2 { b: string }
             let index_arena = checker.ctx.get_arena_for_file(index_idx as u32);
             assert!(
                 conflicts.iter().any(|(decl_idx, _, _, _, _)| {
-                    index_arena
-                        .get(*decl_idx)
-                        .is_some_and(|node| {
-                            node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_SPECIFIER
-                        })
+                    index_arena.get(*decl_idx).is_some_and(|node| {
+                        node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_SPECIFIER
+                    })
                 }),
                 "Expected the duplicate partner to be the local export binding in index.d.ts: {conflicts:#?}"
             );
@@ -1106,12 +1106,9 @@ export interface Row2 { b: string }
             let a_arena = checker.ctx.get_arena_for_file(a_idx as u32);
             assert!(
                 conflicts.iter().any(|(decl_idx, _, _, _, _)| {
-                    a_arena
-                        .get(*decl_idx)
-                        .is_some_and(|node| {
-                            node.kind
-                                == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                        })
+                    a_arena.get(*decl_idx).is_some_and(|node| {
+                        node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    })
                 }),
                 "Expected the duplicate partner to be the augmentation type alias in a.d.ts: {conflicts:#?}"
             );
@@ -1211,7 +1208,13 @@ export interface Row2 { b: string }
             let remote_decl_count = symbol
                 .declarations
                 .iter()
-                .filter_map(|&decl_idx| checker.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)))
+                .filter_map(|&decl_idx| {
+                    checker
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                })
                 .flat_map(|arenas| arenas.iter())
                 .filter(|arena| !std::ptr::eq(arena.as_ref(), checker.ctx.arena))
                 .count();

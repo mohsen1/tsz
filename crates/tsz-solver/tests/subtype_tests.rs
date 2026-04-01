@@ -1,10 +1,10 @@
 use super::*;
-use crate::def::DefId;
-use crate::diagnostics::SubtypeFailureReason;
 use crate::QueryCache;
 use crate::TypeInterner;
 use crate::TypeResolver;
-use crate::{instantiate_type, TypeSubstitution, Visibility};
+use crate::def::DefId;
+use crate::diagnostics::SubtypeFailureReason;
+use crate::{TypeSubstitution, Visibility, instantiate_type};
 use tsz_binder::SymbolId;
 
 #[test]

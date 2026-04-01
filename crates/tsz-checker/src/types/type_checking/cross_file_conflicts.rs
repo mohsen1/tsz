@@ -285,10 +285,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let has_conflict = self.target_file_has_direct_export_named(
-                    target_idx,
-                    &symbol.escaped_name,
-                );
+                let has_conflict =
+                    self.target_file_has_direct_export_named(target_idx, &symbol.escaped_name);
                 if !has_conflict {
                     continue;
                 }

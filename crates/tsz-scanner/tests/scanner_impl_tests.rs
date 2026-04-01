@@ -344,28 +344,31 @@ fn re_scan_jsx_token_single_line_text() {
 
 #[test]
 fn test_template_rescan_invalid_hex_escape() {
-    use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
     use tsz_scanner::SyntaxKind;
-    
+    use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
+
     // Template tail with invalid hex escape
     let source = r#"}\xtraordinary`"#;
     let mut scanner = ScannerState::new(source.to_string(), true);
-    
+
     // First scan the }
     scanner.scan();
     assert_eq!(scanner.get_token(), SyntaxKind::CloseBraceToken);
-    
+
     // Now re-scan for template tail
     let token = scanner.re_scan_template_token(false);
-    
+
     // Should be TemplateTail
     assert_eq!(token, SyntaxKind::TemplateTail);
-    
+
     // Should have ContainsInvalidEscape flag
     let flags = scanner.get_token_flags();
     let has_invalid = (flags & TokenFlags::ContainsInvalidEscape as u32) != 0;
-    
-    assert!(has_invalid, 
+
+    assert!(
+        has_invalid,
         "TemplateTail should have ContainsInvalidEscape flag. Flags={}, text={:?}",
-        flags, scanner.get_token_text_ref());
+        flags,
+        scanner.get_token_text_ref()
+    );
 }

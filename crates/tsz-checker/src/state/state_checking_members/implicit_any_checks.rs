@@ -211,11 +211,10 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
                 )
                 .unwrap_or("");
-                let message =
-                    crate::diagnostics::format_message(
-                        template,
-                        &[&suggested_name, &suggested_type],
-                    );
+                let message = crate::diagnostics::format_message(
+                    template,
+                    &[&suggested_name, &suggested_type],
+                );
                 self.error_at_position(
                     rest_start,
                     rest_len,

@@ -2681,22 +2681,21 @@ impl<'a> CheckerState<'a> {
                             .get_export_decl_at(export_idx)
                             .map(|ed| ed.export_clause)
                             .unwrap_or(NodeIndex::NONE);
-                        let is_value_default = self
-                            .ctx
-                            .arena
-                            .get(clause_idx)
-                            .is_some_and(|clause_node| match clause_node.kind {
-                                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                                    || k == syntax_kind_ext::CLASS_DECLARATION
-                                    || k == syntax_kind_ext::INTERFACE_DECLARATION =>
-                                {
-                                    true
+                        let is_value_default =
+                            self.ctx.arena.get(clause_idx).is_some_and(|clause_node| {
+                                match clause_node.kind {
+                                    k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                                        || k == syntax_kind_ext::CLASS_DECLARATION
+                                        || k == syntax_kind_ext::INTERFACE_DECLARATION =>
+                                    {
+                                        true
+                                    }
+                                    k if k == SyntaxKind::Identifier as u16 => self
+                                        .resolve_identifier_symbol(clause_idx)
+                                        .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                        .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
+                                    _ => false,
                                 }
-                                k if k == SyntaxKind::Identifier as u16 => self
-                                    .resolve_identifier_symbol(clause_idx)
-                                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                                    .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
-                                _ => false,
                             });
                         if is_value_default {
                             self.error_at_node(
@@ -2815,16 +2814,20 @@ impl<'a> CheckerState<'a> {
                         }
                     })
                 } else if let Some(named_exports) = self.ctx.arena.get_named_imports(clause) {
-                    named_exports.elements.nodes.iter().find_map(|&specifier_idx| {
-                        let specifier_node = self.ctx.arena.get(specifier_idx)?;
-                        let specifier = self.ctx.arena.get_specifier(specifier_node)?;
-                        if specifier.is_type_only {
-                            return None;
-                        }
-                        let exported_name =
-                            self.get_identifier_text_from_idx(specifier.name)?;
-                        (exported_name == "default").then_some(specifier.name)
-                    })
+                    named_exports
+                        .elements
+                        .nodes
+                        .iter()
+                        .find_map(|&specifier_idx| {
+                            let specifier_node = self.ctx.arena.get(specifier_idx)?;
+                            let specifier = self.ctx.arena.get_specifier(specifier_node)?;
+                            if specifier.is_type_only {
+                                return None;
+                            }
+                            let exported_name =
+                                self.get_identifier_text_from_idx(specifier.name)?;
+                            (exported_name == "default").then_some(specifier.name)
+                        })
                 } else if clause.kind == SyntaxKind::Identifier as u16 {
                     Some(ed.export_clause)
                 } else {
@@ -2892,8 +2895,8 @@ impl<'a> CheckerState<'a> {
                 let clause_node = self.ctx.arena.get(clause_idx)?;
                 let named_exports = self.ctx.arena.get_named_imports(clause_node)?;
 
-                let bridges_interface_merge = named_exports.elements.nodes.iter().any(
-                    |&specifier_idx| {
+                let bridges_interface_merge =
+                    named_exports.elements.nodes.iter().any(|&specifier_idx| {
                         let specifier_node = match self.ctx.arena.get(specifier_idx) {
                             Some(node) => node,
                             None => return false,
@@ -2923,8 +2926,7 @@ impl<'a> CheckerState<'a> {
                                         && interface_default_names.contains(&local_name)
                                 })
                         })
-                    },
-                );
+                    });
 
                 bridges_interface_merge.then_some(export_idx)
             })

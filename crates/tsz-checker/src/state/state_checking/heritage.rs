@@ -614,7 +614,7 @@ impl<'a> CheckerState<'a> {
                                     None
                                 };
 
-                                // Route heritage constructor validation through the canonical 
+                                // Route heritage constructor validation through the canonical
                                 // relation boundary for unified error code routing.
                                 // Instead of directly checking is_constructor_type and emitting TS2507,
                                 // we evaluate the type through the boundary first, then check.
@@ -638,20 +638,22 @@ impl<'a> CheckerState<'a> {
                                     // Evaluate type through the assignability boundary for proper
                                     // resolution. This routes through the canonical boundary and
                                     // ensures the type is fully resolved before checking.
-                                    let evaluated_type = self.evaluate_type_for_assignability(symbol_type);
-                                    
-                                    // Use the assignability boundary to check if this is a valid 
+                                    let evaluated_type =
+                                        self.evaluate_type_for_assignability(symbol_type);
+
+                                    // Use the assignability boundary to check if this is a valid
                                     // constructor type by checking through the solver's relation logic.
-                                    let is_valid_base = if self.is_constructor_type(evaluated_type) {
+                                    let is_valid_base = if self.is_constructor_type(evaluated_type)
+                                    {
                                         true
                                     } else {
                                         // For types that don't directly report as constructors,
                                         // let the general type system handle validation rather
-                                        // than emitting TS2507 directly. The heritage type 
+                                        // than emitting TS2507 directly. The heritage type
                                         // relationship will be validated through standard paths.
                                         false
                                     };
-                                    
+
                                     if !is_valid_base {
                                         // Emit TS2507 through the standard error boundary
                                         use crate::diagnostics::{

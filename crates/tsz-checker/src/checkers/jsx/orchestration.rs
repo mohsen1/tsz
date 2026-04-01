@@ -6,8 +6,8 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -354,9 +354,12 @@ impl<'a> CheckerState<'a> {
         fallback_type: TypeId,
     ) -> TypeId {
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type)
-            && let Some(constraint) =
-                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, component_type)
-            && let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, constraint)
+            && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                component_type,
+            )
+            && let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, constraint)
         {
             for member in members.into_iter().rev() {
                 if let Some(tag_name) = self.get_jsx_single_string_literal_tag_name(member)
@@ -402,9 +405,10 @@ impl<'a> CheckerState<'a> {
             .get_jsx_library_managed_attributes_application(component_type, display_props_type)
             .unwrap_or(display_props_type);
 
-        let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, raw_props_type)
-            || tsz_solver::contains_type_parameters(self.ctx.types, semantic_props_type)
-            || tsz_solver::contains_type_parameters(self.ctx.types, component_type);
+        let raw_has_type_params =
+            tsz_solver::contains_type_parameters(self.ctx.types, raw_props_type)
+                || tsz_solver::contains_type_parameters(self.ctx.types, semantic_props_type)
+                || tsz_solver::contains_type_parameters(self.ctx.types, component_type);
         let display_target = self.format_type(display_props_type);
         Some((semantic_props_type, raw_has_type_params, display_target))
     }
@@ -1400,18 +1404,23 @@ impl<'a> CheckerState<'a> {
             match self.get_element_attributes_property_name_with_check(None) {
                 None => match self.resolve_property_access_with_env(sig.return_type, "props") {
                     PropertyAccessResult::Success { type_id, .. } => Some(type_id),
-                    _ => match self.resolve_property_access_with_env(evaluated_return_type, "props") {
-                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
-                        _ => None,
-                    },
+                    _ => {
+                        match self.resolve_property_access_with_env(evaluated_return_type, "props")
+                        {
+                            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                            _ => None,
+                        }
+                    }
                 },
                 Some(name) if name.is_empty() => Some(sig.return_type),
                 Some(name) => match self.resolve_property_access_with_env(sig.return_type, &name) {
                     PropertyAccessResult::Success { type_id, .. } => Some(type_id),
-                    _ => match self.resolve_property_access_with_env(evaluated_return_type, &name) {
-                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
-                        _ => None,
-                    },
+                    _ => {
+                        match self.resolve_property_access_with_env(evaluated_return_type, &name) {
+                            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                            _ => None,
+                        }
+                    }
                 },
             }
         })?;
@@ -1419,24 +1428,25 @@ impl<'a> CheckerState<'a> {
         let type_args: Vec<_> = sig
             .type_params
             .iter()
-            .map(|param| param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN))
+            .map(|param| {
+                param
+                    .default
+                    .or(param.constraint)
+                    .unwrap_or(TypeId::UNKNOWN)
+            })
             .collect();
         let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
             &sig.type_params,
             &type_args,
         );
-        let instantiated = crate::query_boundaries::common::instantiate_type(
-            self.ctx.types,
-            props,
-            &substitution,
-        );
+        let instantiated =
+            crate::query_boundaries::common::instantiate_type(self.ctx.types, props, &substitution);
         let evaluated = if tsz_solver::is_union_type(self.ctx.types, instantiated)
             || crate::computation::call_inference::should_preserve_contextual_application_shape(
                 self.ctx.types,
                 instantiated,
-            )
-        {
+            ) {
             instantiated
         } else {
             self.evaluate_type_with_env(instantiated)
@@ -1732,15 +1742,14 @@ impl<'a> CheckerState<'a> {
             };
             let declared_component_type =
                 self.get_jsx_identifier_declared_type(tag_name_idx, component_type);
-            let component_type = if !tsz_solver::contains_type_parameters(
-                self.ctx.types,
-                component_type,
-            ) && tsz_solver::contains_type_parameters(self.ctx.types, declared_component_type)
-            {
-                declared_component_type
-            } else {
-                component_type
-            };
+            let component_type =
+                if !tsz_solver::contains_type_parameters(self.ctx.types, component_type)
+                    && tsz_solver::contains_type_parameters(self.ctx.types, declared_component_type)
+                {
+                    declared_component_type
+                } else {
+                    component_type
+                };
 
             let component_metadata_type =
                 self.get_jsx_component_metadata_type(tag_name_idx, component_type);
@@ -2238,7 +2247,9 @@ impl<'a> CheckerState<'a> {
         }
 
         match self.get_jsx_namespace_type() {
-            Some(jsx_sym_id) => self.resolve_jsx_namespace_target_symbol_id(jsx_sym_id).is_some(),
+            Some(jsx_sym_id) => self
+                .resolve_jsx_namespace_target_symbol_id(jsx_sym_id)
+                .is_some(),
             None => true,
         }
     }
@@ -2319,11 +2330,15 @@ impl<'a> CheckerState<'a> {
             symbol.exports.as_ref()?.get(export_name)?
         } else {
             let lib_binders = self.get_lib_binders();
-            let symbol = self.ctx.binder.get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+            let symbol = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
             symbol.exports.as_ref()?.get(export_name)?
         };
         if let Some(file_idx) = file_idx {
-            self.ctx.register_symbol_file_target(export_sym_id, file_idx);
+            self.ctx
+                .register_symbol_file_target(export_sym_id, file_idx);
         }
         Some(export_sym_id)
     }
@@ -2382,8 +2397,11 @@ impl<'a> CheckerState<'a> {
 
         if let Some(module_name) = import_module.as_deref() {
             let export_name = import_name.as_deref().unwrap_or(escaped_name.as_str());
-            let target_sym_id =
-                self.resolve_cross_file_export_from_file(module_name, export_name, Some(source_file_idx))?;
+            let target_sym_id = self.resolve_cross_file_export_from_file(
+                module_name,
+                export_name,
+                Some(source_file_idx),
+            )?;
             return self.resolve_symbol_id_from_origin(target_sym_id, visited);
         }
 
@@ -2394,7 +2412,8 @@ impl<'a> CheckerState<'a> {
         }
         let import = arena.get_import_decl(decl_node)?;
         let entity_name = Self::entity_name_text_in_arena(arena, import.module_specifier)?;
-        let target_sym_id = self.resolve_entity_name_from_file(source_file_idx, &entity_name, visited)?;
+        let target_sym_id =
+            self.resolve_entity_name_from_file(source_file_idx, &entity_name, visited)?;
         Some(target_sym_id)
     }
 
@@ -2414,23 +2433,40 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(current_sym);
 
         for segment in segments {
-            let current_file_idx = self.ctx.resolve_symbol_file_index(current_sym).unwrap_or(file_idx);
+            let current_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(current_sym)
+                .unwrap_or(file_idx);
             let member_sym_id = if let Some(symbol) = self.get_cross_file_symbol(current_sym) {
                 symbol
                     .exports
                     .as_ref()
                     .and_then(|exports| exports.get(segment))
-                    .or_else(|| symbol.members.as_ref().and_then(|members| members.get(segment)))?
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(segment))
+                    })?
             } else {
                 let lib_binders = self.get_lib_binders();
-                let symbol = self.ctx.binder.get_symbol_with_libs(current_sym, &lib_binders)?;
+                let symbol = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(current_sym, &lib_binders)?;
                 symbol
                     .exports
                     .as_ref()
                     .and_then(|exports| exports.get(segment))
-                    .or_else(|| symbol.members.as_ref().and_then(|members| members.get(segment)))?
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(segment))
+                    })?
             };
-            self.ctx.register_symbol_file_target(member_sym_id, current_file_idx);
+            self.ctx
+                .register_symbol_file_target(member_sym_id, current_file_idx);
             current_sym = self
                 .resolve_symbol_id_from_origin(member_sym_id, visited)
                 .unwrap_or(member_sym_id);

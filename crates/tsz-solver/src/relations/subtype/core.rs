@@ -491,8 +491,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
+                // Reset `in_intersection_member_check` for apparent primitive structural
+                // comparison. When called from within a target intersection member loop,
+                // the flag suppresses weak type checks. But the apparent-primitive
+                // comparison is a fresh structural query — the String wrapper shape
+                // should NOT bypass weak type detection when checked against weak types.
+                let saved_inter_check = self.in_intersection_member_check;
+                self.in_intersection_member_check = false;
                 let result =
                     self.check_object_subtype(&shape, None, Some(source), &t_shape, Some(target));
+                self.in_intersection_member_check = saved_inter_check;
                 if result.is_true() {
                     return result;
                 }
@@ -832,11 +840,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // member matches and no type-specific handler intercepts).
         if let Some(members) = intersection_list_id(self.interner, source) {
             let member_list = self.interner.type_list(members);
+            // Reset `in_intersection_member_check` for source member checks.
+            // When we reach here from a target intersection loop, the flag is true
+            // which suppresses weak type checks (TS2559). But the source member checks
+            // are independent subtype queries that need full weak type enforcement.
+            // Without this reset, `string <: { opt?: T }` would incorrectly succeed
+            // (the apparent primitive shape bypasses the weak type check), allowing
+            // intersections like `{ opt: X } & string` to be spuriously assignable to
+            // `{ opt: Y } & string` when X and Y are incompatible.
+            let saved_intersection_check = self.in_intersection_member_check;
+            self.in_intersection_member_check = false;
             for &member in member_list.iter() {
                 if self.check_subtype(member, target).is_true() {
+                    self.in_intersection_member_check = saved_intersection_check;
                     return SubtypeResult::True;
                 }
             }
+            self.in_intersection_member_check = saved_intersection_check;
             // No individual member matches; fall through to type-specific handlers
         }
 

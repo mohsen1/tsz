@@ -3065,14 +3065,8 @@ let x2: string = f;
                     tests_index.to_str().unwrap(),
                     "import * as React from 'react';\nexport var y = 2;\n",
                 ),
-                (
-                    root_react_path.to_str().unwrap(),
-                    "declare global { }\n",
-                ),
-                (
-                    tests_react_path.to_str().unwrap(),
-                    "",
-                ),
+                (root_react_path.to_str().unwrap(), "declare global { }\n"),
+                (tests_react_path.to_str().unwrap(), ""),
             ],
             &options,
             &dir,

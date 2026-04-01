@@ -328,9 +328,7 @@ pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
     if value.is_empty() {
         return None;
     }
-    let value = value
-        .split_once(['-', '+'])
-        .map_or(value, |(core, _)| core);
+    let value = value.split_once(['-', '+']).map_or(value, |(core, _)| core);
     let mut parts = value.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next().unwrap_or("0").parse().ok()?;

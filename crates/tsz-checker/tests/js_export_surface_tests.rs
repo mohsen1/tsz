@@ -624,8 +624,14 @@ function values(
         "./mod.js",
     );
 
-    let ts2722: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2722).collect();
-    let ts18048: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 18048).collect();
+    let ts2722: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2722)
+        .collect();
+    let ts18048: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .collect();
 
     assert!(
         ts2722.is_empty(),
