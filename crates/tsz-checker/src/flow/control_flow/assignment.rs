@@ -1607,24 +1607,33 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
-        let initial_type = self.resolve_assignment_reduction_type(initial_type);
+        // Resolve/evaluate the initial type for union member filtering and enum
+        // checks. IMPORTANT: preserve the original initial_type for non-union
+        // return paths. evaluate_application_type converts Application types to
+        // their structural Object form, destroying the generic identity needed
+        // for variance-based assignability rejection. For non-union types (like
+        // Promise<Foo>), we must return the ORIGINAL Application type, not the
+        // evaluated Object form.
+        let resolved_initial = self.resolve_assignment_reduction_type(initial_type);
 
         // For enum types, narrow directly to the assigned type when it is
         // assignable to the enum. This preserves the enum member identity
         // (e.g. `E.ONE` stays `E.ONE`, not decomposed to `0`).
         // E.g. `let e: E = E.ONE` narrows the flow type from `E` to `E.ONE`.
-        if enum_member_domain(self.interner, initial_type) != initial_type {
+        if enum_member_domain(self.interner, resolved_initial) != resolved_initial {
             let assigned_type = self.resolve_assignment_reduction_type(assigned_type);
-            return if is_assignable(self.interner, assigned_type, initial_type) {
+            return if is_assignable(self.interner, assigned_type, resolved_initial) {
                 assigned_type
             } else {
                 initial_type
             };
         }
 
-        let members_opt = union_members_for_type(self.interner, initial_type);
+        let members_opt = union_members_for_type(self.interner, resolved_initial);
         let members = match members_opt {
             Some(m) => m,
+            // Non-union types: return the ORIGINAL type (not the resolved/evaluated
+            // form) to preserve Application type identity for variance checking.
             None => return initial_type,
         };
 
