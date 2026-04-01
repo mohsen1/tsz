@@ -2018,15 +2018,34 @@ impl<'a> CheckerState<'a> {
             return Some(jsx_sym);
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
-            if self.ctx.binder.global_augmentations.contains_key("JSX") {
+            if self.ctx.binder.global_augmentations.contains_key("JSX")
+                || self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+            {
                 return Some(sym_id);
             }
         }
         if let Some(sym_id) = self.get_cross_file_global_augmentation_symbol_id("JSX") {
             return Some(sym_id);
         }
-        if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
+        // Top-level `declare namespace JSX { ... }` inside an external module is
+        // module-local, not a global JSX namespace. Only script files may use a
+        // plain file-local `JSX` as the global fallback.
+        if !self.ctx.binder.is_external_module()
+            && let Some(sym_id) = self.ctx.binder.file_locals.get("JSX")
+        {
             return Some(sym_id);
+        }
+        if self.ctx.binder.is_external_module() {
+            if let Some(sym_id) = self.get_cross_file_script_global_symbol_id("JSX") {
+                return Some(sym_id);
+            }
+            let lib_binders = self.get_lib_binders();
+            for lib_binder in lib_binders.iter() {
+                if let Some(sym_id) = lib_binder.file_locals.get("JSX") {
+                    return Some(sym_id);
+                }
+            }
+            return None;
         }
         let lib_binders = self.get_lib_binders();
         if let Some(sym_id) = self
@@ -2055,6 +2074,40 @@ impl<'a> CheckerState<'a> {
             Some(jsx_sym_id) => self.resolve_jsx_namespace_target_symbol_id(jsx_sym_id).is_some(),
             None => true,
         }
+    }
+
+    fn get_cross_file_script_global_symbol_id(&self, name: &str) -> Option<SymbolId> {
+        let all_binders = self.ctx.all_binders.as_ref()?;
+
+        if let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+        {
+            for &(file_idx, sym_id) in entries {
+                let Some(binder) = all_binders.get(file_idx) else {
+                    continue;
+                };
+                if binder.is_external_module() {
+                    continue;
+                }
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+                return Some(sym_id);
+            }
+        }
+
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            if binder.is_external_module() {
+                continue;
+            }
+            if let Some(sym_id) = binder.file_locals.get(name) {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     fn get_cross_file_global_augmentation_symbol_id(&self, name: &str) -> Option<SymbolId> {
