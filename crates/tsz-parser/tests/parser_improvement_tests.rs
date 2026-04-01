@@ -1773,11 +1773,9 @@ function hof2(f: function(this: number, string): string) {
         parser.get_diagnostics()
     );
 
-    assert!(
-        diagnostics.contains(&2554),
-        "Expected TS2554 from bad call with `this` signature, got {:?}",
-        parser.get_diagnostics()
-    );
+    // TS2554 (too many arguments) is a checker-level diagnostic; it cannot appear
+    // in parser diagnostics. The parser's job is to recover JSDoc `function(...)` into
+    // a well-formed FunctionType so the checker can later produce TS2554.
 
     assert!(
         !diagnostics
