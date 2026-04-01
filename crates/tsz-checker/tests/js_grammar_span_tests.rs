@@ -97,3 +97,21 @@ fn js_optional_parameters_report_ts8009_at_question_token() {
     );
     assert_eq!(ts8009[0].length, 1, "unexpected diagnostic length: {ts8009:#?}");
 }
+
+#[test]
+fn parameter_property_rest_error_anchors_at_modifier() {
+    let source = r#"class Foo3 {
+  constructor (public ...args: string[]) { }
+}"#;
+
+    let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
+    let ts1317: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 1317).collect();
+
+    assert_eq!(ts1317.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
+
+    let public_start = source.find("public").expect("public keyword") as u32;
+    assert_eq!(
+        ts1317[0].start, public_start,
+        "Expected TS1317 to anchor at the parameter property modifier. Actual diagnostics: {ts1317:#?}"
+    );
+}
