@@ -838,7 +838,7 @@ fn compile_inner(
             || d.code
                 == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
     });
-    
+
     // TS5107/TS5101 (deprecation warnings for deprecated options/values) are fatal in tsc 6.0.
     // They stop compilation and only config-level diagnostics are reported.
     // Match this behavior to avoid extra file-level diagnostics.
@@ -1524,7 +1524,7 @@ fn compile_inner(
             // Parser/grammar errors (1xxx range) and JS grammar errors (8xxx range)
             (code >= 1000 && code < 2000) || (code >= 8000 && code < 9000)
         });
-        
+
         if has_grammar_errors {
             // Grammar errors take precedence - suppress TS5107/TS5101
             diagnostics.retain(|d| {
