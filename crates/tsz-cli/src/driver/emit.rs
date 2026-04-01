@@ -45,6 +45,7 @@ pub(crate) fn emit_outputs(
         )
     });
     let mut declaration_bundle_chunks = Vec::new();
+    let mut declaration_bundle_blocked = false;
 
     // When --outFile is set and there are multiple source files, collect JS
     // chunks and concatenate at the end instead of emitting individual files.
@@ -425,7 +426,14 @@ pub(crate) fn emit_outputs(
                 }
 
                 let mut contents = emitter.emit(file.source_file);
-                emit_diagnostics.extend(normalize_ts2883_diagnostics(emitter.take_diagnostics()));
+                let emitter_diagnostics = normalize_ts2883_diagnostics(emitter.take_diagnostics());
+                let declaration_emit_blocked =
+                    emitter_diagnostics.iter().any(|diagnostic| diagnostic.code == 7056);
+                emit_diagnostics.extend(emitter_diagnostics);
+                if declaration_emit_blocked {
+                    declaration_bundle_blocked = true;
+                    continue;
+                }
                 let map_json = map_info
                     .as_ref()
                     .and_then(|_| emitter.generate_source_map_json());
@@ -496,6 +504,7 @@ pub(crate) fn emit_outputs(
 
     if let Some(bundle_path) = declaration_bundle_path
         && !declaration_bundle_chunks.is_empty()
+        && !declaration_bundle_blocked
     {
         outputs.push(OutputFile {
             path: bundle_path,
