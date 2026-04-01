@@ -15315,7 +15315,6 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
-#[ignore] // TODO: TS2344 for recursive Shared<GetProps<C>> constraint not yet emitted
 fn test_ts2344_reports_for_recursive_shared_constraint_in_component_enhancer() {
     if !lib_files_available() {
         return;
@@ -15412,7 +15411,6 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
-#[ignore] // TODO: TS2344 for exported recursive shared constraint not yet emitted
 fn test_ts2344_reports_for_recursive_shared_constraint_in_exported_component_enhancer() {
     if !lib_files_available() {
         return;
