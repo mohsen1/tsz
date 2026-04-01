@@ -9795,9 +9795,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return false;
         };
-        let Some(source_arena) = binder.symbol_arenas.get(&sym_id) else {
-            return false;
-        };
+        let source_arena = binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.arena);
 
         for decl_idx in symbol.declarations.iter().copied() {
             let Some(decl_node) = source_arena.get(decl_idx) else {
@@ -9813,8 +9815,124 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     return true;
                 }
+                if self.emit_non_portable_expression_declared_return_diagnostic(
+                    var_decl.initializer,
+                    decl_name,
+                    file,
+                    pos,
+                    length,
+                ) {
+                    return true;
+                }
                 if self.emit_non_portable_expression_symbol_diagnostic(
                     var_decl.initializer,
+                    decl_name,
+                    file,
+                    pos,
+                    length,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn emit_non_portable_expression_declared_return_diagnostic(
+        &mut self,
+        expr_idx: NodeIndex,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let sym_id = match expr_node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .arena
+                .get_call_expr(expr_node)
+                .and_then(|call| self.value_reference_symbol(call.expression)),
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => self
+                .arena
+                .get_tagged_template(expr_node)
+                .and_then(|tagged| self.value_reference_symbol(tagged.tag)),
+            _ => None,
+        };
+
+        let Some(sym_id) = sym_id else {
+            return false;
+        };
+        self.emit_non_portable_callable_symbol_declared_return_diagnostic(
+            sym_id, decl_name, file, pos, length,
+        )
+    }
+
+    fn emit_non_portable_callable_symbol_declared_return_diagnostic(
+        &mut self,
+        sym_id: SymbolId,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        let Some(source_arena) = binder.symbol_arenas.get(&sym_id) else {
+            return false;
+        };
+        let Some(source_file) = self.arena_source_file(source_arena.as_ref()) else {
+            return false;
+        };
+        if !source_file.is_declaration_file {
+            return false;
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+
+            if let Some(function) = source_arena.get_function(decl_node)
+                && function.type_annotation.is_some()
+                && self.emit_non_portable_type_node_diagnostic_from_arena(
+                    source_arena.as_ref(),
+                    function.type_annotation,
+                    decl_name,
+                    file,
+                    pos,
+                    length,
+                )
+            {
+                return true;
+            }
+
+            if let Some(signature) = source_arena.get_signature(decl_node) {
+                let return_type_node = if decl_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
+                    let Some(type_node) = source_arena.get(signature.type_annotation) else {
+                        continue;
+                    };
+                    source_arena
+                        .get_function_type(type_node)
+                        .map_or(signature.type_annotation, |function_type| {
+                            function_type.type_annotation
+                        })
+                } else {
+                    signature.type_annotation
+                };
+                if self.emit_non_portable_type_node_diagnostic_from_arena(
+                    source_arena.as_ref(),
+                    return_type_node,
                     decl_name,
                     file,
                     pos,
@@ -10233,7 +10351,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_non_portable_symbol_declaration_diagnostic(sym_id, decl_name, file, pos, length)
     }
 
-    fn emit_non_portable_import_type_text_diagnostics(
+    pub(crate) fn emit_non_portable_import_type_text_diagnostics(
         &mut self,
         printed_type_text: &str,
         decl_name: &str,
@@ -10245,7 +10363,8 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         let mut references = self.collect_non_portable_references_in_symbol_declaration(sym_id);
-        if let Some(parsed_reference) = self.parse_import_type_text(printed_type_text)
+        if self.import_type_uses_private_package_subpath(printed_type_text)
+            && let Some(parsed_reference) = self.parse_import_type_text(printed_type_text)
             && !references.contains(&parsed_reference)
         {
             references.insert(0, parsed_reference);
@@ -10256,6 +10375,52 @@ impl<'a> DeclarationEmitter<'a> {
         {
             references.push(root_reference);
         }
+        if references.is_empty() {
+            return false;
+        }
+        for (from_path, type_name) in references {
+            self.emit_non_portable_named_reference_diagnostic(
+                decl_name, file, pos, length, &from_path, &type_name,
+            );
+        }
+        true
+    }
+
+    fn emit_non_portable_type_node_diagnostic_from_arena(
+        &mut self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        if !node_idx.is_some() {
+            return false;
+        }
+
+        let arena_addr = arena as *const NodeArena as usize;
+        let Some(source_path) = self.arena_to_path.get(&arena_addr).cloned() else {
+            return false;
+        };
+
+        let mut visited_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_nodes = rustc_hash::FxHashSet::default();
+        let mut visited_types = rustc_hash::FxHashSet::default();
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut references = Vec::new();
+        self.collect_non_portable_references_in_type_node(
+            arena,
+            node_idx,
+            &source_path,
+            &mut references,
+            &mut seen,
+            &mut visited_types,
+            &mut visited_symbols,
+            &mut visited_declaration_symbols,
+            &mut visited_nodes,
+        );
         if references.is_empty() {
             return false;
         }
@@ -10675,7 +10840,7 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    fn import_type_uses_private_package_subpath(&self, printed: &str) -> bool {
+    pub(crate) fn import_type_uses_private_package_subpath(&self, printed: &str) -> bool {
         let Some(rest) = printed.strip_prefix("import(\"") else {
             return false;
         };
