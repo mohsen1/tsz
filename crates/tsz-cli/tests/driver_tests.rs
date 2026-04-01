@@ -5965,6 +5965,67 @@ const y: originalZZZ = x;
 }
 
 #[test]
+fn compile_module_augmentation_default_interface_alias_merges_without_ts2300() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs"
+  },
+  "files": ["a.ts", "b.ts", "c.ts"]
+}"#,
+    );
+
+    write_file(
+        &base.join("a.ts"),
+        r#"interface I {}
+export default I;
+"#,
+    );
+
+    write_file(
+        &base.join("b.ts"),
+        r#"export {};
+declare module "./a" {
+    export default interface I { x: number; }
+}
+"#,
+    );
+
+    write_file(
+        &base.join("c.ts"),
+        r#"import I from "./a";
+function f(i: I) {
+    i.x;
+}
+"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::DUPLICATE_IDENTIFIER),
+        "Expected module augmentation default interface alias merge to avoid TS2300, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 2339),
+        "Expected merged default interface alias to expose x in imports, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_multi_file_project_with_type_imports() {
     // Test type-only imports compile correctly
     let temp = TempDir::new().expect("temp dir");

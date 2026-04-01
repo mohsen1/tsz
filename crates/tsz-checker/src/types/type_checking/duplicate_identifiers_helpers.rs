@@ -422,6 +422,18 @@ impl<'a> CheckerState<'a> {
                         let is_exported =
                             self.is_declaration_exported(decl_arena.as_ref(), decl_idx);
                         declarations.push((decl_idx, flags, is_exported));
+                    } else if name == "default"
+                        && let Some(target_sym_id) = self
+                            .default_export_alias_target_symbol_in_file(binder, decl_arena.as_ref(), decl_idx)
+                    {
+                        self.push_export_surface_symbol_declarations_in_file(
+                            binder,
+                            arena,
+                            target_sym_id,
+                            Some(true),
+                            &mut declarations,
+                            &mut seen,
+                        );
                     }
                 }
             } else if seen.insert(decl_idx.0)
@@ -429,10 +441,81 @@ impl<'a> CheckerState<'a> {
             {
                 let is_exported = self.is_declaration_exported(arena, decl_idx);
                 declarations.push((decl_idx, flags, is_exported));
+            } else if name == "default"
+                && let Some(target_sym_id) =
+                    self.default_export_alias_target_symbol_in_file(binder, arena, decl_idx)
+            {
+                self.push_export_surface_symbol_declarations_in_file(
+                    binder,
+                    arena,
+                    target_sym_id,
+                    Some(true),
+                    &mut declarations,
+                    &mut seen,
+                );
             }
         }
 
         declarations
+    }
+
+    fn default_export_alias_target_symbol_in_file(
+        &self,
+        binder: &tsz_binder::BinderState,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let export_decl_idx = self.resolve_duplicate_decl_node(arena, decl_idx)?;
+        let export_node = arena.get(export_decl_idx)?;
+        if export_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            return None;
+        }
+        let export_decl = arena.get_export_decl(export_node)?;
+        if !export_decl.is_default_export {
+            return None;
+        }
+        let clause_node = arena.get(export_decl.export_clause)?;
+        if clause_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let ident = arena.get_identifier(clause_node)?;
+        binder.file_locals.get(&ident.escaped_text)
+    }
+
+    fn push_export_surface_symbol_declarations_in_file(
+        &self,
+        binder: &tsz_binder::BinderState,
+        arena: &tsz_parser::parser::node::NodeArena,
+        sym_id: tsz_binder::SymbolId,
+        exported_override: Option<bool>,
+        declarations: &mut Vec<(NodeIndex, u32, bool)>,
+        seen: &mut FxHashSet<u32>,
+    ) {
+        let Some(symbol) = binder.get_symbol(sym_id) else {
+            return;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for decl_arena in arenas {
+                    if !std::ptr::eq(decl_arena.as_ref(), arena) || !seen.insert(decl_idx.0) {
+                        continue;
+                    }
+                    if let Some(flags) = self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
+                    {
+                        let is_exported = exported_override
+                            .unwrap_or_else(|| self.is_declaration_exported(decl_arena.as_ref(), decl_idx));
+                        declarations.push((decl_idx, flags, is_exported));
+                    }
+                }
+            } else if seen.insert(decl_idx.0)
+                && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
+            {
+                let is_exported =
+                    exported_override.unwrap_or_else(|| self.is_declaration_exported(arena, decl_idx));
+                declarations.push((decl_idx, flags, is_exported));
+            }
+        }
     }
 
     fn module_augmentation_targets_current_file_export(
