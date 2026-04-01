@@ -139,26 +139,34 @@ fn post_process_checker_diagnostics(
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
     }
 
-    // When TS5107/TS5101 deprecation diagnostics are present, tsc 6.0 stops
-    // type checking but continues parsing. Type-checking errors (type
-    // relationships, assignability, inference) are suppressed, but other
-    // semantic errors may still be emitted.
+    // When TS5107/TS5101 deprecation diagnostics are present, suppress the most
+    // common type relationship errors that tsc would not emit. Parser errors
+    // (<2000) are handled separately and not affected by this filter.
     if has_deprecation_diagnostics {
-        // Suppress type relationship errors (TS2xxx except TS2458 amd module names)
-        checker_diagnostics.retain(|diag| {
-            let code = diag.code;
-            // Always keep parser errors (<2000) and JS grammar (8000-9000)
-            if code < 2000 || (8000..9000).contains(&code) {
-                return true;
-            }
-            // Suppress type relationship errors: TS2300-TS2999 except specific codes
-            if (2300..3000).contains(&code) {
-                // Keep AMD module name error (TS2458)
-                return code == 2458;
-            }
-            // Keep other semantic errors (TS1xxx was already handled, TS3xxx+, TS5xxx+, TS6xxx+, TS7xxx+)
-            true
-        });
+        // Type relationship errors to suppress when deprecation warnings are present
+        const SUPPRESSED_TYPE_CODES: &[u32] = &[
+            2322, // TS2322: Type not assignable
+            2345, // TS2345: Argument not assignable
+            2339, // TS2339: Property does not exist
+            2343, // TS2343: Access modifier error
+            2304, // TS2304: Cannot find name
+            2307, // TS2307: Cannot find module
+            7006, // TS7006: Parameter implicitly has 'any' type
+            7005, // TS7005: Variable implicitly has 'any' type
+            2323, // TS2323: Cannot redeclare exported variable
+            2741, // TS2741: Missing properties
+            2510, // TS2510: Cannot assign to read-only property
+            2694, // TS2694: Namespace not found
+            2531, // TS2531: Possibly null
+            2532, // TS2532: Possibly undefined
+            2533, // TS2533: Object is possibly null or undefined
+            2564, // TS2564: Property has no initializer
+            2454, // TS2454: Variable used before being assigned
+            2403, // TS2403: Subsequent variable declarations must have same type
+            2411, // TS2411: Property conflict
+            2300, // TS2300: Duplicate identifier
+        ];
+        checker_diagnostics.retain(|diag| !SUPPRESSED_TYPE_CODES.contains(&diag.code));
     }
 
     // Suppress semantic errors that cascade from structural parse failures.
