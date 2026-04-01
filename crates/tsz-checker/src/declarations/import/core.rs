@@ -2908,16 +2908,21 @@ impl<'a> CheckerState<'a> {
                             _ => return false,
                         };
                         let _ = exported_name;
-                        let local_name_idx = if specifier.property_name.is_some() {
-                            specifier.property_name
-                        } else {
-                            specifier.name
-                        };
-                        let Some(local_name) = self.get_identifier_text_from_idx(local_name_idx)
-                        else {
-                            return false;
-                        };
-                        interface_default_names.contains(&local_name)
+                        let mut candidate_name_indices = Vec::with_capacity(2);
+                        if specifier.property_name.is_some() {
+                            candidate_name_indices.push(specifier.property_name);
+                        }
+                        if specifier.name.is_some() {
+                            candidate_name_indices.push(specifier.name);
+                        }
+
+                        candidate_name_indices.into_iter().any(|candidate_idx| {
+                            self.get_identifier_text_from_idx(candidate_idx)
+                                .is_some_and(|local_name| {
+                                    local_name != "default"
+                                        && interface_default_names.contains(&local_name)
+                                })
+                        })
                     },
                 );
 
