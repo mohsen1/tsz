@@ -408,3 +408,60 @@ interface C extends A, B { }
         "Should NOT emit TS2430 when bases have compatible index signatures"
     );
 }
+
+// =========================================================================
+// Overloaded generic callable property: tsc N×M erasure path
+// =========================================================================
+
+#[test]
+fn test_overloaded_generic_callable_property_no_false_ts2430() {
+    // When a property type is a callable object with overloaded generic signatures,
+    // the child interface may override it with a single generic function type.
+    // tsc's N×M signaturesRelatedTo path erases type params to `any`, making
+    // `{ <T extends Derived>(a: T): T; <T extends Base>(a: T): T; }` assignable
+    // to `<T>(a: T) => T`. This must not produce a false TS2430.
+    let source = r#"
+class Base { foo: string = ""; }
+class Derived extends Base { bar: string = ""; }
+
+interface Parent {
+    method: {
+        (x: {
+            <T extends Derived>(a: T): T;
+            <T extends Base>(a: T): T;
+        }): any[];
+    };
+}
+
+interface Child extends Parent {
+    method: (x: <T>(a: T) => T) => any[];
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2430),
+        "Should NOT emit TS2430 when overloaded generic callable property is \
+         overridden by a single generic function. tsc's N×M erasure path accepts this."
+    );
+}
+
+#[test]
+fn test_overloaded_generic_callable_property_incompatible_still_errors() {
+    // The erasure path must NOT suppress genuine incompatibilities.
+    // Here the return type is wrong (number[] vs string[]).
+    let source = r#"
+interface Parent {
+    method: {
+        (x: number): string[];
+        (x: string): string[];
+    };
+}
+
+interface Child extends Parent {
+    method: (x: number) => number[];
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should still emit TS2430 when overloaded property has genuinely incompatible types"
+    );
+}

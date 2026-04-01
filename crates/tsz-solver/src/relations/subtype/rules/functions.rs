@@ -24,15 +24,94 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
 /// Build a `TypeSubstitution` that maps each type parameter to its constraint
-/// (or `unknown` if unconstrained). This corresponds to tsc's `getErasedSignature` /
-/// `getCanonicalSignature` behavior — used when generic signatures need to be
-/// compared structurally after erasing their type parameter identities.
+/// (or `unknown` if unconstrained). This corresponds to tsc's `getCanonicalSignature`
+/// behavior — used when generic signatures need to be compared structurally after
+/// erasing their type parameter identities.
 fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) -> TypeSubstitution {
     let mut sub = TypeSubstitution::new();
     for tp in type_params {
         sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
     }
     sub
+}
+
+/// Build a `TypeSubstitution` that maps each type parameter to `any`.
+/// This matches tsc's `getErasedSignature` / `createTypeEraser` behavior, which
+/// maps type parameters to `any` (NOT to their constraints). Used in the N×M
+/// signature comparison path (`signaturesRelatedTo` with `erase = true`) where
+/// multiple overloaded signatures are compared against a target.
+fn erase_type_params_to_any(type_params: &[TypeParamInfo]) -> TypeSubstitution {
+    let mut sub = TypeSubstitution::new();
+    for tp in type_params {
+        sub.insert(tp.name, TypeId::ANY);
+    }
+    sub
+}
+
+/// Erase a call signature's type parameters to `any`, producing a non-generic
+/// `FunctionShape`. Used by the N×M signature comparison path.
+fn erase_call_sig_to_any(sig: &CallSignature, interner: &dyn crate::TypeDatabase) -> FunctionShape {
+    use crate::instantiation::instantiate::instantiate_type;
+    if sig.type_params.is_empty() {
+        return FunctionShape {
+            type_params: Vec::new(),
+            params: sig.params.clone(),
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate,
+            is_constructor: false,
+            is_method: sig.is_method,
+        };
+    }
+    let sub = erase_type_params_to_any(&sig.type_params);
+    let erased_params: Vec<_> = sig
+        .params
+        .iter()
+        .map(|p| ParamInfo {
+            name: p.name,
+            type_id: instantiate_type(interner, p.type_id, &sub),
+            optional: p.optional,
+            rest: p.rest,
+        })
+        .collect();
+    FunctionShape {
+        type_params: Vec::new(),
+        params: erased_params,
+        this_type: sig.this_type,
+        return_type: instantiate_type(interner, sig.return_type, &sub),
+        type_predicate: sig.type_predicate,
+        is_constructor: false,
+        is_method: sig.is_method,
+    }
+}
+
+/// Erase a function shape's type parameters to `any`, producing a non-generic
+/// `FunctionShape`. Used by the N×M signature comparison path.
+fn erase_fn_shape_to_any(f: &FunctionShape, interner: &dyn crate::TypeDatabase) -> FunctionShape {
+    use crate::instantiation::instantiate::instantiate_type;
+    if f.type_params.is_empty() {
+        return f.clone();
+    }
+    let sub = erase_type_params_to_any(&f.type_params);
+    let erased_params: Vec<_> = f
+        .params
+        .iter()
+        .map(|p| ParamInfo {
+            name: p.name,
+            type_id: instantiate_type(interner, p.type_id, &sub),
+            optional: p.optional,
+            rest: p.rest,
+        })
+        .collect();
+    FunctionShape {
+        type_params: Vec::new(),
+        params: erased_params,
+        this_type: f.this_type,
+        return_type: instantiate_type(interner, f.return_type, &sub),
+        type_predicate: f.type_predicate,
+        is_constructor: f.is_constructor,
+        is_method: f.is_method,
+    }
 }
 
 fn resolve_contextual_source_inference_candidate(
@@ -1795,12 +1874,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_fn = self.interner.function_shape(s_fn_id);
         let t_callable = self.interner.callable_shape(t_callable_id);
 
+        let has_multiple_target_sigs = t_callable.call_signatures.len() > 1;
+
         for t_sig in &t_callable.call_signatures {
             if s_fn.is_constructor {
                 return SubtypeResult::False;
             }
             if !self.check_call_signature_subtype_fn(&s_fn, t_sig).is_true() {
-                return SubtypeResult::False;
+                // tsc N×M path: when the target has multiple call signatures, try
+                // erasing type params to `any` before rejecting. This matches tsc's
+                // `signaturesRelatedTo` which uses `erase = true` for the N×M case.
+                if has_multiple_target_sigs {
+                    if !self.check_erased_fn_subtype_to_sig(&s_fn, t_sig).is_true() {
+                        return SubtypeResult::False;
+                    }
+                } else {
+                    return SubtypeResult::False;
+                }
             }
         }
 
@@ -1904,7 +1994,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
         }
+
+        // tsc N×M path: when a callable has multiple signatures and the direct
+        // comparison above fails, try erasing type parameters to `any` (matching
+        // tsc's `getErasedSignature` / `createTypeEraser`). In tsc's
+        // `signaturesRelatedTo`, the N×M case (source.length > 1 || target.length > 1)
+        // always uses `erase = true`, which maps type params to `any`. This allows
+        // overloaded callables with constrained generics (e.g., `{ <T extends A>(x: T): T;
+        // <T extends B>(x: T): T }`) to be assignable to unconstrained generic functions
+        // (e.g., `<T>(x: T) => T`), because after erasure both become `(x: any) => any`.
+        if s_callable.call_signatures.len() > 1 {
+            for s_sig in &s_callable.call_signatures {
+                if self
+                    .check_erased_signature_subtype_to_fn(s_sig, &t_fn)
+                    .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         SubtypeResult::False
+    }
+
+    /// Compare a function type against a call signature after erasing both signatures'
+    /// type parameters to `any`. Matches tsc's N×M `signaturesRelatedTo` path.
+    fn check_erased_fn_subtype_to_sig(
+        &mut self,
+        s_fn: &FunctionShape,
+        t_sig: &CallSignature,
+    ) -> SubtypeResult {
+        let s_erased = erase_fn_shape_to_any(s_fn, self.interner);
+        let t_erased = erase_call_sig_to_any(t_sig, self.interner);
+        self.check_function_subtype(&s_erased, &t_erased)
+    }
+
+    /// Compare a call signature against a function type after erasing both signatures'
+    /// type parameters to `any`. Matches tsc's N×M `signaturesRelatedTo` path.
+    fn check_erased_signature_subtype_to_fn(
+        &mut self,
+        s_sig: &CallSignature,
+        t_fn: &FunctionShape,
+    ) -> SubtypeResult {
+        let s_erased = erase_call_sig_to_any(s_sig, self.interner);
+        let t_erased = erase_fn_shape_to_any(t_fn, self.interner);
+        self.check_function_subtype(&s_erased, &t_erased)
     }
 
     /// Try to instantiate a generic callable signature to match a concrete function type.
@@ -1975,12 +2109,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Unlike call-site overload resolution (which uses only the implementation/last
         // signature), structural subtype checking uses ALL source signatures — matching
         // tsc's signaturesRelatedTo N×M comparison.
+        let is_multi_sig = source.call_signatures.len() > 1 || target.call_signatures.len() > 1;
         for t_sig in &target.call_signatures {
             let mut found_match = false;
             for s_sig in &source.call_signatures {
                 if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
                     found_match = true;
                     break;
+                }
+            }
+            // tsc N×M path: when either side has multiple signatures, try erasing
+            // type params to `any` (matching tsc's `getErasedSignature` behavior).
+            if !found_match && is_multi_sig {
+                for s_sig in &source.call_signatures {
+                    if self
+                        .check_erased_call_signature_subtype(s_sig, t_sig)
+                        .is_true()
+                    {
+                        found_match = true;
+                        break;
+                    }
                 }
             }
             if !found_match {
@@ -2092,6 +2240,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &CallSignature,
     ) -> SubtypeResult {
         self.check_call_signature_subtype_impl(source, target, false)
+    }
+
+    /// Compare two call signatures after erasing both signatures' type parameters
+    /// to `any`. Used in the N×M callable subtype path to match tsc's behavior.
+    fn check_erased_call_signature_subtype(
+        &mut self,
+        source: &CallSignature,
+        target: &CallSignature,
+    ) -> SubtypeResult {
+        use crate::instantiation::instantiate::instantiate_type;
+
+        let s_erased = erase_call_sig_to_any(source, self.interner);
+        let t_erased = erase_call_sig_to_any(target, self.interner);
+        self.check_function_subtype(&s_erased, &t_erased)
     }
 
     pub(crate) fn check_call_signature_subtype_as_constructor(
