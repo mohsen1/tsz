@@ -15,7 +15,8 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
-        let declared = self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+        let declared =
+            self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
         if !declared.is_empty() {
             return declared;
         }
@@ -27,9 +28,13 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> usize {
-        let declared = self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+        let declared =
+            self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
         if !declared.is_empty() {
-            return declared.iter().filter(|param| param.default.is_none()).count();
+            return declared
+                .iter()
+                .filter(|param| param.default.is_none())
+                .count();
         }
         self.count_required_type_params(sym_id)
     }
@@ -123,9 +128,7 @@ impl<'a> CheckerState<'a> {
                     let required_count = self
                         .count_required_type_params_from_ast(sym_id)
                         .filter(|_| !type_params.is_empty())
-                        .unwrap_or_else(|| {
-                            self.count_required_reference_type_params(sym_id, name)
-                        });
+                        .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, name));
                     if required_count > 0
                         // Skip TS2314 for self-references within the same type alias.
                         // TSC handles circular self-references (e.g. `type T1<X> = T1`)
@@ -413,6 +416,14 @@ impl<'a> CheckerState<'a> {
                 let target_sym_id = self.resolve_alias_symbol(sym_id, &mut visited);
 
                 if matches!(symbol.import_name.as_deref(), Some("*")) && target_sym_id.is_some() {
+                    if symbol.is_umd_export {
+                        if let Some(target_sym_id) = target_sym_id
+                            && target_sym_id != sym_id
+                        {
+                            return self.symbol_is_namespace_only(target_sym_id);
+                        }
+                        return false;
+                    }
                     return true;
                 }
 

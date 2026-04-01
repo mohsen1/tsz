@@ -6535,6 +6535,54 @@ export = f;
 }
 
 #[test]
+fn test_umd_export_as_namespace_class_is_usable_in_type_position() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "foo.d.ts",
+                r#"
+declare class Thing {
+    foo(): number;
+}
+declare namespace Thing {
+    interface SubThing {}
+}
+export = Thing;
+export as namespace Foo;
+"#,
+            ),
+            (
+                "a.ts",
+                r#"
+/// <reference path="foo.d.ts" />
+import * as ff from "./foo";
+
+declare let y: Foo;
+y.foo();
+declare let z: Foo.SubThing;
+let x: any = Foo;
+"#,
+            ),
+        ],
+        "a.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2709),
+        "Did not expect TS2709 for UMD export-as-namespace class in type position. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2686),
+        "Expected TS2686 for bare UMD global value access in module file. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_uninstantiated_namespace_shadowing_symbol_uses_global_value_for_property_access() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
@@ -21618,7 +21666,10 @@ namespace N {
 type Works = N.Collection.Keyed<string, number>;
 "#,
     );
-    let ts2314: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2314).collect();
+    let ts2314: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2314)
+        .collect();
     assert!(
         ts2314.is_empty(),
         "Qualified merged namespace members in type position should not validate against the value-side arity. Got: {ts2314:?}. All: {diagnostics:?}"
@@ -21636,7 +21687,10 @@ declare function Collection<T>(collection: Iterable<T>): Collection<number, T>;
 type Works = Collection<any, any>;
 "#,
     );
-    let ts2314: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2314).collect();
+    let ts2314: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2314)
+        .collect();
     assert!(
         ts2314.is_empty(),
         "Merged function/interface symbols should use the interface arity in type position. Got: {ts2314:?}. All: {diagnostics:?}"
@@ -21657,7 +21711,10 @@ declare namespace Immutable {
 }
 "#,
     );
-    let ts2314: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2314).collect();
+    let ts2314: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2314)
+        .collect();
     assert!(
         ts2314.is_empty(),
         "Unqualified names inside a namespace body should use the merged type-side arity. Got: {ts2314:?}. All: {diagnostics:?}"
@@ -21702,7 +21759,10 @@ interface Indexed<T> extends Collection<number, T> { toSeq(): SeqIndexed<T>; }
 interface SeqIndexed<T> extends Seq<number, T>, Indexed<T> { toSeq(): this; }
 "#,
     );
-    let ts2430: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2430).collect();
+    let ts2430: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2430)
+        .collect();
     assert!(
         !ts2430.is_empty(),
         "Polymorphic this mismatch should emit TS2430 for Indexed<T>. All: {diagnostics:?}"
@@ -21719,7 +21779,10 @@ interface SetCollection<T> extends Collection<never, T> { toSeq(): SeqSet<T>; }
 interface SeqSet<T> extends Seq<never, T>, SetCollection<T> { toSeq(): this; }
 "#,
     );
-    let ts2430: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2430).collect();
+    let ts2430: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2430)
+        .collect();
     assert!(
         !ts2430.is_empty(),
         "Polymorphic this mismatch should emit TS2430 for SetCollection<T>. All: {diagnostics:?}"
