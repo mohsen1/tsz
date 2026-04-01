@@ -1223,7 +1223,9 @@ impl<'a> CheckerState<'a> {
             checker.literal_type_from_initializer(rhs_expr)
         }?;
 
-        tsz_solver::type_queries::is_string_literal(self.ctx.types, literal).then_some(literal)
+        crate::query_boundaries::common::string_literal_value(self.ctx.types, literal)
+            .is_some()
+            .then_some(literal)
     }
 
     fn augment_commonjs_export_object_type_with_expandos(
