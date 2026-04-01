@@ -1700,13 +1700,12 @@ impl<'a> CheckerState<'a> {
                     } else {
                         false
                     };
-                    // tsc suppresses TS2403 in JS/checkJs files — var redeclaration
-                    // is idiomatic JavaScript and doesn't warrant a type error.
-                    let is_js_file = self.ctx.is_js_file();
+                    // Unchecked JS files do not participate in TS2403, but checked
+                    // JS (`// @ts-check` / checkJs) still uses redeclaration identity.
                     if !is_mergeable_declaration
                         && !has_ns_export_visibility_mismatch
                         && !is_cross_namespace_body
-                        && !is_js_file
+                        && !is_non_checked_js
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
                     {
                         if let Some(ref name) = var_name {
@@ -1791,14 +1790,18 @@ impl<'a> CheckerState<'a> {
                                             // Module-scoped variables don't merge with globals.
                                             if !is_in_function_scope
                                                 && !is_bare_declaration
-                                                && !self.ctx.is_js_file()
+                                                && !is_non_checked_js
                                                 && !self.are_var_decl_types_compatible(
-                                                    lib_type, final_type,
+                                                    lib_type,
+                                                    raw_declared_type,
                                                 )
                                                 && let Some(ref name) = var_name
                                             {
                                                 self.error_subsequent_variable_declaration(
-                                                    name, lib_type, final_type, decl_idx,
+                                                    name,
+                                                    lib_type,
+                                                    raw_declared_type,
+                                                    decl_idx,
                                                 );
                                             }
                                             prior_type_found =
@@ -1910,11 +1913,17 @@ impl<'a> CheckerState<'a> {
                                     && !is_non_exported_ns_var
                                     && !is_other_non_exported_ns_var
                                     && !has_ns_export_visibility_mismatch
-                                    && !self.are_var_decl_types_compatible(other_type, final_type)
+                                    && !self.are_var_decl_types_compatible(
+                                        other_type,
+                                        raw_declared_type,
+                                    )
                                     && let Some(ref name) = var_name
                                 {
                                     self.error_subsequent_variable_declaration(
-                                        name, other_type, final_type, decl_idx,
+                                        name,
+                                        other_type,
+                                        raw_declared_type,
+                                        decl_idx,
                                     );
                                 }
                                 prior_type_found = Some(if let Some(prev) = prior_type_found {
@@ -1934,7 +1943,7 @@ impl<'a> CheckerState<'a> {
                         && !is_in_namespace
                         && !is_in_function_scope
                         && !is_in_external_module
-                        && !self.ctx.is_js_file()
+                        && !is_non_checked_js
                         && let Some(ref name_str) = var_name
                     {
                         // Clone entries to avoid holding borrow on self during mutation.
@@ -2077,10 +2086,16 @@ impl<'a> CheckerState<'a> {
                                     CheckerState::leave_cross_arena_delegation();
                                     if other_type != TypeId::ERROR
                                         && !self
-                                            .are_var_decl_types_compatible(other_type, final_type)
+                                            .are_var_decl_types_compatible(
+                                                other_type,
+                                                raw_declared_type,
+                                            )
                                     {
                                         self.error_subsequent_variable_declaration(
-                                            name_str, other_type, final_type, decl_idx,
+                                            name_str,
+                                            other_type,
+                                            raw_declared_type,
+                                            decl_idx,
                                         );
                                     }
                                     prior_type_found = Some(if let Some(prev) = prior_type_found {

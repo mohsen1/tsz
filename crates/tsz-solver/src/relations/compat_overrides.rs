@@ -512,6 +512,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
+        // `object` (the intrinsic non-primitive type) is not redeclaration-identical
+        // to the global `Object` interface. They are related for ordinary
+        // compatibility, but tsc treats them as distinct declaration surfaces for
+        // TS2403, including JSDoc `@type {object}` vs `@type {Object}`.
+        if (a == TypeId::OBJECT && self.is_global_object_interface_target(b))
+            || (b == TypeId::OBJECT && self.is_global_object_interface_target(a))
+        {
+            return false;
+        }
+
         // 4. Enum Nominality Check
         // If one is an enum and the other isn't, or they are different enums,
         // they are not identical for redeclaration, even if structurally compatible.
