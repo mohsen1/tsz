@@ -908,12 +908,22 @@ impl<'a> CheckerState<'a> {
                                             )
                                         {
                                         } else {
+                                            // Disable callable-with-type-params suppression
+                                            // for variable declarations. The suppression is
+                                            // designed for class member checks (TS2416/TS2720)
+                                            // but incorrectly hides real TS2322 errors when
+                                            // a callable with outer-scope type params is
+                                            // assigned to a concrete callable target.
+                                            // (e.g., (cb: (x: string, ...rest: T) => void) => void
+                                            //   vs (cb: (...args: never) => void) => void)
+                                            checker.ctx.skip_callable_type_param_suppression.set(true);
                                             let _ = checker.check_assignable_or_report_at(
                                                 checked_init_type,
                                                 declared_type,
                                                 var_decl.initializer,
                                                 decl_idx,
                                             );
+                                            checker.ctx.skip_callable_type_param_suppression.set(false);
                                         }
                                     }
                                 }

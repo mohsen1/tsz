@@ -15907,6 +15907,33 @@ class Good implements IFoo<number> {
     );
 }
 
+/// TS2344 false positive: indexed access type constraints must be evaluated
+/// before checking constraint satisfaction. `WeakKeyTypes[keyof WeakKeyTypes]`
+/// should evaluate to `object | symbol`, and `K extends object` satisfies that.
+#[test]
+fn test_ts2344_indexed_access_constraint_is_evaluated() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface MyWeakKeyTypes {
+    object: object;
+    symbol: symbol;
+}
+type MyWeakKey = MyWeakKeyTypes[keyof MyWeakKeyTypes];
+
+declare class MyWeakMap<K extends MyWeakKey, V> { }
+
+class Foo<K extends object> {
+    m = new MyWeakMap<K, string>();
+}
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Should NOT get TS2344: object extends object | symbol.\nActual: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_ts2345_function_argument_display_widens_unannotated_literal_return() {
     let diagnostics = compile_and_get_diagnostics(
