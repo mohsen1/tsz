@@ -1130,6 +1130,12 @@ pub struct CheckerContext<'a> {
     /// (for TS2859 "Excessive complexity comparing types" emission).
     pub relation_depth_exceeded: Cell<bool>,
 
+    /// When true, `should_suppress_assignability_diagnostic` skips the callable-
+    /// with-type-params suppression. Set by variable declaration checking to
+    /// avoid hiding genuine TS2322 errors for callable types with outer-scope
+    /// type parameters assigned to concrete callable targets.
+    pub skip_callable_type_param_suppression: Cell<bool>,
+
     /// Explicit evaluation session state (replaces thread-local depth/fuel guards).
     /// Shared via `Rc` across parent/child contexts so counters survive cross-arena
     /// delegation without implicit global state.

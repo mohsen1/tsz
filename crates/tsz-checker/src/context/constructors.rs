@@ -181,6 +181,7 @@ impl<'a> CheckerContext<'a> {
             instantiation_depth: Cell::new(0),
             depth_exceeded: Cell::new(false),
             relation_depth_exceeded: Cell::new(false),
+            skip_callable_type_param_suppression: Cell::new(false),
             eval_session: Rc::new(tsz_solver::EvaluationSession::new()),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,

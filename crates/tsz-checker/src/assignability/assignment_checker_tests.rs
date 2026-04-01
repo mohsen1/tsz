@@ -5,6 +5,19 @@ fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
 }
 
+fn strict_diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            strict_function_types: true,
+            ..CheckerOptions::default()
+        },
+    )
+}
+
 #[test]
 fn conditional_type_intersection_assignment_ts2322() {
     // tsc emits TS2322 for both assignments because Something<A> contains
@@ -607,6 +620,54 @@ fn generic_construct_signature_different_arity_ts2322() {
         ts2322_count,
         1,
         "expected 1 TS2322 for different type param arity construct signatures, got {ts2322_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_rest_types_callback_contravariance_ts2322() {
+    // When a function type with outer-scope generic rest parameters (T extends any[])
+    // is assigned to a concrete function type with never rest params in callback position,
+    // the assignability check must NOT be suppressed — the types are genuinely incompatible.
+    let source = r#"
+        function assignmentWithComplexRest2<T extends any[]>() {
+            const fn1: (cb: (x: string, ...rest: T) => void) => void = (cb) => {};
+            const fn2: (cb: (...args: never) => void) => void = fn1;
+        }
+    "#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert!(
+        ts2322_count >= 1,
+        "expected at least 1 TS2322 for callback contravariance with never rest params, got {ts2322_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_rest_types_direct_assignment_no_error() {
+    // Direct assignment of a function with generic rest params to (...args: never) => void
+    // should NOT produce an error.
+    let source = r#"
+        function assignmentWithComplexRest<T extends any[]>() {
+            const fn1: (x: string, ...rest: T) => void = (x, ..._) => x;
+            const fn2: (...args: never) => void = fn1;
+        }
+    "#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        0,
+        "expected no TS2322 for direct assignment with generic rest params, got {ts2322_count}. Diagnostics: {:?}",
         diagnostics
             .iter()
             .map(|d| (d.code, &d.message_text))
