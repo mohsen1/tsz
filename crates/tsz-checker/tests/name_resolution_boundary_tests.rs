@@ -565,6 +565,37 @@ let x: Outer.Inner.DoesNotExist;
     );
 }
 
+#[test]
+fn boundary_string_module_parent_does_not_qualify_namespace_ts2694() {
+    let diags = check(
+        r#"
+declare namespace X { export interface bar { } }
+declare module "m" {
+    namespace X { export interface foo { } }
+    export { X };
+    export function foo(): X.foo;
+    export function bar(): X.bar;
+}
+"#,
+    );
+
+    let ts2694 = diags
+        .iter()
+        .find(|d| d.code == 2694)
+        .expect("Expected TS2694 for missing namespace export");
+
+    assert!(
+        ts2694
+            .message_text
+            .contains("Namespace 'X' has no exported member 'bar'."),
+        "Expected TS2694 to use the local namespace name, got: {ts2694:?}"
+    );
+    assert!(
+        !ts2694.message_text.contains("m.X"),
+        "TS2694 should not qualify namespaces through string-literal modules: {ts2694:?}"
+    );
+}
+
 // =========================================================================
 // Phase 2.5: Wrong-meaning migration through boundary
 // =========================================================================
