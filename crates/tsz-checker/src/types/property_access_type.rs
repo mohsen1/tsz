@@ -1251,6 +1251,12 @@ impl<'a> CheckerState<'a> {
                 )
             });
             if can_add_named_props {
+                if let Some(export_name) = static_member_name.as_deref()
+                    && let Some(export_type) =
+                        surface.lookup_named_export(export_name, self.ctx.types)
+                {
+                    return export_type;
+                }
                 return TypeId::ANY;
             }
         }
