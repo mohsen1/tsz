@@ -1579,18 +1579,6 @@ fn compile_inner(
                 }
                 is_deprecation(d.code)
             });
-        } else if resolved.checker.target.is_es5() {
-            // tsc treats deprecated ES5 targets specially:
-            // - Grammar errors (1xxx, 8xxx) suppress TS5107 and are emitted alone
-            // - Without grammar errors, only TS5107 + config-level errors are kept;
-            //   file-level semantic errors are suppressed
-            if has_grammar_errors {
-                diagnostics.retain(|d| {
-                    !is_deprecation(d.code) && is_grammar_error_for_deprecation_priority(d.code)
-                });
-            } else {
-                diagnostics.retain(|d| is_deprecation(d.code) || is_config_level_code(d.code));
-            }
         } else if has_grammar_errors {
             // Grammar errors take precedence - suppress TS5107/TS5101
             diagnostics.retain(|d| !is_deprecation(d.code));
