@@ -2216,7 +2216,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn array_destructuring_element_has_default_initializer(&self, element_idx: NodeIndex) -> bool {
-        let element_idx = self.ctx.arena.skip_parenthesized_and_assertions(element_idx);
+        let element_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(element_idx);
         self.ctx
             .arena
             .get(element_idx)
