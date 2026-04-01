@@ -1,12 +1,14 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
+use crate::query_boundaries::common::{callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, Visibility};
 
 #[derive(Clone)]
 pub(crate) struct ClassPropertyInitializationInfo {
@@ -182,6 +184,7 @@ impl<'a> CheckerState<'a> {
     /// Uses a single unified map per axis (instance/static) instead of 6 separate maps.
     fn collect_class_members_for_chain(
         &mut self,
+        class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> ClassOwnMemberSummary {
         use crate::class_checker::MemberVisibility;
@@ -221,143 +224,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        self.record_merged_interface_members_for_chain(class_idx, &mut summary);
         self.collect_js_implicit_member_kinds(class, &mut summary);
         summary
-    }
-
-    /// Collect members from interface declarations that merge with the given class.
-    /// When `interface Foo { method(): string }` and `class Foo { ... }` share the
-    /// same name, the class instance type includes the interface members. This method
-    /// adds those members to the class chain summary so that derived class override
-    /// checks (TS2416) can see them.
-    fn collect_merged_interface_members(
-        &mut self,
-        class_idx: NodeIndex,
-        class: &tsz_parser::parser::node::ClassData,
-        summary: &mut ClassOwnMemberSummary,
-    ) {
-        use crate::class_checker::MemberVisibility;
-
-        // Get the class name to look up its symbol
-        let Some(name_node) = self.ctx.arena.get(class.name) else {
-            return;
-        };
-        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
-            return;
-        };
-        let Some(sym_id) = self.ctx.binder.file_locals.get(&name_ident.escaped_text) else {
-            return;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return;
-        };
-
-        // Collect declarations that are interface declarations (not this class)
-        let iface_decls: Vec<NodeIndex> = symbol
-            .declarations
-            .iter()
-            .copied()
-            .filter(|&decl_idx| {
-                decl_idx != class_idx
-                    && self
-                        .ctx
-                        .arena
-                        .get(decl_idx)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::INTERFACE_DECLARATION)
-            })
-            .collect();
-
-        if iface_decls.is_empty() {
-            return;
-        }
-
-        for decl_idx in iface_decls {
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(iface) = self.ctx.arena.get_interface(decl_node) else {
-                continue;
-            };
-
-            for &member_idx in &iface.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-
-                if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
-                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                        continue;
-                    };
-                    let Some(name) = self.get_property_name(sig.name) else {
-                        continue;
-                    };
-
-                    // Build the method function type from the signature
-                    let (type_params, type_param_updates) =
-                        self.push_type_parameters(&sig.type_parameters);
-                    let (params, this_type) = self.extract_params_from_signature(sig);
-                    let (return_type, type_predicate) =
-                        self.return_type_and_predicate(sig.type_annotation, &params);
-
-                    let factory = self.ctx.types.factory();
-                    let method_type = factory.function(tsz_solver::FunctionShape {
-                        type_params,
-                        params,
-                        this_type,
-                        return_type,
-                        type_predicate,
-                        is_constructor: false,
-                        is_method: true,
-                    });
-                    self.pop_type_parameters(type_param_updates);
-
-                    let info = ClassMemberInfo {
-                        name: name.clone(),
-                        type_id: method_type,
-                        name_idx: sig.name,
-                        visibility: MemberVisibility::Public,
-                        is_method: true,
-                        is_static: false,
-                        is_accessor: false,
-                        is_abstract: false,
-                        has_override: false,
-                        is_jsdoc_override: false,
-                        has_dynamic_name: false,
-                        has_computed_non_literal_name: false,
-                    };
-                    Self::record_unified_member(info, true, summary, self);
-                } else if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
-                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                        continue;
-                    };
-                    let Some(name) = self.get_property_name(sig.name) else {
-                        continue;
-                    };
-
-                    let type_id = if sig.type_annotation.is_some() {
-                        self.get_type_from_type_node(sig.type_annotation)
-                    } else {
-                        TypeId::ANY
-                    };
-
-                    let info = ClassMemberInfo {
-                        name: name.clone(),
-                        type_id,
-                        name_idx: sig.name,
-                        visibility: MemberVisibility::Public,
-                        is_method: false,
-                        is_static: false,
-                        is_accessor: false,
-                        is_abstract: false,
-                        has_override: false,
-                        is_jsdoc_override: false,
-                        has_dynamic_name: false,
-                        has_computed_non_literal_name: false,
-                    };
-                    Self::record_unified_member(info, true, summary, self);
-                }
-            }
-        }
     }
 
     fn summarize_own_class_members(
@@ -599,14 +468,7 @@ impl<'a> CheckerState<'a> {
             // as `any` and skipping TS2416 checks entirely.
             let (_, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
-            let mut own_summary = self.collect_class_members_for_chain(class);
-
-            // Also include members from merged interface declarations.
-            // When a class and interface share the same name (declaration merging),
-            // the class instance type includes interface members. Without this,
-            // derived class override checks (TS2416) miss base members that come
-            // from the merged interface side.
-            self.collect_merged_interface_members(current_idx, class, &mut own_summary);
+            let own_summary = self.collect_class_members_for_chain(current_idx, class);
 
             // Extract extends-clause type arguments while the current class's type
             // parameters are still in scope (so expressions like `RT[RT['a']]` resolve).
@@ -817,6 +679,96 @@ impl<'a> CheckerState<'a> {
             kind,
             is_visible,
         });
+    }
+
+    fn record_merged_interface_members_for_chain(
+        &mut self,
+        class_idx: NodeIndex,
+        summary: &mut ClassOwnMemberSummary,
+    ) {
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(class_idx) else {
+            return;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+
+        let interface_decls: Vec<NodeIndex> = symbol
+            .declarations
+            .iter()
+            .copied()
+            .filter(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_interface(node))
+                    .is_some()
+            })
+            .collect();
+        if interface_decls.is_empty() {
+            return;
+        }
+
+        let type_param_bindings = self.get_type_param_bindings();
+        let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+        let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+        let lowering = TypeLowering::with_resolvers(
+            self.ctx.arena,
+            self.ctx.types,
+            &type_resolver,
+            &value_resolver,
+        )
+        .with_type_param_bindings(type_param_bindings);
+        let interface_type = lowering.lower_interface_declarations(&interface_decls);
+        let interface_type = self.merge_interface_heritage_types(&interface_decls, interface_type);
+        self.record_merged_interface_shape_members(interface_type, summary);
+    }
+
+    fn record_merged_interface_shape_members(
+        &mut self,
+        interface_type: TypeId,
+        summary: &mut ClassOwnMemberSummary,
+    ) {
+        if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
+            for prop in &shape.properties {
+                self.record_merged_interface_property(prop, summary);
+            }
+            return;
+        }
+
+        if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type) {
+            for prop in &shape.properties {
+                self.record_merged_interface_property(prop, summary);
+            }
+        }
+    }
+
+    fn record_merged_interface_property(
+        &mut self,
+        prop: &tsz_solver::PropertyInfo,
+        summary: &mut ClassOwnMemberSummary,
+    ) {
+        let visibility = match prop.visibility {
+            Visibility::Private => crate::class_checker::MemberVisibility::Private,
+            Visibility::Protected => crate::class_checker::MemberVisibility::Protected,
+            Visibility::Public => crate::class_checker::MemberVisibility::Public,
+        };
+        let info = ClassMemberInfo {
+            name: self.ctx.types.resolve_atom(prop.name),
+            type_id: prop.type_id,
+            name_idx: NodeIndex::NONE,
+            visibility,
+            is_method: prop.is_method,
+            is_static: false,
+            is_accessor: false,
+            is_abstract: false,
+            has_override: false,
+            is_jsdoc_override: false,
+            has_dynamic_name: false,
+            has_computed_non_literal_name: false,
+        };
+        let is_visible = visibility != crate::class_checker::MemberVisibility::Private;
+        Self::record_unified_member(info, is_visible, summary, self);
     }
 
     const fn member_kind_from_info(info: &ClassMemberInfo) -> ClassMemberKind {

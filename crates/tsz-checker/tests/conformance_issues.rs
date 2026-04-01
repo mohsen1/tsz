@@ -16727,6 +16727,74 @@ class Good implements IFoo<number> {
     );
 }
 
+#[test]
+fn test_interface_class_merge_preserves_override_and_assignment_failures() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+// @target: es2015
+interface Foo {
+    method(a: number): string;
+    optionalMethod?(a: number): string;
+    property: string;
+    optionalProperty?: string;
+}
+
+class Foo {
+    additionalProperty: string;
+
+    additionalMethod(a: number): string {
+        return this.method(0);
+    }
+}
+
+class Bar extends Foo {
+    method(a: number) {
+        return this.optionalProperty;
+    }
+}
+
+var bar = new Bar();
+bar.method(0);
+bar.optionalMethod(1);
+bar.property;
+bar.optionalProperty;
+bar.additionalProperty;
+bar.additionalMethod(2);
+
+var direct: {
+    method(a: number): string;
+    property: string;
+    additionalProperty: string;
+    additionalMethod(a: number): string;
+} = new Bar();
+var obj: {
+    method(a: number): string;
+    property: string;
+    additionalProperty: string;
+    additionalMethod(a: number): string;
+};
+
+bar = obj;
+obj = bar;
+        "#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2416 && message.contains("Property 'method' in type 'Bar'")
+        }),
+        "Expected TS2416 for the merged interface/class override.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 when assigning Bar to the object type.\nActual: {diagnostics:#?}"
+    );
+}
+
 /// TS2344 false positive: indexed access type constraints must be evaluated
 /// before checking constraint satisfaction. `WeakKeyTypes[keyof WeakKeyTypes]`
 /// should evaluate to `object | symbol`, and `K extends object` satisfies that.

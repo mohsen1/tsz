@@ -14,7 +14,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
-    TypeParamInfo, Visibility,
+    TypeData, TypeParamInfo, Visibility,
 };
 
 #[inline]
@@ -910,14 +910,64 @@ impl<'a> CheckerState<'a> {
         // Phase 2: Process deferred methods with a partial `this` type so that
         // method body inference can resolve `this.x` references (e.g. `return this.b`).
         if !deferred_methods.is_empty() {
+            let mut partial_method_props = properties.clone();
+            let mut partial_method_string_index = string_index;
+            let mut partial_method_number_index = number_index;
+
+            // Method body inference needs inherited `this` members up front.
+            // Without the base instance surface here, overrides like
+            // `return this.optionalProperty` in a subclass of a declaration-merged
+            // class/interface infer `error` instead of the inherited property type.
+            if let Some(ref heritage_clauses) = class.heritage_clauses {
+                for &clause_idx in &heritage_clauses.nodes {
+                    let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                        continue;
+                    };
+                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+                    let Some(&type_idx) = heritage.types.nodes.first() else {
+                        break;
+                    };
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        break;
+                    };
+                    let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else {
+                        (type_idx, None)
+                    };
+
+                    if let Some(base_instance_type) =
+                        self.base_instance_type_from_expression(expr_idx, type_arguments)
+                    {
+                        self.merge_base_instance_properties(
+                            base_instance_type,
+                            &mut partial_method_props,
+                            &mut partial_method_string_index,
+                            &mut partial_method_number_index,
+                        );
+                    }
+                    break;
+                }
+            }
+
             // Build a partial instance type from properties collected so far,
             // including placeholder entries for ALL deferred methods so that
             // methods can reference each other via `this` (e.g. `typeof a`
             // in return type where `a` defaults to `this.getNumber()`).
             let mut partial_props: Vec<PropertyInfo> = Vec::with_capacity(
-                properties.len() + deferred_methods.len() + deferred_accessors.len(),
+                partial_method_props.len() + deferred_methods.len() + deferred_accessors.len(),
             );
-            partial_props.extend(properties.values().cloned());
+            partial_props.extend(partial_method_props.values().cloned());
             for (_, method) in &deferred_methods {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -995,8 +1045,8 @@ impl<'a> CheckerState<'a> {
             }
             let partial_type = factory.object_with_index(ObjectShape {
                 properties: partial_props,
-                string_index,
-                number_index,
+                string_index: partial_method_string_index,
+                number_index: partial_method_number_index,
                 symbol: current_sym,
                 ..ObjectShape::default()
             });
@@ -1786,7 +1836,8 @@ impl<'a> CheckerState<'a> {
         // Final interface merging pass
         if let Some(sym_id) = current_sym {
             if let Some(interface_type) = merged_interface_type_for_class {
-                instance_type = self.merge_interface_types(instance_type, interface_type);
+                instance_type =
+                    self.merge_class_instance_with_interface(instance_type, interface_type);
             }
 
             // Apply module augmentations targeting this class's interface name.
@@ -1853,6 +1904,94 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
+    }
+
+    fn merge_class_instance_with_interface(
+        &mut self,
+        instance_type: TypeId,
+        interface_type: TypeId,
+    ) -> TypeId {
+        let factory = self.ctx.types.factory();
+
+        let mut properties = FxHashMap::default();
+        let mut call_signatures = Vec::new();
+        let mut construct_signatures = Vec::new();
+        let mut string_index = None;
+        let mut number_index = None;
+        let mut symbol = None;
+        let mut result_is_callable = false;
+
+        let mut merge_shape = |type_id: TypeId, is_derived_class: bool| {
+            if let Some(shape) = callable_shape_for_type(self.ctx.types, type_id) {
+                result_is_callable = true;
+                if is_derived_class {
+                    symbol = shape.symbol;
+                    string_index = shape.string_index;
+                    number_index = shape.number_index;
+                } else {
+                    if string_index.is_none() {
+                        string_index = shape.string_index;
+                    }
+                    if number_index.is_none() {
+                        number_index = shape.number_index;
+                    }
+                }
+                call_signatures.extend(shape.call_signatures.iter().cloned());
+                construct_signatures.extend(shape.construct_signatures.iter().cloned());
+                for prop in &shape.properties {
+                    properties.entry(prop.name).or_insert_with(|| prop.clone());
+                }
+                return;
+            }
+
+            if let Some(shape) = object_shape_for_type(self.ctx.types, type_id) {
+                if is_derived_class {
+                    symbol = shape.symbol;
+                    string_index = shape.string_index;
+                    number_index = shape.number_index;
+                } else {
+                    if string_index.is_none() {
+                        string_index = shape.string_index;
+                    }
+                    if number_index.is_none() {
+                        number_index = shape.number_index;
+                    }
+                }
+                for prop in &shape.properties {
+                    properties.entry(prop.name).or_insert_with(|| prop.clone());
+                }
+            }
+        };
+
+        merge_shape(instance_type, true);
+        merge_shape(interface_type, false);
+
+        if result_is_callable {
+            return factory.callable(CallableShape {
+                call_signatures,
+                construct_signatures,
+                properties: properties.into_values().collect(),
+                string_index,
+                number_index,
+                symbol,
+                is_abstract: false,
+            });
+        }
+
+        let shape = ObjectShape {
+            properties: properties.into_values().collect(),
+            string_index,
+            number_index,
+            symbol,
+            ..ObjectShape::default()
+        };
+
+        match self.ctx.types.lookup(instance_type) {
+            Some(TypeData::Object(_)) if string_index.is_none() && number_index.is_none() => {
+                factory.object(shape.properties)
+            }
+            _ => factory.object_with_index(shape),
+        }
     }
 
     fn merge_union_index_signature(
