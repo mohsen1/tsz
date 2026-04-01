@@ -1759,8 +1759,13 @@ impl ParserState {
                         // This ensures the TS1003 error is at the same position as where
                         // parseExpected(CloseParenToken) would emit TS1005, allowing the
                         // duplicate-position suppression to prevent cascading errors.
+                        let missing_pos = if self.is_token(SyntaxKind::EndOfFileToken) {
+                            missing_name_pos
+                        } else {
+                            self.token_pos()
+                        };
                         self.parse_error_at(
-                            self.token_pos(),
+                            missing_pos,
                             0,
                             "Identifier expected.",
                             tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
