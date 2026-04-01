@@ -12,6 +12,21 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn file_has_jsdoc_typedef_named(&self, file_idx: usize, export_name: &str) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        arena.source_files.iter().any(|source_file| {
+            source_file.comments.iter().any(|comment| {
+                let content = source_file
+                    .text
+                    .get(comment.pos as usize..comment.end as usize)
+                    .unwrap_or("");
+                Self::parse_jsdoc_typedefs(content)
+                    .iter()
+                    .any(|(name, _)| name == export_name)
+            })
+        })
+    }
+
     pub(crate) fn report_namespace_value_access_for_type_only_import_equals_expr(
         &mut self,
         expr_idx: NodeIndex,
@@ -819,6 +834,21 @@ impl<'a> CheckerState<'a> {
         let exports = symbol.exports.as_ref()?;
         let member_sym_id = exports.get(property_name)?;
         let member_sym = self.ctx.binder.get_symbol(member_sym_id)?;
+        let concrete_value = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE;
+
+        if (member_sym.flags & concrete_value) == 0
+            && self
+                .ctx
+                .resolve_symbol_file_index(member_sym_id)
+                .is_some_and(|file_idx| self.file_has_jsdoc_typedef_named(file_idx, property_name))
+        {
+            return None;
+        }
 
         // Only resolve value-side members. Type-only members (interfaces,
         // type aliases) should fall through to TS2693/TS2339 handling.
@@ -1119,6 +1149,17 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
+                }
+                let concrete_value = symbol_flags::VARIABLE
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::ENUM
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE;
+                if (sym.flags & concrete_value) == 0
+                    && self.file_has_jsdoc_typedef_named(target_file_idx, export_name)
+                {
+                    return true;
                 }
                 // Follow import alias chains transitively, but only if the
                 // symbol doesn't have a concrete runtime value binding.

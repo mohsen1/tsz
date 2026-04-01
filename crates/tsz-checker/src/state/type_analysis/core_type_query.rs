@@ -549,7 +549,7 @@ impl<'a> CheckerState<'a> {
     fn decompose_typeof_import_query(
         &self,
         expr_name: NodeIndex,
-    ) -> Option<(NodeIndex, Vec<String>)> {
+    ) -> Option<(NodeIndex, Vec<(NodeIndex, String)>)> {
         let mut current = expr_name;
         let mut segments = Vec::new();
 
@@ -569,14 +569,14 @@ impl<'a> CheckerState<'a> {
                     let access = self.ctx.arena.get_access_expr(node)?;
                     let name_node = self.ctx.arena.get(access.name_or_argument)?;
                     let ident = self.ctx.arena.get_identifier(name_node)?;
-                    segments.push(ident.escaped_text.clone());
+                    segments.push((access.name_or_argument, ident.escaped_text.clone()));
                     current = access.expression;
                 }
                 tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME => {
                     let name = self.ctx.arena.get_qualified_name(node)?;
                     let right_node = self.ctx.arena.get(name.right)?;
                     let ident = self.ctx.arena.get_identifier(right_node)?;
-                    segments.push(ident.escaped_text.clone());
+                    segments.push((name.right, ident.escaped_text.clone()));
                     current = name.left;
                 }
                 tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
@@ -588,7 +588,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn build_typeof_import_namespace_type(
+    pub(crate) fn build_typeof_import_namespace_type(
         &mut self,
         module_name: &str,
         resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
@@ -625,12 +625,25 @@ impl<'a> CheckerState<'a> {
             module_name,
             Some(self.ctx.current_file_idx),
         ) {
+            let exports_table_target = exports_table
+                .iter()
+                .find_map(|(_, &export_sym_id)| self.ctx.resolve_symbol_file_index(export_sym_id))
+                .or(target_idx);
             let mut props = Vec::new();
             for (name, &export_sym_id) in exports_table.iter() {
                 if name == "export="
                     || self.is_type_only_export_symbol(export_sym_id)
                     || self.is_export_from_type_only_wildcard(module_name, name)
                     || self.export_symbol_has_no_value(export_sym_id)
+                    || exports_table_target
+                        .is_some_and(|target_idx| self.file_has_jsdoc_typedef_named(target_idx, name))
+                    || self
+                        .resolve_import_type_jsdoc_typedef(
+                            module_name,
+                            name,
+                            resolution_mode_override,
+                        )
+                        .is_some()
                     || self.is_export_type_only_from_file(
                         module_name,
                         name,
@@ -694,12 +707,34 @@ impl<'a> CheckerState<'a> {
 
         let mut current =
             self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)?;
-        for segment in segments {
+        for (segment_idx, segment) in segments {
             let access = self.resolve_property_access_with_env(current, &segment);
             current = match access {
                 crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id, ..
                 } => self.resolve_type_query_type(type_id),
+                crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
+                | crate::query_boundaries::common::PropertyAccessResult::IsUnknown => {
+                    let namespace_name = self
+                        .ctx
+                        .namespace_module_names
+                        .get(&current)
+                        .map(|name| format!("\"{}\".export=", name.strip_prefix("./").unwrap_or(name)))
+                        .or_else(|| {
+                            self.is_namespace_value_type(current).then(|| {
+                                format!(
+                                    "\"{}\".export=",
+                                    self.imported_namespace_display_module_name(&module_name)
+                                )
+                            })
+                        });
+                    if let Some(namespace_name) = namespace_name {
+                        self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
+                    } else {
+                        self.error_property_not_exist_at(&segment, current, segment_idx);
+                    }
+                    return Some(TypeId::ERROR);
+                }
                 _ => return Some(TypeId::ERROR),
             };
         }
