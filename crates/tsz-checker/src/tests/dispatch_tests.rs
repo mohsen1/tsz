@@ -158,6 +158,37 @@ fn ts2352_array_assertion_with_best_common_type_does_not_emit_ts2353() {
 }
 
 #[test]
+fn ts2352_merged_class_namespace_record_cast_reports_missing_string_index() {
+    let diags = check_source_diagnostics(
+        r#"
+type Dict = { [key: string]: unknown };
+class C1 { foo() {} }
+new C1() as Dict;
+
+class C2 { foo() {} }
+namespace C2 { export const unrelated = 3; }
+new C2() as Dict;
+
+namespace C3 { export const unrelated = 3; }
+C3 as Dict;
+"#,
+    );
+
+    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        ts2352.len(),
+        2,
+        "Expected exactly two TS2352 diagnostics, got: {diags:?}"
+    );
+    assert!(
+        ts2352
+            .iter()
+            .all(|diag| diag.message_text.contains("Conversion of type")),
+        "Expected TS2352 conversion diagnostics for the class assertions, got: {ts2352:?}"
+    );
+}
+
+#[test]
 fn ts2339_property_access_anchors_property_token() {
     let source = r#"
 declare const value: {};
