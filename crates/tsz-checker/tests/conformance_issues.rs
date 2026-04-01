@@ -22420,3 +22420,70 @@ declare namespace m {
         "TS7005 should not fire in .d.ts files, got: {diagnostics:?}"
     );
 }
+
+/// Class methods with overloads that reference class type parameters in their
+/// return types should not produce false TS2394 errors. The manual signature
+/// lowering used for overload compatibility doesn't have class type params in
+/// scope, producing Error types in the lowered signature. The checker must
+/// detect these buried Error types and fall back to get_type_of_node.
+#[test]
+fn test_class_method_overload_with_class_type_param_in_return_no_false_ts2394() {
+    // Simple case: class type param T directly in return type
+    let d = compile_and_get_diagnostics(
+        r#"
+interface Vector<T> { _brand: T }
+class Foo<T> {
+    test(): Vector<T>;
+    test(): Vector<any> {
+        return undefined as any;
+    }
+}
+"#,
+    );
+    let ts2394_count = d.iter().filter(|(c, _)| *c == 2394).count();
+    assert_eq!(
+        ts2394_count, 0,
+        "Vector<T> should be compatible with Vector<any> in overload check, got: {d:?}"
+    );
+
+    // Complex case: class type param in conditional type (Exclude) within tuple return
+    let d = compile_and_get_diagnostics(
+        r#"
+type Exclude2<T, U> = T extends U ? never : T;
+interface Seq<T> { tail(): Opt<Seq<T>>; }
+class Opt<T> { toVector(): Vector<T> { return undefined as any; } }
+class Vector<T> implements Seq<T> {
+    tail(): Opt<Vector<T>> { return undefined as any; }
+    partition2<U extends T>(predicate:(v:T)=>v is U): [Vector<U>,Vector<Exclude2<T, U>>];
+    partition2(predicate:(x:T)=>boolean): [Vector<T>,Vector<T>];
+    partition2<U extends T>(predicate:(v:T)=>boolean): [Vector<U>,Vector<any>] {
+        return undefined as any;
+    }
+}
+"#,
+    );
+    let ts2394_count = d.iter().filter(|(c, _)| *c == 2394).count();
+    assert_eq!(
+        ts2394_count, 0,
+        "Overload with Exclude<T,U> return should be compatible with Vector<any>, got: {d:?}"
+    );
+
+    // Case with deferred conditional type in return
+    let d = compile_and_get_diagnostics(
+        r#"
+type MyCond<T> = T extends string ? number : boolean;
+interface Vector<T> { _brand: T }
+class Foo<T> {
+    test(): Vector<MyCond<T>>;
+    test(): Vector<any> {
+        return undefined as any;
+    }
+}
+"#,
+    );
+    let ts2394_count = d.iter().filter(|(c, _)| *c == 2394).count();
+    assert_eq!(
+        ts2394_count, 0,
+        "Vector<MyCond<T>> should be compatible with Vector<any> in overload check, got: {d:?}"
+    );
+}
