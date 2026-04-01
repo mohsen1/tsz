@@ -1070,11 +1070,11 @@ fn convert_options_to_tsconfig(
         if let Some(serde_json::Value::Bool(strict_val)) = opts.get("strict").cloned() {
             // Expand strict sub-options for both strict: true and strict: false.
             // The tsc cache generator writes these explicitly in both directions.
-            // NOTE: alwaysStrict is intentionally excluded from automatic expansion.
-            // When alwaysStrict=false is added to tsconfig, tsc 6.0 emits TS5107
-            // (deprecation warning) which suppresses all file-level errors. Tests
-            // that need alwaysStrict behavior should specify it explicitly.
+            // NOTE: alwaysStrict must be included in automatic expansion.
+            // When strict=false expands to include alwaysStrict=false, tsc 6.0 emits TS5107
+            // (deprecation warning) which suppresses all file-level errors, matching test expectations.
             for key in [
+                "alwaysStrict",
                 "noImplicitAny",
                 "noImplicitThis",
                 "strictNullChecks",
