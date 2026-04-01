@@ -4,6 +4,7 @@
 //! overlap) behind one API so checker code can call Solver queries instead
 //! of wiring checker internals directly to concrete checker engines.
 
+use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::classes::inheritance::InheritanceGraph;
 use crate::operations::AssignabilityChecker;
@@ -12,7 +13,6 @@ use crate::relations::compat::{
 };
 use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{RelationCacheKey, SymbolRef, TypeId};
-use crate::TypeDatabase;
 
 /// Relation categories supported by the unified query API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

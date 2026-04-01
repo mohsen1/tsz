@@ -1255,3 +1255,88 @@ let x = a.equalsShallow(b);
         "Method with generic this on union of arrays should not emit TS2684. Got: {diags:#?}"
     );
 }
+
+// ─── Higher-order generic contextual types (compose/flip patterns) ──────
+
+#[test]
+fn compose_with_naked_generic_function_arguments() {
+    // compose(list, box) should infer <T>(x: T) => Box<T[]>
+    // when assigned to a variable with that generic function annotation.
+    // Source type params (T in list, V in box) appear directly (naked) as
+    // parameter types, enabling proper higher-order inference.
+    let source = r#"
+type Box<T> = { value: T };
+declare function compose<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): Box<V>;
+const f11: <T>(x: T) => Box<T[]> = compose(list, box);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "compose(list, box) with generic contextual type should not error. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn compose_with_wrapped_generic_function_arguments() {
+    // compose(unbox, unlist) should infer <T>(x: Box<T[]>) => T
+    // when assigned to a variable with that generic function annotation.
+    // Source type params (W in unbox, T in unlist) appear inside wrapper
+    // types (Box<W>, T[]), requiring the contextual type to drive inference.
+    let source = r#"
+type Box<T> = { value: T };
+declare function compose<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;
+declare function unbox<W>(x: Box<W>): W;
+declare function unlist<T>(a: T[]): T;
+const f13: <T>(x: Box<T[]>) => T = compose(unbox, unlist);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "compose(unbox, unlist) with generic contextual type should not error. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn flip_with_generic_function_argument() {
+    // flip(zip) should infer <A, B>(b: B, a: A) => [A, B]
+    // when assigned to a variable with that generic function annotation.
+    let source = r#"
+declare function zip<A, B>(a: A, b: B): [A, B];
+declare function flip<X, Y, Z>(f: (x: X, y: Y) => Z): (y: Y, x: X) => Z;
+const f40: <A, B>(b: B, a: A) => [A, B] = flip(zip);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "flip(zip) with generic contextual type should not error. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn non_inferrable_type_propagation_not_broken() {
+    // Regression guard: filter(exists(...)) in a pipe should not produce
+    // false TS2345 errors. The generic function result from exists() has
+    // non-naked type params that should be erased during inference.
+    let source = r#"
+interface Predicate<A> { (a: A): boolean }
+interface Left<E> { readonly _tag: 'Left'; readonly left: E }
+interface Right<A> { readonly _tag: 'Right'; readonly right: A }
+type Either<E, A> = Left<E> | Right<A>;
+declare const filter: {
+    <A, B extends A>(refinement: { (a: A): a is B }): (as: ReadonlyArray<A>) => ReadonlyArray<B>
+    <A>(predicate: Predicate<A>): <B extends A>(bs: ReadonlyArray<B>) => ReadonlyArray<B>
+    <A>(predicate: Predicate<A>): (as: ReadonlyArray<A>) => ReadonlyArray<A>
+};
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+declare function exists<A>(predicate: Predicate<A>): <E>(ma: Either<E, A>) => boolean;
+declare const es: Either<string, number>[];
+const x = pipe(es, filter(exists((n) => n > 0)));
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "pipe(es, filter(exists(...))) should not produce TS2345. Got: {diags:#?}"
+    );
+}

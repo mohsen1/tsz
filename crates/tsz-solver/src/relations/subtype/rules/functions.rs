@@ -18,7 +18,7 @@ use crate::types::{
     InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId,
     TypeParamInfo, TypePredicate, Visibility,
 };
-use crate::visitor::{callable_shape_id, contains_this_type, function_shape_id};
+use crate::visitor::{callable_shape_id, contains_this_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -1345,50 +1345,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // properly compared. This handles cases like:
         //   () => T  vs  () => U  (T and U are different type parameters)
         // where T should NOT be assignable to U.
-        if source_instantiated.type_params.is_empty() && target_instantiated.type_params.is_empty() {
+        if source_instantiated.type_params.is_empty() && target_instantiated.type_params.is_empty()
+        {
             // Check if return types contain type parameters that need explicit comparison
             let s_return = source_instantiated.return_type;
             let t_return = target_instantiated.return_type;
-            
-            // Helper to extract return type from a function-like type
-            let get_inner_return = |type_id: TypeId| -> Option<TypeId> {
-                // Try Function type first
-                if let Some(shape_id) = function_shape_id(self.interner, type_id) {
-                    let shape = self.interner.function_shape(shape_id);
-                    if shape.type_params.is_empty() {
-                        return Some(shape.return_type);
-                    }
-                }
-                // Try Callable type
-                if let Some(shape_id) = callable_shape_id(self.interner, type_id) {
-                    let shape = self.interner.callable_shape(shape_id);
-                    if let Some(sig) = shape.call_signatures.first() {
-                        if sig.type_params.is_empty() {
-                            return Some(sig.return_type);
-                        }
-                    }
-                }
-                None
-            };
-            
-            // If both return types are function-like with no type params, check their returns
-            if let Some(s_inner_return) = get_inner_return(s_return)
-                && let Some(t_inner_return) = get_inner_return(t_return)
+
+            // If return types are different function types, check their return types too
+            if let Some(s_shape) = callable_shape_id(self.interner, s_return)
+                && let Some(t_shape) = callable_shape_id(self.interner, t_return)
             {
-                // Check if both inner returns are type parameters
-                if let Some(s_tp) = type_param_info(self.interner, s_inner_return)
-                    && let Some(t_tp) = type_param_info(self.interner, t_inner_return)
-                {
-                    // Different type parameters should not be assignable
-                    if s_tp.name != t_tp.name {
-                        // Check if there's a constraint relationship
-                        let s_constrained_to_t = s_tp.constraint.map_or(false, |c| c == t_inner_return);
-                        let t_constrained_to_s = t_tp.constraint.map_or(false, |c| c == s_inner_return);
-                        
-                        if !s_constrained_to_t && !t_constrained_to_s {
-                            // Different unconstrained type parameters - not assignable
-                            self.type_param_equivalences.truncate(equiv_start);
-                            return SubtypeResult::False;
+                let s_callable = self.interner.callable_shape(s_shape);
+                let t_callable = self.interner.callable_shape(t_shape);
+
+                // Get the first call signature from each callable (if any)
+                if let (Some(s_sig), Some(t_sig)) = (
+                    s_callable.call_signatures.first(),
+                    t_callable.call_signatures.first(),
+                ) {
+                    // If both inner functions also have no type params, check their returns
+                    if s_sig.type_params.is_empty() && t_sig.type_params.is_empty() {
+                        let s_inner_return = s_sig.return_type;
+                        let t_inner_return = t_sig.return_type;
+
+                        // Check if both inner returns are type parameters
+                        if let Some(s_tp) = type_param_info(self.interner, s_inner_return)
+                            && let Some(t_tp) = type_param_info(self.interner, t_inner_return)
+                        {
+                            // Different type parameters should not be assignable
+                            if s_tp.name != t_tp.name {
+                                // Check if there's a constraint relationship
+                                let s_constrained_to_t =
+                                    s_tp.constraint.map_or(false, |c| c == t_inner_return);
+                                let t_constrained_to_s =
+                                    t_tp.constraint.map_or(false, |c| c == s_inner_return);
+
+                                if !s_constrained_to_t && !t_constrained_to_s {
+                                    // Different unconstrained type parameters - not assignable
+                                    self.type_param_equivalences.truncate(equiv_start);
+                                    return SubtypeResult::False;
+                                }
+                            }
                         }
                     }
                 }

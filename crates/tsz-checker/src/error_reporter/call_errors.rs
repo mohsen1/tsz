@@ -2268,14 +2268,14 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Suppress TS2345 for callbacks with unannotated parameters that rely on
-        // contextual typing. When a callback has unannotated parameters, its type
-        // depends on the contextual type from the call site. If the contextual
-        // typing wasn't properly applied during type inference, the callback's
-        // inferred type may not match the expected type, causing false TS2345.
-        // This handles cases like JSDoc @enum types where the callback parameter
-        // should be contextually typed but the assignability check happens before
-        // contextual typing is fully resolved.
-        if self.arg_is_callback_with_unannotated_params(idx) {
+        // contextual typing, but ONLY when contextual typing genuinely failed to
+        // resolve parameter types (they remained `any`/`unknown`).
+        // When contextual typing DID resolve concrete types and the mismatch
+        // persists, the error is real — e.g., individual params `(a: 1|2, b: "1"|"2")`
+        // vs a readonly tuple union rest parameter `(...args: readonly [1, "1"] | readonly [2, "2"])`.
+        if self.arg_is_callback_with_unannotated_params(idx)
+            && self.callback_params_are_unresolved(arg_type)
+        {
             return;
         }
         // Run failure analysis to produce elaboration as related information,
@@ -2396,6 +2396,23 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .diagnostics
             .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+    }
+
+    /// Check if a callback function type has all-any/unknown parameter types,
+    /// indicating contextual typing failed to provide concrete types.
+    fn callback_params_are_unresolved(&self, arg_type: TypeId) -> bool {
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(
+            self.ctx.types.as_type_database(),
+            arg_type,
+        ) {
+            shape.params.is_empty()
+                || shape
+                    .params
+                    .iter()
+                    .all(|p| matches!(p.type_id, TypeId::ANY | TypeId::UNKNOWN))
+        } else {
+            false
+        }
     }
 
     /// Check if a node is a `new` expression.
