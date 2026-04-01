@@ -241,15 +241,15 @@ impl<'a> CheckerState<'a> {
             }
             MemberAccessLevel::Protected => {
                 if self.is_super_expression(object_expr)
-                    && self
-                        .get_class_decl_from_type(object_type)
-                        .is_some_and(|receiver_class_idx| {
+                    && self.get_class_decl_from_type(object_type).is_some_and(
+                        |receiver_class_idx| {
                             receiver_class_idx == access_info.declaring_class_idx
                                 || self.is_class_derived_from(
                                     receiver_class_idx,
                                     access_info.declaring_class_idx,
                                 )
-                        })
+                        },
+                    )
                 {
                     true
                 } else if !protected_candidates.is_empty() {
@@ -543,10 +543,8 @@ impl<'a> CheckerState<'a> {
                             None => false,
                             Some(cur) => {
                                 cur == access_info.declaring_class_idx
-                                    || self.is_class_derived_from(
-                                        cur,
-                                        access_info.declaring_class_idx,
-                                    )
+                                    || self
+                                        .is_class_derived_from(cur, access_info.declaring_class_idx)
                             }
                         }
                     }
@@ -1388,12 +1386,10 @@ mod tests {
 
     #[test]
     fn conformance_mixin_private_and_protected_does_not_emit_extra_super_ts2445() {
-        let diagnostics = check_diagnostics(include_str!(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../TypeScript/tests/cases/compiler/mixinPrivateAndProtected.ts"
-            )
-        ));
+        let diagnostics = check_diagnostics(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../TypeScript/tests/cases/compiler/mixinPrivateAndProtected.ts"
+        )));
 
         assert_eq!(
             diagnostics.iter().filter(|&&code| code == 2445).count(),
