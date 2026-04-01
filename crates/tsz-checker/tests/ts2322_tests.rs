@@ -1063,6 +1063,44 @@ var r = foo<number>({ bar: 1, baz: '' });
 }
 
 #[test]
+fn generic_object_assign_initializer_keeps_outer_ts2322() {
+    let source = r#"
+type Omit<T, K> = Pick<T, Exclude<keyof T, K>>;
+type Assign<T, U> = Omit<T, keyof U> & U;
+
+class Base<T> {
+    constructor(public t: T) {}
+}
+
+export class Foo<T> extends Base<T> {
+    update(): Foo<Assign<T, { x: number }>> {
+        const v: Assign<T, { x: number }> = Object.assign(this.t, { x: 1 });
+        return new Foo(v);
+    }
+}
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let codes: Vec<_> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected outer TS2322 for generic Object.assign initializer, got: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
+        "Expected initializer TS2769 for generic Object.assign initializer, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_string_intrinsic_targets_widen_literal_sources() {
     let source = r#"
 let x: Uppercase<string>;
