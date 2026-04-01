@@ -433,6 +433,18 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
+        if let Some(module_name) = root_symbol.import_module.as_deref() {
+            let source_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(root_sym)
+                .unwrap_or(self.ctx.current_file_idx);
+            if let Some(sym_id) =
+                self.resolve_cross_file_export_from_file(module_name, "JSX", Some(source_file_idx))
+            {
+                return Some(sym_id);
+            }
+        }
+
         // Some binder states keep the namespace merge partner separate from the
         // value-side factory symbol (`const jsx` + `namespace jsx`).
         for &candidate_id in self.ctx.binder.get_symbols().find_all_by_name(root_name) {

@@ -11489,6 +11489,82 @@ declare namespace JSX {
     );
 }
 
+#[test]
+fn test_module_local_jsx_namespace_does_not_satisfy_global_jsx_lookup() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        div: {
+            static?: boolean;
+        };
+    }
+}
+
+export default <div static={true} />;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "index.tsx",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::Preserve,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7026),
+        "Expected TS7026 because a top-level JSX namespace inside an external module is module-local, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsx_factory_namespace_reexport_stays_visible_across_namespace_import() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/library.ts",
+                r#"
+function createElement(element: string, props: any, ...children: any[]): any {}
+
+namespace JSX {
+  export interface IntrinsicElements {
+    [key: string]: Record<string, any>;
+  }
+}
+
+export { createElement, JSX };
+"#,
+            ),
+            (
+                "/index.tsx",
+                r#"
+import * as MyLib from "./library";
+
+const content = <my-element/>;
+"#,
+            ),
+        ],
+        "/index.tsx",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::React,
+            jsx_factory: "MyLib.createElement".to_string(),
+            jsx_factory_from_config: true,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7026),
+        "Expected factory-scoped JSX namespace reexport to satisfy JSX lookup without TS7026, got: {diagnostics:#?}"
+    );
+}
+
 /// Template expressions in switch cases should narrow discriminated unions.
 /// Before the fix, template expression case values resolved to `string` instead
 /// of the literal `"cat"`, preventing discriminant narrowing and producing
