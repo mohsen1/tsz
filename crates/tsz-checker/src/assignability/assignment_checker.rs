@@ -1,6 +1,7 @@
 //! Assignment expression checking (simple, compound, logical, readonly).
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -14,6 +15,224 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn contextual_type_for_assignment_target(&mut self, target_idx: NodeIndex) -> TypeId {
+        let target_type = self.get_type_of_assignment_target(target_idx);
+        let target_type = self.resolve_type_query_type(target_type);
+        if matches!(
+            target_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            TypeId::ANY
+        } else {
+            self.contextual_type_for_expression(target_type)
+        }
+    }
+
+    fn build_contextual_type_from_assignment_pattern(&mut self, pattern_idx: NodeIndex) -> Option<TypeId> {
+        let pattern_node = self.ctx.arena.get(pattern_idx)?;
+        let factory = self.ctx.types.factory();
+
+        if pattern_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let array = self.ctx.arena.get_literal_expr(pattern_node)?;
+            let mut tuple_elements = Vec::with_capacity(array.elements.nodes.len());
+
+            for &elem_idx in &array.elements.nodes {
+                let (elem_type, is_rest) = if elem_idx.is_none() {
+                    (TypeId::ANY, false)
+                } else {
+                    let elem_idx = self.ctx.arena.skip_parenthesized_and_assertions(elem_idx);
+                    let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                        tuple_elements.push(tsz_solver::TupleElement {
+                            type_id: TypeId::ANY,
+                            optional: false,
+                            rest: false,
+                            name: None,
+                        });
+                        continue;
+                    };
+
+                    if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                        let spread_target = self
+                            .ctx
+                            .arena
+                            .get_spread(elem_node)
+                            .map(|spread| spread.expression)
+                            .unwrap_or(NodeIndex::NONE);
+                        let spread_target = self
+                            .ctx
+                            .arena
+                            .skip_parenthesized_and_assertions(spread_target);
+                        let spread_target_type =
+                            self.contextual_type_for_assignment_target(spread_target);
+                        let rest_elem_type =
+                            crate::query_boundaries::common::array_element_type(
+                                self.ctx.types,
+                                spread_target_type,
+                            )
+                            .unwrap_or(TypeId::ANY);
+                        (rest_elem_type, true)
+                    } else if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        || elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    {
+                        (
+                            self.build_contextual_type_from_assignment_pattern(elem_idx)
+                                .unwrap_or(TypeId::ANY),
+                            false,
+                        )
+                    } else if elem_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                        (
+                            self.ctx
+                                .arena
+                                .get_binary_expr(elem_node)
+                                .filter(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16)
+                                .map(|bin| {
+                                    let lhs =
+                                        self.ctx.arena.skip_parenthesized_and_assertions(bin.left);
+                                    if self.ctx.arena.get(lhs).is_some_and(|lhs_node| {
+                                        lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                            || lhs_node.kind
+                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    }) {
+                                        self.build_contextual_type_from_assignment_pattern(lhs)
+                                            .unwrap_or(TypeId::ANY)
+                                    } else {
+                                        self.contextual_type_for_assignment_target(lhs)
+                                    }
+                                })
+                                .unwrap_or(TypeId::ANY),
+                            false,
+                        )
+                    } else {
+                        (self.contextual_type_for_assignment_target(elem_idx), false)
+                    }
+                };
+
+                tuple_elements.push(tsz_solver::TupleElement {
+                    type_id: elem_type,
+                    optional: false,
+                    rest: is_rest,
+                    name: None,
+                });
+            }
+
+            Some(factory.tuple(tuple_elements))
+        } else if pattern_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let object = self.ctx.arena.get_literal_expr(pattern_node)?;
+            let mut properties = Vec::new();
+
+            for &elem_idx in &object.elements.nodes {
+                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                    continue;
+                };
+
+                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+                {
+                    continue;
+                }
+
+                let (name, target_idx) =
+                    if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                        (self.get_property_name_resolved(prop.name), Some(prop.initializer))
+                    } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
+                    {
+                        let name = self
+                            .ctx
+                            .arena
+                            .get(shorthand.name)
+                            .and_then(|node| self.ctx.arena.get_identifier(node))
+                            .map(|ident| ident.escaped_text.clone());
+                        (name, Some(shorthand.name))
+                    } else {
+                        (None, None)
+                    };
+
+                let Some(name) = name else {
+                    continue;
+                };
+                let Some(target_idx) = target_idx else {
+                    continue;
+                };
+
+                let target_idx = self.ctx.arena.skip_parenthesized_and_assertions(target_idx);
+                let prop_type = if self
+                    .ctx
+                    .arena
+                    .get(target_idx)
+                    .is_some_and(|node| {
+                        node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    })
+                {
+                    self.build_contextual_type_from_assignment_pattern(target_idx)
+                        .unwrap_or(TypeId::ANY)
+                } else if self
+                    .ctx
+                    .arena
+                    .get(target_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+                {
+                    self.ctx
+                        .arena
+                        .get_binary_expr(self.ctx.arena.get(target_idx)?)
+                        .filter(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16)
+                        .map(|bin| {
+                            let lhs = self.ctx.arena.skip_parenthesized_and_assertions(bin.left);
+                            if self
+                                .ctx
+                                .arena
+                                .get(lhs)
+                                .is_some_and(|lhs_node| {
+                                    lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                        || lhs_node.kind
+                                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                })
+                            {
+                                self.build_contextual_type_from_assignment_pattern(lhs)
+                                    .unwrap_or(TypeId::ANY)
+                            } else {
+                                self.contextual_type_for_assignment_target(lhs)
+                            }
+                        })
+                        .unwrap_or(TypeId::ANY)
+                } else {
+                    self.contextual_type_for_assignment_target(target_idx)
+                };
+
+                let atom = self.ctx.types.intern_string(&name);
+                properties.push(tsz_solver::PropertyInfo::new(atom, prop_type));
+            }
+
+            Some(factory.object(properties))
+        } else {
+            None
+        }
+    }
+
+    fn destructuring_assignment_initializer_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) -> TypingRequest {
+        let initializer_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+        let supports_context = self.ctx.arena.get(initializer_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            )
+        });
+
+        if !supports_context {
+            return TypingRequest::NONE;
+        }
+
+        self.build_contextual_type_from_assignment_pattern(pattern_idx)
+            .map_or(TypingRequest::NONE, TypingRequest::with_contextual_type)
+    }
+
     fn report_abstract_properties_in_destructuring_assignment(
         &mut self,
         left_idx: NodeIndex,
@@ -1583,8 +1802,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let contextual_request = if !is_destructuring
-            && left_type != TypeId::ANY
+        let contextual_request = if is_destructuring {
+            self.destructuring_assignment_initializer_request(left_idx, right_idx)
+        } else if left_type != TypeId::ANY
             && left_type != TypeId::NEVER
             && left_type != TypeId::UNKNOWN
             && !self.type_contains_error(left_type)

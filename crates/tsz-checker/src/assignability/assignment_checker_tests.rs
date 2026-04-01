@@ -197,6 +197,27 @@ handler = cond
 }
 
 #[test]
+fn destructuring_assignment_contextually_types_literal_rhs_for_ts2488() {
+    let diagnostics = diagnostics_for(
+        r#"
+var a: string, b: boolean[];
+[a, ...b] = { 0: "", 1: true };
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2488)
+        .expect("expected TS2488 for non-iterable destructuring assignment");
+
+    assert!(
+        diag.message_text
+            .contains("Type '{ 0: string; 1: true; }' must have a '[Symbol.iterator]()' method that returns an iterator."),
+        "Expected TS2488 to preserve the partially contextualized RHS shape, got: {diag:?}"
+    );
+}
+
+#[test]
 fn nested_object_literal_assignability_keeps_exact_property_anchor() {
     let source = r#"
 type Inner = { ok: string };
