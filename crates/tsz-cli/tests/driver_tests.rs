@@ -129,6 +129,77 @@ export = Foo;
 }
 
 #[test]
+fn compile_amd_dependency_comment_name_fixture_keeps_ts2792_under_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("test.ts"),
+        r#"///<amd-dependency path='aliasedModule5' name='n1'/>
+///<amd-dependency path='unaliasedModule3'/>
+///<amd-dependency path='aliasedModule6' name='n2'/>
+///<amd-dependency path='unaliasedModule4'/>
+
+import "unaliasedModule1";
+
+import r1 = require("aliasedModule1");
+r1;
+
+import {p1, p2, p3} from "aliasedModule2";
+p1;
+
+import d from "aliasedModule3";
+d;
+
+import * as ns from "aliasedModule4";
+ns;
+
+import "unaliasedModule2";
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "amd"
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 5107).count(),
+        1,
+        "Expected one TS5107 deprecation diagnostic, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2882).count(),
+        2,
+        "Expected two TS2882 side-effect import diagnostics, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2792).count(),
+        4,
+        "Expected four TS2792 import diagnostics, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2307),
+        "Did not expect TS2307 once Classic resolution upgrades to TS2792, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn declaration_emit_ts2883_prefers_canonical_named_reference_message() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
