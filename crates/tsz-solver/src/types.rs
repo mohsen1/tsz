@@ -905,6 +905,10 @@ bitflags::bitflags! {
         /// Enum namespaces get implicit index signatures for inference and
         /// subtype checking, unlike regular named interfaces/classes.
         const ENUM_NAMESPACE = 1 << 3;
+        /// This object came from the declaration-only UMD global surface of an
+        /// exported class. It must not later pick up module augmentation members
+        /// through name-based fallback lookup.
+        const NO_MODULE_AUGMENTATION_LOOKUP = 1 << 4;
     }
 }
 

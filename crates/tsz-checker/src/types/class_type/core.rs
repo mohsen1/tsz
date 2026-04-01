@@ -13,8 +13,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeParamInfo,
-    Visibility,
+    CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
+    TypeParamInfo, Visibility,
 };
 
 #[inline]
@@ -43,6 +43,43 @@ fn in_progress_class_instance_result(
     }
 }
 
+fn declaration_is_module_augmentation(
+    arena: &tsz_parser::parser::NodeArena,
+    decl_idx: NodeIndex,
+) -> bool {
+    let mut current = Some(decl_idx);
+    while let Some(node_idx) = current {
+        let Some(ext) = arena.get_extended(node_idx) else {
+            break;
+        };
+        if ext.parent.is_none() {
+            break;
+        }
+        let parent_idx = ext.parent;
+        let Some(parent_node) = arena.get(parent_idx) else {
+            break;
+        };
+        if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+            && let Some(module_decl) = arena.get_module(parent_node)
+            && let Some(name_node) = arena.get(module_decl.name)
+        {
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                return true;
+            }
+            if name_node.kind == SyntaxKind::GlobalKeyword as u16 {
+                return false;
+            }
+            if let Some(ident) = arena.get_identifier(name_node)
+                && ident.escaped_text == "global"
+            {
+                return false;
+            }
+        }
+        current = Some(parent_idx);
+    }
+    false
+}
+
 // =============================================================================
 // Class Type Resolution
 // =============================================================================
@@ -67,31 +104,59 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
+        self.get_class_instance_type_with_mode(class_idx, class, true)
+    }
+
+    pub(crate) fn get_class_instance_type_without_module_augmentations(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> TypeId {
+        self.get_class_instance_type_with_mode(class_idx, class, false)
+    }
+
+    fn get_class_instance_type_with_mode(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        apply_module_augmentations: bool,
+    ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
         let is_in_resolution_set = current_sym
             .is_some_and(|sym_id| self.ctx.class_instance_resolution_set.contains(&sym_id));
 
-        // Fast path for re-entrant class instance queries: avoid re-entering
-        // the full inheritance walk while the class is already being resolved.
-        if let Some(result) = in_progress_class_instance_result(
-            is_in_resolution_set,
-            self.ctx.class_instance_type_cache.get(&class_idx).copied(),
-        ) {
-            return result;
-        }
+        if apply_module_augmentations {
+            // Fast path for re-entrant class instance queries: avoid re-entering
+            // the full inheritance walk while the class is already being resolved.
+            if let Some(result) = in_progress_class_instance_result(
+                is_in_resolution_set,
+                self.ctx.class_instance_type_cache.get(&class_idx).copied(),
+            ) {
+                return result;
+            }
 
-        if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
-            return cached;
+            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+                return cached;
+            }
+        } else if is_in_resolution_set {
+            return TypeId::ERROR;
         }
 
         let mut visited = FxHashSet::default();
         let mut visited_nodes = FxHashSet::default();
-        let result =
-            self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes);
+        let result = self.get_class_instance_type_inner(
+            class_idx,
+            class,
+            &mut visited,
+            &mut visited_nodes,
+            apply_module_augmentations,
+        );
 
-        // Cache all terminal outcomes (including ERROR) so pathological
-        // inheritance graphs don't repeatedly recompute the same failing class.
-        self.ctx.class_instance_type_cache.insert(class_idx, result);
+        if apply_module_augmentations {
+            // Cache all terminal outcomes (including ERROR) so pathological
+            // inheritance graphs don't repeatedly recompute the same failing class.
+            self.ctx.class_instance_type_cache.insert(class_idx, result);
+        }
 
         result
     }
@@ -111,6 +176,7 @@ impl<'a> CheckerState<'a> {
         class: &tsz_parser::parser::node::ClassData,
         visited: &mut FxHashSet<SymbolId>,
         visited_nodes: &mut FxHashSet<NodeIndex>,
+        apply_module_augmentations: bool,
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
         let factory = self.ctx.types.factory();
@@ -1570,6 +1636,11 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .copied()
                 .filter(|&decl_idx| {
+                    if !apply_module_augmentations
+                        && declaration_is_module_augmentation(self.ctx.arena, decl_idx)
+                    {
+                        return false;
+                    }
                     self.ctx
                         .arena
                         .get(decl_idx)
@@ -1633,8 +1704,11 @@ impl<'a> CheckerState<'a> {
                             if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
                                 continue;
                             }
+                            let is_module_augmentation_decl =
+                                declaration_is_module_augmentation(arena.as_ref(), decl_idx);
                             if let Some(node) = arena.get(decl_idx)
                                 && arena.get_interface(node).is_some()
+                                && (apply_module_augmentations || !is_module_augmentation_decl)
                             {
                                 let cross_type =
                                     self.lower_cross_file_interface_decl(arena, decl_idx, sym_id);
@@ -1704,6 +1778,9 @@ impl<'a> CheckerState<'a> {
         if has_late_bound_members {
             shape.mark_has_late_bound_members();
         }
+        if !apply_module_augmentations {
+            shape.flags |= ObjectFlags::NO_MODULE_AUGMENTATION_LOOKUP;
+        }
         let mut instance_type = factory.object_with_index(shape);
 
         // Final interface merging pass
@@ -1716,7 +1793,9 @@ impl<'a> CheckerState<'a> {
             // When another file has `declare module './thisFile' { interface ClassName { ... } }`,
             // those augmented members must be merged into the class instance type so that
             // `ClassName.prototype` and value-position usage see the full merged type.
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if apply_module_augmentations
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
                 let class_name = symbol.escaped_name.clone();
                 if let Some(sf) = self.ctx.arena.source_files.first() {
                     let file_name = sf.file_name.clone();
