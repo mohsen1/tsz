@@ -7511,7 +7511,11 @@ impl<'a> DeclarationEmitter<'a> {
                     .as_deref()
                     .filter(|text| self.type_text_is_directly_nameable_reference(text))
                     .or_else(|| {
-                        self.type_text_is_directly_nameable_reference(&printed_type_text)
+                        let printed_is_safe_fallback = printed_type_text.starts_with("import(\"")
+                            || printed_type_text.contains('<')
+                            || printed_type_text.contains('.');
+                        (printed_is_safe_fallback
+                            && self.type_text_is_directly_nameable_reference(&printed_type_text))
                             .then_some(printed_type_text.as_str())
                     });
                 let preferred_type_is_directly_nameable =

@@ -285,8 +285,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let has_conflict =
-                    self.target_file_has_direct_export_named(target_idx, &symbol.escaped_name);
+                let has_conflict = self
+                    .module_augmentation_top_level_name_conflicts_with_target_export_surface(
+                        decl_idx,
+                        target_idx,
+                        &symbol.escaped_name,
+                    );
                 if !has_conflict {
                     continue;
                 }
@@ -382,6 +386,26 @@ impl<'a> CheckerState<'a> {
             .module_exports
             .get(&file_name)
             .is_some_and(|exports| exports.get(export_name).is_some())
+    }
+
+    fn module_augmentation_top_level_name_conflicts_with_target_export_surface(
+        &self,
+        decl_idx: NodeIndex,
+        target_idx: usize,
+        export_name: &str,
+    ) -> bool {
+        let Some(local_flags) = self.declaration_symbol_flags(self.ctx.arena, decl_idx) else {
+            return self.target_file_has_direct_export_named(target_idx, export_name);
+        };
+
+        let target_decls = self.export_surface_declarations_in_file(target_idx, export_name);
+        if target_decls.is_empty() {
+            return self.target_file_has_direct_export_named(target_idx, export_name);
+        }
+
+        target_decls.into_iter().all(|(_, target_flags, _)| {
+            !tsz_binder::BinderState::can_merge_flags(target_flags, local_flags)
+        })
     }
 
     fn collect_interface_member_kinds(
