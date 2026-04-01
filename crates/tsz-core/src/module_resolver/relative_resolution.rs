@@ -153,8 +153,22 @@ impl ModuleResolver {
         }
 
         if let Some(resolved) = try_resolve_candidate(&candidate) {
+            let resolved_display = resolved.to_string_lossy().replace('\\', "/");
+            let resolved_via_index = resolved_display.ends_with("/index.ts")
+                || resolved_display.ends_with("/index.tsx")
+                || resolved_display.ends_with("/index.mts")
+                || resolved_display.ends_with("/index.cts")
+                || resolved_display.ends_with("/index.d.ts")
+                || resolved_display.ends_with("/index.d.mts")
+                || resolved_display.ends_with("/index.d.cts");
+            let resolved_using_ts_extension = (specifier.ends_with(".ts")
+                || specifier.ends_with(".tsx")
+                || specifier.ends_with(".mts")
+                || specifier.ends_with(".cts"))
+                && !resolved_via_index;
             return Ok(ResolvedModule {
                 resolved_path: resolved.clone(),
+                resolved_using_ts_extension,
                 is_external: false,
                 package_name: None,
                 original_specifier: specifier.to_string(),
@@ -208,6 +222,7 @@ impl ModuleResolver {
         if let Some(resolved) = self.try_file_or_directory(&path) {
             return Ok(ResolvedModule {
                 resolved_path: resolved.clone(),
+                resolved_using_ts_extension: false,
                 is_external: false,
                 package_name: None,
                 original_specifier: specifier.to_string(),

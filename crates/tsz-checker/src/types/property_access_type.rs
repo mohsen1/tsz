@@ -2024,6 +2024,12 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|owner_node| {
                             owner_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
+                    let this_owner_is_js_prototype_method = self
+                        .this_has_contextual_owner(access.expression)
+                        .is_some_and(|owner_idx| {
+                            self.js_prototype_owner_expression_for_node(owner_idx)
+                                .is_some()
+                        });
                     if is_this_access
                         && this_owner_is_object_literal
                         && !has_explicit_this_context
@@ -2038,6 +2044,14 @@ impl<'a> CheckerState<'a> {
                                     top,
                                 )
                         })
+                    {
+                        return TypeId::ANY;
+                    }
+
+                    if self.is_js_file()
+                        && is_this_access
+                        && this_owner_is_js_prototype_method
+                        && self.property_access_is_direct_write_target(idx)
                     {
                         return TypeId::ANY;
                     }

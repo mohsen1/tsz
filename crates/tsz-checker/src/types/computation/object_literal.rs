@@ -318,8 +318,18 @@ impl<'a> CheckerState<'a> {
                 contextual_type = Some(narrowed);
             }
         }
-        let contextual_receiver_this_type =
-            self.contextual_object_receiver_this_type(contextual_type, marker_this_type);
+        let prototype_owner_this_type = if self.is_js_file() {
+            self.js_prototype_owner_expression_for_node(idx)
+                .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
+                .and_then(|owner_target| {
+                    self.js_constructor_body_instance_type_for_function(owner_target)
+                })
+        } else {
+            None
+        };
+        let contextual_receiver_this_type = prototype_owner_this_type.or_else(|| {
+            self.contextual_object_receiver_this_type(contextual_type, marker_this_type)
+        });
         let base_request = request.contextual_opt(contextual_type);
 
         for &elem_idx in &obj.elements.nodes {
@@ -528,7 +538,10 @@ impl<'a> CheckerState<'a> {
                             && marker_this_type.is_none()
                             && self.current_this_type().is_none()
                         {
-                            if let Some(ctx_type) = contextual_type {
+                            if let Some(receiver_this_type) = contextual_receiver_this_type {
+                                self.ctx.this_type_stack.push(receiver_this_type);
+                                pushed_prop_fn_this = true;
+                            } else if let Some(ctx_type) = contextual_type {
                                 let ctx_type = self.evaluate_contextual_type(ctx_type);
                                 self.ctx.this_type_stack.push(ctx_type);
                                 pushed_prop_fn_this = true;
@@ -1201,7 +1214,10 @@ impl<'a> CheckerState<'a> {
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
                     if marker_this_type.is_none() && self.current_this_type().is_none() {
-                        if let Some(ctx_type) = contextual_type {
+                        if let Some(receiver_this_type) = contextual_receiver_this_type {
+                            self.ctx.this_type_stack.push(receiver_this_type);
+                            pushed_contextual_this = true;
+                        } else if let Some(ctx_type) = contextual_type {
                             let ctx_type = self.evaluate_contextual_type(ctx_type);
                             self.ctx.this_type_stack.push(ctx_type);
                             pushed_contextual_this = true;

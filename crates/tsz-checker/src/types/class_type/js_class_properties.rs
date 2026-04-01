@@ -111,9 +111,25 @@ impl CheckerState<'_> {
         let Some(parameters) = parameters else {
             return param_type_map;
         };
-        let class_template_types = self.enclosing_jsdoc_class_template_types(parent_idx);
-
         let jsdoc = self.get_jsdoc_for_function(parent_idx);
+        let class_template_types = self.enclosing_jsdoc_class_template_types(parent_idx);
+        let mut function_template_types = FxHashMap::default();
+        if let Some(jsdoc) = jsdoc.as_ref() {
+            for name in Self::jsdoc_template_type_params(jsdoc) {
+                let atom = self.ctx.types.intern_string(&name);
+                function_template_types.entry(name).or_insert_with(|| {
+                    self.ctx
+                        .types
+                        .factory()
+                        .type_param(tsz_solver::TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        })
+                });
+            }
+        }
         let jsdoc_param_names: Vec<String> = jsdoc
             .as_ref()
             .map(|jsdoc| {
@@ -144,7 +160,10 @@ impl CheckerState<'_> {
                                 .trim_end_matches('=')
                                 .trim_start_matches("...")
                                 .trim();
-                            class_template_types.get(normalized).copied()
+                            class_template_types
+                                .get(normalized)
+                                .copied()
+                                .or_else(|| function_template_types.get(normalized).copied())
                         })
                     })
                     .or_else(|| self.jsdoc_type_annotation_for_node(param_idx))

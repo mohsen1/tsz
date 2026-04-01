@@ -421,7 +421,7 @@ impl<'a> CheckerState<'a> {
             None
         };
         let prototype_owner_expr = if self.is_js_file() && !is_arrow_function {
-            self.js_prototype_owner_expression_for_function(idx)
+            self.js_prototype_owner_expression_for_node(idx)
         } else {
             None
         };

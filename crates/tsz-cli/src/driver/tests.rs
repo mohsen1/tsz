@@ -17,6 +17,19 @@ use tsz::emitter::PrinterOptions;
 use tsz_common::common::ModuleKind;
 use tsz_common::diagnostics::Diagnostic;
 
+const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
+    matches!(code,
+        8002 | 8003 | 8004 | 8006 | 8008 | 8009 | 8010 | 8011 | 8013 | 8015 | 8016 | 8017
+            | 8018
+    ) || matches!(code,
+        17002 | 17006 | 17007 | 17008 | 17012
+    ) || matches!(code,
+        1002 | 1003 | 1005 | 1011 | 1034 | 1109 | 1110 | 1121 | 1124 | 1125 | 1126 | 1127
+            | 1128 | 1131 | 1134 | 1137 | 1144 | 1145 | 1198 | 1199 | 1389 | 1433 | 1434
+            | 1436 | 1440 | 1442 | 1489
+    ) || matches!(code, 2458 | 2754)
+}
+
 #[test]
 fn test_module_resolution_requires_matching_module() {
     let resolved = ResolvedCompilerOptions {
@@ -422,7 +435,6 @@ fn test_compile_preserve_symlinks_emits_ts2307_for_original_target() {
 /// NOT a grammar error. It must NOT suppress TS5107 deprecation diagnostics.
 #[test]
 fn test_ts17009_does_not_suppress_deprecation() {
-    use super::is_grammar_error_for_deprecation_priority;
     assert!(
         !is_grammar_error_for_deprecation_priority(17009),
         "TS17009 is a semantic error and must not suppress TS5107"
@@ -433,7 +445,6 @@ fn test_ts17009_does_not_suppress_deprecation() {
 /// NOT a grammar error. It must NOT suppress TS5107 deprecation diagnostics.
 #[test]
 fn test_ts17011_does_not_suppress_deprecation() {
-    use super::is_grammar_error_for_deprecation_priority;
     assert!(
         !is_grammar_error_for_deprecation_priority(17011),
         "TS17011 is a semantic error and must not suppress TS5107"
@@ -444,7 +455,6 @@ fn test_ts17011_does_not_suppress_deprecation() {
 /// correctly suppress TS5107 in tsc.
 #[test]
 fn test_exponentiation_errors_do_suppress_deprecation() {
-    use super::is_grammar_error_for_deprecation_priority;
     assert!(
         is_grammar_error_for_deprecation_priority(17006),
         "TS17006 should suppress TS5107"
@@ -458,7 +468,6 @@ fn test_exponentiation_errors_do_suppress_deprecation() {
 /// 8xxx JS grammar errors and specific 1xxx parser errors should suppress TS5107.
 #[test]
 fn test_grammar_error_classification() {
-    use super::is_grammar_error_for_deprecation_priority;
     // 8xxx: JS grammar errors (8024 is JSDoc, not grammar)
     assert!(is_grammar_error_for_deprecation_priority(8002));
     assert!(!is_grammar_error_for_deprecation_priority(8024));
