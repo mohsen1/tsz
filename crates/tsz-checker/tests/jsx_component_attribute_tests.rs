@@ -3,10 +3,12 @@
 //! Verifies that TS2322 (type mismatch) and TS2741 (missing required property)
 //! are correctly emitted for JSX component attributes.
 
+use std::path::Path;
 use std::sync::Arc;
 use tsz_checker::CheckerState;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -884,9 +886,55 @@ let p2 = <TestMod.Test />;
 // Cross-file: import React = require('react') with ambient module
 // =============================================================================
 
+fn load_cross_file_jsx_lib_files() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let search_roots: Vec<&Path> = {
+        let mut roots = vec![manifest_dir];
+        let mut parent = manifest_dir.parent();
+        while let Some(dir) = parent {
+            roots.push(dir);
+            parent = dir.parent();
+        }
+        roots
+    };
+    let candidates = [("lib.es5.d.ts", [
+        "scripts/node_modules/typescript/lib/lib.es5.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
+        "crates/tsz-core/src/lib-assets-stripped/es5.d.ts",
+        "crates/tsz-core/src/lib-assets/es5.d.ts",
+        "../tsz-core/src/lib-assets-stripped/es5.d.ts",
+        "../tsz-core/src/lib-assets/es5.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
+        "TypeScript/src/lib/es5.d.ts",
+    ])];
+
+    let mut lib_files = Vec::new();
+    for (file_name, suffixes) in candidates {
+        let maybe_path = search_roots
+            .iter()
+            .flat_map(|root| suffixes.iter().map(move |suffix| root.join(suffix)))
+            .find(|path| path.exists());
+        if let Some(path) = maybe_path
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            lib_files.push(Arc::new(LibFile::from_source(
+                file_name.to_string(),
+                content,
+            )));
+        }
+    }
+    lib_files
+}
+
 /// Helper to compile a multi-file JSX project and return diagnostics for the main file.
 fn cross_file_jsx_diagnostics(lib_source: &str, main_source: &str) -> Vec<(u32, String)> {
-    cross_file_jsx_diagnostics_with_mode(lib_source, main_source, JsxMode::Preserve)
+    cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        main_source,
+        JsxMode::Preserve,
+        false,
+    )
 }
 
 fn cross_file_jsx_diagnostics_with_mode(
@@ -894,6 +942,21 @@ fn cross_file_jsx_diagnostics_with_mode(
     main_source: &str,
     jsx_mode: JsxMode,
 ) -> Vec<(u32, String)> {
+    cross_file_jsx_diagnostics_with_mode_and_default_libs(lib_source, main_source, jsx_mode, false)
+}
+
+fn cross_file_jsx_diagnostics_with_mode_and_default_libs(
+    lib_source: &str,
+    main_source: &str,
+    jsx_mode: JsxMode,
+    include_default_libs: bool,
+) -> Vec<(u32, String)> {
+    let default_lib_files = if include_default_libs {
+        load_cross_file_jsx_lib_files()
+    } else {
+        Vec::new()
+    };
+
     // Parse and bind lib file (react.d.ts equivalent)
     let mut parser_lib = ParserState::new("react.d.ts".to_string(), lib_source.to_string());
     let root_lib = parser_lib.parse_source_file();
@@ -906,18 +969,31 @@ fn cross_file_jsx_diagnostics_with_mode(
     let mut parser_main = ParserState::new("file.tsx".to_string(), main_source.to_string());
     let root_main = parser_main.parse_source_file();
     let mut binder_main = tsz_binder::BinderState::new();
-    let raw_lib_contexts = vec![tsz_binder::state::LibContext {
+    let mut raw_lib_contexts: Vec<_> = default_lib_files
+        .iter()
+        .map(|lib| tsz_binder::state::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    raw_lib_contexts.push(tsz_binder::state::LibContext {
         arena: Arc::clone(&arena_lib),
         binder: Arc::clone(&binder_lib),
-    }];
+    });
     binder_main.merge_lib_contexts_into_binder(&raw_lib_contexts);
     binder_main.bind_source_file(parser_main.get_arena(), root_main);
 
     let arena_main = Arc::new(parser_main.get_arena().clone());
     let binder_main = Arc::new(binder_main);
 
-    let all_arenas = Arc::new(vec![Arc::clone(&arena_main), Arc::clone(&arena_lib)]);
-    let all_binders = Arc::new(vec![Arc::clone(&binder_main), Arc::clone(&binder_lib)]);
+    let mut all_arenas_vec = vec![Arc::clone(&arena_main), Arc::clone(&arena_lib)];
+    let mut all_binders_vec = vec![Arc::clone(&binder_main), Arc::clone(&binder_lib)];
+    for lib in &default_lib_files {
+        all_arenas_vec.push(Arc::clone(&lib.arena));
+        all_binders_vec.push(Arc::clone(&lib.binder));
+    }
+    let all_arenas = Arc::new(all_arenas_vec);
+    let all_binders = Arc::new(all_binders_vec);
 
     let options = CheckerOptions {
         jsx_mode,
@@ -936,13 +1012,21 @@ fn cross_file_jsx_diagnostics_with_mode(
     checker.ctx.set_all_arenas(all_arenas);
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(0);
-    checker
-        .ctx
-        .set_lib_contexts(vec![tsz_checker::context::LibContext {
+    let mut checker_lib_contexts: Vec<_> = default_lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker_lib_contexts.push(tsz_checker::context::LibContext {
             arena: Arc::clone(&arena_lib),
             binder: Arc::clone(&binder_lib),
-        }]);
-    checker.ctx.set_actual_lib_file_count(1);
+        });
+    checker.ctx.set_lib_contexts(checker_lib_contexts);
+    checker
+        .ctx
+        .set_actual_lib_file_count(default_lib_files.len() + 1);
 
     checker.check_source_file(root_main);
     checker
@@ -1010,7 +1094,12 @@ class Poisoned extends React.Component<Prop, {}> {
 let p = <Poisoned x />;
 "#;
 
-    let diags = cross_file_jsx_diagnostics(lib_source, main_source);
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        main_source,
+        JsxMode::Preserve,
+        true,
+    );
     // The export= resolution should work — no TS2307 "Cannot find module"
     assert!(
         !has_code(&diags, 2307),
