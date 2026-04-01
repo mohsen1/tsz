@@ -660,6 +660,8 @@ impl<'a> CheckerState<'a> {
             // the solver handles generic-to-generic comparison correctly via alpha-renaming.
             // Also skip when only the source has type parameters and target is concrete —
             // this is a real mismatch (e.g., <T>(x: T) => T vs (x: string) => boolean).
+            // Additionally skip when source has outer-context type params and target is concrete
+            // (e.g., JSDoc @template types that should emit errors for concrete mismatches).
             || (!self.ctx.skip_callable_type_param_suppression.get()
                 && is_callable_or_function(source)
                 && is_callable_or_function(target)
@@ -669,6 +671,9 @@ impl<'a> CheckerState<'a> {
                     && has_own_signature_type_params(target))
                 && !(has_own_signature_type_params(source)
                     && !has_own_signature_type_params(target)
+                    && !contains_type_parameters(target))
+                && !(!has_own_signature_type_params(source)
+                    && contains_type_parameters(source)
                     && !contains_type_parameters(target)))
     }
 
