@@ -249,6 +249,20 @@ fn test_prepare_test_dir_does_not_copy_non_root_tsconfig_to_root() {
 }
 
 #[test]
+fn test_normalize_message_paths_keeps_current_ts2883_node_modules_shape() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path();
+    let message = "The inferred type of 'Form' cannot be named without a reference to 'HTMLAttributes' from './node_modules/react'. This is likely not portable. A type annotation is necessary.";
+
+    let normalized = normalize_message_paths(message, project_root);
+
+    assert_eq!(
+        normalized,
+        "The inferred type of 'Form' cannot be named without a reference to 'HTMLAttributes' from '../../../../../..node_modules/react'. This is likely not portable. A type annotation is necessary."
+    );
+}
+
+#[test]
 fn test_prepare_test_dir_preserves_explicit_allow_js_false_with_check_js() {
     let content = "var x;";
     let filenames: Vec<(String, String)> = Vec::new();
