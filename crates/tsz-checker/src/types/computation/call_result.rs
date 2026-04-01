@@ -688,8 +688,7 @@ impl<'a> CheckerState<'a> {
                     || args
                         .iter()
                         .copied()
-                        .any(|arg_idx| self.get_type_of_node(arg_idx) == TypeId::ERROR)
-                    || self.callee_type_has_structural_errors(callee_type, callee_expr);
+                        .any(|arg_idx| self.get_type_of_node(arg_idx) == TypeId::ERROR);
                 if has_error_surface {
                     return TypeId::ERROR;
                 }
@@ -977,127 +976,5 @@ impl<'a> CheckerState<'a> {
             expanded.push(arg_idx);
         }
         expanded
-    }
-
-    /// Check if a callee type has structural errors that should suppress TS2769.
-    /// When a class/interface has structural errors (TS2420, TS2430, TS2694),
-    /// we should suppress "no overload matches" errors because the type is known
-    /// to be broken.
-    fn callee_type_has_structural_errors(&mut self, callee_type: TypeId, callee_expr: NodeIndex) -> bool {
-        // Try to get the symbol from various type kinds
-        if let Some(symbol_id) = self.get_type_symbol(callee_type) {
-            if self.symbol_has_structural_errors(symbol_id) {
-                return true;
-            }
-        }
-
-        // For property access expressions (e.g., Promise.try), check the base identifier
-        if let Some(callee_node) = self.ctx.arena.get(callee_expr) {
-            if let Some(access) = self.ctx.arena.get_access_expr(callee_node) {
-                // Get the base expression (e.g., Promise in Promise.try)
-                let base_expr = access.expression;
-                
-                // Try to get the symbol directly from the base identifier
-                if let Some(_base_name) = self.ctx.arena.get_identifier_text(base_expr) {
-                    // Try to resolve the symbol from the current scope
-                    if let Some(node_sym) = self.ctx.binder.get_node_symbol(base_expr) {
-                        if self.symbol_has_structural_errors(node_sym) {
-                            return true;
-                        }
-                    }
-                    
-                    // Fallback: check if any structural errors exist in the file
-                    // This is a broader check that should catch cases where the symbol
-                    // lookup fails but structural errors have been emitted
-                    if self.has_structural_errors_in_file() {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-    
-    /// Check if any structural errors (TS2420, TS2430, TS2694) have been emitted.
-    fn has_structural_errors_in_file(&self) -> bool {
-        let structural_error_codes = [
-            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-            diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-        ];
-        
-        self.ctx.diagnostics.iter().any(|d| structural_error_codes.contains(&d.code))
-    }
-
-    /// Get the symbol associated with a type, handling various type kinds.
-    fn get_type_symbol(&self, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
-        let db = self.ctx.types.as_type_database();
-        
-        // First try the shape-based lookup (Object, ObjectWithIndex, Callable)
-        if let Some(key) = db.lookup(type_id) {
-            match key {
-                tsz_solver::TypeData::Callable(shape_id) => {
-                    let shape = db.callable_shape(shape_id);
-                    return shape.symbol;
-                }
-                tsz_solver::TypeData::Object(shape_id) | tsz_solver::TypeData::ObjectWithIndex(shape_id) => {
-                    let shape = db.object_shape(shape_id);
-                    return shape.symbol;
-                }
-                _ => {}
-            }
-        }
-        
-        // Check for TypeQuery types (typeof references)
-        if let Some(key) = db.lookup(type_id) {
-            if let tsz_solver::TypeData::TypeQuery(sym_ref) = key {
-                return Some(tsz_binder::SymbolId(sym_ref.0));
-            }
-        }
-        
-        // For Lazy(DefId) types, resolve to symbol
-        if let Some(key) = db.lookup(type_id) {
-            if let tsz_solver::TypeData::Lazy(def_id) = key {
-                return self.ctx.def_to_symbol_id(def_id);
-            }
-        }
-        
-        None
-    }
-
-    /// Check if a symbol has structural error diagnostics (TS2420, TS2430, TS2694).
-    fn symbol_has_structural_errors(&self, symbol_id: tsz_binder::SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
-            return false;
-        };
-
-        // Check if any structural error diagnostics have been emitted for this symbol's declarations
-        let structural_error_codes = [
-            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-            diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-        ];
-
-        // Get the span of the symbol's declarations
-        for &decl_idx in &symbol.declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let decl_start = node.pos as u32;
-            let decl_end = node.end as u32;
-
-            // Check if any structural error diagnostics are within this declaration's span
-            for diag in &self.ctx.diagnostics {
-                if structural_error_codes.contains(&diag.code)
-                    && diag.start >= decl_start
-                    && diag.start < decl_end
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 }
