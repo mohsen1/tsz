@@ -1606,6 +1606,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Ambient declarations still need index-signature parameter validation (TS1268).
         if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
             self.check_ambient_variable_type_annotations_for_index_signatures(stmt_idx);
+            self.check_ambient_variable_implicit_any(stmt_idx);
         }
 
         // Check labeled statements — the inner statement should also be checked
@@ -1693,6 +1694,71 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
                         );
                     }
+                }
+            }
+        }
+    }
+
+    /// TS7005: Emit "Variable 'x' implicitly has an 'any' type" for ambient variable
+    /// declarations without a type annotation when `noImplicitAny` is enabled.
+    ///
+    /// Variables inside `declare namespace` blocks are only visited via
+    /// `check_statement_in_ambient_context`, which doesn't run the full variable
+    /// checking pipeline. This method fills that gap for the TS7005 diagnostic.
+    fn check_ambient_variable_implicit_any(&mut self, stmt_idx: NodeIndex) {
+        if !self.ctx.no_implicit_any() || self.ctx.is_declaration_file() {
+            return;
+        }
+
+        let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) else {
+            return;
+        };
+
+        for &list_idx in &var_stmt.declarations.nodes {
+            let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                // Only flag declarations without a type annotation or initializer
+                if var_decl.type_annotation.is_some() || var_decl.initializer.is_some() {
+                    continue;
+                }
+                // Skip destructuring patterns
+                if self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                    name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                }) {
+                    continue;
+                }
+                use tsz_parser::parser::node::NodeAccess;
+                let Some(name) = self.ctx.arena.get_identifier_text(var_decl.name) else {
+                    continue;
+                };
+                use crate::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::get_message_template;
+                let template =
+                    get_message_template(diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE)
+                        .unwrap_or("Variable '{0}' implicitly has an '{1}' type.");
+                let message = format_message(template, &[name, "any"]);
+                if let Some((pos, end)) = self.ctx.get_node_span(var_decl.name) {
+                    self.ctx.error(
+                        pos,
+                        end - pos,
+                        message,
+                        diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+                    );
                 }
             }
         }

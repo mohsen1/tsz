@@ -22343,3 +22343,80 @@ fn test_type_parameter_nested_function_return_type_not_equivalent() {
         "Same type param through nesting should be assignable, got: {d:?}"
     );
 }
+
+/// TS7005 should fire for variables inside `declare namespace` that lack
+/// a type annotation, when `noImplicitAny` is enabled.
+/// Regression test for: conformance/implicitAnyAmbients.ts
+#[test]
+fn test_ts7005_emitted_for_ambient_namespace_variables() {
+    let source = r#"
+declare namespace m {
+    var x;
+    var y: any;
+    namespace n {
+        var z;
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7005_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7005)
+        .collect();
+
+    // Should emit TS7005 for `var x;` and `var z;` (no type annotation)
+    // but NOT for `var y: any;` (has explicit type annotation)
+    assert_eq!(
+        ts7005_diags.len(),
+        2,
+        "Expected exactly 2 TS7005 diagnostics (for `x` and `z`), got: {ts7005_diags:?}"
+    );
+
+    // Verify the messages reference the correct variable names
+    let messages: Vec<&str> = ts7005_diags.iter().map(|(_, m)| m.as_str()).collect();
+    assert!(
+        messages.iter().any(|m| m.contains("'x'")),
+        "Expected TS7005 for variable 'x', got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("'z'")),
+        "Expected TS7005 for variable 'z', got: {messages:?}"
+    );
+
+    // `var y: any` should NOT trigger TS7005 — it has an explicit type annotation
+    assert!(
+        !messages.iter().any(|m| m.contains("'y'")),
+        "var y: any should NOT trigger TS7005, got: {messages:?}"
+    );
+}
+
+/// TS7005 should NOT fire for ambient namespace variables in .d.ts files.
+#[test]
+fn test_ts7005_not_emitted_for_dts_ambient_namespace_variables() {
+    let source = r#"
+declare namespace m {
+    var x;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.d.ts",
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7005_count = diagnostics.iter().filter(|(code, _)| *code == 7005).count();
+    assert_eq!(
+        ts7005_count, 0,
+        "TS7005 should not fire in .d.ts files, got: {diagnostics:?}"
+    );
+}
