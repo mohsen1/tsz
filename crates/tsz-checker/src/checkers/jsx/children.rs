@@ -87,17 +87,28 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         child_count: usize,
         has_text_child: bool,
+        contextual_children_type: Option<TypeId>,
         synthesized_children_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
         let children_prop_name = self.get_jsx_children_prop_name();
-        let Some(children_type) = self.get_jsx_children_prop_type(props_type) else {
+        let Some(mut children_type) = self.get_jsx_children_prop_type(props_type) else {
             return;
         };
         let children_type_str = self
             .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
             .unwrap_or_else(|| self.jsx_children_type_display(props_type, children_type));
         let multiple_children_type = self.select_jsx_multiple_children_target_type(children_type);
+
+        if child_count == 1
+            && !matches!(synthesized_children_type, TypeId::ANY | TypeId::ERROR)
+            && let Some(precise_children_type) = contextual_children_type
+            && precise_children_type != TypeId::ANY
+            && precise_children_type != children_type
+            && !self.is_assignable_to(synthesized_children_type, precise_children_type)
+        {
+            children_type = precise_children_type;
+        }
 
         match child_count {
             0 => {}

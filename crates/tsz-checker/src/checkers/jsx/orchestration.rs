@@ -615,10 +615,15 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::computation::call_inference::should_preserve_contextual_application_shape;
 
+        let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
         let function_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
             self.ctx.types,
             component_type,
-        )?;
+        )
+        .filter(|shape| !shape.type_params.is_empty() && !shape.params.is_empty())
+        .or_else(|| {
+            self.infer_jsx_generic_class_component_signature(opening_idx, component_type)
+        })?;
         if function_shape.type_params.is_empty() || function_shape.params.is_empty() {
             return None;
         }
@@ -632,7 +637,6 @@ impl<'a> CheckerState<'a> {
         // contextual typing from inferred type params.
         let mut concrete_attrs: Vec<(String, TypeId)> = Vec::new();
         let mut has_function_valued_attrs = false;
-        let mut has_function_valued_children = false;
         for (name, ty) in &provided_attrs {
             match ty {
                 Some(ty) => {
@@ -641,14 +645,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 None => {
-                    if name == &children_prop_name {
-                        has_function_valued_children = true;
-                    } else {
+                    if name != &children_prop_name {
                         has_function_valued_attrs = true;
                     }
                 }
             }
         }
+
+        // Function-valued body children should be checked against the inferred children context,
+        // not feed back into type-parameter inference.
+        let has_function_valued_children = false;
 
         // === Round 1: Infer type params from concrete attrs only ===
         let mut substitution = if concrete_attrs.is_empty() {
@@ -1184,6 +1190,10 @@ impl<'a> CheckerState<'a> {
             self.get_jsx_props_type_for_component(component_type, element_idx)
         {
             if raw_has_type_params
+                && tsz_solver::type_queries::get_construct_signatures(
+                    self.ctx.types,
+                    normalized_component_type,
+                ).is_none_or(|sigs| sigs.is_empty())
                 && let Some(inferred_props) = self
                     .infer_jsx_generic_component_props_type(
                         attributes_idx,
@@ -1201,25 +1211,49 @@ impl<'a> CheckerState<'a> {
             return Some((props_type, raw_has_type_params));
         }
 
-        self.infer_jsx_generic_component_props_type(attributes_idx, normalized_component_type)
-            .or_else(|| {
-                self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+        let has_function_valued_jsx_attrs = self
+            .collect_jsx_union_resolution_attrs(attributes_idx)
+            .is_some_and(|attrs| {
+                let children_prop_name = self.get_jsx_children_prop_name();
+                attrs
+                    .into_iter()
+                    .any(|(name, ty)| name != children_prop_name && ty.is_none())
+            });
+        let is_class_like_component = self
+            .ctx
+            .arena
+            .get_extended(attributes_idx)
+            .map(|ext| ext.parent)
+            .and_then(|opening_idx| {
+                self.infer_jsx_generic_class_component_signature(
+                    opening_idx,
+                    normalized_component_type,
+                )
             })
-            .map(|props_type| (props_type, false))
+            .is_some();
+
+        let fallback_props = if is_class_like_component && !has_function_valued_jsx_attrs {
+            self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+        } else {
+            self.infer_jsx_generic_component_props_type(attributes_idx, normalized_component_type)
+                .or_else(|| {
+                    self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+                })
+        };
+
+        fallback_props.map(|props_type| (props_type, false))
     }
 
     pub(super) fn infer_jsx_generic_class_component_signature(
         &mut self,
-        element_idx: NodeIndex,
+        _element_idx: NodeIndex,
         component_type: TypeId,
     ) -> Option<tsz_solver::FunctionShape> {
-        let node = self.ctx.arena.get(element_idx)?;
-        let opening = self.ctx.arena.get_jsx_opening(node)?;
         let call_sig =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?
                 .first()?
                 .clone();
-        let function_shape = tsz_solver::FunctionShape {
+        let mut function_shape = tsz_solver::FunctionShape {
             type_params: call_sig.type_params,
             params: call_sig.params,
             this_type: call_sig.this_type,
@@ -1228,39 +1262,57 @@ impl<'a> CheckerState<'a> {
             is_constructor: true,
             is_method: call_sig.is_method,
         };
-        if function_shape.type_params.is_empty() || function_shape.params.is_empty() {
+        if function_shape.type_params.is_empty() {
             return None;
         }
 
-        let children_prop_name = self.get_jsx_children_prop_name();
-        let provided_attrs = self.collect_jsx_union_resolution_attrs(opening.attributes)?;
-        let provided_attrs: Vec<(String, TypeId)> = provided_attrs
-            .into_iter()
-            .map(|(name, ty)| {
-                if name == children_prop_name {
-                    return (name, TypeId::ERROR);
+        if function_shape.params.is_empty() {
+            use crate::query_boundaries::common::PropertyAccessResult;
+
+            let evaluated_return_type = self.evaluate_type_with_env(function_shape.return_type);
+            let synthesized_param_type = match self
+                .get_element_attributes_property_name_with_check(None)
+            {
+                None => {
+                    match self.resolve_property_access_with_env(function_shape.return_type, "props")
+                    {
+                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                        _ => match self
+                            .resolve_property_access_with_env(evaluated_return_type, "props")
+                        {
+                            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                            _ => None,
+                        },
+                    }
                 }
-                (name, ty.unwrap_or(TypeId::ANY))
-            })
-            .filter(|(name, ty)| name != &children_prop_name && *ty != TypeId::ERROR)
-            .collect();
-        if provided_attrs.is_empty() {
+                Some(name) if name.is_empty() => Some(function_shape.return_type),
+                Some(name) => {
+                    match self.resolve_property_access_with_env(function_shape.return_type, &name) {
+                        PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                        _ => match self
+                            .resolve_property_access_with_env(evaluated_return_type, &name)
+                        {
+                            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                            _ => None,
+                        },
+                    }
+                }
+            }
+            .filter(|type_id| !matches!(*type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
+
+            if let Some(type_id) = synthesized_param_type {
+                let props_name = self.ctx.types.intern_string("props");
+                function_shape
+                    .params
+                    .push(tsz_solver::ParamInfo::required(props_name, type_id));
+            }
+        }
+
+        if function_shape.params.is_empty() {
             return None;
         }
 
-        let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-        let substitution = {
-            let env = self.ctx.type_env.borrow();
-            crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
-                self.ctx.types,
-                &self.ctx,
-                &env,
-                &function_shape,
-                &[attrs_type],
-                None,
-            )
-        };
-        Some(self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution))
+        Some(function_shape)
     }
 
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).

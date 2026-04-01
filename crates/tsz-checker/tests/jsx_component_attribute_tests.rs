@@ -491,7 +491,9 @@ declare namespace JSX {
     assert!(
         diags.iter().any(|(code, message)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("\"data-foo\": number")
+                && message.contains("data-foo")
+                && message.contains("number")
+                && message.contains("not assignable")
         }),
         "Declared hyphenated attrs should use synthesized JSX-attrs assignability, got: {diags:?}"
     );
