@@ -10,6 +10,30 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn get_reference_type_params_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let declared = self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+        if !declared.is_empty() {
+            return declared;
+        }
+        self.get_display_type_params_for_symbol(sym_id)
+    }
+
+    pub(crate) fn count_required_reference_type_params(
+        &mut self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> usize {
+        let declared = self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+        if !declared.is_empty() {
+            return declared.iter().filter(|param| param.default.is_none()).count();
+        }
+        self.count_required_type_params(sym_id)
+    }
+
     pub(crate) fn symbol_has_declared_type_meaning(&self, sym_id: SymbolId) -> bool {
         let lib_binders = self.get_lib_binders();
         let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
@@ -89,21 +113,18 @@ impl<'a> CheckerState<'a> {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
                     }
-                    let mut type_params = self.get_display_type_params_for_symbol(sym_id);
-                    if type_params.is_empty() {
-                        type_params =
-                            self.extract_declared_type_params_for_reference_symbol(sym_id, name);
-                        if !type_params.is_empty() {
-                            self.ctx
-                                .get_or_create_def_id_with_params(sym_id, type_params.clone());
-                        }
+                    let type_params = self.get_reference_type_params_for_symbol(sym_id, name);
+                    if !type_params.is_empty() {
+                        self.ctx
+                            .get_or_create_def_id_with_params(sym_id, type_params.clone());
                     }
                     // Use AST-level check first to avoid self-referential default
                     // resolution issues (e.g., `interface SelfRef<T = SelfRef> {}`).
                     let required_count = self
                         .count_required_type_params_from_ast(sym_id)
+                        .filter(|_| !type_params.is_empty())
                         .unwrap_or_else(|| {
-                            type_params.iter().filter(|p| p.default.is_none()).count()
+                            self.count_required_reference_type_params(sym_id, name)
                         });
                     if required_count > 0
                         // Skip TS2314 for self-references within the same type alias.

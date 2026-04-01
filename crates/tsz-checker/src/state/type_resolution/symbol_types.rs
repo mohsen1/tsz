@@ -142,7 +142,8 @@ impl<'a> CheckerState<'a> {
                     // with unrelated local declarations, which corrupts cached generic metadata.
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if self.ctx.get_def_type_params(def_id).is_none() {
-                        let params = self.get_type_params_for_symbol(sym_id);
+                        let params =
+                            self.get_reference_type_params_for_symbol(sym_id, escaped_name);
                         if !params.is_empty() {
                             self.ctx.insert_def_type_params(def_id, params);
                         }

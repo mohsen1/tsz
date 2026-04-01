@@ -638,6 +638,12 @@ impl<'a> CheckerState<'a> {
                         if group.len() <= 1 {
                             continue;
                         }
+                        if group
+                            .iter()
+                            .all(|&(decl_idx, _, _, _)| self.is_ambient_declaration(decl_idx))
+                        {
+                            continue;
+                        }
                         let all_functions = group
                             .iter()
                             .all(|&(_, flags, _, _)| (flags & symbol_flags::FUNCTION) != 0);
@@ -1062,7 +1068,9 @@ impl<'a> CheckerState<'a> {
                         if self.is_ambient_declaration(namespace_idx) {
                             continue;
                         }
-                        if self.is_ambient_function_declaration(function_idx) {
+                        if self.is_ambient_declaration(function_idx)
+                            || self.is_ambient_function_declaration(function_idx)
+                        {
                             continue;
                         }
                         if namespace_idx.0 < function_idx.0 {

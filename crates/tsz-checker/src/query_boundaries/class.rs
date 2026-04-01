@@ -3,6 +3,57 @@ use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
 use tsz_solver::{TypeDatabase, TypeId};
 
+fn collect_signature_return_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    if let Some(signatures) = crate::query_boundaries::common::call_signatures_for_type(db, type_id)
+    {
+        return signatures
+            .into_iter()
+            .map(|signature| signature.return_type)
+            .collect();
+    }
+    if let Some(shape_id) = tsz_solver::function_shape_id(db, type_id) {
+        return vec![db.function_shape(shape_id).return_type];
+    }
+    if let Some(shape_id) = tsz_solver::callable_shape_id(db, type_id) {
+        return db
+            .callable_shape(shape_id)
+            .call_signatures
+            .iter()
+            .map(|signature| signature.return_type)
+            .collect();
+    }
+    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, type_id)
+        && shape.properties.len() == 1
+    {
+        let prop = &shape.properties[0];
+        if prop.is_method {
+            return collect_signature_return_types(db, prop.type_id);
+        }
+    }
+    Vec::new()
+}
+
+fn has_polymorphic_this_return_mismatch(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source_returns = collect_signature_return_types(checker.ctx.types, source);
+    let target_returns = collect_signature_return_types(checker.ctx.types, target);
+    if source_returns.is_empty() || target_returns.is_empty() {
+        return false;
+    }
+
+    let source_has_polymorphic_this = source_returns
+        .iter()
+        .any(|&ret| tsz_solver::is_this_type(checker.ctx.types, ret));
+    let target_has_polymorphic_this = target_returns
+        .iter()
+        .any(|&ret| tsz_solver::is_this_type(checker.ctx.types, ret));
+
+    target_has_polymorphic_this && !source_has_polymorphic_this
+}
+
 // =============================================================================
 // Relation boundary helpers (thin wrappers over assignability)
 // =============================================================================
@@ -25,6 +76,9 @@ pub(crate) fn should_report_member_type_mismatch(
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
+    }
+    if has_polymorphic_this_return_mismatch(checker, source, target) {
+        return true;
     }
     if checker.is_assignable_to_no_erase_generics(source, target) {
         return false;
@@ -73,6 +127,9 @@ pub(crate) fn should_report_own_member_type_mismatch(
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
+    }
+    if has_polymorphic_this_return_mismatch(checker, source, target) {
+        return true;
     }
     if checker.is_assignable_to_no_erase_generics(source, target) {
         return false;
@@ -187,6 +244,9 @@ pub(crate) fn should_report_property_type_mismatch(
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
+    }
+    if has_polymorphic_this_return_mismatch(checker, narrowed_source, target) {
+        return true;
     }
 
     let request = {

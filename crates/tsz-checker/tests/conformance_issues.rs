@@ -21603,6 +21603,130 @@ wasAbstract.mixinMethod();
 }
 
 #[test]
+fn test_no_false_ts2314_for_qualified_merged_namespace_member_type_reference() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace N {
+    export namespace Collection {
+        export namespace Keyed {}
+        export function Keyed<K, V>(collection: Iterable<[K, V]>): Collection.Keyed<K, V>;
+        export function Keyed<V>(obj: { [key: string]: V }): Collection.Keyed<string, V>;
+        export interface Keyed<K, V> {}
+    }
+}
+
+type Works = N.Collection.Keyed<string, number>;
+"#,
+    );
+    let ts2314: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Qualified merged namespace members in type position should not validate against the value-side arity. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2314_for_type_position_merged_function_interface_symbol() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Collection<K, V> {}
+declare function Collection<I extends Collection<any, any>>(collection: I): I;
+declare function Collection<T>(collection: Iterable<T>): Collection<number, T>;
+
+type Works = Collection<any, any>;
+"#,
+    );
+    let ts2314: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Merged function/interface symbols should use the interface arity in type position. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2314_for_unqualified_namespace_merged_function_interface_symbol() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare namespace Immutable {
+    export function Collection<I extends Collection<any, any>>(collection: I): I;
+    export function Collection<T>(collection: Iterable<T>): Collection<number, T>;
+    export interface Collection<K, V> {}
+    export interface Uses {
+        value: Collection<any, any>;
+    }
+}
+"#,
+    );
+    let ts2314: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Unqualified names inside a namespace body should use the merged type-side arity. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ambient_nested_namespace_merge_does_not_emit_false_ts2395_or_ts2434() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare namespace N {
+    export namespace Seq {
+        namespace Indexed {
+            function of<T>(...values: Array<T>): Seq.Indexed<T>;
+        }
+        export function Indexed(): Seq.Indexed<any>;
+        export function Indexed<T>(): Seq.Indexed<T>;
+        export function Indexed<T>(collection: Iterable<T>): Seq.Indexed<T>;
+        export interface Indexed<T> extends Seq<number, T> {}
+    }
+    export interface Seq<K, V> {}
+}
+"#,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2395 || *code == 2434)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Ambient namespace merges should not emit TS2395/TS2434. Got: {relevant:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_polymorphic_this_in_indexed_interface_extension_emits_ts2430() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Collection<K, V> { toSeq(): this; }
+interface Seq<K, V> extends Collection<K, V> {}
+interface Indexed<T> extends Collection<number, T> { toSeq(): SeqIndexed<T>; }
+interface SeqIndexed<T> extends Seq<number, T>, Indexed<T> { toSeq(): this; }
+"#,
+    );
+    let ts2430: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2430).collect();
+    assert!(
+        !ts2430.is_empty(),
+        "Polymorphic this mismatch should emit TS2430 for Indexed<T>. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_polymorphic_this_in_set_interface_extension_emits_ts2430() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Collection<K, V> { toSeq(): this; }
+interface Seq<K, V> extends Collection<K, V> {}
+interface SetCollection<T> extends Collection<never, T> { toSeq(): SeqSet<T>; }
+interface SeqSet<T> extends Seq<never, T>, SetCollection<T> { toSeq(): this; }
+"#,
+    );
+    let ts2430: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2430).collect();
+    assert!(
+        !ts2430.is_empty(),
+        "Polymorphic this mismatch should emit TS2430 for SetCollection<T>. All: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_exported_arrow_function_expando_assignment_no_false_ts2339() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
