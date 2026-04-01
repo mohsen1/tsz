@@ -423,6 +423,23 @@ impl<'a> DeclarationEmitter<'a> {
                             {
                                 break;
                             }
+                            let arg_type_text = self.preferred_expression_type_text(arg_idx).or_else(
+                                || self
+                                    .get_node_type_or_names(&[arg_idx])
+                                    .map(|type_id| self.print_type_id(type_id)),
+                            );
+                            if let Some(arg_type_text) = arg_type_text
+                                && arg_type_text.starts_with("import(\"")
+                                && self.emit_non_portable_import_type_text_diagnostics(
+                                    &arg_type_text,
+                                    "default",
+                                    &file_path,
+                                    assign_node.pos,
+                                    assign_node.end - assign_node.pos,
+                                )
+                            {
+                                break;
+                            }
                             if self.emit_non_portable_initializer_declaration_diagnostics(
                                 arg_idx,
                                 "default",
@@ -756,6 +773,22 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         break;
                     }
+                    let arg_type_text = self.preferred_expression_type_text(arg_idx).or_else(|| {
+                        self.get_node_type_or_names(&[arg_idx])
+                            .map(|type_id| self.print_type_id(type_id))
+                    });
+                    if let Some(arg_type_text) = arg_type_text
+                        && arg_type_text.starts_with("import(\"")
+                        && self.emit_non_portable_import_type_text_diagnostics(
+                            &arg_type_text,
+                            "default",
+                            &file_path,
+                            diag_pos,
+                            diag_len,
+                        )
+                    {
+                        break;
+                    }
                     if self.emit_non_portable_initializer_declaration_diagnostics(
                         arg_idx, "default", &file_path, diag_pos, diag_len,
                     ) {
@@ -775,16 +808,57 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("declare const ");
         self.write(&var_name);
 
+        let portability_context = self.current_file_path.as_ref().map(|file_path| {
+            let (pos, len) = self
+                .arena
+                .get(export_idx)
+                .map(|export_node| (export_node.pos, export_node.end - export_node.pos))
+                .unwrap_or_else(|| {
+                    let expr_node = self.arena.get(expr_idx).expect("export expr node");
+                    (expr_node.pos, expr_node.end - expr_node.pos)
+                });
+            (file_path.clone(), pos, len, self.diagnostics.len())
+        });
+
         // Default exports are const-like — preserve literal types for simple literals
         if let Some(literal_text) = self.const_literal_initializer_text_deep(expr_idx) {
             self.write(": ");
             self.write(&literal_text);
         } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
+            if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
+                && self.diagnostics.len() == *diagnostics_before
+                && type_text.starts_with("import(\"")
+                && self.import_type_uses_private_package_subpath(&type_text)
+            {
+                let _ = self.emit_non_portable_import_type_text_diagnostics(
+                    &type_text, "default", file_path, *pos, *len,
+                );
+                self.emit_non_portable_initializer_declaration_diagnostics(
+                    expr_idx, "default", file_path, *pos, *len,
+                );
+            }
             self.write(": ");
             self.write(&type_text);
         } else if let Some(type_id) = self.get_node_type(expr_idx) {
+            let printed_type = self.print_type_id(type_id);
+            if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
+                && self.diagnostics.len() == *diagnostics_before
+                && printed_type.starts_with("import(\"")
+                && self.import_type_uses_private_package_subpath(&printed_type)
+            {
+                let _ = self.emit_non_portable_import_type_text_diagnostics(
+                    &printed_type,
+                    "default",
+                    file_path,
+                    *pos,
+                    *len,
+                );
+                self.emit_non_portable_initializer_declaration_diagnostics(
+                    expr_idx, "default", file_path, *pos, *len,
+                );
+            }
             self.write(": ");
-            self.write(&self.print_type_id(type_id));
+            self.write(&printed_type);
         } else {
             self.write(": any");
         }

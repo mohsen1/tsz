@@ -119,7 +119,25 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
-        self.get_class_constructor_type_with_request(class_idx, class, &TypingRequest::NONE)
+        self.get_class_constructor_type_with_request_and_mode(
+            class_idx,
+            class,
+            &TypingRequest::NONE,
+            true,
+        )
+    }
+
+    pub(crate) fn get_class_constructor_type_without_module_augmentations(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> TypeId {
+        self.get_class_constructor_type_with_request_and_mode(
+            class_idx,
+            class,
+            &TypingRequest::NONE,
+            false,
+        )
     }
 
     pub(crate) fn get_class_constructor_type_with_request(
@@ -128,13 +146,25 @@ impl<'a> CheckerState<'a> {
         class: &tsz_parser::parser::node::ClassData,
         request: &TypingRequest,
     ) -> TypeId {
+        self.get_class_constructor_type_with_request_and_mode(class_idx, class, request, true)
+    }
+
+    fn get_class_constructor_type_with_request_and_mode(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        request: &TypingRequest,
+        apply_module_augmentations: bool,
+    ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
-        if request.is_empty()
+        if apply_module_augmentations
+            && request.is_empty()
             && let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx)
         {
             return cached;
         }
-        let can_use_cache = request.is_empty()
+        let can_use_cache = apply_module_augmentations
+            && request.is_empty()
             && current_sym
                 .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
                 .unwrap_or(true);
@@ -167,7 +197,12 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        let result = self.get_class_constructor_type_inner(class_idx, class, request);
+        let result = self.get_class_constructor_type_inner(
+            class_idx,
+            class,
+            request,
+            apply_module_augmentations,
+        );
 
         // Cleanup: remove from resolution set
         if did_insert && let Some(sym_id) = current_sym {
@@ -246,6 +281,7 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
         request: &TypingRequest,
+        apply_module_augmentations: bool,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
@@ -1193,7 +1229,11 @@ impl<'a> CheckerState<'a> {
                         .insert(sym_id, partial_instance);
                 }
             }
-            let result = self.get_class_instance_type(class_idx, class);
+            let result = if apply_module_augmentations {
+                self.get_class_instance_type(class_idx, class)
+            } else {
+                self.get_class_instance_type_without_module_augmentations(class_idx, class)
+            };
             // Restore the previous cached values (Lazy placeholder / no instance type)
             // so other code paths continue to work correctly.
             if let Some(sym_id) = current_sym {

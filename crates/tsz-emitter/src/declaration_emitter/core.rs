@@ -1788,6 +1788,16 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     let type_text = self
                         .rewrite_recursive_static_class_expression_type(prop_idx, effective_type);
+                    if let Some(name_node) = self.arena.get(prop.name)
+                        && let Some(file_path) = self.current_file_path.clone()
+                    {
+                        let _ = self.emit_non_serializable_import_type_diagnostic(
+                            &type_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
                     self.write(": ");
                     self.write(&type_text);
                     // For optional class properties without an explicit type annotation,

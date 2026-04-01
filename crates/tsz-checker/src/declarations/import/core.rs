@@ -2277,7 +2277,9 @@ impl<'a> CheckerState<'a> {
                 }
                 syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_data) = self.ctx.arena.get_export_decl(node) {
-                        if export_data.is_default_export {
+                        let has_named_default_export =
+                            self.export_decl_has_named_default_export(stmt_idx);
+                        if export_data.is_default_export || has_named_default_export {
                             export_default_indices.push(stmt_idx);
 
                             // TS2714: In ambient context, export default expression must be
@@ -2436,11 +2438,15 @@ impl<'a> CheckerState<'a> {
             let mut has_interface = false;
             let mut has_class = false;
             let mut has_function = false;
+            let mut has_named_default_export = false;
             let mut value_count = 0;
             let mut function_value_count = 0;
             let mut function_name: Option<String> = None;
 
             for &export_idx in &export_default_indices {
+                if self.export_decl_has_named_default_export(export_idx) {
+                    has_named_default_export = true;
+                }
                 let wrapped_kind = self
                     .ctx
                     .arena
@@ -2631,6 +2637,72 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                         );
                     }
+                } else if has_named_default_export
+                    && export_default_indices.iter().any(|&idx| {
+                        let Some(clause_idx) = self
+                            .ctx
+                            .arena
+                            .get_export_decl_at(idx)
+                            .map(|ed| ed.export_clause)
+                        else {
+                            return false;
+                        };
+                        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                            return false;
+                        };
+                        match clause_node.kind {
+                            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::CLASS_DECLARATION
+                                || k == syntax_kind_ext::INTERFACE_DECLARATION =>
+                            {
+                                true
+                            }
+                            k if k == SyntaxKind::Identifier as u16 => self
+                                .resolve_identifier_symbol(clause_idx)
+                                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
+                            _ => false,
+                        }
+                    })
+                {
+                    for &export_idx in &export_default_indices {
+                        let anchor = self.get_default_export_anchor(export_idx);
+                        let clause_idx = self
+                            .ctx
+                            .arena
+                            .get_export_decl_at(export_idx)
+                            .map(|ed| ed.export_clause)
+                            .unwrap_or(NodeIndex::NONE);
+                        let is_value_default = self
+                            .ctx
+                            .arena
+                            .get(clause_idx)
+                            .is_some_and(|clause_node| match clause_node.kind {
+                                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                                    || k == syntax_kind_ext::CLASS_DECLARATION
+                                    || k == syntax_kind_ext::INTERFACE_DECLARATION =>
+                                {
+                                    true
+                                }
+                                k if k == SyntaxKind::Identifier as u16 => self
+                                    .resolve_identifier_symbol(clause_idx)
+                                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                    .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
+                                _ => false,
+                            });
+                        if is_value_default {
+                            self.error_at_node(
+                                anchor,
+                                "Cannot redeclare exported variable 'default'.",
+                                diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                            );
+                        }
+                        self.error_at_node(
+                            anchor,
+                            diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                        );
+                    }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
                     // tsc skips interface declarations when emitting TS2528 (interfaces
@@ -2734,6 +2806,17 @@ impl<'a> CheckerState<'a> {
                             None
                         }
                     })
+                } else if let Some(named_exports) = self.ctx.arena.get_named_imports(clause) {
+                    named_exports.elements.nodes.iter().find_map(|&specifier_idx| {
+                        let specifier_node = self.ctx.arena.get(specifier_idx)?;
+                        let specifier = self.ctx.arena.get_specifier(specifier_node)?;
+                        if specifier.is_type_only {
+                            return None;
+                        }
+                        let exported_name =
+                            self.get_identifier_text_from_idx(specifier.name)?;
+                        (exported_name == "default").then_some(specifier.name)
+                    })
                 } else if clause.kind == SyntaxKind::Identifier as u16 {
                     Some(ed.export_clause)
                 } else {
@@ -2741,6 +2824,36 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .unwrap_or(export_idx)
+    }
+
+    fn export_decl_has_named_default_export(&self, export_idx: NodeIndex) -> bool {
+        let Some(clause_idx) = self
+            .ctx
+            .arena
+            .get_export_decl_at(export_idx)
+            .map(|ed| ed.export_clause)
+        else {
+            return false;
+        };
+        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+            return false;
+        };
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return false;
+        };
+
+        named_exports.elements.nodes.iter().any(|&specifier_idx| {
+            let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                return false;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(specifier_node) else {
+                return false;
+            };
+            !specifier.is_type_only
+                && self
+                    .get_identifier_text_from_idx(specifier.name)
+                    .is_some_and(|name| name == "default")
+        })
     }
 
     /// Emit TS2323 + TS2813 + TS2814 for function + class default export merge conflicts.

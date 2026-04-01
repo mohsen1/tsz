@@ -12,6 +12,7 @@
 
 use tsz_binder::SymbolId;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 
 // ---------------------------------------------------------------------------
 // Request model
@@ -416,6 +417,7 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
         let mut parts = vec![symbol.escaped_name.clone()];
         let mut current = symbol.parent;
+        let mut root_symbol = symbol;
 
         // Walk up the parent chain, collecting names.
         // Stop at the source file / global scope (parent == NONE or parent is source file).
@@ -429,7 +431,13 @@ impl<'a> CheckerState<'a> {
                     if p.escaped_name.is_empty() || p.escaped_name == "__global" {
                         break;
                     }
+                    // `declare module "x" { namespace N { ... } }` should report `N`,
+                    // not `x.N`, in TS2694 namespace-member diagnostics.
+                    if self.is_string_literal_module_symbol_for_display(p) {
+                        break;
+                    }
                     parts.push(p.escaped_name.clone());
+                    root_symbol = p;
                     // Stop after adding this symbol if its parent is the root
                     if p.parent == SymbolId::NONE {
                         break;
@@ -440,15 +448,82 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Only use the qualified name if there are multiple parts
-        if parts.len() > 1 {
+        let qualified_name = if parts.len() > 1 {
             parts.reverse();
             parts.join(".")
         } else {
             // Just the simple name - use the original symbol's escaped_name
             let _ = sym_id; // suppress unused warning
             symbol.escaped_name.clone()
+        };
+
+        // External-module qualification only applies when the outermost namespace
+        // in the chain is itself exported from the file module. Nested local
+        // namespaces inside a module should still print as `foo.bar.baz`, not
+        // `"file".foo.bar.baz`.
+        if root_symbol.parent == SymbolId::NONE
+            && let Some(module_name) = self.external_module_display_name_for_symbol(root_symbol)
+        {
+            return format!("{module_name}.{qualified_name}");
         }
+
+        qualified_name
+    }
+
+    fn external_module_display_name_for_symbol(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<String> {
+        if !symbol.is_exported {
+            return None;
+        }
+
+        let (is_external_module, file_name) = if symbol.decl_file_idx != u32::MAX {
+            let file_idx = symbol.decl_file_idx as usize;
+            let binder = self.ctx.get_binder_for_file(file_idx)?;
+            let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
+            let file_name = arena.source_files.first()?.file_name.clone();
+            (binder.is_external_module(), file_name)
+        } else {
+            (self.ctx.binder.is_external_module(), self.ctx.file_name.clone())
+        };
+
+        if !is_external_module {
+            return None;
+        }
+
+        let stem = file_name
+            .rsplit_once('.')
+            .map(|(base, _)| base)
+            .unwrap_or(file_name.as_str());
+        let basename = stem.rsplit_once('/').map(|(_, name)| name).unwrap_or(stem);
+        if basename.is_empty() {
+            return None;
+        }
+
+        Some(format!("\"{basename}\""))
+    }
+
+    fn is_string_literal_module_symbol_for_display(&self, symbol: &tsz_binder::Symbol) -> bool {
+        if (symbol.flags & symbol_flags::MODULE) == 0 || symbol.declarations.is_empty() {
+            return false;
+        }
+
+        symbol.declarations.iter().all(|&decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                return false;
+            }
+            let Some(module) = self.ctx.arena.get_module(node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(module.name)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16)
+        })
     }
 
     /// Report a wrong-meaning diagnostic for a symbol that was found but has

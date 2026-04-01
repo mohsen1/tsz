@@ -143,29 +143,20 @@ impl<'a> CheckerState<'a> {
         }
 
         // Emit module-not-found diagnostic for unresolved export specifiers.
-        // Prefer the driver-provided resolution error (TS2792/TS2834/TS2835/etc.)
-        // and dedupe through modules_with_ts2307_emitted to avoid duplicate reports.
-        let module_key = module_name.to_string();
-        if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-            self.ctx.import_resolution_stack.pop();
-            return;
-        }
-
+        // Unlike imports, tsc reports these per re-export site, so we must not
+        // suppress later `export ... from "x"` diagnostics just because an
+        // earlier re-export from the same missing module already failed.
         if self
             .ctx
             .get_resolution_error_with_mode(module_name, resolution_mode)
             .is_some()
         {
             let (message, code) = self.module_not_found_diagnostic(module_name);
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error_at_node(export_decl.module_specifier, &message, code);
-            }
+            self.error_at_node(export_decl.module_specifier, &message, code);
             self.ctx.import_resolution_stack.pop();
             return;
         }
 
-        self.ctx.modules_with_ts2307_emitted.insert(module_key);
         let (message, code) = self.module_not_found_diagnostic(module_name);
         self.error_at_node(export_decl.module_specifier, &message, code);
 

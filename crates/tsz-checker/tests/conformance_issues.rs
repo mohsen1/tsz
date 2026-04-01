@@ -184,7 +184,9 @@ declare namespace Ambient {
         "Expected exactly one TS1280 for the first top-level namespace in a global script. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts1280[0].1.contains("Namespaces are not allowed in global script files"),
+        ts1280[0]
+            .1
+            .contains("Namespaces are not allowed in global script files"),
         "Expected the TS1280 message for isolatedModules global-script namespaces. Actual diagnostics: {diagnostics:#?}"
     );
 }
@@ -6533,6 +6535,54 @@ export = f;
 }
 
 #[test]
+fn test_umd_export_as_namespace_class_is_usable_in_type_position() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "foo.d.ts",
+                r#"
+declare class Thing {
+    foo(): number;
+}
+declare namespace Thing {
+    interface SubThing {}
+}
+export = Thing;
+export as namespace Foo;
+"#,
+            ),
+            (
+                "a.ts",
+                r#"
+/// <reference path="foo.d.ts" />
+import * as ff from "./foo";
+
+declare let y: Foo;
+y.foo();
+declare let z: Foo.SubThing;
+let x: any = Foo;
+"#,
+            ),
+        ],
+        "a.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2709),
+        "Did not expect TS2709 for UMD export-as-namespace class in type position. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2686),
+        "Expected TS2686 for bare UMD global value access in module file. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_uninstantiated_namespace_shadowing_symbol_uses_global_value_for_property_access() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
@@ -8238,6 +8288,41 @@ var r23 = dot(id)(id);
     assert!(
         !has_error(&relevant, 2345),
         "Should NOT emit TS2345 for contextual signature instantiation chain.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_recursive_type_relations_object_keys_reduce_reports_ts2345() {
+    let source = r#"
+type ClassNameObject = { [key: string]: boolean | undefined };
+declare function reduceClassNameObject(
+    cb: (obj: ClassNameObject, key: string) => ClassNameObject,
+): void;
+
+export function css<S extends { [K in keyof S]: string }>(styles: S): string {
+  reduceClassNameObject((obj: ClassNameObject, key: keyof S) => {
+    const exportedClassName = styles[key];
+    obj[exportedClassName] = true;
+    return obj;
+  });
+  return "";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    let ts2345 = diagnostics
+        .iter()
+        .find(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type '(obj: ClassNameObject, key: keyof S) => ClassNameObject'",
+                )
+        })
+        .cloned();
+
+    assert!(
+        ts2345.is_some(),
+        "Expected TS2345 for generic callback parameter mismatch with keyof S parameter. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -10370,6 +10455,14 @@ function f(...string) { }
     assert!(
         has_error(&diagnostics, 7051),
         "Should emit TS7051 for rest param with type-keyword name.\nActual errors: {diagnostics:#?}"
+    );
+    let ts7051 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 7051)
+        .expect("expected TS7051 diagnostic");
+    assert!(
+        ts7051.1.contains("arg0: string[]"),
+        "Rest TS7051 should suggest an array type, got: {ts7051:?}"
     );
 }
 
@@ -15222,7 +15315,6 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
-#[ignore] // TODO: TS2344 for recursive Shared<GetProps<C>> constraint not yet emitted
 fn test_ts2344_reports_for_recursive_shared_constraint_in_component_enhancer() {
     if !lib_files_available() {
         return;
@@ -15319,7 +15411,6 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
-#[ignore] // TODO: TS2344 for exported recursive shared constraint not yet emitted
 fn test_ts2344_reports_for_recursive_shared_constraint_in_exported_component_enhancer() {
     if !lib_files_available() {
         return;
@@ -17067,8 +17158,7 @@ function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Sha
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2862
-                && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+            *code == 2862 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
         }),
         "Expected TS2862 for broad string write through generic mapped type.\nActual diagnostics: {diagnostics:#?}"
     );
@@ -17695,31 +17785,40 @@ expected = iter[Symbol.asyncIterator];
 }
 
 #[test]
-#[ignore = "isolated declarations computed property checking not yet wired up"]
 fn test_isolated_declarations_reports_computed_object_literal_exports() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
         r#"
-const y: 0 = 0;
-let u = Symbol();
+const x: 0 | 1 = Math.random() ? 0 : 1;
+declare function assert(n: number): asserts n is 1;
+assert(x);
 
-export let o = { [y]: 1 };
-export let o2 = { [u]: 1 };
+let u = Symbol();
+const y: 0 = 0;
+
+export let o = { [x]: 1 };
+export let o2 = { [y]: 1 };
 export let o3 = { [1]: 1 };
 export let o31 = { [-1]: 1 };
 export let o32 = { [1 - 1]: 1 };
+export let o4 = { [u]: 1 };
 "#,
         CheckerOptions {
             target: tsz_common::common::ScriptTarget::ES2015,
             isolated_declarations: true,
+            emit_declarations: true,
             ..Default::default()
         },
     );
 
     let ts9038_count = diagnostics.iter().filter(|(code, _)| *code == 9038).count();
     assert_eq!(
-        ts9038_count, 3,
-        "Expected TS9038 only for non-literal computed object-literal property names.\nActual diagnostics: {diagnostics:#?}"
+        ts9038_count, 4,
+        "Expected TS9038 for identifier- and expression-based computed object-literal property names under isolated declarations.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 9010),
+        "Expected TS9010 for the inferred helper variable used in a computed export name.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -21594,6 +21693,145 @@ wasAbstract.mixinMethod();
 }
 
 #[test]
+fn test_no_false_ts2314_for_qualified_merged_namespace_member_type_reference() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace N {
+    export namespace Collection {
+        export namespace Keyed {}
+        export function Keyed<K, V>(collection: Iterable<[K, V]>): Collection.Keyed<K, V>;
+        export function Keyed<V>(obj: { [key: string]: V }): Collection.Keyed<string, V>;
+        export interface Keyed<K, V> {}
+    }
+}
+
+type Works = N.Collection.Keyed<string, number>;
+"#,
+    );
+    let ts2314: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2314)
+        .collect();
+    assert!(
+        ts2314.is_empty(),
+        "Qualified merged namespace members in type position should not validate against the value-side arity. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2314_for_type_position_merged_function_interface_symbol() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Collection<K, V> {}
+declare function Collection<I extends Collection<any, any>>(collection: I): I;
+declare function Collection<T>(collection: Iterable<T>): Collection<number, T>;
+
+type Works = Collection<any, any>;
+"#,
+    );
+    let ts2314: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2314)
+        .collect();
+    assert!(
+        ts2314.is_empty(),
+        "Merged function/interface symbols should use the interface arity in type position. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2314_for_unqualified_namespace_merged_function_interface_symbol() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare namespace Immutable {
+    export function Collection<I extends Collection<any, any>>(collection: I): I;
+    export function Collection<T>(collection: Iterable<T>): Collection<number, T>;
+    export interface Collection<K, V> {}
+    export interface Uses {
+        value: Collection<any, any>;
+    }
+}
+"#,
+    );
+    let ts2314: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2314)
+        .collect();
+    assert!(
+        ts2314.is_empty(),
+        "Unqualified names inside a namespace body should use the merged type-side arity. Got: {ts2314:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ambient_nested_namespace_merge_does_not_emit_false_ts2395_or_ts2434() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare namespace N {
+    export namespace Seq {
+        namespace Indexed {
+            function of<T>(...values: Array<T>): Seq.Indexed<T>;
+        }
+        export function Indexed(): Seq.Indexed<any>;
+        export function Indexed<T>(): Seq.Indexed<T>;
+        export function Indexed<T>(collection: Iterable<T>): Seq.Indexed<T>;
+        export interface Indexed<T> extends Seq<number, T> {}
+    }
+    export interface Seq<K, V> {}
+}
+"#,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2395 || *code == 2434)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Ambient namespace merges should not emit TS2395/TS2434. Got: {relevant:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_polymorphic_this_in_indexed_interface_extension_emits_ts2430() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Collection<K, V> { toSeq(): this; }
+interface Seq<K, V> extends Collection<K, V> {}
+interface Indexed<T> extends Collection<number, T> { toSeq(): SeqIndexed<T>; }
+interface SeqIndexed<T> extends Seq<number, T>, Indexed<T> { toSeq(): this; }
+"#,
+    );
+    let ts2430: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2430)
+        .collect();
+    assert!(
+        !ts2430.is_empty(),
+        "Polymorphic this mismatch should emit TS2430 for Indexed<T>. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_polymorphic_this_in_set_interface_extension_emits_ts2430() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Collection<K, V> { toSeq(): this; }
+interface Seq<K, V> extends Collection<K, V> {}
+interface SetCollection<T> extends Collection<never, T> { toSeq(): SeqSet<T>; }
+interface SeqSet<T> extends Seq<never, T>, SetCollection<T> { toSeq(): this; }
+"#,
+    );
+    let ts2430: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2430)
+        .collect();
+    assert!(
+        !ts2430.is_empty(),
+        "Polymorphic this mismatch should emit TS2430 for SetCollection<T>. All: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_exported_arrow_function_expando_assignment_no_false_ts2339() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -22629,5 +22867,40 @@ class Foo<T> {
     assert_eq!(
         ts2394_count, 0,
         "Vector<MyCond<T>> should be compatible with Vector<any> in overload check, got: {d:?}"
+    );
+}
+
+#[test]
+fn test_generic_identity_callback_arg_emits_ts2345() {
+    // When a generic function like `<T>(value: T) => T` is passed as an argument
+    // to a parameter expecting a non-generic callback, the display target must use
+    // the TARGET's return type (not the source's instantiated return) so the
+    // re-check in check_argument_assignable_or_report doesn't suppress the error.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare function identity<T>(value: T): T;
+declare function take(cb: (value: string | number) => boolean): void;
+take(identity);
+"#,
+    );
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for generic identity not assignable to callback, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_identity_callback_valid_case_no_error() {
+    // When the generic callback IS compatible, no error should be emitted.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare function identity<T>(value: T): T;
+declare function take(cb: (value: string) => string): void;
+take(identity);
+"#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Should NOT emit TS2345 when generic callback is compatible, got: {diagnostics:?}"
     );
 }

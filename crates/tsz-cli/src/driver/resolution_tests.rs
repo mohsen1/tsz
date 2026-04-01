@@ -1,6 +1,6 @@
 use super::*;
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz::config::{CompilerOptions, resolve_compiler_options};
+use tsz::config::{resolve_compiler_options, CompilerOptions};
 use tsz::emitter::ModuleKind;
 
 #[test]
@@ -126,6 +126,66 @@ fn test_exports_js_target_substitutes_dts() {
             &dir.join("node_modules/pkg/entrypoint.d.ts"),
         )),
         "exports target with .js should resolve to an adjacent declaration file"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_duplicate_package_redirects_prefer_stable_lexical_root_when_depth_ties() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_duplicate_package_tie_break");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/@types/react")).unwrap();
+    fs::create_dir_all(dir.join("tests/node_modules/@types/react")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/@types/react/package.json"),
+        r#"{"name":"@types/react","version":"16.4.6"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("tests/node_modules/@types/react/package.json"),
+        r#"{"name":"@types/react","version":"16.4.6"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/@types/react/index.d.ts"),
+        "declare global {}",
+    )
+    .unwrap();
+    fs::write(dir.join("tests/node_modules/@types/react/index.d.ts"), "").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let redirects = build_duplicate_package_redirects(
+        &[
+            dir.join("node_modules/@types/react/index.d.ts")
+                .display()
+                .to_string(),
+            dir.join("tests/node_modules/@types/react/index.d.ts")
+                .display()
+                .to_string(),
+        ],
+        &options,
+    );
+
+    let root_index = canonicalize_or_owned(&dir.join("node_modules/@types/react/index.d.ts"));
+    let tests_index =
+        canonicalize_or_owned(&dir.join("tests/node_modules/@types/react/index.d.ts"));
+
+    assert_eq!(
+        redirects.get(&tests_index),
+        Some(&root_index),
+        "same-depth duplicate packages should deterministically redirect to the lexical root copy"
+    );
+    assert!(
+        !redirects.contains_key(&root_index),
+        "canonical root package file should not redirect away"
     );
 
     let _ = fs::remove_dir_all(&dir);

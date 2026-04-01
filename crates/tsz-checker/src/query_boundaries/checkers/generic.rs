@@ -68,6 +68,11 @@ pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
 
+/// Check if a type has construct signatures or is a constructor function.
+pub(crate) fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_constructor_like_type(db, type_id)
+}
+
 /// Check if a type has call signatures (not just construct signatures).
 /// Returns false for class constructor types that only have `new` signatures.
 pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

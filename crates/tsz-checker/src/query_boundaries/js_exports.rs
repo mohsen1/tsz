@@ -316,6 +316,7 @@ impl<'a> CheckerState<'a> {
     fn direct_module_export_object_literal_seed_props(
         &mut self,
         direct_export_type: TypeId,
+        force_optional: bool,
     ) -> Vec<PropertyInfo> {
         let shape = crate::query_boundaries::checkers::generic::get_object_shape(
             self.ctx.types,
@@ -339,7 +340,7 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .enumerate()
             .map(|(idx, mut prop)| {
-                prop.optional = true;
+                prop.optional = force_optional;
                 prop.declaration_order = idx as u32;
                 prop
             })
@@ -390,9 +391,12 @@ impl<'a> CheckerState<'a> {
         let mut pending: FxHashMap<tsz_common::Atom, PropertyInfo> = FxHashMap::default();
         let mut ordered_names = Vec::new();
 
-        for rhs_expr in rhs_exprs {
+        let last_direct_index = rhs_exprs.len().saturating_sub(1);
+        for (index, rhs_expr) in rhs_exprs.into_iter().enumerate() {
             let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, None);
-            for prop in self.direct_module_export_object_literal_seed_props(rhs_type) {
+            let force_optional = index != last_direct_index;
+            for prop in self.direct_module_export_object_literal_seed_props(rhs_type, force_optional)
+            {
                 if !pending.contains_key(&prop.name) {
                     ordered_names.push(prop.name);
                 }

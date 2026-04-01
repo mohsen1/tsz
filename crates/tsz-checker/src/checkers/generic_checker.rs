@@ -564,7 +564,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let type_params = self.get_type_params_for_symbol(sym_id);
+        let lib_binders = self.get_lib_binders();
+        let base_name = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(sym_id, &lib_binders)
+            .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+        let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
         if type_params.is_empty() {
             // Before emitting TS2315, check if this symbol's declaration actually has
             // type parameters. Cross-arena symbols (e.g., lib types like Awaited<T>)
@@ -579,12 +585,6 @@ impl<'a> CheckerState<'a> {
                 && symbol_type != TypeId::ANY
                 && !type_args_list.nodes.is_empty()
             {
-                let lib_binders = self.get_lib_binders();
-                let name = self
-                    .ctx
-                    .binder
-                    .get_symbol_with_libs(sym_id, &lib_binders)
-                    .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
                 // TSC points the TS2315 error at the type name (e.g. `C` in
                 // `C<string>`), not at the first type argument. Extract the
                 // type_name from the TypeReference node.
@@ -598,7 +598,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     error_anchor,
                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
-                    &[name.as_str()],
+                    &[base_name.as_str()],
                 );
             }
             // Still resolve type arguments even when the type is not generic.
@@ -617,20 +617,12 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_type_ref(node))
             .map(|type_ref| type_ref.type_name)
             .unwrap_or(type_ref_idx);
-        let lib_binders = self.get_lib_binders();
-        let base_name = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
-            .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
         let display_name = Self::format_generic_display_name_with_interner(
             &base_name,
             &type_params,
             self.ctx.types,
         );
-        let min_required = self
-            .count_required_type_params_from_ast(sym_id)
-            .unwrap_or_else(|| type_params.iter().filter(|tp| tp.default.is_none()).count());
+        let min_required = self.count_required_reference_type_params(sym_id, &base_name);
         self.validate_type_reference_type_arguments_against_params(
             &type_params,
             min_required,
@@ -1047,19 +1039,33 @@ impl<'a> CheckerState<'a> {
                                         };
                                         // When the true branch is an `infer` variable
                                         // (e.g., `F extends (...args: infer L) => any ? L : never`),
-                                        // the result is structurally extracted from the extends type
-                                        // pattern, not bounded by it. The extends type is a pattern
-                                        // matcher, not a constraint proxy. Defer to instantiation.
-                                        // This covers `Parameters<F>`, `ReturnType<F>`,
-                                        // `ConstructorParameters<F>`, `InstanceType<F>`, etc.
+                                        // the result is often structurally extracted from the
+                                        // extends-type pattern, not bounded by it. For signature
+                                        // utilities (`Parameters`, `ReturnType`,
+                                        // `ConstructorParameters`, `InstanceType`) the extends
+                                        // type is only a matcher, so defer to instantiation.
+                                        // For opaque wrapper extractors like
+                                        // `C extends ComponentType<infer P> ? P : never`,
+                                        // tsc still uses the extends type as the eager proxy when
+                                        // the required constraint is neither callable nor
+                                        // constructable.
                                         let cond_true_is_infer = query::is_infer_type(
                                             self.ctx.types.as_type_database(),
                                             cond_true,
                                         );
+                                        let constraint_uses_signature_matching =
+                                            query::is_callable_type(
+                                                self.ctx.types.as_type_database(),
+                                                constraint_resolved,
+                                            ) || query::is_constructor_like_type(
+                                                self.ctx.types.as_type_database(),
+                                                constraint_resolved,
+                                            ) || self.is_function_constraint(constraint);
                                         let is_extract_like = cond_true == cond_check
                                             || (cond_true_is_bare_param
                                                 && !is_key_filtering_pattern
-                                                && !cond_true_is_infer);
+                                                && (!cond_true_is_infer
+                                                    || !constraint_uses_signature_matching));
                                         if !is_extract_like {
                                             // True branch is a structural type derived from the
                                             // check type (e.g., mapped type). Constraint satisfaction

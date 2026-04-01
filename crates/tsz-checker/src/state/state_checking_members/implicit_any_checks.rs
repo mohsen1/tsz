@@ -206,12 +206,16 @@ impl<'a> CheckerState<'a> {
 
             if !has_parameter_modifiers && Self::is_type_keyword_name(&param_name) {
                 let suggested_name = format!("arg{param_index}");
+                let suggested_type = format!("{param_name}[]");
                 let template = tsz_common::diagnostics::get_message_template(
                     diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
                 )
                 .unwrap_or("");
                 let message =
-                    crate::diagnostics::format_message(template, &[&suggested_name, &param_name]);
+                    crate::diagnostics::format_message(
+                        template,
+                        &[&suggested_name, &suggested_type],
+                    );
                 self.error_at_position(
                     rest_start,
                     rest_len,

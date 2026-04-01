@@ -639,7 +639,8 @@ impl<'a> CheckerState<'a> {
             index_info.string_index = None;
         }
 
-        // If all instance signatures were invalidated and no static/symbol/synthesized ones, nothing to enforce.
+        // If all instance signatures were invalidated and no static/symbol/synthesized ones,
+        // nothing to enforce.
         if index_info.string_index.is_none()
             && index_info.number_index.is_none()
             && symbol_value_type.is_none()
@@ -1150,7 +1151,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let computed = self.ctx.arena.get_computed_property(name_node)?;
-        if !self.computed_name_uses_entity_expression(computed.expression) {
+        // Only simple identifier expressions synthesize index signatures.
+        // Property access chains (e.g. `[rC.x]`) resolve to specific named
+        // properties via late-binding in TSC and do not create index signatures.
+        // Using property access chains here would also risk incorrect key type
+        // resolution due to circularity.
+        let expr_node = self.ctx.arena.get(computed.expression)?;
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
             return None;
         }
 
@@ -1332,13 +1339,12 @@ interface I {
         );
     }
 
-    /// Computed property names with non-entity expressions (like `[+s]`) should be
-    /// checked against synthesized index signatures from entity-expression computed
-    /// members (like `[s]: number`). Previously, the early exit in
-    /// `check_index_signature_compatibility` didn't account for synthesized index
-    /// signatures, causing TS2411 to be silently skipped.
     #[test]
-    fn ts2411_computed_property_checked_against_synthesized_index() {
+    fn ts2411_synthesized_index_from_computed_entity_names() {
+        // When a class has computed property names with entity expressions (like [s], [n]),
+        // they synthesize implicit index signatures. Other computed members with
+        // non-entity expressions (like [+s]) must be checked against those synthesized
+        // index signatures.
         let diags = check_source_diagnostics(
             r#"
 var s: string;
@@ -1347,18 +1353,17 @@ var a: any;
 class C {
     [s]: number;
     [n] = n;
-    [s + n] = 2;
     [+s]: typeof s;
+    [0]: number;
     [a]: number;
 }
 "#,
         );
-        let ts2411 = diags.iter().filter(|d| d.code == 2411).count();
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2411).collect();
         assert_eq!(
-            ts2411,
+            matching.len(),
             2,
-            "Expected 2 TS2411 diagnostics for [+s] (type string) against synthesized string \
-             and number index signatures (type number).\nActual diagnostics: {:?}",
+            "Expected 2 TS2411 for [+s] (string type) against synthesized number and string index (number type), got codes: {:?}",
             diags
                 .iter()
                 .map(|d| (d.code, &d.message_text))

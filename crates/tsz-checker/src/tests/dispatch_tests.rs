@@ -189,6 +189,75 @@ C3 as Dict;
 }
 
 #[test]
+fn ts2352_record_mapped_type_equivalent_to_direct_index_signature() {
+    // Record<string, unknown> should evaluate identically to { [key: string]: unknown }.
+    // Without defining Record (it's from lib.d.ts, not in check_source_diagnostics),
+    // this verifies mapped type evaluation produces the same assignability result.
+    let diags_record = check_source_diagnostics(
+        r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+class C1 { foo() {} }
+let x: Record<string, unknown> = new C1();
+"#,
+    );
+    let diags_direct = check_source_diagnostics(
+        r#"
+class C1 { foo() {} }
+type Dict = { [key: string]: unknown };
+let x: Dict = new C1();
+"#,
+    );
+    let ts2322_record = diags_record.iter().filter(|d| d.code == 2322).count();
+    let ts2322_direct = diags_direct.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_record, ts2322_direct,
+        "Record<string, unknown> and {{[key: string]: unknown}} must have identical assignability"
+    );
+    assert_eq!(
+        ts2322_record, 1,
+        "Class without index signature should not be assignable"
+    );
+}
+
+#[test]
+fn ts2352_merged_class_namespace_record_generic_cast() {
+    // Same as ts2352_merged_class_namespace_record_cast but using Record<string, unknown>
+    // (a mapped type) instead of a direct index signature. This reproduces the
+    // conformance failure in mergedClassNamespaceRecordCast.ts.
+    let diags = check_source_diagnostics(
+        r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+class C1 { foo() {} }
+new C1() as Record<string, unknown>;
+
+class C2 { foo() {} }
+namespace C2 { export const unrelated = 3; }
+new C2() as Record<string, unknown>;
+
+C2.unrelated;
+new C2().unrelated;
+
+namespace C3 { export const unrelated = 3; }
+C3 as Record<string, unknown>;
+"#,
+    );
+
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339 for new C2().unrelated, got: {ts2339:?}"
+    );
+
+    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        ts2352.len(),
+        2,
+        "Expected exactly two TS2352 diagnostics for C1 and C2 assertions, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2339_property_access_anchors_property_token() {
     let source = r#"
 declare const value: {};

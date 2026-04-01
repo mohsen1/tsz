@@ -561,6 +561,18 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
+        let base_type =
+            crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
+        if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, base_type)
+            .is_some_and(|shape| {
+                shape
+                    .flags
+                    .contains(tsz_solver::ObjectFlags::NO_MODULE_AUGMENTATION_LOOKUP)
+            })
+        {
+            return None;
+        }
+
         let type_name = self.format_type_for_assignability_message(object_type);
         if type_name.is_empty()
             || type_name == "any"

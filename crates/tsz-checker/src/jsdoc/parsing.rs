@@ -369,6 +369,81 @@ impl<'a> CheckerState<'a> {
         Some((module_specifier, Some(after_dot[..end].to_string())))
     }
 
+    pub(super) fn parse_jsdoc_typeof_import_query(
+        type_expr: &str,
+    ) -> Option<(String, Vec<(usize, String)>)> {
+        let expr = type_expr.trim();
+        let mut cursor = "typeof".len();
+        let bytes = expr.as_bytes();
+        if !expr.starts_with("typeof") {
+            return None;
+        }
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if !expr[cursor..].starts_with("import(") {
+            return None;
+        }
+        cursor += "import(".len();
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let quote = *bytes.get(cursor)?;
+        if quote != b'"' && quote != b'\'' && quote != b'`' {
+            return None;
+        }
+        cursor += 1;
+        let module_start = cursor;
+        while cursor < bytes.len() && bytes[cursor] != quote {
+            cursor += 1;
+        }
+        let module_specifier = expr[module_start..cursor].trim().to_string();
+        if cursor >= bytes.len() {
+            return None;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if *bytes.get(cursor)? != b')' {
+            return None;
+        }
+        cursor += 1;
+
+        let mut segments = Vec::new();
+        while cursor < bytes.len() {
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor >= bytes.len() {
+                break;
+            }
+            if bytes[cursor] != b'.' {
+                return None;
+            }
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            let segment_start = cursor;
+            let first = *bytes.get(cursor)?;
+            if !first.is_ascii_alphabetic() && first != b'_' && first != b'$' {
+                return None;
+            }
+            cursor += 1;
+            while cursor < bytes.len() {
+                let ch = bytes[cursor];
+                if !ch.is_ascii_alphanumeric() && ch != b'_' && ch != b'$' {
+                    break;
+                }
+                cursor += 1;
+            }
+            segments.push((segment_start, expr[segment_start..cursor].to_string()));
+        }
+
+        Some((module_specifier, segments))
+    }
+
     pub(super) fn jsdoc_template_constraints(jsdoc: &str) -> Vec<(String, Option<String>)> {
         let mut out = Vec::new();
         for raw_line in jsdoc.lines() {

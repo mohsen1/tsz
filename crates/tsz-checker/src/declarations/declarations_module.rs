@@ -2,6 +2,7 @@
 //! TS2434, TS2435, TS1035, TS1235, TS5061, TS2664, TS2666/TS2667).
 
 use crate::declarations::DeclarationChecker;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
@@ -766,22 +767,16 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                             self.ctx.arena.get_identifier(name_node)
                                     {
                                         if let Some(specifier) = module_specifier.as_deref()
-                                            && let Some(target_idx) =
-                                                self.ctx.resolve_import_target(specifier)
-                                            && let Some(target_binder) =
-                                                self.ctx.get_binder_for_file(target_idx)
-                                        {
-                                            let target_arena =
-                                                self.ctx.get_arena_for_file(target_idx as u32);
-                                            if let Some(source_file) =
-                                                target_arena.source_files.first()
-                                                && let Some(existing_sym_id) = target_binder
-                                                    .resolve_import_if_needed_public(
-                                                        &source_file.file_name,
-                                                        &ident.escaped_text,
-                                                    )
-                                                && let Some(symbol) =
-                                                    target_binder.get_symbol(existing_sym_id)
+                                            && let Some((existing_sym_id, owner_idx)) = self
+                                                .resolve_export_in_module_target(
+                                                    specifier,
+                                                    &ident.escaped_text,
+                                                    &mut FxHashSet::default(),
+                                                )
+                                            && let Some(owner_binder) =
+                                                self.ctx.get_binder_for_file(owner_idx)
+                                            && let Some(symbol) =
+                                                owner_binder.get_symbol(existing_sym_id)
                                             {
                                                 let allowed = (symbol.flags
                                                     & (symbol_flags::REGULAR_ENUM
@@ -798,7 +793,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                                     );
                                                 }
                                             }
-                                        }
                                         if register_value_name(&ident.escaped_text, enm.name)
                                             && let Some(node) = self.ctx.arena.get(enm.name)
                                         {
@@ -995,6 +989,73 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
     }
 
+    fn resolve_export_in_module_target(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        visited: &mut FxHashSet<usize>,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let target_idx = self.ctx.resolve_import_target(module_specifier)?;
+        self.resolve_export_in_file(target_idx, export_name, visited)
+    }
+
+    fn resolve_export_in_file(
+        &self,
+        file_idx: usize,
+        export_name: &str,
+        visited: &mut FxHashSet<usize>,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        if !visited.insert(file_idx) {
+            return None;
+        }
+
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let file_name = arena.source_files.first()?.file_name.clone();
+
+        if let Some(exports) = binder.module_exports.get(&file_name)
+            && let Some(sym_id) = exports.get(export_name)
+        {
+            return Some((sym_id, file_idx));
+        }
+
+        if let Some(reexports) = binder.reexports.get(&file_name)
+            && let Some((source_module, original_name)) = reexports.get(export_name)
+        {
+            let name = original_name.as_deref().unwrap_or(export_name);
+            if let Some(source_idx) = self
+                .ctx
+                .resolve_import_target_from_file(file_idx, source_module)
+                && let Some(result) = self.resolve_export_in_file(source_idx, name, visited)
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(source_modules) = binder.wildcard_reexports.get(&file_name) {
+            for source_module in source_modules {
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, source_module)
+                    && let Some(result) =
+                        self.resolve_export_in_file(source_idx, export_name, visited)
+                {
+                    return Some(result);
+                }
+            }
+        }
+
+        if export_name == "default"
+            && let Some(sym_id) = binder.file_locals.get("export=")
+        {
+            return Some((sym_id, file_idx));
+        }
+        binder
+            .file_locals
+            .get(export_name)
+            .map(|sym_id| (sym_id, file_idx))
+    }
+
     /// Check TS2433/TS2434: Namespace merging with class/function across files or out of order.
     ///
     /// TS2433: A namespace declaration cannot be in a different file from a class or function
@@ -1010,6 +1071,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         module: &tsz_parser::parser::node::ModuleData,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if self.is_ambient_declaration(module_idx) {
+            return;
+        }
 
         // Get the symbol for this module declaration
         let Some(&sym_id) = self.ctx.binder.node_symbols.get(&module_idx.0) else {
