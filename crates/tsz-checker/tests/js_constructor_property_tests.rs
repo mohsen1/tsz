@@ -1182,9 +1182,17 @@ var cpn = cp.m4()
         .iter()
         .filter(|(code, _)| *code == 2339)
         .collect();
+    let ts2403: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2403)
+        .collect();
     assert!(
         ts2339.is_empty(),
         "Expected generic constructor prototype methods to allow new `this` properties, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2403.is_empty(),
+        "Expected JSDoc generic constructor instance types to stay stable across prototype methods, got: {diagnostics:?}"
     );
 }
 

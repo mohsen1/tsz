@@ -1368,6 +1368,45 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
+    fn resolve_jsdoc_generic_symbol_body_and_params(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .cloned()?;
+
+        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+            let mut visited_aliases = Vec::new();
+            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                return self.resolve_jsdoc_generic_symbol_body_and_params(target);
+            }
+        }
+
+        if (symbol.flags
+            & (symbol_flags::TYPE_ALIAS
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::ENUM))
+            != 0
+        {
+            let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+            return (body_type != TypeId::ERROR && body_type != TypeId::UNKNOWN)
+                .then_some((body_type, type_params));
+        }
+
+        let value_decl = symbol.value_declaration;
+        let constructor_type = self.get_type_of_symbol(sym_id);
+        let shape = tsz_solver::type_queries::get_function_shape(self.ctx.types, constructor_type)?;
+        let raw_instance = self.synthesize_js_constructor_instance_type(
+            value_decl,
+            constructor_type,
+            &[],
+        )?;
+        Some((raw_instance, shape.type_params.clone()))
+    }
+
     fn jsdoc_declared_value_symbol_prefers_value_type(
         &self,
         sym_id: tsz_binder::SymbolId,
@@ -1596,14 +1635,8 @@ impl<'a> CheckerState<'a> {
                 Self::parse_jsdoc_import_type(base_name)
             {
                 let sym_id = self.resolve_jsdoc_import_member(&module_specifier, &member_name)?;
-                let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-                if resolved == TypeId::ERROR || resolved == TypeId::UNKNOWN {
-                    return None;
-                }
-                let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
-                if body_type == TypeId::ERROR {
-                    return None;
-                }
+                let (body_type, type_params) =
+                    self.resolve_jsdoc_generic_symbol_body_and_params(sym_id)?;
                 if type_params.is_empty() || type_args.is_empty() {
                     return Some(body_type);
                 }
@@ -1622,7 +1655,10 @@ impl<'a> CheckerState<'a> {
                 & (symbol_flags::TYPE_ALIAS
                     | symbol_flags::CLASS
                     | symbol_flags::INTERFACE
-                    | symbol_flags::ENUM))
+                    | symbol_flags::ENUM
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | symbol_flags::BLOCK_SCOPED_VARIABLE))
                 == 0
             {
                 return None;
@@ -1640,15 +1676,15 @@ impl<'a> CheckerState<'a> {
                             & (symbol_flags::TYPE_ALIAS
                                 | symbol_flags::CLASS
                                 | symbol_flags::INTERFACE
-                                | symbol_flags::ENUM))
+                                | symbol_flags::ENUM
+                                | symbol_flags::FUNCTION
+                                | symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                | symbol_flags::BLOCK_SCOPED_VARIABLE))
                             != 0
                     })
                 })?
         };
-        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
-        if body_type == TypeId::ERROR {
-            return None;
-        }
+        let (body_type, type_params) = self.resolve_jsdoc_generic_symbol_body_and_params(sym_id)?;
         if type_params.is_empty() || type_args.is_empty() {
             return Some(body_type);
         }
