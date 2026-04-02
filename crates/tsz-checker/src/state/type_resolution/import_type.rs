@@ -820,10 +820,8 @@ impl<'a> CheckerState<'a> {
         // cannot be found in the binder's module exports. This ensures we report
         // module-not-found errors for import type expressions like `typeof import("./missing")`.
         if report_unresolved_imports && !self.ctx.binder.module_exports.contains_key(&module_name) {
-            let (message, code) = self.module_not_found_diagnostic_for_site(
-                &module_name,
-                ModuleNotFoundSite::ImportType,
-            );
+            let (message, code) = self
+                .module_not_found_diagnostic_for_site(&module_name, ModuleNotFoundSite::ImportType);
             self.error_at_node(specifier_node, &message, code);
         }
 

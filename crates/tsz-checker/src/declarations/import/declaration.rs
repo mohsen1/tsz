@@ -1023,7 +1023,9 @@ impl<'a> CheckerState<'a> {
                         if !is_js_like && !is_json_module {
                             let (message, code) = self.module_not_found_diagnostic(module_name);
                             if !self.ctx.modules_with_ts2307_emitted.contains(module_name) {
-                                self.ctx.modules_with_ts2307_emitted.insert(module_name.to_string());
+                                self.ctx
+                                    .modules_with_ts2307_emitted
+                                    .insert(module_name.to_string());
                                 self.error_at_position(spec_start, spec_length, &message, code);
                             }
                             self.ctx.import_resolution_stack.pop();
@@ -1043,10 +1045,22 @@ impl<'a> CheckerState<'a> {
                                 if let Some(exports) = binder.module_exports.get(file_name) {
                                     if exports.has("export=") && exports.len() == 1 {
                                         // Only has export=, no named exports - emit TS2307
-                                        let (message, code) = self.module_not_found_diagnostic(module_name);
-                                        if !self.ctx.modules_with_ts2307_emitted.contains(module_name) {
-                                            self.ctx.modules_with_ts2307_emitted.insert(module_name.to_string());
-                                            self.error_at_position(spec_start, spec_length, &message, code);
+                                        let (message, code) =
+                                            self.module_not_found_diagnostic(module_name);
+                                        if !self
+                                            .ctx
+                                            .modules_with_ts2307_emitted
+                                            .contains(module_name)
+                                        {
+                                            self.ctx
+                                                .modules_with_ts2307_emitted
+                                                .insert(module_name.to_string());
+                                            self.error_at_position(
+                                                spec_start,
+                                                spec_length,
+                                                &message,
+                                                code,
+                                            );
                                         }
                                         self.ctx.import_resolution_stack.pop();
                                         return;
