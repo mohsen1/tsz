@@ -1792,17 +1792,30 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     let type_text = self
                         .rewrite_recursive_static_class_expression_type(prop_idx, effective_type);
+                    let mut emitted_any_for_truncation = false;
                     if let Some(name_node) = self.arena.get(prop.name)
                         && let Some(file_path) = self.current_file_path.clone()
                     {
-                        let _ = self.emit_non_serializable_import_type_diagnostic(
+                        if self.emit_serialized_type_text_truncation_diagnostic_if_needed(
                             &type_text,
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
-                        );
+                        ) {
+                            self.write(": any");
+                            emitted_any_for_truncation = true;
+                        }
+                        if !emitted_any_for_truncation {
+                            let _ = self.emit_non_serializable_import_type_diagnostic(
+                                &type_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
                     }
-                    if self.printed_type_uses_private_import_type_root(&type_text) {
+                    if emitted_any_for_truncation {
+                    } else if self.printed_type_uses_private_import_type_root(&type_text) {
                         if let (Some(file_path), Some((pos, length))) =
                             (self.current_file_path.as_deref(), prop_name_span)
                         {
@@ -1844,7 +1857,25 @@ impl<'a> DeclarationEmitter<'a> {
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.infer_fallback_type_text(prop.initializer)
             {
-                if self.printed_type_uses_private_import_type_root(&type_text) {
+                let emitted_any_for_truncation = if let (Some(file_path), Some((pos, length))) =
+                    (self.current_file_path.clone(), prop_name_span)
+                {
+                    if self.emit_serialized_type_text_truncation_diagnostic_if_needed(
+                        &type_text,
+                        &file_path,
+                        pos,
+                        length,
+                    ) {
+                        self.write(": any");
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if emitted_any_for_truncation {
+                } else if self.printed_type_uses_private_import_type_root(&type_text) {
                     if let (Some(file_path), Some((pos, length))) =
                         (self.current_file_path.as_deref(), prop_name_span)
                     {
