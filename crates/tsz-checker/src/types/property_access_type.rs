@@ -1446,7 +1446,11 @@ impl<'a> CheckerState<'a> {
         // Returning `error` (not `never`) matches tsc behavior: when a property doesn't
         // exist, tsc returns `errorType` which suppresses cascading diagnostics (e.g.
         // TS2322 on `ab.y = 'hello'` when `ab: never`).
-        if object_type == TypeId::NEVER {
+        // Also handle intersections that contain `never` (e.g., when mixin classes have
+        // conflicting private members that reduce the intersection to `never`).
+        if object_type == TypeId::NEVER
+            || tsz_solver::type_queries::contains_never_type_db(self.ctx.types, object_type)
+        {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;
                 if !property_name.starts_with('#') {

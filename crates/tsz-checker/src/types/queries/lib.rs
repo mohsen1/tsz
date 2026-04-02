@@ -1031,6 +1031,14 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(member_id) = direct_member_id {
+                    // Check if the member is from a type-only wildcard export
+                    // For namespace imports (import * as ns from './mod'), we need to check
+                    // if the member was re-exported via `export type * from '...'` and is type-only.
+                    if let Some(ref module_specifier) = import_module {
+                        if self.is_member_type_only_wildcard_export(module_specifier, property_name) {
+                            return None;
+                        }
+                    }
                     return self.resolve_validated_namespace_member(
                         sym_id,
                         member_id,
@@ -1117,6 +1125,77 @@ impl<'a> CheckerState<'a> {
                 None
             }
         }
+    }
+
+    /// Check if a member is from a type-only wildcard export from a specific module.
+    ///
+    /// This handles cases like:
+    ///   // intermediate.ts: export type * from './ghost'
+    ///   // main.ts: import * as intermediate from './intermediate'
+    ///   // intermediate.Ghost should not be accessible as a value
+    ///
+    /// Returns true if the member was re-exported via `export type * from '...'`
+    /// and is therefore type-only.
+    fn is_member_type_only_wildcard_export(
+        &mut self,
+        module_specifier: &str,
+        member_name: &str,
+    ) -> bool {
+        // Resolve the target module file
+        let Some(target_file_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+
+        // Get the file name for looking up wildcard re-exports
+        let target_file_name = self
+            .ctx
+            .get_arena_for_file(target_file_idx as u32)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_default();
+
+        // Check if there's a type-only wildcard re-export
+        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+            let type_only_flags = target_binder.wildcard_reexports_type_only.get(&target_file_name);
+
+            for (i, source_module) in source_modules.iter().enumerate() {
+                let is_type_only = type_only_flags
+                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
+                    .unwrap_or(false);
+
+                if !is_type_only {
+                    continue;
+                }
+
+                // This is a type-only wildcard export - check if the member comes from here
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(target_file_idx, source_module)
+                    && let Some(source_binder) = self.ctx.get_binder_for_file(source_idx)
+                {
+                    let source_file_name = self
+                        .ctx
+                        .get_arena_for_file(source_idx as u32)
+                        .source_files
+                        .first()
+                        .map(|sf| sf.file_name.clone())
+                        .unwrap_or_default();
+
+                    // Check if the member exists in the source module's exports
+                    if let Some(exports) = self.module_exports_for_file(source_binder, &source_file_name)
+                        && exports.get(member_name).is_some()
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     // Section 47: Node Predicate Utilities

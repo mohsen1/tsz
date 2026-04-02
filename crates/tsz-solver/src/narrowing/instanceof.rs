@@ -197,19 +197,69 @@ impl<'a> NarrowingContext<'a> {
                     // Interface overlap: both are object-like but not assignable.
                     // Only create intersection if the types don't have conflicting
                     // properties (e.g., same property name with incompatible types).
+                    // CRITICAL: For class types, use nominal identity - unrelated classes
+                    // should not overlap even if they have no conflicting properties.
                     if self.are_object_like(member) && self.are_object_like(instance_type) {
-                        if self.are_instanceof_types_overlapping(member, instance_type) {
-                            trace!(
-                                "Interface overlap between {} and {}, using intersection",
-                                member.0, instance_type.0
-                            );
-                            filtered_members.push(self.db.intersection2(member, instance_type));
-                            continue;
+                        // Check nominal class relationship first
+                        match self.nominal_instanceof_relation(member, instance_type) {
+                            Some(true) => {
+                                // member IS or EXTENDS instance - keep the member
+                                filtered_members.push(member);
+                                continue;
+                            }
+                            Some(false) => {
+                                // instance EXTENDS member - narrow to instance type
+                                filtered_members.push(instance_type);
+                                continue;
+                            }
+                            None => {
+                                // Check if both are actually classes (have class def ids)
+                                // If so, they're unrelated and should be excluded
+                                let member_is_class = self.get_class_def_id(member).is_some();
+                                let instance_is_class = self.get_class_def_id(instance_type).is_some();
+                                if member_is_class && instance_is_class {
+                                    // Both are unrelated classes - do NOT create intersection
+                                    // Fall through to exclusion below
+                                } else if self.resolver.is_none() {
+                                    // No resolver available - check if both appear to be class types
+                                    // by checking if they are Applications with class bases
+                                    let member_is_app_class = self.is_application_with_class_base(member);
+                                    let instance_is_app_class = self.is_application_with_class_base(instance_type);
+                                    if member_is_app_class && instance_is_app_class {
+                                        // Both appear to be class applications but we can't verify relationship
+                                        // Be conservative and exclude to avoid incorrect intersections
+                                    } else {
+                                        // At least one is not a class application - use structural overlap check
+                                        if self.are_instanceof_types_overlapping(member, instance_type) {
+                                            trace!(
+                                                "Interface overlap between {} and {}, using intersection",
+                                                member.0, instance_type.0
+                                            );
+                                            filtered_members.push(self.db.intersection2(member, instance_type));
+                                            continue;
+                                        }
+                                        trace!(
+                                            "Conflicting properties between {} and {}, excluding",
+                                            member.0, instance_type.0
+                                        );
+                                    }
+                                } else {
+                                    // At least one is not a class - use structural overlap check
+                                    if self.are_instanceof_types_overlapping(member, instance_type) {
+                                        trace!(
+                                            "Interface overlap between {} and {}, using intersection",
+                                            member.0, instance_type.0
+                                        );
+                                        filtered_members.push(self.db.intersection2(member, instance_type));
+                                        continue;
+                                    }
+                                    trace!(
+                                        "Conflicting properties between {} and {}, excluding",
+                                        member.0, instance_type.0
+                                    );
+                                }
+                            }
                         }
-                        trace!(
-                            "Conflicting properties between {} and {}, excluding",
-                            member.0, instance_type.0
-                        );
                     }
 
                     trace!("Union member {} excluded by instanceof check", member.0);
@@ -632,6 +682,19 @@ impl<'a> NarrowingContext<'a> {
         // Try 3: Reverse-lookup — the type is an already-resolved instance Object type
         // that was registered via insert_class_instance_type
         resolver.class_def_for_instance_type(type_id)
+    }
+
+    /// Check if a type is an Application with a class base (e.g., `A<T>` where A is a class).
+    ///
+    /// This is used when the resolver is not available to determine if a type
+    /// looks like a class instance for instanceof narrowing purposes.
+    fn is_application_with_class_base(&self, type_id: TypeId) -> bool {
+        let Some(app_id) = application_id(self.db, type_id) else {
+            return false;
+        };
+        let app = self.db.type_application(app_id);
+        // Check if the base is a Lazy(DefId) - this is a strong indicator of a class/interface type
+        lazy_def_id(self.db, app.base).is_some()
     }
 
     /// Check if `ancestor_def` is in the extends chain of `descendant_def`.
