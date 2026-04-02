@@ -1263,7 +1263,6 @@ impl ParserState {
         match self.token() {
             SyntaxKind::PlusToken
             | SyntaxKind::MinusToken
-            | SyntaxKind::AsteriskToken
             | SyntaxKind::TildeToken
             | SyntaxKind::ExclamationToken
             | SyntaxKind::PlusPlusToken
@@ -1329,6 +1328,14 @@ impl ParserState {
                     end_pos,
                     UnaryExprData { operator, operand },
                 )
+            }
+            SyntaxKind::AsteriskToken => {
+                // `*` is not a standalone unary operator in expression position.
+                // Report TS1109 at the `*`, then recover by skipping it so the
+                // following token can still become the operand expression.
+                self.error_expression_expected();
+                self.next_token();
+                self.parse_unary_expression()
             }
             SyntaxKind::TypeOfKeyword | SyntaxKind::VoidKeyword | SyntaxKind::DeleteKeyword => {
                 let start_pos = self.token_pos();

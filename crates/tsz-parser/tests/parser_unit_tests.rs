@@ -2325,6 +2325,43 @@ fn expr_prefix_update_repeated_operator_same_line_anchors_inner_update() {
 }
 
 #[test]
+fn object_spread_invalid_asterisk_recovers_to_operand_expression() {
+    let source = "let o8 = { ...*o };";
+    let (parser, root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let ts1109 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for invalid spread operand");
+    assert_eq!(
+        ts1109.start,
+        source.find('*').expect("asterisk") as u32,
+        "TS1109 should anchor at the stray `*`: {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let object = arena.get(init).expect("object literal");
+    let object_data = arena
+        .get_literal_expr(object)
+        .expect("object literal expression");
+    assert_eq!(object_data.elements.nodes.len(), 1, "expected one spread property");
+
+    let spread = arena
+        .get(object_data.elements.nodes[0])
+        .expect("spread assignment");
+    assert_eq!(spread.kind, syntax_kind_ext::SPREAD_ASSIGNMENT);
+    let spread_data = arena.get_spread(spread).expect("spread data");
+    let operand = arena.get(spread_data.expression).expect("spread operand");
+    assert_eq!(
+        operand.kind,
+        SyntaxKind::Identifier as u16,
+        "recovery should keep the identifier operand after skipping the stray `*`"
+    );
+    assert_eq!(node_text(arena, source, spread_data.expression), "o");
+}
+
+#[test]
 fn expr_prefix_update_repeated_operator_after_line_break_matches_sputnik_anchor() {
     let source = "var x=0, y=0;\nvar z=\nx\n++\n++\ny\n";
     let (parser, _root) = parse_source(source);
