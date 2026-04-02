@@ -1188,9 +1188,24 @@ impl<'a> CheckerState<'a> {
                         "Round 1 inference: substitution computed"
                     );
                     let mut round2_substitution = substitution.clone();
+                    let mut round2_return_context_names = FxHashSet::default();
                     if let Some(ctx_type) = generic_inference_contextual_type {
-                        let return_context_substitution = self
+                        let mut return_context_substitution = self
                             .compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
+                        let return_param_names: FxHashSet<_> = self
+                            .function_like_return_parameter_type_params(&shape)
+                            .into_iter()
+                            .collect();
+                        if !return_param_names.is_empty() {
+                            let mut filtered =
+                                crate::query_boundaries::common::TypeSubstitution::new();
+                            for (&name, &type_id) in return_context_substitution.map() {
+                                if !return_param_names.contains(&name) {
+                                    filtered.insert(name, type_id);
+                                }
+                            }
+                            return_context_substitution = filtered;
+                        }
                         trace!(
                             type_params = ?shape
                                 .type_params
@@ -1252,6 +1267,7 @@ impl<'a> CheckerState<'a> {
 
                             if should_update {
                                 round2_substitution.insert(name, ty);
+                                round2_return_context_names.insert(name);
                                 had_return_context_substitution = true;
                             }
                         }
@@ -1383,12 +1399,8 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(snap) = &round1_diag_snap {
                         let round1_end = self.ctx.snapshot_diagnostics();
-                        let preserved_round1_arg_diags = self
-                            .collect_non_callback_and_body_assignability_diagnostics_between(
-                                args,
-                                snap,
-                                &round1_end,
-                            );
+                        let preserved_round1_arg_diags =
+                            self.collect_non_callback_diagnostics_between(args, snap, &round1_end);
                         self.ctx.rollback_diagnostics_filtered(snap, |diag| {
                             Self::should_preserve_speculative_call_diagnostic(diag)
                         });
@@ -1470,8 +1482,33 @@ impl<'a> CheckerState<'a> {
                                 self.clear_contextual_resolution_cache();
                                 self.invalidate_expression_for_contextual_retry(arg_idx);
                             }
-                            let contextual_substitution = self
+                            let mut contextual_substitution = self
                                 .widen_round2_contextual_substitution(&shape, &round2_substitution);
+                            if !round2_return_context_names.is_empty()
+                                && let Some(param_type) =
+                                    shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                        let last = shape.params.last()?;
+                                        last.rest.then_some(last.type_id)
+                                    })
+                            {
+                                let names_to_strip: FxHashSet<_> = self
+                                    .sensitive_callback_nested_parameter_type_params(
+                                        &shape, param_type,
+                                    )
+                                    .into_iter()
+                                    .filter(|name| round2_return_context_names.contains(name))
+                                    .collect();
+                                if !names_to_strip.is_empty() {
+                                    let mut filtered =
+                                        crate::query_boundaries::common::TypeSubstitution::new();
+                                    for (&name, &type_id) in contextual_substitution.map() {
+                                        if !names_to_strip.contains(&name) {
+                                            filtered.insert(name, type_id);
+                                        }
+                                    }
+                                    contextual_substitution = filtered;
+                                }
+                            }
                             let round2_contextual_types = self.compute_round2_contextual_types(
                                 &shape,
                                 round1_instantiated_params.as_deref(),
@@ -1838,7 +1875,7 @@ impl<'a> CheckerState<'a> {
                             if let Some(snap) = &initial_arg_snap {
                                 let initial_arg_end = self.ctx.snapshot_diagnostics();
                                 let preserved_initial_arg_diags = self
-                                    .collect_non_callback_and_body_assignability_diagnostics_between(
+                                    .collect_non_callback_diagnostics_between(
                                         args,
                                         snap,
                                         &initial_arg_end,
@@ -1993,7 +2030,7 @@ impl<'a> CheckerState<'a> {
                             if let Some(snap) = &initial_arg_snap {
                                 let initial_arg_end = self.ctx.snapshot_diagnostics();
                                 let preserved_initial_arg_diags = self
-                                    .collect_non_callback_and_body_assignability_diagnostics_between(
+                                    .collect_non_callback_diagnostics_between(
                                         args,
                                         snap,
                                         &initial_arg_end,
@@ -2351,6 +2388,47 @@ impl<'a> CheckerState<'a> {
             generic_instantiated_params = retry.2;
         }
 
+        if is_generic_call
+            && let CallResult::Success(return_type) = result
+            && let Some(ctx_type) =
+                contextual_type.filter(|&ct| ct != TypeId::ANY && ct != TypeId::UNKNOWN)
+            && (common::contains_type_parameters(self.ctx.types, return_type)
+                || common::contains_infer_types(self.ctx.types, return_type)
+                || common::contains_type_by_id(self.ctx.types, return_type, TypeId::UNKNOWN))
+            && let Some(shape) = call_checker::get_contextual_signature_for_arity(
+                self.ctx.types,
+                callee_type_for_call,
+                args.len(),
+            )
+        {
+            let mut return_context_substitution =
+                self.compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
+            let return_param_names: FxHashSet<_> = self
+                .function_like_return_parameter_type_params(&shape)
+                .into_iter()
+                .collect();
+            if !return_param_names.is_empty() {
+                let mut filtered = crate::query_boundaries::common::TypeSubstitution::new();
+                for (&name, &type_id) in return_context_substitution.map() {
+                    if !return_param_names.contains(&name) {
+                        filtered.insert(name, type_id);
+                    }
+                }
+                return_context_substitution = filtered;
+            }
+
+            if !return_context_substitution.is_empty() {
+                let instantiated_return = crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    return_type,
+                    &return_context_substitution,
+                );
+                if instantiated_return != return_type {
+                    result = CallResult::Success(instantiated_return);
+                }
+            }
+        }
+
         // Store instantiated type predicate from generic call resolution
         // so flow narrowing can use the correct (inferred) predicate type.
         if let Some(predicate) = instantiated_predicate {
@@ -2441,8 +2519,8 @@ impl<'a> CheckerState<'a> {
             })
             .is_some();
         if let CallResult::ArgumentTypeMismatch {
-            actual,
-            expected,
+            actual: _,
+            expected: _,
             fallback_return,
             ..
         } = result

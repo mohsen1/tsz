@@ -10,6 +10,7 @@ use crate::error_reporter::fingerprint_policy::{
 use crate::state::CheckerState;
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 /// Returns true if the formatted type name matches a built-in wrapper type
@@ -89,6 +90,7 @@ fn has_own_signature_type_params(db: &dyn tsz_solver::TypeDatabase, type_id: Typ
         return shape
             .call_signatures
             .iter()
+            .chain(shape.construct_signatures.iter())
             .any(|sig| !sig.type_params.is_empty());
     }
     if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
@@ -180,144 +182,71 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    pub(crate) fn missing_property_related_information(
+    fn callback_initializer_for_assignability_anchor(
         &self,
-        target_type: TypeId,
-        property_name: tsz_common::interner::Atom,
-        anchor_idx: Option<NodeIndex>,
-    ) -> Option<DiagnosticRelatedInformation> {
-        use tsz_parser::parser::syntax_kind_ext;
-        use tsz_scanner::SyntaxKind;
-
-        let decl_idx = if let Some(prop_info) =
-            self.property_info_for_display(target_type, property_name)
-            && let Some(prop_symbol_id) = prop_info.parent_id
-            && let Some(prop_symbol) = self.ctx.binder.get_symbol(prop_symbol_id)
-        {
-            if prop_symbol.value_declaration.is_some() {
-                prop_symbol.value_declaration
-            } else {
-                *prop_symbol.declarations.first()?
+        anchor_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let mut current = anchor_idx;
+        for _ in 0..8 {
+            let anchor_node = self.ctx.arena.get(current)?;
+            if anchor_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || anchor_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return Some(current);
             }
-        } else if let Some(anchor_idx) = anchor_idx {
-            let (anchor_start, _) = self.get_node_span(anchor_idx)?;
-            let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            let mut best: Option<(NodeIndex, u32)> = None;
-
-            for symbol in self.ctx.binder.symbols.iter() {
-                if symbol.escaped_name.as_str() != prop_name.as_ref()
-                    || (symbol.decl_file_idx != u32::MAX
-                        && symbol.decl_file_idx != self.ctx.current_file_idx as u32)
-                {
-                    continue;
-                }
-
-                let candidate_idx = if symbol.value_declaration.is_some() {
-                    symbol.value_declaration
-                } else if let Some(&decl_idx) = symbol.declarations.first() {
-                    decl_idx
-                } else {
-                    continue;
-                };
-
-                let Some(candidate_node) = self.ctx.arena.get(candidate_idx) else {
-                    continue;
-                };
-                let is_prop_like = if candidate_node.kind == SyntaxKind::Identifier as u16 {
-                    self.ctx
-                        .arena
-                        .get_extended(candidate_idx)
-                        .and_then(|ext| self.ctx.arena.get(ext.parent))
-                        .is_some_and(|parent| {
-                            parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
-                                || parent.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        })
-                } else {
-                    candidate_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
-                        || candidate_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                };
-                if !is_prop_like {
-                    continue;
-                }
-
-                let Some((start, _)) = self.get_node_span(candidate_idx) else {
-                    continue;
-                };
-                if start >= anchor_start {
-                    continue;
-                }
-                if best.is_none_or(|(_, best_start)| start > best_start) {
-                    best = Some((candidate_idx, start));
-                }
+            if anchor_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let property = self.ctx.arena.get_property_assignment(anchor_node)?;
+                let initializer = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(property.initializer);
+                let initializer_node = self.ctx.arena.get(initializer)?;
+                return (initializer_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || initializer_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                    .then_some(initializer);
             }
 
-            if let Some((decl_idx, _)) = best {
-                decl_idx
-            } else {
-                let source_file = self.ctx.arena.source_files.first()?;
-                let anchor_limit = anchor_start as usize;
-                let text = source_file.text.get(..anchor_limit)?;
-                let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-                let mut search_from = 0usize;
-                let mut last_match = None;
-
-                while let Some(offset) = text[search_from..].find(prop_name.as_ref()) {
-                    let abs = search_from + offset;
-                    let before = text[..abs].chars().next_back();
-                    let after_name = abs + prop_name.len();
-                    let after = text[after_name..].chars().next();
-                    let ident_before = before
-                        .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
-                    let ident_after = after
-                        .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
-                    if !ident_before && !ident_after {
-                        let rest = &text[after_name..];
-                        let trimmed = rest.trim_start();
-                        if trimmed.starts_with(':') || trimmed.starts_with("?:") {
-                            last_match = Some(abs as u32);
-                        }
-                    }
-                    search_from = after_name;
-                }
-
-                if let Some(start) = last_match {
-                    return Some(DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::IS_DECLARED_HERE,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length: prop_name.len() as u32,
-                        message_text: format_message(
-                            diagnostic_messages::IS_DECLARED_HERE,
-                            &[&prop_name],
-                        ),
-                    });
-                }
-
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            if parent.is_none() {
                 return None;
             }
-        } else {
-            return None;
-        };
-        let (start, end) = self.get_node_span(decl_idx)?;
-        let (start, length) =
-            self.normalized_anchor_span(decl_idx, start, end.saturating_sub(start));
-        let file = self
-            .source_file_data_for_node(decl_idx)
-            .map(|sf| sf.file_name.clone())
-            .unwrap_or_else(|| self.ctx.file_name.clone());
+            current = parent;
+        }
 
-        Some(DiagnosticRelatedInformation {
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::IS_DECLARED_HERE,
-            file,
-            start,
-            length,
-            message_text: format_message(
-                diagnostic_messages::IS_DECLARED_HERE,
-                &[&self.ctx.types.resolve_atom_ref(property_name)],
-            ),
-        })
+        None
+    }
+
+    fn should_suppress_outer_callback_return_assignability(
+        &mut self,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        let Some(callback_idx) = self.callback_initializer_for_assignability_anchor(anchor_idx)
+        else {
+            return false;
+        };
+        if self.callback_has_explicit_param_type_conflict(callback_idx, target) {
+            return false;
+        }
+
+        let Some(callback_node) = self.ctx.arena.get(callback_idx) else {
+            return false;
+        };
+        let Some(function) = self.ctx.arena.get_function(callback_node) else {
+            return false;
+        };
+        let Some(body_node) = self.ctx.arena.get(function.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return false;
+        }
+
+        self.has_diagnostic_code_within_span(
+            body_node.pos,
+            body_node.end,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        )
     }
 
     pub(super) fn private_or_protected_member_missing_display(
@@ -485,6 +414,37 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let has_callable_shape = |this: &mut Self, ty: TypeId| {
+            tsz_solver::type_queries::get_function_shape(this.ctx.types, ty).is_some()
+                || crate::query_boundaries::common::callable_shape_for_type(this.ctx.types, ty)
+                    .is_some()
+                || {
+                    let evaluated = this.evaluate_type_with_env(ty);
+                    tsz_solver::type_queries::get_function_shape(this.ctx.types, evaluated)
+                        .is_some()
+                        || crate::query_boundaries::common::callable_shape_for_type(
+                            this.ctx.types,
+                            evaluated,
+                        )
+                        .is_some()
+                }
+        };
+        if has_callable_shape(self, source)
+            && has_callable_shape(self, target)
+            && let Some(arg_node) = self.ctx.arena.get(anchor_idx)
+            && matches!(arg_node.kind, k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION)
+            && let Some(func) = self.ctx.arena.get_function(arg_node)
+            && let Some(body_node) = self.ctx.arena.get(func.body)
+            && body_node.kind != syntax_kind_ext::BLOCK
+            && self.has_diagnostic_code_within_span(
+                body_node.pos,
+                body_node.end,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            )
+        {
+            return;
+        }
+
         // Check for constructor accessibility mismatch
         if let Some((source_level, target_level)) =
             self.constructor_accessibility_mismatch(source, target, None)
@@ -593,6 +553,12 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                 }
+                if is_callable_application_type(self.ctx.types, source)
+                    && is_callable_application_type(self.ctx.types, target)
+                    && self.should_suppress_outer_callback_return_assignability(target, anchor_idx)
+                {
+                    return;
+                }
                 let diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
                 self.ctx.push_diagnostic(diag);
@@ -664,6 +630,13 @@ impl<'a> CheckerState<'a> {
         if let Some(anchor) =
             self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
         {
+            if is_callable_application_type(self.ctx.types, source)
+                && is_callable_application_type(self.ctx.types, target)
+                && self.should_suppress_outer_callback_return_assignability(target, anchor_idx)
+            {
+                return;
+            }
+
             // Precedence gate: suppress fallback TS2322 when a more specific
             // diagnostic is already present at the same span.
             if self.has_more_specific_diagnostic_at_span(anchor.start, anchor.length) {

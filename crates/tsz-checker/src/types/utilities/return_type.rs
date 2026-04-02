@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
         }
 
         crate::computation::contextual::expression_needs_contextual_return_type(self, expr_idx)
-            .then_some(return_context)
+            .then(|| self.contextual_type_for_expression(return_context))
     }
 
     fn should_preserve_tuple_literals_for_generic_return(

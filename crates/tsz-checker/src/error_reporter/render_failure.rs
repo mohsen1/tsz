@@ -624,12 +624,6 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
-        let (start, length) = if depth > 0 || source != source_type || target != target_type {
-            self.object_literal_initializer_anchor_for_type(idx, source_type)
-                .unwrap_or((start, length))
-        } else {
-            (start, length)
-        };
         // TSC emits TS2322 (generic assignability error) instead of TS2741
         // when the source is a primitive type. Primitives can't have "missing properties".
         let display_src_str = if depth == 0 && source_type != tsz_solver::TypeId::OBJECT {
@@ -958,19 +952,13 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             &[&prop_name, &src_str, &tgt_str_qualified],
         );
-        let mut diag = Diagnostic::error(
+        Diagnostic::error(
             file_name,
             start,
             length,
             message,
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-        );
-        if let Some(related) =
-            self.missing_property_related_information(target_type, property_name, Some(idx))
-        {
-            diag.related_information.push(related);
-        }
-        diag
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -988,12 +976,6 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
-        let (start, length) = if depth > 0 || source != source_type || target != target_type {
-            self.object_literal_initializer_anchor_for_type(idx, source_type)
-                .unwrap_or((start, length))
-        } else {
-            (start, length)
-        };
         // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
         if tsz_solver::is_primitive_type(self.ctx.types, source_type) {
             let src_str = self.format_type_diagnostic(source_type);
@@ -1065,14 +1047,6 @@ impl<'a> CheckerState<'a> {
                 | query_utils::ArrayLikeKind::Tuple
                 | query_utils::ArrayLikeKind::Readonly(_)
         );
-        let source_is_callable = [source_type, source].into_iter().any(|candidate| {
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate).is_some()
-                || tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate).is_some()
-                || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, candidate)
-                    .is_some_and(|signatures| !signatures.is_empty())
-        });
-        let target_has_stable_name = self.named_type_display_name(target_type).is_some();
-        let date_target = self.named_type_display_name(target_type).as_deref() == Some("Date");
         let filtered_names: Vec<_> = property_names
             .iter()
             .filter(|name| {
@@ -1080,19 +1054,8 @@ impl<'a> CheckerState<'a> {
                 if s.starts_with("__private_brand") {
                     return false;
                 }
-                if date_target && s.as_ref() == "getVarDate" {
-                    return false;
-                }
-                if source_is_callable && s.as_ref() == "toString" {
-                    return false;
-                }
                 if is_array_target {
                     !is_object_prototype_method_for_array_target(&s)
-                } else if target_has_stable_name {
-                    !matches!(
-                        s.as_ref(),
-                        "constructor" | "hasOwnProperty" | "isPrototypeOf" | "propertyIsEnumerable"
-                    )
                 } else {
                     !is_object_prototype_method(&s)
                 }
@@ -1218,22 +1181,8 @@ impl<'a> CheckerState<'a> {
         };
         let src_str = if depth == 0 {
             self.format_assignment_source_type_for_diagnostic(source, target, idx)
-        } else if let Some(display) = self.declared_type_annotation_text_for_expression(idx) {
-            display
-        } else if let Some(name) = self.preferred_constructor_display_name(source) {
-            name
-        } else if let Some(name) = self.preferred_constructor_display_name(display_source) {
-            name
-        } else if let Some(name) = self.named_type_display_name(source) {
-            name
-        } else if let Some(name) = self.named_type_display_name(display_source) {
-            name
-        } else if let Some(name) =
-            self.named_type_display_name(self.widen_type_for_display(display_source))
-        {
-            name
         } else {
-            self.format_type_for_assignability_message(self.widen_type_for_display(display_source))
+            self.format_type_diagnostic(self.widen_type_for_display(display_source))
         };
         let tgt_str = if depth == 0 {
             self.format_assignability_type_for_message(target, source)
@@ -1297,6 +1246,19 @@ impl<'a> CheckerState<'a> {
         target_property_type: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
+        if depth == 0
+            && let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
+                nested_reason
+        {
+            return self.render_failure_reason(
+                nested_reason.expect("checked above"),
+                source_property_type,
+                target_property_type,
+                idx,
+                depth,
+            );
+        }
+
         if depth == 0 {
             let (source_str, target_str) =
                 self.format_top_level_assignability_message_types(source, target);

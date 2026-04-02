@@ -14,6 +14,7 @@
 //! - `prefer_more_specific_contextual_property_type` — property type preference logic
 //! - `sanitize_contextual_property_type` — contextual type sanitization
 
+use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -635,6 +636,7 @@ impl<'a> CheckerState<'a> {
                 }
             })?;
             let mut property_types = Vec::new();
+            let mut has_unresolved_member = false;
 
             for &member in &members {
                 let resolved_member = this.resolve_type_for_property_access(member);
@@ -645,6 +647,20 @@ impl<'a> CheckerState<'a> {
                     this.resolve_lazy_type(evaluated_member_for_property_access);
                 let evaluated_member_for_property_access =
                     this.evaluate_application_type(evaluated_member_for_property_access);
+                if call_checker::is_type_parameter_type(this.ctx.types, member)
+                    || call_checker::is_type_parameter_type(this.ctx.types, resolved_member)
+                    || call_checker::is_type_parameter_type(
+                        this.ctx.types,
+                        evaluated_member_for_property_access,
+                    )
+                    || this.contextual_type_is_unresolved_for_argument_refresh(member)
+                    || this.contextual_type_is_unresolved_for_argument_refresh(resolved_member)
+                    || this.contextual_type_is_unresolved_for_argument_refresh(
+                        evaluated_member_for_property_access,
+                    )
+                {
+                    has_unresolved_member = true;
+                }
                 let mut property_type = this
                     .ctx
                     .types
@@ -717,7 +733,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if property_types.is_empty() {
-                None
+                has_unresolved_member.then_some(TypeId::ANY)
             } else {
                 Some(
                     this.ctx

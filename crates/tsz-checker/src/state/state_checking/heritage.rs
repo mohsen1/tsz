@@ -60,8 +60,7 @@ impl<'a> CheckerState<'a> {
                 && self.get_cross_file_symbol(heritage_sym).is_some_and(|s| {
                     (s.flags & symbol_flags::VARIABLE) != 0
                         || ((s.flags & symbol_flags::INTERFACE) != 0
-                            && (s.flags & symbol_flags::CLASS) == 0
-                            && (s.flags & symbol_flags::VARIABLE) == 0)
+                            && (s.flags & symbol_flags::CLASS) == 0)
                 }))
     }
 

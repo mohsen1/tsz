@@ -542,6 +542,120 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    pub(crate) fn sensitive_callback_nested_parameter_type_params(
+        &mut self,
+        callee_shape: &tsz_solver::FunctionShape,
+        callback_param_type: TypeId,
+    ) -> Vec<tsz_common::interner::Atom> {
+        let tracked_type_params: FxHashSet<_> =
+            callee_shape.type_params.iter().map(|tp| tp.name).collect();
+        if tracked_type_params.is_empty() {
+            return Vec::new();
+        }
+
+        let callback_shape =
+            call_checker::get_contextual_signature(self.ctx.types, callback_param_type)
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(callback_param_type);
+                    (evaluated != callback_param_type).then(|| {
+                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                    })?
+                })
+                .or_else(|| {
+                    let evaluated = self.evaluate_application_type(callback_param_type);
+                    (evaluated != callback_param_type).then(|| {
+                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                    })?
+                });
+        let Some(callback_shape) = callback_shape else {
+            return Vec::new();
+        };
+
+        let mut nested_mentions = FxHashSet::default();
+        for param in &callback_shape.params {
+            let nested_shape =
+                call_checker::get_contextual_signature(self.ctx.types, param.type_id)
+                    .or_else(|| {
+                        let evaluated = self.evaluate_type_with_env(param.type_id);
+                        (evaluated != param.type_id).then(|| {
+                            call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                        })?
+                    })
+                    .or_else(|| {
+                        let evaluated = self.evaluate_application_type(param.type_id);
+                        (evaluated != param.type_id).then(|| {
+                            call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                        })?
+                    });
+            let Some(nested_shape) = nested_shape else {
+                continue;
+            };
+
+            nested_mentions.extend(
+                nested_shape
+                    .params
+                    .iter()
+                    .flat_map(|nested_param| {
+                        common::collect_referenced_types(self.ctx.types, nested_param.type_id)
+                            .into_iter()
+                    })
+                    .filter_map(|ty| {
+                        common::type_param_info(self.ctx.types, ty).and_then(|info| {
+                            tracked_type_params
+                                .contains(&info.name)
+                                .then_some(info.name)
+                        })
+                    }),
+            );
+        }
+
+        nested_mentions.into_iter().collect()
+    }
+
+    pub(crate) fn function_like_return_parameter_type_params(
+        &mut self,
+        callee_shape: &tsz_solver::FunctionShape,
+    ) -> Vec<tsz_common::interner::Atom> {
+        let tracked_type_params: FxHashSet<_> =
+            callee_shape.type_params.iter().map(|tp| tp.name).collect();
+        if tracked_type_params.is_empty() {
+            return Vec::new();
+        }
+
+        let return_shape =
+            call_checker::get_contextual_signature(self.ctx.types, callee_shape.return_type)
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(callee_shape.return_type);
+                    (evaluated != callee_shape.return_type).then(|| {
+                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                    })?
+                })
+                .or_else(|| {
+                    let evaluated = self.evaluate_application_type(callee_shape.return_type);
+                    (evaluated != callee_shape.return_type).then(|| {
+                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                    })?
+                });
+        let Some(return_shape) = return_shape else {
+            return Vec::new();
+        };
+
+        return_shape
+            .params
+            .iter()
+            .flat_map(|param| common::collect_referenced_types(self.ctx.types, param.type_id))
+            .filter_map(|ty| {
+                common::type_param_info(self.ctx.types, ty).and_then(|info| {
+                    tracked_type_params
+                        .contains(&info.name)
+                        .then_some(info.name)
+                })
+            })
+            .collect::<FxHashSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     pub(crate) fn should_strip_sensitive_placeholder_substitution(
         &mut self,
         callee_shape: &tsz_solver::FunctionShape,
