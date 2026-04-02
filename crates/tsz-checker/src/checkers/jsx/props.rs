@@ -55,7 +55,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().object(properties)
     }
 
-    fn format_jsx_provided_attrs_source_type(&mut self, provided_attrs: &[(String, TypeId)]) -> String {
+    fn format_jsx_provided_attrs_source_type(
+        &mut self,
+        provided_attrs: &[(String, TypeId)],
+    ) -> String {
         if provided_attrs.is_empty() {
             return "{}".to_string();
         }

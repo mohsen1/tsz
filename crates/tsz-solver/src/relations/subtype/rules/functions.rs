@@ -1458,14 +1458,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .contains(&tp_id)
             });
 
-            let source_mentions_outer_type_params = source_instantiated.params.iter().any(|p| {
-                crate::visitor::contains_type_parameters(self.interner, p.type_id)
-            }) || source_instantiated.this_type.is_some_and(|this_type| {
-                crate::visitor::contains_type_parameters(self.interner, this_type)
-            }) || crate::visitor::contains_type_parameters(
-                self.interner,
-                source_instantiated.return_type,
-            );
+            let source_mentions_outer_type_params = source_instantiated
+                .params
+                .iter()
+                .any(|p| crate::visitor::contains_type_parameters(self.interner, p.type_id))
+                || source_instantiated.this_type.is_some_and(|this_type| {
+                    crate::visitor::contains_type_parameters(self.interner, this_type)
+                })
+                || crate::visitor::contains_type_parameters(
+                    self.interner,
+                    source_instantiated.return_type,
+                );
 
             if source_refs_target_params {
                 if !self.erase_generics

@@ -3091,7 +3091,9 @@ let b = <PartRCComp data-extra="hello" />;
     let diags = jsx_diagnostics(&source);
     let ts2741_count = diags
         .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE)
+        .filter(|(code, _)| {
+            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        })
         .count();
     assert_eq!(
         ts2741_count, 2,

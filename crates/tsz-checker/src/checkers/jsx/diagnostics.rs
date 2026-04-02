@@ -230,10 +230,8 @@ impl<'a> CheckerState<'a> {
                         return None;
                     }
                     let left_sym_id = self.resolve_identifier_symbol(binary.left)?;
-                    return self.get_jsx_component_props_display_text_for_symbol(
-                        left_sym_id,
-                        props_name,
-                    );
+                    return self
+                        .get_jsx_component_props_display_text_for_symbol(left_sym_id, props_name);
                 }
                 self.get_jsx_component_props_display_text_from_type_node(
                     decl.type_annotation,
