@@ -3151,10 +3151,10 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
 }
 
 fn parse_script_target(value: &str) -> Result<ScriptTarget> {
-    // Strip trailing comma — multi-target test directives like `esnext, es2022`
-    // can pass `esnext,` through the tsconfig pipeline.
-    let cleaned = value.trim_end_matches(',');
-    let normalized = normalize_option(cleaned);
+    // Handle comma-separated target values (e.g., "ES5, ES2015" from multi-target
+    // test directives) by taking only the first value, matching tsc behavior.
+    let first = value.split(',').next().unwrap_or(value);
+    let normalized = normalize_option(first);
     let target = match normalized.as_str() {
         "es3" => ScriptTarget::ES3,
         "es5" => ScriptTarget::ES5,
@@ -5630,5 +5630,26 @@ mod tests {
         assert_eq!(core_lib_name_for_target(ScriptTarget::ES3), "es5");
         assert_eq!(core_lib_name_for_target(ScriptTarget::ES2025), "esnext");
         assert_eq!(core_lib_name_for_target(ScriptTarget::ESNext), "esnext");
+    }
+
+    #[test]
+    fn parse_script_target_handles_comma_separated_values() {
+        // Multi-target test directives like `@target: ES5, ES2015` produce
+        // comma-separated values in tsconfig. We should take the first value.
+        assert_eq!(
+            parse_script_target("ES5, ES2015").unwrap(),
+            ScriptTarget::ES5
+        );
+        assert_eq!(
+            parse_script_target("es2015, es2017").unwrap(),
+            ScriptTarget::ES2015
+        );
+        assert_eq!(
+            parse_script_target("esnext, es2022").unwrap(),
+            ScriptTarget::ESNext
+        );
+        // Single value should still work
+        assert_eq!(parse_script_target("ES5").unwrap(), ScriptTarget::ES5);
+        assert_eq!(parse_script_target("es2020").unwrap(), ScriptTarget::ES2020);
     }
 }

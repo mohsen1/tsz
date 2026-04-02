@@ -217,3 +217,40 @@ fn async_arrow_parameter_recovery_rolls_back_speculation() {
         "async-arrow speculation should roll back to TypeScript's fallback parse.\nactual diagnostics: {diags:?}"
     );
 }
+
+#[test]
+fn legacy_octal_literal_emits_ts1121() {
+    // TS1121: "Octal literals are not allowed. Use the syntax '0o1'."
+    let (parser, _root) = parse_source("01");
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == 1121),
+        "Expected TS1121 for legacy octal '01', got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn legacy_octal_literal_suggests_modern_syntax() {
+    let (parser, _root) = parse_source("0777");
+    let diags = parser.get_diagnostics();
+    let ts1121 = diags.iter().find(|d| d.code == 1121);
+    assert!(ts1121.is_some(), "Expected TS1121 for '0777'");
+    assert!(
+        ts1121.unwrap().message.contains("0o777"),
+        "Expected suggestion '0o777' in message: {}",
+        ts1121.unwrap().message
+    );
+}
+
+#[test]
+fn negative_legacy_octal_literal_emits_ts1121() {
+    // `-03` should emit TS1121 with suggestion '-0o3'
+    let (parser, _root) = parse_source("-03");
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == 1121),
+        "Expected TS1121 for '-03', got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
