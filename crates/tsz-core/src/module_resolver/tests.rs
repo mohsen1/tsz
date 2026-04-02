@@ -2152,7 +2152,10 @@ fn test_lookup_extension_suggestion_tsx_preserve_uses_jsx() {
     };
     let result = resolver.lookup(&request, |_, _| None, |_| false);
 
-    assert!(result.resolved_path.is_none(), "should not resolve without extension");
+    assert!(
+        result.resolved_path.is_none(),
+        "should not resolve without extension"
+    );
     let error = result.error.expect("should have an error");
     assert_eq!(error.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
     assert!(
@@ -2197,7 +2200,10 @@ fn test_lookup_extension_suggestion_tsx_react_uses_js() {
     };
     let result = resolver.lookup(&request, |_, _| None, |_| false);
 
-    assert!(result.resolved_path.is_none(), "should not resolve without extension");
+    assert!(
+        result.resolved_path.is_none(),
+        "should not resolve without extension"
+    );
     let error = result.error.expect("should have an error");
     assert_eq!(error.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
     assert!(
