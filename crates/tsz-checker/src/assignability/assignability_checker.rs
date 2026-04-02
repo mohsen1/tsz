@@ -701,13 +701,13 @@ impl<'a> CheckerState<'a> {
                     && !contains_type_parameters(target)))
     }
 
-    /// Targeted suppression for member type compatibility checks (TS2416).
+    /// Targeted suppression for member type compatibility checks (TS2416/TS2430).
     ///
     /// Unlike `should_suppress_assignability_diagnostic`, this does NOT suppress
     /// callable types whose source contains type parameters from an outer context.
     /// For implements/extends member checking, class-level type parameters are fully
     /// declared and their constraints must be checked eagerly — suppressing them
-    /// causes false negatives where incompatible method signatures are accepted.
+    /// causes false negatives where incompatible member/property signatures are accepted.
     pub(crate) fn should_suppress_member_assignability(
         &self,
         source: TypeId,

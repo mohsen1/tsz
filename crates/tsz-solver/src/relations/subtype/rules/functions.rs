@@ -1077,10 +1077,45 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //    then infer source type params from the concrete target. Handles cases where
         //    constraints differ structurally but are semantically equivalent through parameter
         //    usage (e.g., `<S extends {p:string}[]>(x: S)` vs `<T extends {p:string}>(x: T[])`).
+        let signature_mentions_nonlocal_type_params =
+            |shape: &crate::types::FunctionShape| -> bool {
+                let local_tp_ids: Vec<TypeId> = shape
+                    .type_params
+                    .iter()
+                    .map(|tp| self.interner.type_param(*tp))
+                    .collect();
+                let refs_nonlocal_type_param = |type_id: TypeId| {
+                    crate::visitor::collect_all_types(self.interner, type_id)
+                        .into_iter()
+                        .any(|ty| {
+                            type_param_info(self.interner, ty).is_some()
+                                && !local_tp_ids.contains(&ty)
+                        })
+                };
+
+                shape
+                    .params
+                    .iter()
+                    .any(|param| refs_nonlocal_type_param(param.type_id))
+                    || shape.this_type.is_some_and(refs_nonlocal_type_param)
+                    || refs_nonlocal_type_param(shape.return_type)
+            };
+
         if !source_instantiated.type_params.is_empty()
             && source_instantiated.type_params.len() == target_instantiated.type_params.len()
             && !target_instantiated.type_params.is_empty()
         {
+            if !self.erase_generics {
+                let source_mentions_nonlocal =
+                    signature_mentions_nonlocal_type_params(&source_instantiated);
+                let target_mentions_nonlocal =
+                    signature_mentions_nonlocal_type_params(&target_instantiated);
+                if source_mentions_nonlocal != target_mentions_nonlocal {
+                    self.type_param_equivalences.truncate(equiv_start);
+                    return SubtypeResult::False;
+                }
+            }
+
             let mut target_to_source_substitution = TypeSubstitution::new();
             let mut source_identity_substitution = TypeSubstitution::new();
             for (source_tp, target_tp) in source_instantiated
@@ -1248,6 +1283,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        let source_mentions_nonlocal_type_params = {
+            let local_source_tp_ids: Vec<TypeId> = source_instantiated
+                .type_params
+                .iter()
+                .map(|tp| self.interner.type_param(*tp))
+                .collect();
+            let refs_nonlocal_type_param = |type_id: TypeId| {
+                crate::visitor::collect_all_types(self.interner, type_id)
+                    .into_iter()
+                    .any(|ty| {
+                        type_param_info(self.interner, ty).is_some()
+                            && !local_source_tp_ids.contains(&ty)
+                    })
+            };
+            source_instantiated
+                .params
+                .iter()
+                .any(|p| refs_nonlocal_type_param(p.type_id))
+                || source_instantiated
+                    .this_type
+                    .is_some_and(refs_nonlocal_type_param)
+                || refs_nonlocal_type_param(source_instantiated.return_type)
+        };
+
         // When both sides are generic but have different type parameter counts,
         // erase both signatures by replacing type params with their constraints
         // (or `unknown` if unconstrained). This matches tsc's `getCanonicalSignature`
@@ -1258,6 +1317,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !target_instantiated.type_params.is_empty()
             && source_instantiated.type_params.len() != target_instantiated.type_params.len()
         {
+            if !self.erase_generics && source_mentions_nonlocal_type_params {
+                // Strict member-compatibility checks must not erase away the distinction
+                // between a source signature's own type parameters and type parameters it
+                // captured from an outer declaration. Otherwise signatures like
+                //   `<U>(x: T, y: U) => string`
+                // are incorrectly accepted as subtypes of
+                //   `<T, U>(x: T, y: U) => string`
+                // during TS2416/TS2430 comparison.
+                self.type_param_equivalences.truncate(equiv_start);
+                return SubtypeResult::False;
+            }
+
             if self.has_conflicting_contextual_param_candidates(
                 &source_instantiated,
                 &target_instantiated,
@@ -1387,7 +1458,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .contains(&tp_id)
             });
 
+            let source_mentions_outer_type_params = source_instantiated.params.iter().any(|p| {
+                crate::visitor::contains_type_parameters(self.interner, p.type_id)
+            }) || source_instantiated.this_type.is_some_and(|this_type| {
+                crate::visitor::contains_type_parameters(self.interner, this_type)
+            }) || crate::visitor::contains_type_parameters(
+                self.interner,
+                source_instantiated.return_type,
+            );
+
             if source_refs_target_params {
+                if !self.erase_generics
+                    && source_mentions_outer_type_params
+                    && (source_instantiated.is_constructor || target_instantiated.is_constructor)
+                {
+                    // Constructor types in strict member-compatibility checks must
+                    // not be promoted to "effectively generic" just because the
+                    // source happens to mention an outer-scope type parameter with
+                    // the same structural identity as the target's local type param.
+                    // That would incorrectly accept
+                    //   `new (x: T) => T[]` <= `new <U>(x: U) => U[]`
+                    // for TS2430/TS2416-style checks.
+                    self.type_param_equivalences.truncate(equiv_start);
+                    return SubtypeResult::False;
+                }
                 // Source references target's bound TypeParams — promote source to generic
                 // and use the same-arity alpha-renaming path above
                 source_instantiated.type_params = target_instantiated.type_params.clone();
@@ -1397,6 +1491,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 target_instantiated.type_params.clear();
                 source_instantiated.type_params.clear();
             } else if !self.erase_generics {
+                if source_mentions_outer_type_params {
+                    // Strict member-compatibility checks (TS2416/TS2430) must reject a
+                    // non-generic source that only works for some outer-scope type
+                    // parameter when the target is genuinely generic. Otherwise shapes like
+                    // `new (x: T) => T[]` are incorrectly accepted as subtypes of
+                    // `new <U>(x: U) => U[]` in interface/base compatibility.
+                    self.type_param_equivalences.truncate(equiv_start);
+                    return SubtypeResult::False;
+                }
+
                 // When erase_generics is false (strict mode, used for implements/extends
                 // member type checking), a non-generic function is NOT assignable to a
                 // generic function. This matches tsc's compareSignaturesRelated with
