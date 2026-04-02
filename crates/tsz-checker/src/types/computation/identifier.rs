@@ -569,7 +569,8 @@ impl<'a> CheckerState<'a> {
                     let has_alias = (flags & tsz_binder::symbol_flags::ALIAS) != 0;
                     if has_alias {
                         let lib_binders = self.get_lib_binders();
-                        if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        if let Some(symbol) =
+                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                             && symbol.import_module.is_some()
                         {
                             return self.get_type_of_symbol(sym_id);
