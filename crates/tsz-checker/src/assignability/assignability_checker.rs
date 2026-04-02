@@ -642,12 +642,51 @@ impl<'a> CheckerState<'a> {
         let contains_type_parameters =
             |type_id: TypeId| tsz_solver::contains_type_parameters(self.ctx.types, type_id);
 
+        let is_structural_target_that_must_not_be_suppressed = |type_id: TypeId| {
+            let has_structural_mismatch_shape = |candidate: TypeId| {
+                crate::query_boundaries::assignability::has_deferred_conditional_member(
+                    self.ctx.types,
+                    candidate,
+                ) || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    candidate,
+                ) || crate::query_boundaries::common::is_conditional_type(self.ctx.types, candidate)
+                    || crate::query_boundaries::common::intersection_members(
+                        self.ctx.types,
+                        candidate,
+                    )
+                    .is_some()
+            };
+
+            let evaluated = self.ctx.types.evaluate_type(type_id);
+            let application_evaluated =
+                if crate::query_boundaries::state::type_environment::application_info(
+                    self.ctx.types,
+                    type_id,
+                )
+                .is_some()
+                {
+                    crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                        self.ctx.types,
+                        &self.ctx,
+                        type_id,
+                    )
+                } else {
+                    type_id
+                };
+            has_structural_mismatch_shape(type_id)
+                || (evaluated != type_id && has_structural_mismatch_shape(evaluated))
+                || (application_evaluated != type_id
+                    && has_structural_mismatch_shape(application_evaluated))
+        };
+
         // Suppress TS2322 for types that contain recursive constraints or error conditions
         // that would lead to false positive diagnostics. These include:
         // - Types with type parameters that might cause recursive constraint issues
         let should_suppress_for_complex_type = |type_id: TypeId| -> bool {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, type_id)
                 || is_callable_or_function(type_id)
+                || is_structural_target_that_must_not_be_suppressed(type_id)
             {
                 return false;
             }

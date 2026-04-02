@@ -13,7 +13,10 @@ use tsz_solver::{
 // Re-export solver value types used by checker call computation.
 pub(crate) use tsz_solver::ContextualTypeContext;
 pub(crate) use tsz_solver::FunctionShape;
+pub(crate) use tsz_solver::ObjectFlags;
 pub(crate) use tsz_solver::ParamInfo;
+#[allow(unused_imports)]
+pub(crate) use tsz_solver::TypeInterner;
 
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 

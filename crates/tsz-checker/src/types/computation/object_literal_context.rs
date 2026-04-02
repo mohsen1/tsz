@@ -821,18 +821,6 @@ impl<'a> CheckerState<'a> {
         };
         let original_contextual_type = contextual_type;
         let mut best_property_type = None;
-
-        if let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
-            self.ctx.types,
-            original_contextual_type,
-        ) && constraint != original_contextual_type
-            && let Some(property_type) =
-                self.contextual_object_literal_property_type(constraint, property_name)
-        {
-            best_property_type = self
-                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
-        }
-
         let env_property_type = if matches!(
             self.resolve_property_access_with_env(original_contextual_type, property_name),
             tsz_solver::operations::property::PropertyAccessResult::Success { .. }
@@ -846,6 +834,18 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+
+        if let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+            self.ctx.types,
+            original_contextual_type,
+        ) && constraint != original_contextual_type
+            && let Some(property_type) =
+                self.contextual_object_literal_property_type(constraint, property_name)
+        {
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
+        }
+
         if let Some(property_type) = self
             .ctx
             .types

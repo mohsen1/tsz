@@ -4,6 +4,14 @@
 //! Props extraction lives in `extraction.rs`, overload resolution in `overloads.rs`.
 
 use crate::context::TypingRequest;
+use crate::diagnostics::{
+    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
+    format_message,
+};
+use crate::error_reporter::{
+    DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+    ResolvedDiagnosticAnchor,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -152,8 +160,6 @@ impl<'a> CheckerState<'a> {
         display_target: &str,
         anchor_idx: NodeIndex,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
         let source_str = self.format_type(attrs_type);
         let message = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -463,30 +469,18 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Property '{prop_name}' is missing in type '{source_type}' but required in type '{target_type}'."
             );
-            use crate::diagnostics::{Diagnostic, diagnostic_codes};
             let Some((start, end)) = self.get_node_span(attributes_idx) else {
                 return;
             };
             let (start, length) =
                 self.normalized_anchor_span(attributes_idx, start, end.saturating_sub(start));
-            let mut diag = Diagnostic::error(
-                self.ctx.file_name.clone(),
-                start,
-                length,
-                message,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-            );
+            let mut related = Vec::new();
             if let Some(tag_name_idx) = tag_name_idx
                 && let Some(prop_decl_idx) = self
                     .get_jsx_component_prop_declaration(tag_name_idx, &prop_name)
                     .or_else(|| self.nearest_property_declaration_before(tag_name_idx, &prop_name))
                 && let Some((related_start, related_end)) = self.get_node_span(prop_decl_idx)
             {
-                use crate::diagnostics::{
-                    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_messages,
-                    format_message,
-                };
-
                 let (related_start, related_length) = self.normalized_anchor_span(
                     prop_decl_idx,
                     related_start,
@@ -496,7 +490,7 @@ impl<'a> CheckerState<'a> {
                     .source_file_data_for_node(prop_decl_idx)
                     .map(|sf| sf.file_name.clone())
                     .unwrap_or_else(|| self.ctx.file_name.clone());
-                diag.related_information.push(DiagnosticRelatedInformation {
+                related.push(DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Message,
                     code: diagnostic_codes::IS_DECLARED_HERE,
                     file: related_file,
@@ -508,7 +502,20 @@ impl<'a> CheckerState<'a> {
                     ),
                 });
             }
-            self.ctx.push_diagnostic(diag);
+            self.emit_render_request_at_anchor(
+                ResolvedDiagnosticAnchor {
+                    node_idx: attributes_idx,
+                    start,
+                    length,
+                },
+                DiagnosticRenderRequest::with_related(
+                    DiagnosticAnchorKind::Exact,
+                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    message,
+                    related,
+                    RelatedInformationPolicy::ELABORATION,
+                ),
+            );
             return;
         }
 
@@ -519,7 +526,6 @@ impl<'a> CheckerState<'a> {
             .collect::<Vec<_>>()
             .join(", ");
 
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         if missing_names.len() > 4 {
             let more_count = (missing_names.len() - 4).to_string();
             let message = format_message(

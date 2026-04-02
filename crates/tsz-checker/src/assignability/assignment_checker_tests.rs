@@ -1,10 +1,14 @@
 use crate::context::CheckerOptions;
-use crate::query_boundaries::common::function_shape_for_type;
-use crate::state::CheckerState;
+use crate::query_boundaries::assignability::{
+    AssignabilityQueryInputs, is_assignable_with_overrides, is_fresh_subtype_of,
+};
+use crate::query_boundaries::common::{
+    TypeInterner, function_shape_for_type, object_shape_for_type,
+};
+use crate::state::{CheckerOverrideProvider, CheckerState};
 use crate::test_utils::{check_js_source_diagnostics, check_source};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{TypeData, TypeInterner};
 
 fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
@@ -122,13 +126,12 @@ fn normalized_type_kinds_for_named_bindings(source: &str, names: &[&str]) -> Vec
                 .map(|sym_id| checker.get_type_of_symbol(sym_id))
                 .map(|type_id| checker.evaluate_type_for_assignability(type_id))
                 .expect("expected binding type");
-            match checker.ctx.types.lookup(type_id) {
-                Some(TypeData::Function(_)) => "Function",
-                Some(TypeData::Callable(_)) => "Callable",
-                Some(TypeData::Object(_)) => "Object",
-                Some(TypeData::ObjectWithIndex(_)) => "ObjectWithIndex",
-                Some(_) => "Other",
-                None => "Missing",
+            if function_shape_for_type(checker.ctx.types, type_id).is_some() {
+                "Function"
+            } else if object_shape_for_type(checker.ctx.types, type_id).is_some() {
+                "Object"
+            } else {
+                "Other"
             }
         })
         .collect()
@@ -1006,13 +1009,13 @@ fn solver_subtype_rejects_stricter_generic_constraints_directly() {
         .collect();
 
     assert!(
-        !tsz_solver::is_subtype_of(checker.ctx.types, ids[0], ids[1]),
-        "direct solver subtype unexpectedly accepts stricter generic constraints"
+        !is_fresh_subtype_of(checker.ctx.types, ids[0], ids[1]),
+        "boundary subtype unexpectedly accepts stricter generic constraints"
     );
 }
 
 #[test]
-fn solver_compat_assignability_currently_accepts_stricter_generic_constraints() {
+fn boundary_assignability_rejects_stricter_generic_constraints() {
     let source = r#"
         declare let f: <T, S extends T>(x: T, y: S) => void;
         declare let g: <T, S>(x: T, y: S) => void;
@@ -1048,9 +1051,21 @@ fn solver_compat_assignability_currently_accepts_stricter_generic_constraints() 
         })
         .collect();
 
-    let mut compat = tsz_solver::CompatChecker::new(checker.ctx.types);
+    let overrides = CheckerOverrideProvider::new(&checker, None);
+    let relation_result = is_assignable_with_overrides(
+        &AssignabilityQueryInputs {
+            db: checker.ctx.types,
+            resolver: &checker.ctx,
+            source: ids[0],
+            target: ids[1],
+            flags: checker.ctx.pack_relation_flags(),
+            inheritance_graph: &checker.ctx.inheritance_graph,
+            sound_mode: checker.ctx.sound_mode(),
+        },
+        &overrides,
+    );
     assert!(
-        !compat.is_assignable(ids[0], ids[1]),
-        "raw compat assignability unexpectedly accepts stricter generic constraints"
+        !relation_result.is_related(),
+        "assignability boundary unexpectedly accepts stricter generic constraints"
     );
 }
