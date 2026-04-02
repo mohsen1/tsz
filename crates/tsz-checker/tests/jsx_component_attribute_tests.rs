@@ -3069,6 +3069,40 @@ let x = <Editor mode="write" />;
     );
 }
 
+#[test]
+fn test_union_of_class_component_types_missing_required_emits_ts2741() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    class Component<P, S> {{
+        props: P;
+    }}
+}}
+
+class RC1 extends React.Component<{{ x: number }}, {{}}> {{}}
+class RC4 extends React.Component<{{}}, {{}}> {{}}
+
+var PartRCComp = RC1 || RC4;
+let a = <PartRCComp />;
+let b = <PartRCComp data-extra="hello" />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2741_count = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE)
+        .count();
+    assert_eq!(
+        ts2741_count, 2,
+        "Expected one TS2741 per JSX use of a component-type union with missing required props, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not fall back to TS2322 for component-type unions missing required props, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // Diagnostic anchor: JSX attribute errors should point at the attribute, not
 // the enclosing variable statement.

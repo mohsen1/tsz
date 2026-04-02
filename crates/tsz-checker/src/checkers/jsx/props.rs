@@ -55,6 +55,66 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().object(properties)
     }
 
+    fn format_jsx_provided_attrs_source_type(&mut self, provided_attrs: &[(String, TypeId)]) -> String {
+        if provided_attrs.is_empty() {
+            return "{}".to_string();
+        }
+
+        let format_name = |name: &str| {
+            let mut chars = name.chars();
+            let Some(first) = chars.next() else {
+                return "\"\"".to_string();
+            };
+            let is_ident = (first == '_' || first == '$' || first.is_ascii_alphabetic())
+                && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+            if is_ident {
+                name.to_string()
+            } else {
+                format!("\"{name}\"")
+            }
+        };
+
+        let fields = provided_attrs
+            .iter()
+            .map(|(name, type_id)| format!("{}: {}", format_name(name), self.format_type(*type_id)))
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!("{{ {fields}; }}")
+    }
+
+    fn format_jsx_missing_props_target_type(
+        &mut self,
+        target_type: TypeId,
+        preferred_target_display: Option<&str>,
+    ) -> String {
+        if let Some(display) = preferred_target_display
+            && !display.contains("children?:")
+        {
+            return display.to_string();
+        }
+
+        let target_type = self.normalize_jsx_required_props_target(target_type);
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)
+        {
+            let filtered_props: Vec<_> = shape
+                .properties
+                .iter()
+                .filter(|prop| {
+                    let name = self.ctx.types.resolve_atom(prop.name);
+                    !(name == "children" && prop.optional)
+                })
+                .cloned()
+                .collect();
+            if filtered_props.len() != shape.properties.len() {
+                return self.format_type(self.ctx.types.factory().object(filtered_props));
+            }
+        }
+
+        preferred_target_display
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| self.format_type(target_type))
+    }
+
     pub(super) fn should_report_custom_jsx_children_via_assignability(
         &mut self,
         props_type: TypeId,
@@ -387,35 +447,11 @@ impl<'a> CheckerState<'a> {
         let mut missing_names = missing_names;
         missing_names.sort_by_key(|name| self.ctx.types.resolve_atom_ref(*name).to_string());
 
-        let source_type = if provided_attrs.is_empty() {
-            "{}".to_string()
-        } else {
-            let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
-                .iter()
-                .map(|(name, type_id)| {
-                    let name_atom = self.ctx.types.intern_string(name);
-                    tsz_solver::PropertyInfo {
-                        name: name_atom,
-                        type_id: *type_id,
-                        write_type: *type_id,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: tsz_solver::Visibility::Public,
-                        parent_id: None,
-                        declaration_order: 0,
-                        is_string_named: false,
-                    }
-                })
-                .collect();
-            let obj_type = self.ctx.types.factory().object(properties);
-            self.format_type(obj_type)
-        };
-        let target_type = preferred_target_display
-            .filter(|display| !display.is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| self.format_type(preferred_target));
+        let source_type = self.format_jsx_provided_attrs_source_type(provided_attrs);
+        let target_type = self.format_jsx_missing_props_target_type(
+            preferred_target,
+            preferred_target_display.filter(|display| !display.is_empty()),
+        );
 
         if missing_names.len() == 1 {
             let prop_name = self.ctx.types.resolve_atom(missing_names[0]);
@@ -510,6 +546,17 @@ impl<'a> CheckerState<'a> {
         &mut self,
         component_type: TypeId,
     ) -> bool {
+        // A union of class component types behaves differently from a single
+        // class with union props. For `RC1 || RC4`, tsc reports TS2741 against
+        // the selected required-props surface rather than a generic TS2322
+        // whole-object assignability error. Keep the TS2322 route for a single
+        // class component whose props type is itself a union.
+        if crate::query_boundaries::common::union_members(self.ctx.types, component_type)
+            .is_some_and(|members| members.len() > 1)
+        {
+            return false;
+        }
+
         let (has_construct, has_call) = self.jsx_component_member_signature_kinds(component_type);
         if !has_construct || has_call {
             return false;
@@ -527,6 +574,40 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()))
         })
+    }
+
+    fn jsx_tag_is_logical_component_alias(&self, tag_name_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(sym_id) = self.resolve_identifier_symbol(tag_name_idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(&decl_idx) = symbol.declarations.first() else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if var_decl.initializer.is_none() {
+            return false;
+        }
+        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        let Some(binary) = self.ctx.arena.get_binary_expr(init_node) else {
+            return false;
+        };
+
+        matches!(
+            binary.operator_token,
+            x if x == SyntaxKind::BarBarToken as u16 || x == SyntaxKind::QuestionQuestionToken as u16
+        )
     }
 
     fn get_normalized_jsx_required_props_shape(
@@ -1811,6 +1892,8 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let class_missing_props_component_type = special_attr_component_type.or(component_type);
+
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !has_excess_property_error
@@ -1818,7 +1901,8 @@ impl<'a> CheckerState<'a> {
             && !skip_prop_checks
             && !display_target.is_empty()
             && !has_prop_type_error
-            && component_type.is_some_and(|comp| {
+            && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
+            && class_missing_props_component_type.is_some_and(|comp| {
                 self.should_report_jsx_class_missing_props_via_assignability(comp)
             })
             && self.jsx_has_missing_required_props(props_type, &provided_attrs)
