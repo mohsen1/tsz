@@ -661,6 +661,19 @@ impl BinderState {
                     self.add_antecedent(post_loop, loop_label);
 
                     self.bind_expression(arena, for_data.expression);
+                    // For for-in statements, the expression acts as a truthiness
+                    // guard: the loop body only executes when the expression is
+                    // not null/undefined.  Create a TRUE_CONDITION flow node so
+                    // that references to the expression variable inside the body
+                    // are narrowed to exclude null/undefined (matching tsc).
+                    if k == syntax_kind_ext::FOR_IN_STATEMENT && for_data.expression.is_some() {
+                        let true_flow = self.create_flow_condition(
+                            flow_flags::TRUE_CONDITION,
+                            self.current_flow,
+                            for_data.expression,
+                        );
+                        self.current_flow = true_flow;
+                    }
                     if for_data.initializer.is_some() {
                         let flow = self.create_flow_assignment(for_data.initializer);
                         self.current_flow = flow;
