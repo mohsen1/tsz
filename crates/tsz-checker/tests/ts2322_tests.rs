@@ -983,6 +983,37 @@ fn test_ts2322_multiple_errors() {
     assert!(count >= 4, "Expected at least 4 TS2322 errors, got {count}");
 }
 
+#[test]
+fn test_ts2322_distinct_type_parameters_are_not_suppressed() {
+    let source = r#"
+        function unconstrained<T, U>(t: T, u: U) {
+            t = u;
+            u = t;
+        }
+
+        function constrained<T extends { foo: string }, U extends { foo: string }>(t: T, u: U) {
+            t = u;
+            u = t;
+        }
+
+        class Box<T extends { foo: string }, U extends { foo: string }> {
+            t!: T;
+            u!: U;
+
+            assign() {
+                this.t = this.u;
+                this.u = this.t;
+            }
+        }
+    "#;
+
+    let count = count_errors_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        count, 6,
+        "Expected TS2322 for each distinct type-parameter assignment, got {count}"
+    );
+}
+
 // =============================================================================
 // No Error Tests (Verify we don't emit false positives)
 // =============================================================================
