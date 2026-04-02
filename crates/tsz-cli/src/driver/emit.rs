@@ -324,8 +324,8 @@ pub(crate) fn emit_outputs(
                         node_types: cache.node_types.to_hash_map(),
                         symbol_types: cache.symbol_types.to_hash_map(),
                         def_to_symbol: cache.def_to_symbol.clone(),
-                        def_types: FxHashMap::default(),
-                        def_type_params: FxHashMap::default(),
+                        def_types: cache.def_types.clone(),
+                        def_type_params: cache.def_type_params.clone(),
                     };
                     let mut emitter = DeclarationEmitter::with_type_info(
                         &file.arena,
@@ -403,8 +403,8 @@ pub(crate) fn emit_outputs(
                         node_types: cache.node_types.to_hash_map(),
                         symbol_types: cache.symbol_types.to_hash_map(),
                         def_to_symbol: cache.def_to_symbol.clone(),
-                        def_types: FxHashMap::default(),
-                        def_type_params: FxHashMap::default(),
+                        def_types: cache.def_types.clone(),
+                        def_type_params: cache.def_type_params.clone(),
                     };
 
                     let mut analyzer = UsageAnalyzer::new(

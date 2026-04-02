@@ -538,6 +538,12 @@ pub struct TypeCache {
     /// Populated by `CheckerContext` during type checking, consumed by `UsageAnalyzer`.
     pub def_to_symbol: FxHashMap<tsz_solver::DefId, SymbolId>,
 
+    /// Snapshot of resolved `DefId -> TypeId` bodies for declaration emit evaluation.
+    pub def_types: FxHashMap<u32, TypeId>,
+
+    /// Snapshot of resolved `DefId -> type params` for declaration emit evaluation.
+    pub def_type_params: FxHashMap<u32, Vec<tsz_solver::TypeParamInfo>>,
+
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     pub flow_analysis_cache:
