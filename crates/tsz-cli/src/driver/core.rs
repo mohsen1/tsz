@@ -989,12 +989,16 @@ fn compile_inner(
     let mut file_paths = discover_ts_files(&discovery)?;
 
     // If config validation already emitted TS5110 (module/moduleResolution mismatch),
-    // bail out early — compilation cannot proceed with incompatible settings.
+    // or TS5090 (`paths` substitutions require `baseUrl`), bail out early.
+    // These are config-stage failures in the cache-backed conformance pipeline, so we
+    // must not continue into file/module checking and add follow-on diagnostics.
     // tsc still emits TS18003 alongside TS5110 when no input files are found,
     // so we must check file discovery before bailing.
     if config_diagnostics.iter().any(|d| {
         d.code
             == diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO
+            || d.code
+                == diagnostic_codes::NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_WHEN_BASEURL_IS_NOT_SET_DID_YOU_FORGET_A_LEAD
     }) {
         let diagnostics = if file_paths.is_empty() && !discovery.files_explicitly_set {
             no_input_diagnostics_for_config(
