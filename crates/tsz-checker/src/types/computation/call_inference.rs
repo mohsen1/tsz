@@ -618,13 +618,17 @@ impl<'a> CheckerState<'a> {
         // arguments and recursively match each against the target. This
         // handles cases like Readonly<T> where T needs to be inferred from
         // the contextual type (e.g., readonly [string, number][]).
-        if let Some((_source_base, source_args)) = common::application_info(self.ctx.types, source)
-        {
+        if let Some((source_base, source_args)) = common::application_info(self.ctx.types, source) {
+            let target_app = common::application_info(self.ctx.types, target);
             // Only try if target is not already matched as Application(same_base)
             // (that case is handled later at the Application-Application matching).
-            let target_same_base = common::application_info(self.ctx.types, target)
-                .is_some_and(|(tb, ta)| tb == _source_base && ta.len() == source_args.len());
-            if !target_same_base {
+            let target_same_base = target_app
+                .as_ref()
+                .is_some_and(|(tb, ta)| *tb == source_base && ta.len() == source_args.len());
+            let target_same_arity_application = target_app
+                .as_ref()
+                .is_some_and(|(_, ta)| ta.len() == source_args.len());
+            if !target_same_base && !target_same_arity_application {
                 // When the source Application evaluates to a callable type
                 // (e.g., Mapper<T, U> = (x: T) => U) and the target is also
                 // a callable type (e.g., (x: string) => number), skip the
@@ -840,19 +844,45 @@ impl<'a> CheckerState<'a> {
         if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
             common::application_info(self.ctx.types, source),
             common::application_info(self.ctx.types, target),
-        ) && source_base == target_base
-            && source_args.len() == target_args.len()
+        ) && source_args.len() == target_args.len()
         {
-            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                self.collect_return_context_substitution(
-                    *source_arg,
-                    *target_arg,
-                    tracked_type_params,
-                    substitution,
-                    visited,
-                );
+            if source_base == target_base {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                return;
             }
-            return;
+
+            // Mirror the solver's cross-wrapper return-context inference: when
+            // different generic interfaces carry the tracked type parameter in
+            // the same positional slot (for example `AssignAction<T>` vs
+            // `ActionFunction<U>` with `_out_TActor?: T`), map the type
+            // arguments positionally so round-2 contextual typing can recover
+            // the concrete callback parameter types.
+            let has_tracked_source_arg = source_args.iter().any(|&arg| {
+                common::type_param_info(self.ctx.types, arg)
+                    .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+            });
+            if has_tracked_source_arg {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_substitution(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
+            }
         }
 
         // Structural Object matching: when source is an Application (e.g., GenericClass<T>)

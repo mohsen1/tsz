@@ -480,25 +480,31 @@ impl<'a> CheckerState<'a> {
                         contextual_receiver_this_type,
                     );
                     let property_request = base_request.contextual_opt(
-                        self.contextual_type_option_for_expression(resolved_prop_ctx)
-                            .or_else(|| {
-                                // When the outer contextual type is UNKNOWN (e.g., from a
-                                // generic JSX component's spread attribute), preserve UNKNOWN
-                                // as the contextual type for function-like initializers. This
-                                // prevents false TS7006 emissions on callback parameters
-                                // inside object literals spread into generic JSX components.
-                                if contextual_type == Some(TypeId::UNKNOWN)
-                                    && let Some(init_node) = self.ctx.arena.get(prop.initializer)
-                                    && matches!(
-                                        init_node.kind,
-                                        syntax_kind_ext::ARROW_FUNCTION
-                                            | syntax_kind_ext::FUNCTION_EXPRESSION
-                                    )
-                                {
-                                    return Some(TypeId::UNKNOWN);
-                                }
-                                None
-                            }),
+                        self.contextual_type_option_for_call_argument_at(
+                            resolved_prop_ctx,
+                            prop.initializer,
+                            None,
+                            None,
+                            crate::call_checker::CallableContext::none(),
+                        )
+                        .or_else(|| {
+                            // When the outer contextual type is UNKNOWN (e.g., from a
+                            // generic JSX component's spread attribute), preserve UNKNOWN
+                            // as the contextual type for function-like initializers. This
+                            // prevents false TS7006 emissions on callback parameters
+                            // inside object literals spread into generic JSX components.
+                            if contextual_type == Some(TypeId::UNKNOWN)
+                                && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                                && matches!(
+                                    init_node.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                )
+                            {
+                                return Some(TypeId::UNKNOWN);
+                            }
+                            None
+                        }),
                     );
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
@@ -888,8 +894,15 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let property_request = base_request
-                        .contextual_opt(self.contextual_type_option_for_expression(index_ctx_type));
+                    let property_request = base_request.contextual_opt(
+                        self.contextual_type_option_for_call_argument_at(
+                            index_ctx_type,
+                            prop.initializer,
+                            None,
+                            None,
+                            crate::call_checker::CallableContext::none(),
+                        ),
+                    );
                     let value_type =
                         self.get_type_of_node_with_request(prop.initializer, &property_request);
 
