@@ -6,7 +6,7 @@ use crate::query_boundaries::assignability::{
     check_application_variance_assignability, classify_for_assignability_eval,
     contains_free_infer_types, get_allowed_keys, get_keyof_type, get_string_literal_value,
     get_union_members, is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
-    is_relation_cacheable, keyof_object_properties, map_compound_members,
+    is_relation_cacheable, is_type_parameter_like, keyof_object_properties, map_compound_members,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -646,9 +646,12 @@ impl<'a> CheckerState<'a> {
         // that would lead to false positive diagnostics. These include:
         // - Types with type parameters that might cause recursive constraint issues
         let should_suppress_for_complex_type = |type_id: TypeId| -> bool {
-            // Quick check: if the type contains type parameters, it may be a complex
-            // generic pattern that causes false positives during assignability checking
+            // Keep the generic false-positive suppression for genuinely complex
+            // generic shapes, but do not suppress plain `T`/`U` relations.
+            // tsc reports TS2322 for distinct type parameters even when they
+            // share the same constraint.
             tsz_solver::contains_type_parameters(self.ctx.types, type_id)
+                && !is_type_parameter_like(self.ctx.types, type_id)
         };
 
         matches!(source, TypeId::ERROR)
