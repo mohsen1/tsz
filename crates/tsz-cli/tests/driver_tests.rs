@@ -11483,6 +11483,55 @@ fn ts5107_suppresses_arrow_line_terminator_follow_on_errors() {
 }
 
 #[test]
+fn json_default_bindings_with_import_assertions_do_not_emit_ts2305() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "esnext",
+            "module": "esnext",
+            "ignoreDeprecations": "6.0",
+            "noEmit": true
+          },
+          "files": ["a.ts", "c.ts", "consumer.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        r#"import { default as pkg } from "./package.json" assert { type: "json" };
+export const pkgValue = pkg;
+"#,
+    );
+    write_file(
+        &base.join("c.ts"),
+        r#"export { default as config } from "./config.json" assert { type: "json" };
+"#,
+    );
+    write_file(
+        &base.join("consumer.ts"),
+        r#"import { config } from "./c";
+
+const exact: { answer: number } = config;
+void exact;
+"#,
+    );
+    write_file(&base.join("package.json"), r#"{ "name": "tsz" }"#);
+    write_file(&base.join("config.json"), r#"{ "answer": 1 }"#);
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 2305),
+        "Did not expect TS2305 for JSON default import/re-export bindings, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn js_checkjs_define_property_module_exports_preserve_augmented_shape() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

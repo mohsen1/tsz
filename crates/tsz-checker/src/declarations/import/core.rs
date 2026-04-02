@@ -1077,6 +1077,8 @@ impl<'a> CheckerState<'a> {
         // TSC includes source-level quotes in module diagnostic messages:
         // Module '"./foo"' has no exported member 'X'
         let quoted_module = format!("\"{module_name}\"");
+        let has_json_default_export =
+            self.module_has_json_default_export(module_name, Some(self.ctx.current_file_idx));
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
         // can only be referenced via default import. Applies to namespace imports
@@ -1189,9 +1191,12 @@ impl<'a> CheckerState<'a> {
             let is_source_file = self.is_source_file_import(module_name);
             let uses_system_namespace_default =
                 self.source_file_import_uses_system_default_namespace_fallback(module_name);
-            if let Some(ref table) = exports_table {
-                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default
-                {
+            let has_default_binding = has_json_default_export
+                || exports_table
+                    .as_ref()
+                    .is_some_and(|table| table.has("default") || table.has("export="));
+            if exports_table.is_some() {
+                if !has_default_binding && !uses_system_namespace_default {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }
             } else if self
@@ -1201,6 +1206,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|resolved| resolved.contains(module_name))
                 && resolved_target.is_some()
                 && !uses_system_namespace_default
+                && !has_default_binding
             {
                 // Module resolved but no exports table found - still emit TS1192
                 self.emit_no_default_export_error(module_name, clause.name, is_source_file);
@@ -1211,9 +1217,12 @@ impl<'a> CheckerState<'a> {
             let is_source_file = self.is_source_file_import(module_name);
             let uses_system_namespace_default =
                 self.source_file_import_uses_system_default_namespace_fallback(module_name);
-            if let Some(ref table) = exports_table {
-                if !table.has("default") && !table.has("export=") && !uses_system_namespace_default
-                {
+            let has_default_binding = has_json_default_export
+                || exports_table
+                    .as_ref()
+                    .is_some_and(|table| table.has("default") || table.has("export="));
+            if exports_table.is_some() {
+                if !has_default_binding && !uses_system_namespace_default {
                     for &specifier_node in &named_default_binding_nodes {
                         self.emit_no_default_export_error(
                             module_name,
@@ -1229,6 +1238,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|resolved| resolved.contains(module_name))
                 && resolved_target.is_some()
                 && !uses_system_namespace_default
+                && !has_default_binding
             {
                 for &specifier_node in &named_default_binding_nodes {
                     self.emit_no_default_export_error(module_name, specifier_node, is_source_file);
@@ -1492,7 +1502,10 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
                                 );
                             }
-                        } else if exports_table.has("default") || exports_table.has("export=") {
+                        } else if has_json_default_export
+                            || exports_table.has("default")
+                            || exports_table.has("export=")
+                        {
                             // Before emitting TS2614, try a type-level resolution for
                             // `export =` modules where the member may be a key of a
                             // mapped type stored as the type of the `export =` target.
