@@ -586,6 +586,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Once the base expression is known to be a type-only import/export chain,
+        // property access is not a valid value operation. Preserve the TS1361/TS1362
+        // diagnostic on the base identifier and stop before member lookup adds a
+        // spurious downstream TS2339.
+        if let Some(local_sym_id) = self.resolve_identifier_symbol(access.expression)
+            && self.alias_resolves_to_type_only(local_sym_id)
+            && let Some(base_node) = self.ctx.arena.get(access.expression)
+            && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+        {
+            self.report_wrong_meaning_diagnostic(
+                &base_ident.escaped_text,
+                access.expression,
+                crate::query_boundaries::name_resolution::NameLookupKind::Type,
+            );
+            return TypeId::ERROR;
+        }
+
         // Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
         // This avoids the general property-access pipeline (accessibility checks,
         // type environment classification, etc.) for a very common hot path.
