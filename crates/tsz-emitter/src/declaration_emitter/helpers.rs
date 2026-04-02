@@ -9438,6 +9438,9 @@ impl<'a> DeclarationEmitter<'a> {
             let access = self.arena.get_access_expr(init_node)?;
             let rhs = self.get_identifier_text(access.name_or_argument)?;
             let lhs = self.nameable_constructor_expression_text(access.expression)?;
+            let base_is_namespace_import_alias = self
+                .value_reference_symbol(access.expression)
+                .is_some_and(|sym_id| self.is_namespace_import_alias_symbol(sym_id));
             if self
                 .value_reference_symbol_needs_typeof(access.name_or_argument)
                 .or_else(|| self.value_reference_symbol_needs_typeof(initializer))
@@ -9448,6 +9451,9 @@ impl<'a> DeclarationEmitter<'a> {
             let tid = type_id?;
             let is_callable = tsz_solver::visitor::function_shape_id(interner, tid).is_some()
                 || tsz_solver::visitor::callable_shape_id(interner, tid).is_some();
+            if base_is_namespace_import_alias && is_callable {
+                return Some(format!("typeof {lhs}.{rhs}"));
+            }
             if !is_callable {
                 return None;
             }
