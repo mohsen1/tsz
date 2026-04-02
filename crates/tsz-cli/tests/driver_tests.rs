@@ -12304,6 +12304,43 @@ fn ts18003_not_emitted_when_inputs_exist_with_ts5110() {
 }
 
 #[test]
+fn ts5090_stops_before_follow_on_module_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "paths": {
+              "@app/*": ["src/*"]
+            }
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "import 'someModule';\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(
+            &diagnostic_codes::NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_WHEN_BASEURL_IS_NOT_SET_DID_YOU_FORGET_A_LEAD
+        ),
+        "Should emit TS5090 for non-relative paths mapping without baseUrl, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS)
+            && !codes.contains(
+                &diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF
+            ),
+        "Should stop before follow-on module diagnostics when TS5090 is present, got: {codes:?}"
+    );
+}
+
+#[test]
 fn ts18003_emitted_when_only_mts_is_present_under_implicit_include() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

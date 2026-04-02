@@ -2132,6 +2132,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // TS5063/TS5066: Validate paths substitution values.
         // TS5063: value should be an array (not string/number/etc.)
         // TS5066: array shouldn't be empty
+        let has_base_url = compiler_opts.contains_key("baseUrl");
         if let Some(serde_json::Value::Object(paths_obj)) = compiler_opts.get_mut("paths") {
             let mut bad_patterns: Vec<String> = Vec::new();
             for (pattern, value) in paths_obj.iter() {
@@ -2167,7 +2168,44 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     serde_json::Value::Array(arr) => {
                         // TS5064: Substitution elements must be strings
                         for (idx, elem) in arr.iter().enumerate() {
-                            if !elem.is_string() {
+                            if let Some(substitution) = elem.as_str() {
+                                if !has_base_url
+                                    && !substitution.is_empty()
+                                    && !is_relative_path_mapping_substitution(substitution)
+                                {
+                                    // Without baseUrl, TypeScript rejects non-relative path
+                                    // substitutions up front instead of silently ignoring them.
+                                    let elem_pos = {
+                                        let arr_start = stripped[value_start as usize..]
+                                            .find('[')
+                                            .map_or(value_start as usize, |p| {
+                                                value_start as usize + p + 1
+                                            });
+                                        let mut pos = arr_start;
+                                        let mut found = 0;
+                                        while found < idx && pos < stripped.len() {
+                                            if stripped.as_bytes()[pos] == b',' {
+                                                found += 1;
+                                            }
+                                            pos += 1;
+                                        }
+                                        while pos < stripped.len()
+                                            && stripped.as_bytes()[pos].is_ascii_whitespace()
+                                        {
+                                            pos += 1;
+                                        }
+                                        pos as u32
+                                    };
+                                    let msg = diagnostic_messages::NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_WHEN_BASEURL_IS_NOT_SET_DID_YOU_FORGET_A_LEAD.to_string();
+                                    diagnostics.push(Diagnostic::error(
+                                        file_path,
+                                        elem_pos,
+                                        estimate_json_value_len(elem),
+                                        msg,
+                                        diagnostic_codes::NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_WHEN_BASEURL_IS_NOT_SET_DID_YOU_FORGET_A_LEAD,
+                                    ));
+                                }
+                            } else {
                                 let type_name = match elem {
                                     serde_json::Value::Number(_) => "number",
                                     serde_json::Value::Bool(_) => "boolean",
@@ -2404,6 +2442,14 @@ fn estimate_json_value_len(value: &serde_json::Value) -> u32 {
             .map(|s| s.len() as u32)
             .unwrap_or(2),
     }
+}
+
+/// Matches TypeScript's `pathIsRelative` check: `/^\\.\\.?($|[\\\\/])/`.
+fn is_relative_path_mapping_substitution(specifier: &str) -> bool {
+    matches!(
+        specifier.as_bytes(),
+        [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]
+    )
 }
 
 /// Return the expected JSON value type for a compiler option.
@@ -5324,6 +5370,51 @@ mod tests {
                 .iter()
                 .map(|d| d.code)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts5090_paths_substitutions_require_base_url() {
+        let source = r#"{
+  "compilerOptions": {
+    "paths": {
+      "@app/*": ["src/*", "./ok/*", "../up/*", "*"]
+    }
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let ts5090: Vec<_> = parsed
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code == 5090)
+            .collect();
+        assert_eq!(
+            ts5090.len(),
+            2,
+            "Expected TS5090 only for non-relative substitutions without baseUrl, got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts5090_paths_substitutions_suppressed_when_base_url_present() {
+        let source = r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@app/*": ["src/*", "*"]
+    }
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5090),
+            "baseUrl should suppress TS5090 for non-relative substitutions, got: {codes:?}"
         );
     }
 
