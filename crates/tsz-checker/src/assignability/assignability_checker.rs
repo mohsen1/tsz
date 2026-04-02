@@ -691,7 +691,7 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            // Do not suppress for mapped types and indexed access types - 
+            // Do not suppress for mapped types and indexed access types -
             // they should still produce TS2322 when the source is not assignable.
             if crate::query_boundaries::common::is_mapped_type(self.ctx.types, type_id)
                 || crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id)
