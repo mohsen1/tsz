@@ -2120,6 +2120,96 @@ fn test_lookup_extension_suggestion_esm() {
 }
 
 #[test]
+fn test_lookup_extension_suggestion_tsx_preserve_uses_jsx() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_ext_suggestion_tsx_preserve");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/foo.tsx"), "export const foo = <div />;").unwrap();
+    fs::write(dir.join("src/index.mts"), "import { foo } from './foo';").unwrap();
+    fs::write(dir.join("package.json"), r#"{"type": "module"}"#).unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        module_suffixes: vec![String::new()],
+        jsx: Some(crate::config::JsxEmit::Preserve),
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./foo",
+        containing_file: &dir.join("src/index.mts"),
+        specifier_span: Span::new(22, 28),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+
+    assert!(result.resolved_path.is_none(), "should not resolve without extension");
+    let error = result.error.expect("should have an error");
+    assert_eq!(error.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
+    assert!(
+        error.message.contains("./foo.jsx"),
+        "should suggest .jsx for tsx preserve: {}",
+        error.message
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_extension_suggestion_tsx_react_uses_js() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_ext_suggestion_tsx_react");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/foo.tsx"), "export const foo = <div />;").unwrap();
+    fs::write(dir.join("src/index.mts"), "import { foo } from './foo';").unwrap();
+    fs::write(dir.join("package.json"), r#"{"type": "module"}"#).unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        module_suffixes: vec![String::new()],
+        jsx: Some(crate::config::JsxEmit::React),
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::NodeNext,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./foo",
+        containing_file: &dir.join("src/index.mts"),
+        specifier_span: Span::new(22, 28),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+
+    assert!(result.resolved_path.is_none(), "should not resolve without extension");
+    let error = result.error.expect("should have an error");
+    assert_eq!(error.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
+    assert!(
+        error.message.contains("./foo.js"),
+        "should suggest .js for tsx react: {}",
+        error.message
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_lookup_cjs_esm_mismatch_classic_resolution() {
     // TS2792: classic resolution should produce moduleResolution mismatch
     let dir = std::env::temp_dir().join("tsz_lookup_cjs_esm_mismatch");
