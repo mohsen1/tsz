@@ -6432,6 +6432,67 @@ export { ConsoleLogger, createLogger } from './logger';
 }
 
 #[test]
+fn compile_type_only_export_equals_chain_reports_ts1361_without_ts2339() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "esModuleInterop": true,
+            "noEmit": true
+          },
+          "files": ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts"]
+        }"#,
+    );
+
+    write_file(&base.join("a.ts"), "export class A {}\n");
+    write_file(
+        &base.join("b.ts"),
+        "import type * as types from './a';\nexport = types;\n",
+    );
+    write_file(
+        &base.join("c.ts"),
+        "import * as types from './a';\nexport = types;\n",
+    );
+    write_file(
+        &base.join("d.ts"),
+        "import types from './b';\nnew types.A();\n",
+    );
+    write_file(
+        &base.join("e.ts"),
+        "import types = require('./b');\nnew types.A();\n",
+    );
+    write_file(
+        &base.join("f.ts"),
+        "import * as types from './b';\nnew types.A();\n",
+    );
+    write_file(
+        &base.join("g.ts"),
+        "import type types from './c';\nnew types.A();\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts1361 = result.diagnostics.iter().filter(|d| d.code == 1361).count();
+    let ts2339 = result.diagnostics.iter().filter(|d| d.code == 2339).count();
+
+    assert_eq!(
+        ts1361, 4,
+        "Expected one TS1361 per consumer file in the export= type-only chain. Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        ts2339, 0,
+        "Did not expect TS2339 after the type-only value error. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_declaration_true_emits_dts_files() {
     // Test that declaration: true produces .d.ts files
     let temp = TempDir::new().expect("temp dir");
