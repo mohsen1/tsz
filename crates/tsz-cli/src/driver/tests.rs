@@ -413,6 +413,70 @@ export class TimestampedUser extends Timestamped(User) {
 }
 
 #[test]
+fn test_compile_project_default_reexport_duplicate_crash_matches_ts2307_count() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015"
+  },
+  "files": ["index.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("index.ts"),
+        r#"// @noTypesAndSymbols: true
+
+export default function () { }
+export { default } from './hi'
+export { aa as default } from './hi'
+"#,
+    )
+    .expect("write index.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307 = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS)
+        .count();
+    assert_eq!(
+        ts2307, 2,
+        "Expected exactly two TS2307 diagnostics for the unresolved re-export specifiers, got: {:?}",
+        result.diagnostics
+    );
+
+    let ts2323 = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE)
+        .count();
+    assert_eq!(
+        ts2323, 2,
+        "Expected exactly two TS2323 diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let ts2528 = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS)
+        .count();
+    assert_eq!(
+        ts2528, 3,
+        "Expected TS2528 on all three conflicting default exports, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_emits_ts18003_in_batch_style_project_mode() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

@@ -1762,6 +1762,41 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            let has_local_non_import_declaration = declarations.iter().copied().any(|decl_idx| {
+                if self.ctx.binder.node_symbols.get(&decl_idx.0) != Some(&sym_id) {
+                    return false;
+                }
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    return false;
+                };
+                if matches!(
+                    node.kind,
+                    syntax_kind_ext::IMPORT_SPECIFIER
+                        | syntax_kind_ext::EXPORT_SPECIFIER
+                        | syntax_kind_ext::IMPORT_CLAUSE
+                        | syntax_kind_ext::NAMESPACE_IMPORT
+                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                ) {
+                    return false;
+                }
+                if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                    return true;
+                }
+                self.ctx
+                    .arena
+                    .get_export_decl(node)
+                    .is_some_and(|export_decl| {
+                        export_decl.module_specifier.is_none() || export_decl.is_default_export
+                    })
+            });
+
+            if import_module.is_some() && has_local_non_import_declaration && value_decl.is_some() {
+                return (
+                    self.type_of_value_declaration_for_symbol(sym_id, value_decl),
+                    Vec::new(),
+                );
+            }
+
             // Handle ES6 named imports (import { X } from './module')
             // Use the import_module field to resolve to the actual export
             // Check if this symbol has import tracking metadata

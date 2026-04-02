@@ -2624,12 +2624,19 @@ impl<'a> CheckerState<'a> {
                         // TS2323 for value exports (identifiers resolving to values,
                         // class declarations, interface declarations).
                         if is_value {
-                            let anchor = if is_ident { export_idx } else { default_anchor };
-                            self.error_at_node(
-                                anchor,
-                                "Cannot redeclare exported variable 'default'.",
-                                diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-                            );
+                            if is_ident {
+                                self.error_at_node(
+                                    export_idx,
+                                    "Cannot redeclare exported variable 'default'.",
+                                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                                );
+                            } else {
+                                self.error_at_default_export_anchor(
+                                    export_idx,
+                                    "Cannot redeclare exported variable 'default'.",
+                                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                                );
+                            }
                         }
                         // TS2528 only when type-only exports are present in the mix.
                         if has_type_only_export {
@@ -2653,9 +2660,8 @@ impl<'a> CheckerState<'a> {
                     // references to classes), tsc uses TS2528 instead, so we fall through
                     // to the else.
                     for &export_idx in &effective_default_indices {
-                        let anchor = self.get_default_export_anchor(export_idx);
-                        self.error_at_node(
-                            anchor,
+                        self.error_at_default_export_anchor(
+                            export_idx,
                             "Cannot redeclare exported variable 'default'.",
                             diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                         );
@@ -2709,12 +2715,17 @@ impl<'a> CheckerState<'a> {
                                         .resolve_identifier_symbol(clause_idx)
                                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                                         .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
+                                    _ if self
+                                        .export_decl_has_direct_named_default_export(export_idx) =>
+                                    {
+                                        true
+                                    }
                                     _ => false,
                                 }
                             });
                         if is_value_default {
-                            self.error_at_node(
-                                anchor,
+                            self.error_at_default_export_anchor(
+                                export_idx,
                                 "Cannot redeclare exported variable 'default'.",
                                 diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                             );
@@ -2852,6 +2863,11 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(export_idx)
     }
 
+    fn error_at_default_export_anchor(&mut self, export_idx: NodeIndex, message: &str, code: u32) {
+        let anchor = self.get_default_export_anchor(export_idx);
+        self.error_at_node(anchor, message, code);
+    }
+
     fn export_decl_has_named_default_export(&self, export_idx: NodeIndex) -> bool {
         let Some(clause_idx) = self
             .ctx
@@ -2878,6 +2894,44 @@ impl<'a> CheckerState<'a> {
             !specifier.is_type_only
                 && self
                     .get_identifier_text_from_idx(specifier.name)
+                    .is_some_and(|name| name == "default")
+        })
+    }
+
+    fn export_decl_has_direct_named_default_export(&self, export_idx: NodeIndex) -> bool {
+        let Some(clause_idx) = self
+            .ctx
+            .arena
+            .get_export_decl_at(export_idx)
+            .map(|ed| ed.export_clause)
+        else {
+            return false;
+        };
+        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+            return false;
+        };
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return false;
+        };
+
+        named_exports.elements.nodes.iter().any(|&specifier_idx| {
+            let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                return false;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(specifier_node) else {
+                return false;
+            };
+            if specifier.is_type_only
+                || !self
+                    .get_identifier_text_from_idx(specifier.name)
+                    .is_some_and(|name| name == "default")
+            {
+                return false;
+            }
+
+            specifier.property_name.is_none()
+                || self
+                    .get_identifier_text_from_idx(specifier.property_name)
                     .is_some_and(|name| name == "default")
         })
     }
@@ -2956,13 +3010,12 @@ impl<'a> CheckerState<'a> {
 
         // TS2323: "Cannot redeclare exported variable 'default'." on every declaration
         for &export_idx in export_default_indices {
-            let anchor = self.get_default_export_anchor(export_idx);
             let message = format_message(
                 diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                 &["default"],
             );
-            self.error_at_node(
-                anchor,
+            self.error_at_default_export_anchor(
+                export_idx,
                 &message,
                 diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
             );

@@ -464,17 +464,29 @@ fn export_default_class_duplicates_no_ts2300() {
 #[test]
 fn export_default_reexports_participate_in_duplicate_default_checks() {
     let diagnostics = verify_errors(
-        "export default function () {} export { default } from './hi'; export { aa as default } from './hi';",
-        &[],
+        "export default function () {}\nexport { default } from './hi';\nexport { aa as default } from './hi';",
+        &[
+            (1, 1, "Cannot redeclare exported variable 'default'."),
+            (1, 1, "A module cannot have multiple default exports."),
+            (2, 10, "Cannot redeclare exported variable 'default'."),
+            (2, 10, "A module cannot have multiple default exports."),
+            (3, 16, "A module cannot have multiple default exports."),
+        ],
     );
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2323),
-        "Expected TS2323 when a declaration-form default export conflicts with default re-exports, got codes: {codes:?}"
+        !codes.contains(&2300),
+        "Did not expect TS2300 for default export re-export conflicts, got codes: {codes:?}"
     );
-    assert!(
-        codes.contains(&2528),
-        "Expected TS2528 for multiple default exports, got codes: {codes:?}"
+    let ts2323 = diagnostics.iter().filter(|d| d.code == 2323).count();
+    assert_eq!(
+        ts2323, 2,
+        "Expected exactly two TS2323 diagnostics for the declaration default and direct default re-export, got codes: {codes:?}"
+    );
+    let ts2528 = diagnostics.iter().filter(|d| d.code == 2528).count();
+    assert_eq!(
+        ts2528, 3,
+        "Expected TS2528 on all three conflicting default exports, got codes: {codes:?}"
     );
 }
 
