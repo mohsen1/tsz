@@ -315,10 +315,8 @@ impl<'a> CheckerState<'a> {
             })
             .or_else(|| {
                 export_keys.iter().find_map(|key| {
-                    binder
-                        .module_exports
-                        .get(key)
-                        .and_then(|exports| exports.get(name))
+                    self.module_exports_for_file(binder, key)
+                        .and_then(|exports| self.resolve_export_from_table(binder, exports, name))
                 })
             })
             .or_else(|| {
@@ -458,6 +456,23 @@ impl<'a> CheckerState<'a> {
                     &mut seen,
                 );
             }
+        }
+
+        if declarations.is_empty()
+            && let Some(resolved_sym_id) = export_keys.iter().find_map(|key| {
+                self.module_exports_for_file(binder, key)
+                    .and_then(|exports| self.resolve_export_from_table(binder, exports, name))
+            })
+        {
+            let mut resolved_seen = FxHashSet::default();
+            self.push_export_surface_symbol_declarations_in_file(
+                binder,
+                arena,
+                resolved_sym_id,
+                Some(true),
+                &mut declarations,
+                &mut resolved_seen,
+            );
         }
 
         declarations
@@ -1311,6 +1326,59 @@ export interface Row2 { b: string }
             assert_eq!(
                 remote_decl_count, 0,
                 "Imported consumer alias should not carry remote declarations: {symbol:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn export_surface_declarations_follow_export_equals_members_to_real_interface_decls() {
+        let files = [
+            (
+                "/a.d.ts",
+                r#"
+import * as e from "express";
+declare module "express" {
+    interface Request {
+        id: number;
+    }
+}
+"#,
+            ),
+            (
+                "/index.d.ts",
+                r#"
+declare namespace Express {
+    export interface Request { }
+}
+
+declare module "express" {
+    function e(): e.Express;
+    namespace e {
+        interface Request extends Express.Request {
+            get(name: string): string;
+        }
+        interface Express {
+            createApplication(): Application;
+        }
+        interface Application {}
+        export = e;
+    }
+}
+"#,
+            ),
+        ];
+
+        with_checker(&files, "/a.d.ts", |checker, _a_idx, index_idx| {
+            let decls = checker.export_surface_declarations_in_file(index_idx, "Request");
+
+            assert!(
+                !decls.is_empty(),
+                "Expected Request to resolve through export= surface to real declarations"
+            );
+            assert!(
+                decls.iter()
+                    .any(|(_, flags, _)| (flags & tsz_binder::symbol_flags::INTERFACE) != 0),
+                "Expected export surface to include interface flags, got: {decls:#?}"
             );
         });
     }
