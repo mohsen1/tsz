@@ -847,6 +847,70 @@ fn test_grammar_error_classification() {
     assert!(!is_grammar_error_for_deprecation_priority(2559));
 }
 
+fn is_config_level_code(code: u32) -> bool {
+    matches!(
+        code,
+        2318 | 5024 | 5053 | 5069 | 5070 | 5071 | 5095 | 5101 | 5102 | 6059 | 6082 | 18003
+    )
+}
+
+/// Config-level codes should be recognized correctly.
+#[test]
+fn test_config_level_code_classification() {
+    assert!(is_config_level_code(2318)); // Cannot find global type
+    assert!(is_config_level_code(5024)); // Compiler option requires value
+    assert!(is_config_level_code(5053)); // Option conflict
+    assert!(is_config_level_code(6082)); // Only emit .d.ts
+    assert!(is_config_level_code(18003)); // No inputs found
+
+    // Semantic errors must NOT be config-level
+    assert!(!is_config_level_code(2322)); // Type not assignable
+    assert!(!is_config_level_code(2339)); // Property does not exist
+    assert!(!is_config_level_code(1124)); // Digit expected (grammar)
+}
+
+/// ES5 target + grammar errors: grammar errors should be emitted,
+/// TS5107 deprecation should be suppressed.
+#[test]
+fn test_es5_target_grammar_errors_suppress_deprecation() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    // Write a test file with a grammar error (1e+ = missing exponent digit → TS1124)
+    fs::write(base.join("test.ts"), "1e+\n").expect("write test.ts");
+    // ES5 target without ignoreDeprecations
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{"compilerOptions": {"target": "ES5", "noEmit": true}}"#,
+    )
+    .expect("write tsconfig.json");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        base.to_str().unwrap(),
+        "--pretty",
+        "false",
+    ])
+    .unwrap();
+    let result = compile(&args, base).expect("compile succeeds");
+    let diagnostics = &result.diagnostics;
+
+    // Should contain TS1124 (grammar error)
+    let has_1124 = diagnostics.iter().any(|d| d.code == 1124);
+    assert!(
+        has_1124,
+        "Expected TS1124 (Digit expected) for '1e+' with ES5 target"
+    );
+
+    // Should NOT contain TS5107 (grammar errors suppress deprecation)
+    let has_5107 = diagnostics.iter().any(|d| d.code == 5107);
+    assert!(
+        !has_5107,
+        "TS5107 should be suppressed when grammar errors are present"
+    );
+}
+
 #[test]
 fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
     let dir = tempfile::TempDir::new().expect("temp dir");
