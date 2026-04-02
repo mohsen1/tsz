@@ -283,7 +283,9 @@ impl<'a> CheckerState<'a> {
         let callback_spans: Vec<Option<(u32, u32)>> = args
             .iter()
             .map(|&arg_idx| {
-                let arg_node = self.ctx.arena.get(arg_idx)?;
+                let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                    return None;
+                };
                 let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
                 if !is_callback_arg {
@@ -1185,13 +1187,13 @@ impl<'a> CheckerState<'a> {
                     } else {
                         Vec::new()
                     };
-                let callback_body_start = self
+                let callback_body_span = self
                     .ctx
                     .arena
                     .get_function(arg_node)
                     .and_then(|func| self.ctx.arena.get(func.body))
                     .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
-                    .map(|body_node| body_node.pos);
+                    .map(|body_node| (body_node.pos, body_node.end));
                 let object_literal_has_excess_property_diag = arg_node.kind
                     == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     && self
@@ -1228,8 +1230,8 @@ impl<'a> CheckerState<'a> {
                             | diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
                             | diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
                     );
-                    let is_callback_body_diag =
-                        callback_body_start.is_some_and(|start| diag.start >= start);
+                    let is_callback_body_diag = callback_body_span
+                        .is_some_and(|(start, end)| diag.start >= start && diag.start < end);
                     let is_object_literal_diag = arg_node.kind
                         == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         && diag.start >= arg_node.pos
@@ -1245,9 +1247,13 @@ impl<'a> CheckerState<'a> {
                             && is_provisional_implicit_any
                             && diag.start >= arg_node.pos
                             && diag.start < arg_node.end;
-                    let is_direct_callback_body_assignability =
-                        callback_body_start.is_some_and(|start| diag.start == start)
-                            && is_provisional_assignability;
+                    let is_direct_callback_body_assignability = callback_body_span.is_some_and(
+                        |(start, end)| {
+                            diag.start >= start
+                                && diag.start < end
+                                && is_provisional_assignability
+                        },
+                    );
                     let keep = if !is_provisional_assignability && !is_provisional_implicit_any {
                         true
                     } else if is_direct_function_arg {
@@ -1729,9 +1735,45 @@ impl<'a> CheckerState<'a> {
                     // when `this` has type `TContext` instead of the inferred `{b: string}`).
                     let mut did_instantiated_retry = false;
                     let mut used_return_context_sub_outer = false;
+                    let sig_shape = FunctionShape {
+                        params: sig.params.clone(),
+                        return_type: sig.return_type,
+                        this_type: sig.this_type,
+                        type_params: sig.type_params.clone(),
+                        type_predicate: sig.type_predicate,
+                        is_constructor: false,
+                        is_method: sig.is_method,
+                    };
+                    let return_sub_for_retry = if contextual_type.is_some() {
+                        self.compute_return_context_substitution_from_shape(
+                            &sig_shape,
+                            contextual_type,
+                        )
+                    } else {
+                        crate::query_boundaries::common::TypeSubstitution::new()
+                    };
+                    let retry_params = if !return_sub_for_retry.is_empty() {
+                        Some(
+                            sig.params
+                                .iter()
+                                .map(|param| {
+                                    let mut instantiated_param = *param;
+                                    instantiated_param.type_id =
+                                        crate::query_boundaries::common::instantiate_type(
+                                            self.ctx.types,
+                                            param.type_id,
+                                            &return_sub_for_retry,
+                                        );
+                                    instantiated_param
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        instantiated_params.clone()
+                    };
                     let (final_arg_types, final_return_type) = if !sig.type_params.is_empty()
                         && !contextual_refresh_args.is_empty()
-                        && let Some(instantiated_params) = instantiated_params.as_ref()
+                        && let Some(instantiated_params) = retry_params.as_ref()
                     {
                         let contextual_closures: Vec<_> = self
                             .ctx
@@ -1774,53 +1816,25 @@ impl<'a> CheckerState<'a> {
                         // provides better type parameter inference than the arguments
                         // (which were typed without useful contextual types in the
                         // union-contextual first pass).
-                        let mut used_return_context_sub = false;
-                        let refreshed_contextual_types = if contextual_type.is_some() {
-                            let sig_shape = FunctionShape {
-                                params: sig.params.clone(),
-                                return_type: sig.return_type,
-                                this_type: sig.this_type,
-                                type_params: sig.type_params.clone(),
-                                type_predicate: sig.type_predicate,
-                                is_constructor: false,
-                                is_method: sig.is_method,
-                            };
-                            let return_sub = self.compute_return_context_substitution_from_shape(
-                                &sig_shape,
-                                contextual_type,
-                            );
-                            if !return_sub.is_empty() {
-                                used_return_context_sub = true;
-                                (0..args.len())
-                                    .map(|i| {
-                                        let param = sig
-                                            .params
-                                            .get(i)
-                                            .map(|p| (p.type_id, p.rest))
-                                            .or_else(|| {
-                                                let last = sig.params.last()?;
-                                                last.rest.then_some((last.type_id, true))
-                                            })?;
-                                        let instantiated =
-                                            crate::query_boundaries::common::instantiate_type(
-                                                self.ctx.types,
-                                                param.0,
-                                                &return_sub,
-                                            );
-                                        let param_type = if param.1 {
-                                            self.rest_argument_element_type_with_env(instantiated)
-                                        } else {
-                                            instantiated
-                                        };
-                                        Some(self.normalize_contextual_call_param_type(param_type))
-                                    })
-                                    .collect()
-                            } else {
-                                self.contextual_param_types_from_instantiated_params(
-                                    instantiated_params,
-                                    args.len(),
-                                )
-                            }
+                        let used_return_context_sub = !return_sub_for_retry.is_empty();
+                        let refreshed_contextual_types = if used_return_context_sub {
+                            (0..args.len())
+                                .map(|i| {
+                                    let param = instantiated_params
+                                        .get(i)
+                                        .map(|p| (p.type_id, p.rest))
+                                        .or_else(|| {
+                                            let last = instantiated_params.last()?;
+                                            last.rest.then_some((last.type_id, true))
+                                        })?;
+                                    let param_type = if param.1 {
+                                        self.rest_argument_element_type_with_env(param.0)
+                                    } else {
+                                        param.0
+                                    };
+                                    Some(self.normalize_contextual_call_param_type(param_type))
+                                })
+                                .collect()
                         } else {
                             self.contextual_param_types_from_instantiated_params(
                                 instantiated_params,
@@ -1868,7 +1882,8 @@ impl<'a> CheckerState<'a> {
                     // overload. The degenerate type parameter inference (e.g.,
                     // `U = never[]` from `reduce`) masks real type errors that should
                     // cause a fallback to a different overload or NoOverloadMatch.
-                    if did_instantiated_retry
+                    if signatures.len() > 1
+                        && did_instantiated_retry
                         && self
                             .overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
                     {
@@ -2078,8 +2093,41 @@ impl<'a> CheckerState<'a> {
                         actual_this_type,
                     )
                     .2;
+                let sig_shape = FunctionShape {
+                    params: sig.params.clone(),
+                    return_type: sig.return_type,
+                    this_type: sig.this_type,
+                    type_params: sig.type_params.clone(),
+                    type_predicate: sig.type_predicate,
+                    is_constructor: false,
+                    is_method: sig.is_method,
+                };
+                let return_sub_for_preinfer = if contextual_type.is_some() {
+                    self.compute_return_context_substitution_from_shape(&sig_shape, contextual_type)
+                } else {
+                    crate::query_boundaries::common::TypeSubstitution::new()
+                };
+                let retry_params = if !return_sub_for_preinfer.is_empty() {
+                    Some(
+                        sig.params
+                            .iter()
+                            .map(|param| {
+                                let mut instantiated_param = *param;
+                                instantiated_param.type_id =
+                                    crate::query_boundaries::common::instantiate_type(
+                                        self.ctx.types,
+                                        param.type_id,
+                                        &return_sub_for_preinfer,
+                                    );
+                                instantiated_param
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    instantiated_params.clone()
+                };
 
-                if let Some(instantiated_params) = instantiated_params.as_ref() {
+                if let Some(instantiated_params) = retry_params.as_ref() {
                     self.ctx
                         .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                             Self::should_preserve_speculative_call_diagnostic(diag)
@@ -2088,8 +2136,26 @@ impl<'a> CheckerState<'a> {
                     self.ctx.node_types = Default::default();
                     refresh_all_args(self);
 
-                    let refreshed_contextual_types = self
-                        .contextual_param_types_from_instantiated_params(
+                    let refreshed_contextual_types = if !return_sub_for_preinfer.is_empty() {
+                        (0..args.len())
+                            .map(|i| {
+                                let param = instantiated_params
+                                    .get(i)
+                                    .map(|p| (p.type_id, p.rest))
+                                    .or_else(|| {
+                                        let last = instantiated_params.last()?;
+                                        last.rest.then_some((last.type_id, true))
+                                    })?;
+                                let param_type = if param.1 {
+                                    self.rest_argument_element_type_with_env(param.0)
+                                } else {
+                                    param.0
+                                };
+                                Some(self.normalize_contextual_call_param_type(param_type))
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        self.contextual_param_types_from_instantiated_params(
                             instantiated_params,
                             args.len(),
                         )
@@ -2099,7 +2165,8 @@ impl<'a> CheckerState<'a> {
                                 self.normalize_contextual_call_param_type(param_type)
                             })
                         })
-                        .collect::<Vec<_>>();
+                        .collect::<Vec<_>>()
+                    };
                     self.collect_call_argument_types_with_context(
                         args,
                         |i, _arg_count| {
@@ -2143,9 +2210,42 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                     actual_this_type,
                 );
+            let sig_shape = FunctionShape {
+                params: sig.params.clone(),
+                return_type: sig.return_type,
+                this_type: sig.this_type,
+                type_params: sig.type_params.clone(),
+                type_predicate: sig.type_predicate,
+                is_constructor: false,
+                is_method: sig.is_method,
+            };
+            let return_sub_for_retry = if contextual_type.is_some() {
+                self.compute_return_context_substitution_from_shape(&sig_shape, contextual_type)
+            } else {
+                crate::query_boundaries::common::TypeSubstitution::new()
+            };
+            let retry_params = if !return_sub_for_retry.is_empty() {
+                Some(
+                    sig.params
+                        .iter()
+                        .map(|param| {
+                            let mut instantiated_param = *param;
+                            instantiated_param.type_id =
+                                crate::query_boundaries::common::instantiate_type(
+                                    self.ctx.types,
+                                    param.type_id,
+                                    &return_sub_for_retry,
+                                );
+                            instantiated_param
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                instantiated_params.clone()
+            };
             if !sig.type_params.is_empty()
                 && !contextual_refresh_args.is_empty()
-                && let Some(instantiated_params) = instantiated_params.as_ref()
+                && let Some(instantiated_params) = retry_params.as_ref()
             {
                 let candidate_first_pass_end = self.ctx.snapshot_diagnostics();
                 let preserved_candidate_arg_diags = self.collect_non_callback_diagnostics_between(
@@ -2168,11 +2268,30 @@ impl<'a> CheckerState<'a> {
                 refresh_all_args(self);
 
                 let retry_callable_ctx = CallableContext::new(func_type);
-                let refreshed_contextual_types = self
-                    .contextual_param_types_from_instantiated_params(
+                let refreshed_contextual_types = if !return_sub_for_retry.is_empty() {
+                    (0..args.len())
+                        .map(|i| {
+                            let param = instantiated_params
+                                .get(i)
+                                .map(|p| (p.type_id, p.rest))
+                                .or_else(|| {
+                                    let last = instantiated_params.last()?;
+                                    last.rest.then_some((last.type_id, true))
+                                })?;
+                            let param_type = if param.1 {
+                                self.rest_argument_element_type_with_env(param.0)
+                            } else {
+                                param.0
+                            };
+                            Some(self.normalize_contextual_call_param_type(param_type))
+                        })
+                        .collect()
+                } else {
+                    self.contextual_param_types_from_instantiated_params(
                         instantiated_params,
                         args.len(),
-                    );
+                    )
+                };
                 let refreshed_arg_types = self.collect_call_argument_types_with_context(
                     args,
                     |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
@@ -2243,7 +2362,9 @@ impl<'a> CheckerState<'a> {
                     }
                     // Reject candidates with callback body errors (e.g., inner
                     // call failures) — same rationale as the first-pass check.
-                    if self.overload_candidate_has_callback_body_errors(args, &candidate_snap) {
+                    if signatures.len() > 1
+                        && self.overload_candidate_has_callback_body_errors(args, &candidate_snap)
+                    {
                         all_arg_count_mismatches = false;
                         has_non_count_non_type_failure = true;
                         self.ctx

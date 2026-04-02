@@ -55,7 +55,7 @@ impl ModuleResolver {
             {
                 // Check if the package name matches - this is REQUIRED for a self-reference
                 let name_matches = package_json.name.as_deref() == Some(package_name);
-                
+
                 if name_matches {
                     // This is a self-reference!
                     if self.resolve_package_json_exports
@@ -80,7 +80,7 @@ impl ModuleResolver {
                             let is_ts_file = resolved_str.ends_with(".ts")
                                 || resolved_str.ends_with(".mts")
                                 || resolved_str.ends_with(".cts");
-                            
+
                             if !is_ts_file {
                                 // Only count as resolved if it's not a TypeScript file
                                 return SelfReferenceResultV2::Resolved(ResolvedModule {

@@ -186,6 +186,29 @@ impl<'a> CheckerState<'a> {
         &self,
         anchor_idx: NodeIndex,
     ) -> Option<NodeIndex> {
+        let callback_argument_in_call_like = |expr_idx: NodeIndex| {
+            let expr_node = self.ctx.arena.get(expr_idx)?;
+            let args = if matches!(
+                expr_node.kind,
+                syntax_kind_ext::CALL_EXPRESSION | syntax_kind_ext::NEW_EXPRESSION
+            ) {
+                self.ctx
+                    .arena
+                    .get_call_expr(expr_node)?
+                    .arguments
+                    .as_ref()?
+            } else {
+                return None;
+            };
+            args.nodes.iter().find_map(|&arg_idx| {
+                let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+                let arg_node = self.ctx.arena.get(arg_idx)?;
+                (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                    .then_some(arg_idx)
+            })
+        };
+
         let mut current = anchor_idx;
         for _ in 0..8 {
             let anchor_node = self.ctx.arena.get(current)?;
@@ -203,7 +226,8 @@ impl<'a> CheckerState<'a> {
                 let initializer_node = self.ctx.arena.get(initializer)?;
                 return (initializer_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || initializer_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then_some(initializer);
+                    .then_some(initializer)
+                    .or_else(|| callback_argument_in_call_like(initializer));
             }
 
             let parent = self.ctx.arena.get_extended(current)?.parent;
@@ -246,6 +270,10 @@ impl<'a> CheckerState<'a> {
             body_node.pos,
             body_node.end,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        ) || self.has_diagnostic_code_within_span(
+            body_node.pos,
+            body_node.end,
+            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
         )
     }
 

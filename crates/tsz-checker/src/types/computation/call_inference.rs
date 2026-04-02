@@ -256,6 +256,18 @@ impl<'a> CheckerState<'a> {
         .then_some(ty)
     }
 
+    fn evaluate_for_return_context_substitution(&mut self, ty: TypeId) -> TypeId {
+        if common::application_info(self.ctx.types, ty).is_some() {
+            crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                self.ctx.types,
+                &self.ctx,
+                ty,
+            )
+        } else {
+            self.evaluate_type_with_env(ty)
+        }
+    }
+
     pub(crate) fn instantiate_generic_function_argument_against_target_for_refinement(
         &mut self,
         source_ty: TypeId,
@@ -664,11 +676,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let source_application = common::application_info(self.ctx.types, source).or_else(|| {
-            let evaluated = self.evaluate_type_with_env(source);
+            let evaluated = self.evaluate_for_return_context_substitution(source);
             (evaluated != source).then(|| common::application_info(self.ctx.types, evaluated))?
         });
         let target_application = common::application_info(self.ctx.types, target).or_else(|| {
-            let evaluated = self.evaluate_type_with_env(target);
+            let evaluated = self.evaluate_for_return_context_substitution(target);
             (evaluated != target).then(|| common::application_info(self.ctx.types, evaluated))?
         });
 
@@ -699,17 +711,44 @@ impl<'a> CheckerState<'a> {
                 // whole target. The function matching below (via
                 // get_contextual_signature) will correctly decompose the
                 // evaluated callable's parameters and return type.
-                let source_eval_for_guard = self.evaluate_type_with_env(source);
-                let source_evals_to_callable = source_eval_for_guard != source
-                    && call_checker::get_contextual_signature(
-                        self.ctx.types,
-                        source_eval_for_guard,
-                    )
-                    .is_some();
+                let source_eval_for_guard = self.evaluate_for_return_context_substitution(source);
+                let target_eval_for_guard = self.evaluate_for_return_context_substitution(target);
+                let source_base_is_callable =
+                    call_checker::get_contextual_signature(self.ctx.types, *source_base).is_some();
+                let source_base_has_callable_shape =
+                    common::callable_shape_for_type(self.ctx.types, *source_base).is_some()
+                        || common::function_shape_for_type(self.ctx.types, *source_base).is_some();
+                let source_evals_to_callable =
+                    call_checker::get_contextual_signature(self.ctx.types, source).is_some()
+                        || source_base_is_callable
+                        || source_base_has_callable_shape
+                        || (source_eval_for_guard != source
+                            && call_checker::get_contextual_signature(
+                                self.ctx.types,
+                                source_eval_for_guard,
+                            )
+                            .is_some());
                 let target_is_callable =
                     call_checker::get_contextual_signature(self.ctx.types, target).is_some();
-                if source_evals_to_callable && target_is_callable {
+                let both_evaluate_to_structural_objects =
+                    common::object_shape_for_type(self.ctx.types, source_eval_for_guard).is_some()
+                        && common::object_shape_for_type(self.ctx.types, target_eval_for_guard)
+                            .is_some();
+                if target_application.is_some() {
+                    // When both sides are Applications of different bases, mapping each
+                    // source type arg directly to the whole target wrapper is almost
+                    // always wrong (e.g. AssignAction<T> vs ActionFunction<U> would infer
+                    // T = ActionFunction<U>). Let the later structural/application-aware
+                    // matching determine whether the wrappers reveal a meaningful mapping.
+                } else if source_evals_to_callable && target_is_callable {
                     // Don't decompose — let function matching below handle it
+                } else if both_evaluate_to_structural_objects {
+                    // Differing application wrappers like AssignAction<T> and
+                    // ActionFunction<U> often carry the tracked type parameter on
+                    // marker/object properties after evaluation. Decomposing their
+                    // type arguments directly would bind T to the whole target
+                    // wrapper instead of letting structural matching infer from the
+                    // evaluated property shapes.
                 } else {
                     // Special case: when the source Application evaluates to an
                     // iterable-like interface (e.g., Iterable<T>) and the target
@@ -766,8 +805,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let source_eval = self.evaluate_type_with_env(source);
-        let target_eval = self.evaluate_type_with_env(target);
+        let source_eval = self.evaluate_for_return_context_substitution(source);
+        let target_eval = self.evaluate_for_return_context_substitution(target);
         let function_info = match (
             call_checker::get_contextual_signature(self.ctx.types, source),
             call_checker::get_contextual_signature(self.ctx.types, target),
@@ -785,6 +824,7 @@ impl<'a> CheckerState<'a> {
         if let Some((source_fn, target_fn)) = function_info
             && source_fn.params.len() <= target_fn.params.len()
         {
+            let substitution_len_before_callable = substitution.len();
             let target_fn =
                 instantiate_contextual_target_shape_for_return_context(self.ctx.types, &target_fn);
             let mut target_index = 0usize;
@@ -843,7 +883,11 @@ impl<'a> CheckerState<'a> {
                 substitution,
                 visited,
             );
-            return;
+            if substitution.len() > substitution_len_before_callable
+                || (source_application.is_none() && target_application.is_none())
+            {
+                return;
+            }
         }
 
         if let (Some(source_elems), Some(target_elems)) = (
@@ -921,19 +965,36 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Structural Object matching: when source is an Application (e.g., GenericClass<T>)
-        // and target is an already-evaluated Object (e.g., GenericClass<[string, boolean]>
-        // resolved to { from: ..., __schema: ... }), evaluate the source Application to get
-        // its expanded object form and match property types structurally.
-        // This handles the common pattern where the return context type from an outer call
-        // has been evaluated while the generic return type is still an Application.
-        if let (Some(source_shape), Some(target_shape)) = (
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_eval),
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval),
-        ) {
-            for source_prop in &source_shape.properties {
+        // Structural property matching: when either side evaluates to a callable/object
+        // wrapper with marker properties (for example ActionFunction<T> carrying
+        // `_out_TActor?: T`), recurse through matching properties to recover the
+        // underlying type-parameter mapping.
+        let source_properties =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_eval)
+                .map(|shape| shape.properties.clone())
+                .or_else(|| {
+                    crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        source_eval,
+                    )
+                    .map(|shape| shape.properties.clone())
+                });
+        let target_properties =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval)
+                .map(|shape| shape.properties.clone())
+                .or_else(|| {
+                    crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        target_eval,
+                    )
+                    .map(|shape| shape.properties.clone())
+                });
+        if let (Some(source_properties), Some(target_properties)) =
+            (source_properties.as_ref(), target_properties.as_ref())
+        {
+            for source_prop in source_properties.iter() {
                 if let Some(target_prop) =
-                    common::find_matching_property(&target_shape.properties, source_prop.name)
+                    common::find_matching_property(target_properties, source_prop.name)
                 {
                     self.collect_return_context_substitution(
                         source_prop.type_id,

@@ -1941,10 +1941,10 @@ mod tests {
     use super::CheckerState;
     use crate::context::{CheckerOptions, ScriptTarget};
     use crate::module_resolution::build_module_resolution_maps;
+    use crate::query_boundaries::common::TypeInterner;
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
 
     #[test]
     fn module_augmentation_export_resolution_prefers_local_alias_over_named_reexport() {
