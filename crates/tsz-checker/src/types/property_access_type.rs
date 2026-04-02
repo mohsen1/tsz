@@ -1727,6 +1727,28 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if self.is_namespace_value_type(object_type) && !enum_instance_like_access {
+                let hidden_qualified_namespace_member_apparent_type = self
+                    .qualified_namespace_member_hidden_on_exported_surface(
+                        idx,
+                        access.expression,
+                        property_name,
+                    );
+                let hidden_qualified_namespace_member =
+                    hidden_qualified_namespace_member_apparent_type.is_some();
+                if !hidden_qualified_namespace_member {
+                    let namespace_object_type = self.resolve_type_for_property_access(object_type);
+                    if let Some(member_type) =
+                        self.resolve_namespace_value_member(namespace_object_type, property_name)
+                    {
+                        return self.finalize_property_access_result(
+                            idx,
+                            member_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
+                }
+
                 // When the object type is a TypeQuery (typeof M) for a namespace,
                 // try to resolve the property from the namespace symbol's exports.
                 // This handles `var m: typeof M; m.Point` where `m` is a variable
