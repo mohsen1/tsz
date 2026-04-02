@@ -405,10 +405,8 @@ export class TimestampedUser extends Timestamped(User) {
     let result = compile(&args, dir.path()).expect("compile succeeds");
 
     assert!(
-        !result
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE),
+        !result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE),
         "Expected no TS2510 for mixin constructor object base, got: {:?}",
         result.diagnostics
     );

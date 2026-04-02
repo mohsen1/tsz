@@ -1699,14 +1699,15 @@ impl<'a> CheckerState<'a> {
         // with multiple construct signatures plus an intersected `prototype` type
         // instead of a raw intersection at the top level. Treat that shape the same
         // way: it is a mixin composition artifact, not a real overload set.
-        let has_intersection_instance = crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-            self.ctx.types,
-            base_constructor_type,
-        )
-        .is_some_and(|instance_type| {
-            crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
-                .is_some()
-        });
+        let has_intersection_instance =
+            crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                self.ctx.types,
+                base_constructor_type,
+            )
+            .is_some_and(|instance_type| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
+                    .is_some()
+            });
         if tsz_solver::is_intersection_type(self.ctx.types, base_constructor_type)
             || has_intersection_instance
         {
