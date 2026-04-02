@@ -1695,7 +1695,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.namespace_has_type_only_member(object_type, property_name) {
-                if self.is_unresolved_import_symbol(access.expression) {
+                // Suppress TS2339/TS2693 when base expression is a property access on an unresolved import
+                // TS2307 was already emitted for the missing module, so we shouldn't
+                // emit additional errors about properties not existing on the import.
+                if self.is_property_access_on_unresolved_import(access.expression) {
                     return TypeId::ERROR;
                 }
                 // Don't emit TS2693 in heritage clause context — the heritage
@@ -1783,6 +1786,7 @@ impl<'a> CheckerState<'a> {
                 if !access.question_dot_token
                     && !property_name.starts_with('#')
                     && !accessibility_error_emitted
+                    && !self.is_property_access_on_unresolved_import(access.expression)
                 {
                     // Check if the base expression is an uninstantiated namespace.
                     // tsc emits TS2708 "Cannot use namespace 'X' as a value" on the
@@ -2353,9 +2357,12 @@ impl<'a> CheckerState<'a> {
                     // TS2339. For example, `super.x()` in a static method (where `x` is an
                     // instance method) and `super.y()` in an instance method (where `y` is a
                     // static method) produce no TS2339 errors in tsc (see superAccess2.ts).
+                    // Also suppress TS2339 when base expression is a property access on an unresolved import
+                    // (TS2307 was already emitted for the missing module).
                     if !property_name.starts_with('#')
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)
+                        && !self.is_property_access_on_unresolved_import(access.expression)
                     {
                         if self.is_js_file()
                             && self.is_current_file_commonjs_export_base(access.expression)
