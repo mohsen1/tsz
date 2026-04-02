@@ -343,6 +343,7 @@ pub(crate) fn emit_outputs(
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
+                    emitter.set_isolated_declarations(context.options.checker.isolated_declarations);
                     emitter.set_files_with_augmentations(files_with_augmentations.clone());
                     emitter
                 } else {
@@ -353,6 +354,7 @@ pub(crate) fn emit_outputs(
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
+                    emitter.set_isolated_declarations(context.options.checker.isolated_declarations);
                     emitter.set_files_with_augmentations(files_with_augmentations.clone());
                     emitter
                 };

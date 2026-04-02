@@ -891,13 +891,17 @@ impl<'a> CheckerState<'a> {
 
                     // Targeted module augmentations are allowed to merge interface
                     // declarations with an existing interface export surface.
+                    // Also allow function declarations to merge - TypeScript permits
+                    // function overloads to be added via module augmentation.
                     // Keep the dedicated cross-file interface-member conflict pass
                     // above responsible for property-vs-method mismatches instead of
                     // collapsing benign interface merges into TS2300 here.
                     if (decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
                         || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation)
-                        && (decl_flags & symbol_flags::INTERFACE) != 0
-                        && (other_flags & symbol_flags::INTERFACE) != 0
+                        && (((decl_flags & symbol_flags::INTERFACE) != 0
+                            && (other_flags & symbol_flags::INTERFACE) != 0)
+                            || ((decl_flags & symbol_flags::FUNCTION) != 0
+                                && (other_flags & symbol_flags::FUNCTION) != 0))
                     {
                         continue;
                     }

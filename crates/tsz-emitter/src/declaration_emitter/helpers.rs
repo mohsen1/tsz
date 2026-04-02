@@ -11287,6 +11287,12 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         use tsz_common::diagnostics::Diagnostic;
 
+        // When isolated declarations is enabled, the checker will emit more
+        // specific errors (TS9010, TS9038, etc.). Skip TS7056 to avoid masking them.
+        if self.isolated_declarations {
+            return false;
+        }
+
         if self
             .find_unexported_import_type_reference_in_printed_type(printed_type_text)
             .is_none()
@@ -11306,6 +11312,12 @@ impl<'a> DeclarationEmitter<'a> {
         pos: u32,
         length: u32,
     ) -> bool {
+        // When isolated declarations is enabled, the checker will emit more
+        // specific errors (TS9010, TS9038, etc.). Skip TS7056 to avoid masking them.
+        if self.isolated_declarations {
+            return false;
+        }
+
         const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 
         if let Some(estimated_length) = self.estimated_truncation_candidate_length(expr_idx) {
@@ -11348,6 +11360,12 @@ impl<'a> DeclarationEmitter<'a> {
         pos: u32,
         length: u32,
     ) -> bool {
+        // When isolated declarations is enabled, the checker will emit more
+        // specific errors (TS9010, TS9038, etc.). Skip TS7056 to avoid masking them.
+        if self.isolated_declarations {
+            return false;
+        }
+
         const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 
         if type_text.chars().count() <= NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH {
@@ -11373,6 +11391,12 @@ impl<'a> DeclarationEmitter<'a> {
         length: u32,
     ) -> bool {
         use tsz_common::diagnostics::Diagnostic;
+
+        // When isolated declarations is enabled, the checker will emit more
+        // specific errors (TS9010, TS9038, etc.). Skip TS7056 to avoid masking them.
+        if self.isolated_declarations {
+            return false;
+        }
 
         if !self.printed_type_uses_non_emittable_local_alias_root(printed_type_text) {
             return false;
