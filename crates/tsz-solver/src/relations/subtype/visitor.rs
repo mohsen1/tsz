@@ -718,20 +718,20 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // be considered subtypes of each other. This fixes cases like:
             //   JSX.IntrinsicElements[T1] <: JSX.IntrinsicElements[T2]
             // where T1 and T2 are both `extends keyof JSX.IntrinsicElements` but different params.
-            if let Some(s_param) = type_param_info(self.checker.interner, key_type) {
-                if let Some(t_param) = type_param_info(self.checker.interner, t_idx) {
-                    // Both keys are type parameters with different names - not subtypes
-                    if s_param.name != t_param.name {
-                        if let Some(tracer) = &mut self.checker.tracer
-                            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                                source_type: self.source,
-                                target_type: self.target,
-                            })
-                        {
-                            return SubtypeResult::False;
-                        }
+            if let Some(s_param) = type_param_info(self.checker.interner, key_type)
+                && let Some(t_param) = type_param_info(self.checker.interner, t_idx)
+            {
+                // Both keys are type parameters with different names - not subtypes
+                if s_param.name != t_param.name {
+                    if let Some(tracer) = &mut self.checker.tracer
+                        && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                            source_type: self.source,
+                            target_type: self.target,
+                        })
+                    {
                         return SubtypeResult::False;
                     }
+                    return SubtypeResult::False;
                 }
             }
 

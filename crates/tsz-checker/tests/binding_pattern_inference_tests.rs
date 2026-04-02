@@ -152,8 +152,7 @@ trans(({a, b = 10}) => a);
     assert_eq!(
         ts2345_count, 5,
         "Expected 5 TS2345 errors for binding-pattern callbacks with uninferred T. \
-         Got {} TS2345 errors. All diagnostics: {diagnostics:#?}",
-        ts2345_count
+         Got {ts2345_count} TS2345 errors. All diagnostics: {diagnostics:#?}"
     );
 }
 

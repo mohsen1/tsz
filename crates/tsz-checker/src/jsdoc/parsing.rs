@@ -9,6 +9,8 @@ use super::types::{
 };
 use crate::state::CheckerState;
 
+type JSDocImportQueryMembers = Vec<(usize, String)>;
+
 impl<'a> CheckerState<'a> {
     // -----------------------------------------------------------------
     // Low-level nesting-aware string splitting
@@ -408,7 +410,7 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn parse_jsdoc_typeof_import_query(
         type_expr: &str,
-    ) -> Option<(String, Vec<(usize, String)>)> {
+    ) -> Option<(String, JSDocImportQueryMembers)> {
         let expr = type_expr.trim();
         let mut cursor = "typeof".len();
         let bytes = expr.as_bytes();

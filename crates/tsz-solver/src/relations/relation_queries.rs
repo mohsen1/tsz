@@ -387,7 +387,6 @@ pub fn check_application_variance<R: TypeResolver>(
     let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
     let mut all_ok = true;
     let mut any_checked = false;
-    let mut has_empty_variance = false;
     for (i, variance) in variances.iter().enumerate() {
         let s_arg = s_app.args[i];
         let t_arg = t_app.args[i];
@@ -417,7 +416,6 @@ pub fn check_application_variance<R: TypeResolver>(
             // arguments are assignable to catch cases where different unconstrained
             // type parameters (e.g., T vs U) should not be assignable.
             // We do an invariant check (both directions) to be safe.
-            has_empty_variance = true;
             any_checked = true;
             if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
                 all_ok = false;
@@ -480,31 +478,31 @@ pub fn are_type_params_assignable(
     target: TypeId,
 ) -> bool {
     // If both are type parameters, check their relationship
-    if let Some(s_info) = crate::visitor::type_param_info(interner, source) {
-        if let Some(t_info) = crate::visitor::type_param_info(interner, target) {
-            // Same name means same type parameter (or shadowed, treat as same for assignability)
-            if s_info.name == t_info.name {
-                return true;
-            }
-
-            // Different names - check if there's a constraint relationship
-            // If source has constraint that's assignable to target, they're related
-            if let Some(s_constraint) = s_info.constraint {
-                if s_constraint == target {
-                    return true;
-                }
-            }
-
-            // If target has constraint that source is assignable to, they're related
-            if let Some(t_constraint) = t_info.constraint {
-                if t_constraint == source {
-                    return true;
-                }
-            }
-
-            // Different unconstrained type parameters are NOT assignable
-            return false;
+    if let Some(s_info) = crate::visitor::type_param_info(interner, source)
+        && let Some(t_info) = crate::visitor::type_param_info(interner, target)
+    {
+        // Same name means same type parameter (or shadowed, treat as same for assignability)
+        if s_info.name == t_info.name {
+            return true;
         }
+
+        // Different names - check if there's a constraint relationship
+        // If source has constraint that's assignable to target, they're related
+        if let Some(s_constraint) = s_info.constraint
+            && s_constraint == target
+        {
+            return true;
+        }
+
+        // If target has constraint that source is assignable to, they're related
+        if let Some(t_constraint) = t_info.constraint
+            && t_constraint == source
+        {
+            return true;
+        }
+
+        // Different unconstrained type parameters are NOT assignable
+        return false;
     }
 
     // If only one is a type parameter, or neither, fall back to general assignability

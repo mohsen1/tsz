@@ -1383,10 +1383,8 @@ impl<'a> CheckerState<'a> {
             let direct_initializer =
                 if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
                     Some(prop.initializer)
-                } else if let Some(prop) = self.ctx.arena.get_shorthand_property(node) {
-                    Some(prop.name)
                 } else {
-                    None
+                    self.ctx.arena.get_shorthand_property(node).map(|prop| prop.name)
                 };
 
             if let Some(initializer_idx) = direct_initializer {

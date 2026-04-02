@@ -2942,9 +2942,9 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if specifier.is_type_only
-                || !self
+                || self
                     .get_identifier_text_from_idx(specifier.name)
-                    .is_some_and(|name| name == "default")
+                    .is_none_or(|name| name != "default")
             {
                 return false;
             }

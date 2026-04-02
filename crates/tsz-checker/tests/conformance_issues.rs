@@ -23629,7 +23629,7 @@ fn test_ts7005_emitted_for_plain_const_without_initializer() {
 /// return types should not produce false TS2394 errors. The manual signature
 /// lowering used for overload compatibility doesn't have class type params in
 /// scope, producing Error types in the lowered signature. The checker must
-/// detect these buried Error types and fall back to get_type_of_node.
+/// detect these buried Error types and fall back to `get_type_of_node`.
 #[test]
 fn test_class_method_overload_with_class_type_param_in_return_no_false_ts2394() {
     // Simple case: class type param T directly in return type

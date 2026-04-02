@@ -8,6 +8,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::PropertyInfo;
 use tsz_solver::TypeId;
 
+type ImportQuerySegments = Vec<(NodeIndex, String)>;
+
 impl<'a> CheckerState<'a> {
     fn get_enum_namespace_type_for_value(&mut self, type_id: TypeId) -> TypeId {
         let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
@@ -549,7 +551,7 @@ impl<'a> CheckerState<'a> {
     fn decompose_typeof_import_query(
         &self,
         expr_name: NodeIndex,
-    ) -> Option<(NodeIndex, Vec<(NodeIndex, String)>)> {
+    ) -> Option<(NodeIndex, ImportQuerySegments)> {
         let mut current = expr_name;
         let mut segments = Vec::new();
 
