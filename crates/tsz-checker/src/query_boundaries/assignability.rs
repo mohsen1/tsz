@@ -181,6 +181,10 @@ pub(crate) fn has_recursive_type_parameter_constraint(
     })
 }
 
+pub(crate) fn has_deferred_conditional_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::has_deferred_conditional_member(db, type_id)
+}
+
 pub(crate) fn is_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_any_type(db, type_id)
 }
