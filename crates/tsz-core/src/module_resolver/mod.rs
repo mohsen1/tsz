@@ -90,6 +90,8 @@ pub struct ModuleResolver {
     package_type_cache: FxHashMap<PathBuf, Option<PackageType>>,
     /// Cached package type for the current resolution
     current_package_type: Option<PackageType>,
+    /// Root directory for the project (used for TS2209 ambiguous root detection)
+    root_dir: Option<PathBuf>,
 }
 
 impl ModuleResolver {
@@ -123,6 +125,7 @@ impl ModuleResolver {
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             package_type_cache: FxHashMap::default(),
             current_package_type: None,
+            root_dir: options.root_dir.clone(),
         }
     }
 
@@ -148,6 +151,7 @@ impl ModuleResolver {
             rewrite_relative_import_extensions: false,
             package_type_cache: FxHashMap::default(),
             current_package_type: None,
+            root_dir: None,
         }
     }
 
