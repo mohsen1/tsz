@@ -617,9 +617,6 @@ impl<'a> CheckerState<'a> {
 
             return if index_type == TypeId::STRING {
                 resolver.has_index_signature(evaluated_object, IndexKind::String)
-            } else if index_type == TypeId::NUMBER {
-                resolver.has_index_signature(evaluated_object, IndexKind::Number)
-                    || resolver.has_index_signature(evaluated_object, IndexKind::String)
             } else {
                 resolver.has_index_signature(evaluated_object, IndexKind::String)
                     || resolver.has_index_signature(evaluated_object, IndexKind::Number)

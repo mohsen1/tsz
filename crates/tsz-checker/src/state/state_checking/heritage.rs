@@ -7,7 +7,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-
 impl<'a> CheckerState<'a> {
     fn symbol_is_uninstantiated_namespace(
         &self,
