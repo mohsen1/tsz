@@ -825,6 +825,61 @@ const y = x.id;
 }
 
 #[test]
+fn compile_project_ambient_import_equals_module_declaration_avoids_ts2300() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("server.d.ts"),
+        r#"declare module "other" {
+    export class C { }
+}
+
+declare module "server" {
+    import events = require("other");
+
+    namespace S {
+        export var a: number;
+    }
+
+    export = S;
+}
+"#,
+    );
+    write_file(
+        &base.join("client.ts"),
+        r#"import { a } from "server";
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015"
+  },
+  "files": ["server.d.ts", "client.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::DUPLICATE_IDENTIFIER),
+        "Expected ambient external module import-equals declaration to avoid TS2300, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics for ambient import-equals external module declaration, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_project_umd_global_class_surface_stays_unaugmented() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

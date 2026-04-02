@@ -220,6 +220,15 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
+        // String-literal modules in script files are ambient external module
+        // declarations, not module augmentations. The top-level conflict pass
+        // only applies when the current file is itself an external module host
+        // for augmentations.
+        if !self.ctx.binder.is_external_module() {
+            self.check_target_file_exports_conflicting_with_module_augmentations();
+            return;
+        }
+
         let Some(source_file) = self.ctx.arena.source_files.first() else {
             return;
         };
