@@ -98,6 +98,10 @@ pub(crate) fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     tsz_solver::type_queries::is_type_deeply_any(db, type_id)
 }
 
+pub(crate) fn has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
+}
+
 pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_error_type_db(db, type_id)
 }
