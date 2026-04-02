@@ -172,6 +172,7 @@ pub struct DeclarationEmitter<'a> {
     /// enforces portability via the exports map (TS2307).
     pub(super) skip_portability_check: bool,
     pub(super) strict_null_checks: bool,
+    pub(super) isolated_declarations: bool,
     /// Accumulated enum values from all previously-evaluated enums in this file.
     /// Persists across enum declarations so cross-enum references (e.g., `B.Y = A.X`)
     /// can be resolved.
@@ -274,6 +275,7 @@ impl<'a> DeclarationEmitter<'a> {
             diagnostics: Vec::new(),
             skip_portability_check: false,
             strict_null_checks: false,
+            isolated_declarations: false,
             all_enum_values: FxHashMap::default(),
         }
     }
@@ -354,6 +356,7 @@ impl<'a> DeclarationEmitter<'a> {
             diagnostics: Vec::new(),
             skip_portability_check: false,
             strict_null_checks: false,
+            isolated_declarations: false,
             all_enum_values: FxHashMap::default(),
         }
     }
@@ -443,6 +446,10 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub const fn set_strict_null_checks(&mut self, strict: bool) {
         self.strict_null_checks = strict;
+    }
+
+    pub const fn set_isolated_declarations(&mut self, isolated: bool) {
+        self.isolated_declarations = isolated;
     }
 
     /// Take diagnostics collected during declaration emit (e.g., TS2883).
@@ -1814,7 +1821,9 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                     if emitted_any_for_truncation {
-                    } else if self.printed_type_uses_private_import_type_root(&type_text) {
+                    } else if self.printed_type_uses_private_import_type_root(&type_text)
+                        && !self.isolated_declarations
+                    {
                         if let (Some(file_path), Some((pos, length))) =
                             (self.current_file_path.as_deref(), prop_name_span)
                         {
@@ -1871,7 +1880,9 @@ impl<'a> DeclarationEmitter<'a> {
                     false
                 };
                 if emitted_any_for_truncation {
-                } else if self.printed_type_uses_private_import_type_root(&type_text) {
+                } else if self.printed_type_uses_private_import_type_root(&type_text)
+                    && !self.isolated_declarations
+                {
                     if let (Some(file_path), Some((pos, length))) =
                         (self.current_file_path.as_deref(), prop_name_span)
                     {
