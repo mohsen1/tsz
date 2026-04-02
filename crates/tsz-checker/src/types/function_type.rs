@@ -512,20 +512,20 @@ impl<'a> CheckerState<'a> {
             && let Some(owner_target) = prototype_owner_target
             && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
         {
-                let factory = self.ctx.types.factory();
-                for name in Self::jsdoc_template_type_params(&owner_jsdoc) {
-                    let atom = self.ctx.types.intern_string(&name);
-                    let info = TypeParamInfo {
-                        name: atom,
+            let factory = self.ctx.types.factory();
+            for name in Self::jsdoc_template_type_params(&owner_jsdoc) {
+                let atom = self.ctx.types.intern_string(&name);
+                let info = TypeParamInfo {
+                    name: atom,
                     constraint: None,
-                        default: None,
-                        is_const: false,
-                    };
-                    let ty = factory.type_param(info);
-                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-                    jsdoc_type_param_updates.push((name, previous, false));
-                }
+                    default: None,
+                    is_const: false,
+                };
+                let ty = factory.type_param(info);
+                let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+                jsdoc_type_param_updates.push((name, previous, false));
             }
+        }
         if self.is_js_file()
             && type_params.is_empty()
             && let Some(ref jsdoc) = func_jsdoc

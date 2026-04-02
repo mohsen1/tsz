@@ -1181,7 +1181,9 @@ impl<'a> CheckerState<'a> {
             if symbol.escaped_name == "default"
                 && declarations
                     .iter()
-                    .filter(|(decl_idx, _, is_local, _, _)| !*is_local || conflicts.contains(decl_idx))
+                    .filter(|(decl_idx, _, is_local, _, _)| {
+                        !*is_local || conflicts.contains(decl_idx)
+                    })
                     .all(|(decl_idx, _, _, _, _)| {
                         self.declaration_participates_in_default_export_conflict(*decl_idx)
                     })

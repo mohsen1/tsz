@@ -445,7 +445,9 @@ export { aa as default } from './hi'
     let ts2307 = result
         .diagnostics
         .iter()
-        .filter(|diag| diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS)
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
         .count();
     assert_eq!(
         ts2307, 2,

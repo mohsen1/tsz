@@ -2721,8 +2721,9 @@ impl<'a> CheckerState<'a> {
                                         .resolve_identifier_symbol(clause_idx)
                                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                                         .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
-                                    _ if self
-                                        .export_decl_has_direct_named_default_export(export_idx) =>
+                                    _ if self.export_decl_has_direct_named_default_export(
+                                        export_idx,
+                                    ) =>
                                     {
                                         true
                                     }
