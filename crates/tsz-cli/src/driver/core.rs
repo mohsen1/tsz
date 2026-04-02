@@ -799,6 +799,27 @@ fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         || matches!(code, 2458 | 2754)
 }
 
+/// Config-level diagnostic codes that tsc emits alongside TS5107 even for
+/// deprecated ES5 targets. These are compiler-option validation errors, not
+/// file-level semantic errors.
+fn is_config_level_code(code: u32) -> bool {
+    matches!(
+        code,
+        2318  // Cannot find global type
+            | 5024  // Compiler option requires a value
+            | 5053  // Compiler option conflict
+            | 5069  // Option not allowed
+            | 5070  // resolveJsonModule requires node
+            | 5071  // resolveJsonModule
+            | 5095  // resolveJsonModule
+            | 5101  // Option is deprecated (TS5101 variant)
+            | 5102  // Option deprecated variant
+            | 6059  // rootDir
+            | 6082  // Only emit .d.ts declaration files
+            | 18003 // No inputs found
+    )
+}
+
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
@@ -1556,9 +1577,17 @@ fn compile_inner(
                 is_deprecation(d.code)
             });
         } else if resolved.checker.target.is_es5() {
-            // tsc treats deprecated ES3/ES5 targets as an early-fatal config error
-            // unless a grammar error suppresses the deprecation diagnostic entirely.
-            diagnostics.retain(|d| is_deprecation(d.code));
+            // tsc treats deprecated ES5 targets specially:
+            // - Grammar errors (1xxx, 8xxx) suppress TS5107 and are emitted alone
+            // - Without grammar errors, only TS5107 + config-level errors are kept;
+            //   file-level semantic errors are suppressed
+            if has_grammar_errors {
+                diagnostics.retain(|d| {
+                    !is_deprecation(d.code) && is_grammar_error_for_deprecation_priority(d.code)
+                });
+            } else {
+                diagnostics.retain(|d| is_deprecation(d.code) || is_config_level_code(d.code));
+            }
         } else if has_grammar_errors {
             // Grammar errors take precedence - suppress TS5107/TS5101
             diagnostics.retain(|d| !is_deprecation(d.code));
