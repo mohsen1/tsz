@@ -219,7 +219,21 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
                 if decl.type_annotation.is_none() {
-                    return None;
+                    let init_node = self.ctx.arena.get(decl.initializer)?;
+                    let binary = self.ctx.arena.get_binary_expr(init_node)?;
+                    let is_logical_alias = matches!(
+                        binary.operator_token,
+                        x if x == tsz_scanner::SyntaxKind::BarBarToken as u16
+                            || x == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
+                    );
+                    if !is_logical_alias {
+                        return None;
+                    }
+                    let left_sym_id = self.resolve_identifier_symbol(binary.left)?;
+                    return self.get_jsx_component_props_display_text_for_symbol(
+                        left_sym_id,
+                        props_name,
+                    );
                 }
                 self.get_jsx_component_props_display_text_from_type_node(
                     decl.type_annotation,
