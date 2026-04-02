@@ -735,6 +735,96 @@ model.cache;
 }
 
 #[test]
+fn compile_project_export_equals_request_augmentation_avoids_ts2300() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/express/index.d.ts"),
+        r#"declare namespace Express {
+    export interface Request { }
+    export interface Response { }
+    export interface Application { }
+}
+
+declare module "express" {
+    function e(): e.Express;
+    namespace e {
+        interface Request extends Express.Request {
+            get(name: string): string;
+        }
+        interface Response extends Express.Response {
+            charset: string;
+        }
+        interface Application extends Express.Application {
+            routes: any;
+        }
+        interface Express extends Application {
+            createApplication(): Application;
+        }
+        interface RequestHandler {
+            (req: Request, res: Response, next: Function): any;
+        }
+        export = e;
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("augmentation.ts"),
+        r#"import * as e from "express";
+declare module "express" {
+    interface Request {
+        id: number;
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("consumer.ts"),
+        r#"import { Request } from "express";
+import "./augmentation";
+
+let x: Request;
+const y = x.id;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true
+  },
+  "files": ["augmentation.ts", "consumer.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::DUPLICATE_IDENTIFIER),
+        "Expected export= module augmentation interface merge to avoid TS2300, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected augmented Request interface to expose id, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED),
+        "Expected TS2454 to remain the primary consumer error, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_project_umd_global_class_surface_stays_unaugmented() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
