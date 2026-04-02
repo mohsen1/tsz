@@ -1035,7 +1035,8 @@ impl<'a> CheckerState<'a> {
                     // For namespace imports (import * as ns from './mod'), we need to check
                     // if the member was re-exported via `export type * from '...'` and is type-only.
                     if let Some(ref module_specifier) = import_module {
-                        if self.is_member_type_only_wildcard_export(module_specifier, property_name) {
+                        if self.is_member_type_only_wildcard_export(module_specifier, property_name)
+                        {
                             return None;
                         }
                     }
@@ -1160,7 +1161,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if there's a type-only wildcard re-export
         if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
-            let type_only_flags = target_binder.wildcard_reexports_type_only.get(&target_file_name);
+            let type_only_flags = target_binder
+                .wildcard_reexports_type_only
+                .get(&target_file_name);
 
             for (i, source_module) in source_modules.iter().enumerate() {
                 let is_type_only = type_only_flags
@@ -1186,7 +1189,8 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or_default();
 
                     // Check if the member exists in the source module's exports
-                    if let Some(exports) = self.module_exports_for_file(source_binder, &source_file_name)
+                    if let Some(exports) =
+                        self.module_exports_for_file(source_binder, &source_file_name)
                         && exports.get(member_name).is_some()
                     {
                         return true;
