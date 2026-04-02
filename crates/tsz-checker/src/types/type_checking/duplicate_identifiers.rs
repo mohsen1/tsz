@@ -1173,6 +1173,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Multiple default exports are classified by the dedicated export pass
+            // (TS2323/TS2528/TS2813/TS2814). If the generic duplicate-identifier
+            // pass also reports TS2300 for the synthetic `default` symbol, we end
+            // up with the wrong diagnostic family for re-exports and declaration
+            // forms that tsc handles through export-default rules instead.
+            if symbol.escaped_name == "default"
+                && declarations
+                    .iter()
+                    .filter(|(decl_idx, _, is_local, _, _)| !*is_local || conflicts.contains(decl_idx))
+                    .all(|(decl_idx, _, _, _, _)| {
+                        self.declaration_participates_in_default_export_conflict(*decl_idx)
+                    })
+            {
+                continue;
+            }
+
             // TS2393: Duplicate function implementation.
             {
                 let has_non_function_conflict =
@@ -2116,5 +2132,56 @@ impl<'a> CheckerState<'a> {
                 self.pop_type_parameters(updates);
             }
         }
+    }
+
+    fn declaration_participates_in_default_export_conflict(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        let mut export_idx = None;
+        for _ in 0..4 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if self.ctx.arena.get_export_decl(node).is_some() {
+                export_idx = Some(current);
+                break;
+            }
+            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                break;
+            };
+            if parent.is_none() {
+                break;
+            }
+            current = parent;
+        }
+
+        let Some(export_idx) = export_idx else {
+            return false;
+        };
+        let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) else {
+            return false;
+        };
+        if export_decl.is_default_export {
+            return true;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+            return false;
+        };
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return false;
+        };
+
+        named_exports.elements.nodes.iter().any(|&specifier_idx| {
+            let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                return false;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(specifier_node) else {
+                return false;
+            };
+            !specifier.is_type_only
+                && self
+                    .get_identifier_text_from_idx(specifier.name)
+                    .is_some_and(|name| name == "default")
+        })
     }
 }
