@@ -2208,15 +2208,14 @@ impl<'a> CheckerState<'a> {
                         == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT)
                 && let Some(named_imports) = self.ctx.arena.get_named_imports(named_bindings_node)
             {
-                if named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT {
+                if named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT
+                {
                     if named_imports.name.is_some()
-                        && self
-                            .ctx
-                            .arena
-                            .get_identifier_text(named_imports.name)
-                            == Some(name)
+                        && self.ctx.arena.get_identifier_text(named_imports.name) == Some(name)
                     {
-                        if let Some(module_specifier) = self.get_import_module_specifier(import_decl) {
+                        if let Some(module_specifier) =
+                            self.get_import_module_specifier(import_decl)
+                        {
                             if self.is_export_type_only_across_binders(&module_specifier, "*")
                                 || self.is_module_export_equals_type_only(&module_specifier)
                             {
