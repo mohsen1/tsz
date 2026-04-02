@@ -2122,7 +2122,13 @@ impl<'a> CheckerState<'a> {
                     if self.is_js_file()
                         && self.ctx.compiler_options.check_js
                         && let Some(expr_text) = self.expression_text(idx)
-                        && let Some(jsdoc_type) = self.resolve_jsdoc_assigned_value_type(&expr_text)
+                        && let Some(jsdoc_type) = if skip_flow_narrowing
+                            && self.property_access_is_direct_write_target(idx)
+                        {
+                            self.resolve_jsdoc_assigned_value_type_for_write(&expr_text)
+                        } else {
+                            self.resolve_jsdoc_assigned_value_type(&expr_text)
+                        }
                     {
                         return jsdoc_type;
                     }

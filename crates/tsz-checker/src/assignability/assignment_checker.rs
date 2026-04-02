@@ -1777,7 +1777,7 @@ impl<'a> CheckerState<'a> {
             && self.ctx.compiler_options.check_js
             && matches!(left_type, TypeId::ANY | TypeId::UNKNOWN)
             && let Some(name) = self.expression_text(left_idx)
-            && let Some(jsdoc_left_type) = self.resolve_jsdoc_assigned_value_type(&name)
+            && let Some(jsdoc_left_type) = self.resolve_jsdoc_assigned_value_type_for_write(&name)
         {
             left_type = jsdoc_left_type;
         }
