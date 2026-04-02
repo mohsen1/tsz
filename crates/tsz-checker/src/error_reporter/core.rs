@@ -2175,7 +2175,7 @@ impl<'a> CheckerState<'a> {
                         self.widen_enum_member_type(expr_type)
                     } else {
                         expr_type
-                };
+                    };
                 let display_type = self.widen_function_like_display_type(display_type);
                 let display_type = if self.is_literal_sensitive_assignment_target(target) {
                     display_type
@@ -2250,7 +2250,8 @@ impl<'a> CheckerState<'a> {
                 self.widen_type_for_display(source)
             };
             let display_type = self.widen_function_like_display_type(display_type);
-            if let Some(display) = self.new_expression_nominal_source_display(expr_idx, display_type)
+            if let Some(display) =
+                self.new_expression_nominal_source_display(expr_idx, display_type)
             {
                 return display;
             }
@@ -2389,11 +2390,11 @@ impl<'a> CheckerState<'a> {
             if expr_type != TypeId::ERROR {
                 let widened_expr_type = self.widen_type_for_display(expr_type);
                 let display_type =
-                if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
-                    self.widen_enum_member_type(widened_expr_type)
-                } else {
-                    widened_expr_type
-                };
+                    if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
+                        self.widen_enum_member_type(widened_expr_type)
+                    } else {
+                        widened_expr_type
+                    };
                 let display_type = self.widen_function_like_display_type(display_type);
                 if let Some(display) =
                     self.new_expression_nominal_source_display(expr_idx, display_type)
@@ -2433,7 +2434,8 @@ impl<'a> CheckerState<'a> {
                 self.widen_type_for_display(source)
             };
             let display_type = self.widen_function_like_display_type(display_type);
-            if let Some(display) = self.new_expression_nominal_source_display(expr_idx, display_type)
+            if let Some(display) =
+                self.new_expression_nominal_source_display(expr_idx, display_type)
             {
                 return display;
             }
