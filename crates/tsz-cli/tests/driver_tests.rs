@@ -620,6 +620,64 @@ export const f = fn;
 }
 
 #[test]
+fn declaration_emit_namespace_import_callable_member_avoids_ts7056() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("a.ts"),
+        r#"export type SpecialString = string;
+type PrivateSpecialString = string;
+
+export namespace N {
+    export type SpecialString = string;
+}
+
+export const o = (
+    p1: SpecialString,
+    p2: PrivateSpecialString,
+    p3: N.SpecialString,
+) => null! as { foo: SpecialString, bar: PrivateSpecialString, baz: N.SpecialString };
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import * as a from "./a";
+
+export const g = a.o;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2020",
+    "strict": true,
+    "declaration": true,
+    "module": "commonjs"
+  },
+  "files": ["a.ts", "b.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 7056),
+        "expected no TS7056 for namespace-import callable alias emit, got: {:#?}",
+        result.diagnostics
+    );
+
+    let b_dts = fs::read_to_string(base.join("b.d.ts")).expect("b.d.ts should exist");
+    assert!(
+        b_dts.contains("typeof a.o"),
+        "expected namespace import member reuse in b.d.ts, got:\n{b_dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_reusable_local_property_names_avoid_ts7056() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
