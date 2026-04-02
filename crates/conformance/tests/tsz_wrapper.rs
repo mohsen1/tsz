@@ -703,7 +703,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
 }
 
 #[test]
-fn test_prepare_test_dir_implicit_include_includes_module_extensions() {
+fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
     let filenames = vec![
         ("/index.js".to_string(), "export {};".to_string()),
         ("/index.mjs".to_string(), "export {};".to_string()),

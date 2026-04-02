@@ -2175,7 +2175,7 @@ impl<'a> CheckerState<'a> {
                         self.widen_enum_member_type(expr_type)
                     } else {
                         expr_type
-                    };
+                };
                 let display_type = self.widen_function_like_display_type(display_type);
                 let display_type = if self.is_literal_sensitive_assignment_target(target) {
                     display_type
@@ -2185,6 +2185,11 @@ impl<'a> CheckerState<'a> {
                 } else {
                     crate::query_boundaries::common::widen_type(self.ctx.types, display_type)
                 };
+                if let Some(display) =
+                    self.new_expression_nominal_source_display(expr_idx, display_type)
+                {
+                    return display;
+                }
                 return self.format_assignability_type_for_message(display_type, target);
             }
 
@@ -2245,6 +2250,10 @@ impl<'a> CheckerState<'a> {
                 self.widen_type_for_display(source)
             };
             let display_type = self.widen_function_like_display_type(display_type);
+            if let Some(display) = self.new_expression_nominal_source_display(expr_idx, display_type)
+            {
+                return display;
+            }
 
             if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -2380,12 +2389,17 @@ impl<'a> CheckerState<'a> {
             if expr_type != TypeId::ERROR {
                 let widened_expr_type = self.widen_type_for_display(expr_type);
                 let display_type =
-                    if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
-                        self.widen_enum_member_type(widened_expr_type)
-                    } else {
-                        widened_expr_type
-                    };
+                if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
+                    self.widen_enum_member_type(widened_expr_type)
+                } else {
+                    widened_expr_type
+                };
                 let display_type = self.widen_function_like_display_type(display_type);
+                if let Some(display) =
+                    self.new_expression_nominal_source_display(expr_idx, display_type)
+                {
+                    return display;
+                }
                 return self.format_assignability_type_for_message(display_type, target);
             }
         }
@@ -2419,10 +2433,46 @@ impl<'a> CheckerState<'a> {
                 self.widen_type_for_display(source)
             };
             let display_type = self.widen_function_like_display_type(display_type);
+            if let Some(display) = self.new_expression_nominal_source_display(expr_idx, display_type)
+            {
+                return display;
+            }
             return self.format_assignability_type_for_message(display_type, target);
         }
 
         self.format_assignability_type_for_message(source, target)
+    }
+
+    fn new_expression_nominal_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        display_type: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        if let Some(new_expr) = self.ctx.arena.get_call_expr(node)
+            && let Some(mut ctor_display) = self.expression_text(new_expr.expression)
+        {
+            if let Some(type_args) = &new_expr.type_arguments
+                && !type_args.nodes.is_empty()
+            {
+                let rendered_args: Vec<String> = type_args
+                    .nodes
+                    .iter()
+                    .map(|&arg| self.get_source_text_for_node(arg))
+                    .collect();
+                ctor_display.push('<');
+                ctor_display.push_str(&rendered_args.join(", "));
+                ctor_display.push('>');
+            }
+            return Some(ctor_display);
+        }
+
+        Some(self.format_property_receiver_type_for_diagnostic(display_type))
     }
 
     fn preferred_evaluated_source_display(&mut self, source: TypeId) -> Option<String> {

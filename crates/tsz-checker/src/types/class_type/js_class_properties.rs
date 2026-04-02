@@ -258,6 +258,15 @@ impl CheckerState<'_> {
                 let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
                 self.jsdoc_type_annotation_for_node_direct_force(expr_stmt.expression)
             })
+            // Fallback: when allowJs is set but checkJs is not, the `_direct`
+            // variants above return None because should_resolve_jsdoc() is false.
+            // tsc still reads @type annotations for type inference in this case.
+            .or_else(|| self.jsdoc_type_annotation_for_node_inference(stmt_idx))
+            .or_else(|| {
+                let stmt_node = self.ctx.arena.get(stmt_idx)?;
+                let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+                self.jsdoc_type_annotation_for_node_inference(expr_stmt.expression)
+            })
     }
 
     /// Force resolve a direct leading JSDoc `@type` annotation, bypassing the

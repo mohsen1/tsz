@@ -2859,6 +2859,60 @@ class E<T extends Date> {
 }
 
 #[test]
+fn test_ts2322_new_date_assignment_uses_nominal_date_display() {
+    let source = r#"
+function foo4<T extends U, U extends V, V extends Date>(t: T, u: U, v: V) {
+    t = new Date();
+    u = new Date();
+    v = new Date();
+}
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected three TS2322 diagnostics for Date-constrained generic assignments, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'Date' is not assignable to type 'T'.")),
+        "Expected nominal Date display for T assignment, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'Date' is not assignable to type 'U'.")),
+        "Expected nominal Date display for U assignment, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'Date' is not assignable to type 'V'.")),
+        "Expected nominal Date display for V assignment, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().all(|(_, msg)| !msg.contains("getVarDate")),
+        "Did not expect structural Date expansion in TS2322 diagnostics, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 #[ignore = "Requires deferred indexed access evaluation for intersections with type parameters - see conformance test compiler/indexedAccessRelation.ts"]
 fn indexed_access_on_intersection_preserves_deferred_constraints() {
     // Repro from TypeScript#14723 / conformance test indexedAccessRelation.ts.

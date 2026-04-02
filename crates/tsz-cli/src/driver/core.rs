@@ -799,27 +799,6 @@ fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         || matches!(code, 2458 | 2754)
 }
 
-/// Config-level diagnostic codes that tsc emits alongside TS5107 even for
-/// deprecated ES5 targets. These are compiler-option validation errors, not
-/// file-level semantic errors.
-fn is_config_level_code(code: u32) -> bool {
-    matches!(
-        code,
-        2318  // Cannot find global type
-            | 5024  // Compiler option requires a value
-            | 5053  // Compiler option conflict
-            | 5069  // Option not allowed
-            | 5070  // resolveJsonModule requires node
-            | 5071  // resolveJsonModule
-            | 5095  // resolveJsonModule
-            | 5101  // Option is deprecated (TS5101 variant)
-            | 5102  // Option deprecated variant
-            | 6059  // rootDir
-            | 6082  // Only emit .d.ts declaration files
-            | 18003 // No inputs found
-    )
-}
-
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
@@ -1391,6 +1370,32 @@ fn compile_inner(
     if !binary_file_names_to_suppress.is_empty() {
         diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
     }
+
+    // Handle TS5107/TS5101 deprecation diagnostics based on tsc behavior:
+    // tsc 6.0 treats TS5107/TS5101 as fatal - compilation stops and only
+    // config-level diagnostics are reported, UNLESS grammar errors exist
+    // which take precedence over deprecation warnings.
+    if has_deprecation_diagnostics {
+        let has_grammar_errors = diagnostics
+            .iter()
+            .any(|d| is_grammar_error_for_deprecation_priority(d.code));
+        
+        if has_grammar_errors {
+            // Grammar errors take precedence - suppress TS5107/TS5101
+            config_diagnostics.retain(|d| {
+                d.code
+                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+                    && d.code
+                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+            });
+        } else {
+            // TS5107 takes priority (fatal) - suppress all file-level diagnostics.
+            // Preserve only global-level TS2318 ("Cannot find global type") identified
+            // by empty file name and position 0, which tsc emits alongside deprecation warnings.
+            diagnostics.retain(|d| d.code == 2318 && d.file.is_empty() && d.start == 0);
+        }
+    }
+
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.extend(type_file_diagnostics);
@@ -1553,52 +1558,6 @@ fn compile_inner(
             emitted = emitted_files.len(),
             no_check = resolved.no_check
         );
-    }
-
-    // Handle TS5107/TS5101 deprecation diagnostics based on tsc behavior:
-    // 1. If real grammar errors exist, they take precedence and suppress the deprecation.
-    // 2. Otherwise the deprecation is early-fatal and suppresses follow-on file diagnostics.
-    if has_deprecation_diagnostics {
-        let is_deprecation = |code: u32| {
-            code == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-                || code
-                    == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-        };
-        let has_grammar_errors = diagnostics
-            .iter()
-            .any(|d| is_grammar_error_for_deprecation_priority(d.code));
-
-        if resolved.checker.no_lib {
-            diagnostics.retain(|d| {
-                if d.code == diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE {
-                    return true;
-                }
-                if has_grammar_errors {
-                    return !is_deprecation(d.code)
-                        && is_grammar_error_for_deprecation_priority(d.code);
-                }
-                is_deprecation(d.code)
-            });
-        } else if resolved.checker.target.is_es5() {
-            // tsc treats deprecated ES5 targets specially:
-            // - Grammar errors (1xxx, 8xxx) suppress TS5107 and are emitted alone
-            // - Without grammar errors, only TS5107 + config-level errors are kept;
-            //   file-level semantic errors are suppressed
-            if has_grammar_errors {
-                diagnostics.retain(|d| {
-                    !is_deprecation(d.code) && is_grammar_error_for_deprecation_priority(d.code)
-                });
-            } else {
-                diagnostics.retain(|d| is_deprecation(d.code) || is_config_level_code(d.code));
-            }
-        } else if has_grammar_errors {
-            // Grammar errors take precedence - suppress TS5107/TS5101
-            diagnostics.retain(|d| !is_deprecation(d.code));
-        } else {
-            // TS5107/TS5101 present without real grammar errors - match tsc's
-            // early-fatal config behavior and keep only the deprecation itself.
-            diagnostics.retain(|d| is_deprecation(d.code));
-        }
     }
 
     Ok(CompilationResult {
