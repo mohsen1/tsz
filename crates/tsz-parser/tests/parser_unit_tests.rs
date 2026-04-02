@@ -2345,7 +2345,11 @@ fn object_spread_invalid_asterisk_recovers_to_operand_expression() {
     let object_data = arena
         .get_literal_expr(object)
         .expect("object literal expression");
-    assert_eq!(object_data.elements.nodes.len(), 1, "expected one spread property");
+    assert_eq!(
+        object_data.elements.nodes.len(),
+        1,
+        "expected one spread property"
+    );
 
     let spread = arena
         .get(object_data.elements.nodes[0])

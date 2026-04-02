@@ -1380,14 +1380,14 @@ impl<'a> CheckerState<'a> {
 
             let node = self.ctx.arena.get(current)?;
 
-            let direct_initializer = if let Some(prop) = self.ctx.arena.get_property_assignment(node)
-            {
-                Some(prop.initializer)
-            } else if let Some(prop) = self.ctx.arena.get_shorthand_property(node) {
-                Some(prop.name)
-            } else {
-                None
-            };
+            let direct_initializer =
+                if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
+                    Some(prop.initializer)
+                } else if let Some(prop) = self.ctx.arena.get_shorthand_property(node) {
+                    Some(prop.name)
+                } else {
+                    None
+                };
 
             if let Some(initializer_idx) = direct_initializer {
                 if let Some(anchor) = self.resolve_diagnostic_anchor(
@@ -1407,8 +1407,9 @@ impl<'a> CheckerState<'a> {
 
             if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 let literal = self.ctx.arena.get_literal_expr(node)?;
-                let source_display = self
-                    .format_type_for_assignability_message(self.widen_type_for_display(source_type));
+                let source_display = self.format_type_for_assignability_message(
+                    self.widen_type_for_display(source_type),
+                );
 
                 for child_idx in literal.elements.nodes.iter().copied() {
                     let Some(child) = self.ctx.arena.get(child_idx) else {
@@ -1429,10 +1430,9 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let candidate_display = self
-                        .format_type_for_assignability_message(
-                            self.widen_type_for_display(candidate_type),
-                        );
+                    let candidate_display = self.format_type_for_assignability_message(
+                        self.widen_type_for_display(candidate_type),
+                    );
                     if candidate_type != source_type && candidate_display != source_display {
                         continue;
                     }
@@ -1629,12 +1629,12 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let key = (decl_idx, arena as *const tsz_parser::NodeArena);
-                    if declarations
-                        .iter()
-                        .all(|(existing_idx, existing_arena)| {
-                            (*existing_idx, *existing_arena as *const tsz_parser::NodeArena) != key
-                        })
-                    {
+                    if declarations.iter().all(|(existing_idx, existing_arena)| {
+                        (
+                            *existing_idx,
+                            *existing_arena as *const tsz_parser::NodeArena,
+                        ) != key
+                    }) {
                         declarations.push((decl_idx, arena));
                     }
                     pushed = true;
@@ -1643,12 +1643,12 @@ impl<'a> CheckerState<'a> {
 
             if !pushed && fallback_arena.get(decl_idx).is_some() {
                 let key = (decl_idx, fallback_arena as *const tsz_parser::NodeArena);
-                if declarations
-                    .iter()
-                    .all(|(existing_idx, existing_arena)| {
-                        (*existing_idx, *existing_arena as *const tsz_parser::NodeArena) != key
-                    })
-                {
+                if declarations.iter().all(|(existing_idx, existing_arena)| {
+                    (
+                        *existing_idx,
+                        *existing_arena as *const tsz_parser::NodeArena,
+                    ) != key
+                }) {
                     declarations.push((decl_idx, fallback_arena));
                 }
             }
@@ -1837,7 +1837,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(shape_id) = tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
+        if let Some(shape_id) =
+            tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
         {
             let shape = self.ctx.types.object_shape(shape_id);
             if let Some(sym_id) = shape.symbol
@@ -1875,8 +1876,8 @@ impl<'a> CheckerState<'a> {
 
         let source_display =
             self.format_type_for_assignability_message(self.widen_type_for_display(type_id));
-        let constructor_display =
-            self.format_type_for_assignability_message(self.widen_type_for_display(constructor_type));
+        let constructor_display = self
+            .format_type_for_assignability_message(self.widen_type_for_display(constructor_type));
         (source_display == constructor_display).then_some(constructor_name)
     }
 
